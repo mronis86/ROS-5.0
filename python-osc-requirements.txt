@@ -1,0 +1,17 @@
+# Python OSC GUI Requirements
+# Install with: pip install -r python-osc-requirements.txt
+
+# GUI Framework (built into Python)
+# tkinter is included with Python, no additional install needed
+
+# Supabase client
+supabase>=2.0.0
+
+# HTTP requests (for API calls)
+requests>=2.28.0
+
+# Optional: Better OSC support (uncomment if you want more advanced OSC features)
+# python-osc>=1.7.4
+
+# Optional: Better GUI styling (uncomment if you want modern UI)
+# customtkinter>=5.0.0

@@ -1,0 +1,12 @@
+{
+  "name": "netlify-functions",
+  "version": "1.0.0",
+  "description": "Netlify Functions for CSV/XML API endpoints",
+  "main": "index.js",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

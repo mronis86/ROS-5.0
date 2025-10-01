@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Custom Graphics JSON</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1e293b;
+            color: white;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background-color: #059669;
+        }
+        .error {
+            background-color: #dc2626;
+        }
+        .info {
+            background-color: #2563eb;
+        }
+        pre {
+            background-color: #374151;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        .refresh-btn {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        .refresh-btn:hover {
+            background-color: #2563eb;
+        }
+        .url-info {
+            background-color: #1e40af;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .copy-btn {
+            background-color: #10b981;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        .copy-btn:hover {
+            background-color: #059669;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Live Custom Graphics JSON</h1>
+        <div id="status" class="status">Loading...</div>
+        
+        <div class="url-info">
+            <strong>VMIX URL:</strong> <span id="vmix-url"></span>
+            <button class="copy-btn" onclick="copyVMIXUrl()">Copy URL</button>
+            <br><small>Use this URL in VMIX Data Sources → JSON/XML for real-time updates</small>
+        </div>
+        
+        <button class="refresh-btn" onclick="loadData()">Refresh Data</button>
+        <div id="json-output"></div>
+    </div>
+
+    <script>
+        let eventId = null;
+        let lastData = null;
+        let isPolling = false;
+
+        // Get eventId from URL parameters
+        function getEventId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('eventId');
+        }
+
+        // Load data from localStorage
+        async function loadData() {
+            try {
+                eventId = getEventId();
+                if (!eventId) {
+                    showError('No eventId provided in URL parameters');
+                    return;
+                }
+
+                showStatus('Loading data...', 'info');
+
+                // Try to get data from localStorage
+                const scheduleKey = `runOfShowSchedule_${eventId}`;
+                const savedSchedule = localStorage.getItem(scheduleKey);
+                
+                if (!savedSchedule) {
+                    showError('No schedule data found for event: ' + eventId);
+                    return;
+                }
+
+                const schedule = JSON.parse(savedSchedule);
+                console.log('Loaded schedule:', schedule);
+
+                // Get master start time
+                const masterTimeKey = `masterStartTime_${eventId}`;
+                const masterStartTime = localStorage.getItem(masterTimeKey) || '';
+
+                // Generate custom graphics JSON
+                const customGraphicsData = generateCustomGraphicsJSON(schedule, masterStartTime);
+                
+                // Display JSON
+                displayJSON(customGraphicsData);
+                lastData = customGraphicsData;
+                showStatus('Data loaded successfully - Last updated: ' + new Date().toLocaleTimeString(), 'success');
+
+                // Start polling if not already polling
+                if (!isPolling) {
+                    startPolling();
+                }
+
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showError('Error loading data: ' + error.message);
+            }
+        }
+
+        // Generate custom graphics JSON
+        function generateCustomGraphicsJSON(schedule, masterStartTime) {
+            // Calculate start time function
+            const calculateStartTime = (index) => {
+                if (!masterStartTime) return '';
+                
+                let totalMinutes = 0;
+                for (let i = 0; i < index; i++) {
+                    const item = schedule[i];
+                    totalMinutes += (item.durationHours * 60) + item.durationMinutes;
+                }
+                
+                const [hours, minutes] = masterStartTime.split(':').map(Number);
+                const startDate = new Date();
+                startDate.setHours(hours, minutes + totalMinutes, 0, 0);
+                
+                return startDate.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+            };
+
+            // Generate custom graphics from schedule items
+            const customGraphics = schedule
+                .filter(item => item.isPublic)
+                .map(item => ({
+                    type: item.segmentName || 'Segment',
+                    text: item.segmentName || 'Custom Graphic',
+                    duration: `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`,
+                    cue: item.customFields?.cue || 'CUE##',
+                    startTime: calculateStartTime(schedule.findIndex(s => s.id === item.id)),
+                    notes: item.notes || ''
+                }));
+
+            return {
+                event: 'Current Event',
+                generated: new Date().toISOString(),
+                customGraphics: customGraphics.length > 0 ? customGraphics : [
+                    { type: 'Title', text: 'Welcome to Event', duration: '00:00:10', cue: 'CUE01', startTime: '00:00:00', notes: 'Opening title' },
+                    { type: 'Break', text: 'Commercial Break', duration: '00:02:00', cue: 'CUE02', startTime: '00:15:00', notes: 'Commercial break' }
+                ]
+            };
+        }
+
+        // Display JSON
+        function displayJSON(data) {
+            const jsonOutput = document.getElementById('json-output');
+            jsonOutput.innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        }
+
+        // Show status
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + type;
+        }
+
+        // Show error
+        function showError(message) {
+            showStatus(message, 'error');
+        }
+
+        // Copy VMIX URL
+        function copyVMIXUrl() {
+            const url = window.location.href;
+            navigator.clipboard.writeText(url).then(() => {
+                alert('VMIX URL copied to clipboard!');
+            }).catch(() => {
+                const textArea = document.createElement('textarea');
+                textArea.value = url;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('VMIX URL copied to clipboard!');
+            });
+        }
+
+        // Start polling for changes
+        function startPolling() {
+            if (isPolling) return;
+            
+            isPolling = true;
+            showStatus('Polling for changes every 5 seconds...', 'info');
+            
+            setInterval(() => {
+                loadData();
+            }, 5000);
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set VMIX URL
+            document.getElementById('vmix-url').textContent = window.location.href;
+            loadData();
+        });
+    </script>
+</body>
+</html>

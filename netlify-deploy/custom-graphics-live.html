@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Custom Graphics JSON</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            margin: 0; 
+            padding: 20px; 
+            background: #1a1a1a; 
+            color: #00ff00; 
+        }
+        pre { 
+            white-space: pre-wrap; 
+            word-wrap: break-word; 
+        }
+    </style>
+</head>
+<body>
+    <pre id="json-output">Loading...</pre>
+    
+    <script>
+        // Get eventId from URL parameters
+        function getEventId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('eventId');
+        }
+        
+        // Generate custom graphics JSON
+        function generateCustomGraphicsJSON(schedule, masterStartTime) {
+            // Calculate start time function
+            const calculateStartTime = (index) => {
+                if (!masterStartTime) return '';
+                
+                let totalMinutes = 0;
+                for (let i = 0; i < index; i++) {
+                    const item = schedule[i];
+                    totalMinutes += (item.durationHours * 60) + item.durationMinutes;
+                }
+                
+                const [hours, minutes] = masterStartTime.split(':').map(Number);
+                const startDate = new Date();
+                startDate.setHours(hours, minutes + totalMinutes, 0, 0);
+                
+                return startDate.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+            };
+
+            // Generate custom graphics from schedule items
+            const customGraphics = schedule
+                .filter(item => item.isPublic)
+                .map(item => ({
+                    type: item.segmentName || 'Segment',
+                    text: item.segmentName || 'Custom Graphic',
+                    duration: `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`,
+                    cue: item.customFields?.cue || 'CUE##',
+                    startTime: calculateStartTime(schedule.findIndex(s => s.id === item.id)),
+                    notes: item.notes || ''
+                }));
+
+            return {
+                event: 'Current Event',
+                generated: new Date().toISOString(),
+                customGraphics: customGraphics.length > 0 ? customGraphics : [
+                    { type: 'Title', text: 'Welcome to Event', duration: '00:00:10', cue: 'CUE01', startTime: '00:00:00', notes: 'Opening title' },
+                    { type: 'Break', text: 'Commercial Break', duration: '00:02:00', cue: 'CUE02', startTime: '00:15:00', notes: 'Commercial break' }
+                ]
+            };
+        }
+        
+        // Load data and display JSON
+        function loadData() {
+            try {
+                const eventId = getEventId();
+                if (!eventId) {
+                    document.getElementById('json-output').textContent = JSON.stringify({
+                        error: 'No eventId provided in URL parameters',
+                        generated: new Date().toISOString()
+                    }, null, 2);
+                    return;
+                }
+
+                // Try to get data from localStorage
+                const scheduleKey = `runOfShowSchedule_${eventId}`;
+                const savedSchedule = localStorage.getItem(scheduleKey);
+                
+                if (!savedSchedule) {
+                    document.getElementById('json-output').textContent = JSON.stringify({
+                        error: 'No schedule data found for event: ' + eventId,
+                        generated: new Date().toISOString()
+                    }, null, 2);
+                    return;
+                }
+
+                const schedule = JSON.parse(savedSchedule);
+                
+                // Get master start time
+                const masterTimeKey = `masterStartTime_${eventId}`;
+                const masterStartTime = localStorage.getItem(masterTimeKey) || '';
+
+                // Generate and display JSON
+                const jsonData = generateCustomGraphicsJSON(schedule, masterStartTime);
+                document.getElementById('json-output').textContent = JSON.stringify(jsonData, null, 2);
+
+            } catch (error) {
+                document.getElementById('json-output').textContent = JSON.stringify({
+                    error: 'Error loading data: ' + error.message,
+                    generated: new Date().toISOString()
+                }, null, 2);
+            }
+        }
+        
+        // Load data on page load
+        loadData();
+        
+        // Refresh every 10 seconds
+        setInterval(loadData, 10000);
+    </script>
+</body>
+</html>
+

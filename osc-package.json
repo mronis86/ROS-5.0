@@ -1,0 +1,16 @@
+{
+  "name": "osc-server-package",
+  "version": "1.0.0",
+  "description": "OSC Server Package for Run of Show",
+  "main": "osc-websocket-server.js",
+  "dependencies": {
+    "ws": "^8.14.2",
+    "osc": "^2.4.5"
+  },
+  "scripts": {
+    "install-deps": "npm install",
+    "start-server": "node osc-websocket-server.js",
+    "start-cli": "node osc-cli.js"
+  }
+}
+

@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Large files that exceed GitHub limits
+apps/portable-electron/dist/
+apps/portable-electron/dist/win-unpacked/
+electron-app/node_modules/
+node_modules/electron/dist/
+*.exe
+**/*.exe
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build outputs
+dist/
+build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Temporary folders
+tmp/
+temp/
+
+# Python files (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Local development files
+*.local
