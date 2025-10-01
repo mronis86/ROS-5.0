@@ -4,7 +4,7 @@ import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 import { driftDetector } from '../services/driftDetector';
 import DriftStatusIndicator from '../components/DriftStatusIndicator';
-import { supabase } from '../services/supabase';
+import { socketClient } from '../services/socket-client';
 
 interface ScheduleItem {
   id: number;
@@ -160,7 +160,7 @@ const GreenRoomPage: React.FC = () => {
           setMasterStartTime(selectedTime.value);
         } else {
           console.log('❌ No suitable master start time found in localStorage');
-          console.log('🔍 Will try to get master start time from Supabase data...');
+          console.log('🔍 Will try to get master start time from API data...');
         }
       }
       if (savedDayTimes) {
@@ -305,26 +305,65 @@ const GreenRoomPage: React.FC = () => {
     }
   };
 
-  // Real-time subscription for active timer changes
+  // WebSocket connection for active timer changes
   useEffect(() => {
     if (!event?.id) return;
     
     loadActiveTimer(); // Load initial data
-    const activeTimerSubscription = supabase
-      .channel('active_timers_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'active_timers', filter: `event_id=eq.${event.id}` },
-        (payload) => {
-          console.log('🔄 Real-time active timer change detected:', payload);
-          loadActiveTimer(); // Reload active timer data when changes occur
-        }
-      )
-      .subscribe();
     
+    console.log('🔌 Setting up WebSocket connection for Green Room timer updates');
+    
+    const callbacks = {
+      onTimerUpdated: (data: any) => {
+        console.log('📡 Green Room: Timer updated via WebSocket');
+        // Update timer state directly from WebSocket data
+        if (data && data.item_id) {
+          setTimerProgress(prev => ({
+            ...prev,
+            [data.item_id]: {
+              elapsed: data.elapsed_seconds || 0,
+              total: data.duration_seconds || 300,
+              startedAt: data.started_at ? new Date(data.started_at) : null
+            }
+          }));
+        }
+      },
+      onTimerStopped: (data: any) => {
+        console.log('📡 Green Room: Timer stopped via WebSocket');
+        // Clear timer state when stopped
+        if (data && data.item_id) {
+          setActiveItemId(null);
+          setTimerProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[data.item_id];
+            return newProgress;
+          });
+        }
+      },
+      onTimersStopped: (data: any) => {
+        console.log('📡 Green Room: All timers stopped via WebSocket');
+        // Clear all timer states
+        setActiveItemId(null);
+        setTimerProgress({});
+      },
+      onTimerStarted: (data: any) => {
+        console.log('📡 Green Room: Timer started via WebSocket');
+        // Update active item when timer starts
+        if (data && data.item_id) {
+          setActiveItemId(data.item_id);
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log(`🔌 Green Room WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      }
+    };
+
+    // Connect to WebSocket
+    socketClient.connect(event.id, callbacks);
+
     return () => {
-      console.log('🔄 Cleaning up active timer subscription');
-      supabase.removeChannel(activeTimerSubscription);
+      console.log('🔄 Cleaning up Green Room WebSocket connection');
+      socketClient.disconnect(event.id);
     };
   }, [event?.id]);
 
@@ -406,9 +445,9 @@ const GreenRoomPage: React.FC = () => {
       const data = await DatabaseService.getRunOfShowData(currentEventId);
       console.log('🔄 Raw data received:', data);
       
-      // Try to get master start time from Supabase data if not found in localStorage
+      // Try to get master start time from API data if not found in localStorage
       if (data && data.settings && data.settings.masterStartTime && masterStartTime === '09:00') {
-        console.log('📥 Found master start time in Supabase data:', data.settings.masterStartTime);
+        console.log('📥 Found master start time in API data:', data.settings.masterStartTime);
         setMasterStartTime(data.settings.masterStartTime);
       }
       
@@ -515,26 +554,35 @@ const GreenRoomPage: React.FC = () => {
     loadSchedule();
   }, [event?.id]);
 
-  // Real-time subscription for schedule changes
+  // WebSocket connection for schedule changes
   useEffect(() => {
     if (!event?.id) return;
 
-    console.log('🔄 Starting real-time schedule subscription for Green Room...');
-    const scheduleSubscription = supabase
-      .channel('run_of_show_data_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'run_of_show_data', filter: `event_id=eq.${event.id}` },
-        (payload) => {
-          console.log('🔄 Real-time schedule change detected:', payload);
-          loadSchedule(); // Reload schedule data when changes occur
+    console.log('🔌 Setting up WebSocket connection for Green Room schedule updates');
+    
+    const callbacks = {
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 Green Room: Run of show data updated via WebSocket');
+        // Update schedule data directly from WebSocket
+        if (data && data.schedule_items) {
+          setSchedule(data.schedule_items);
         }
-      )
-      .subscribe();
+        // Update master start time if provided
+        if (data && data.settings && data.settings.masterStartTime) {
+          setMasterStartTime(data.settings.masterStartTime);
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log(`🔌 Green Room schedule WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      }
+    };
+
+    // Connect to WebSocket for schedule updates
+    socketClient.connect(event.id, callbacks);
 
     return () => {
-      console.log('🔄 Cleaning up schedule subscription');
-      supabase.removeChannel(scheduleSubscription);
+      console.log('🔄 Cleaning up Green Room schedule WebSocket connection');
+      socketClient.disconnect(event.id);
     };
   }, [event?.id]);
 
