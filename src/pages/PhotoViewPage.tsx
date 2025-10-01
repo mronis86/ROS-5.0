@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
-import { supabase } from '../services/supabase';
-import { driftDetector } from '../services/driftDetector';
+// import { supabase } from '../services/supabase'; // REMOVED: Using WebSocket-only approach
+// import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import DriftStatusIndicator from '../components/DriftStatusIndicator';
+import { socketClient } from '../services/socket-client';
 
 interface ScheduleItem {
   id: number;
@@ -518,57 +519,11 @@ const PhotoViewPage: React.FC = () => {
                   }
                 });
                 
-                // Start drift detection for running timers
+                // Drift detection removed - WebSocket handles all timer synchronization
                 if (activeTimer.timer_state === 'running' && dbStartedAt && activeTimer.duration_seconds) {
-                  console.log(`🔄 PhotoView: Starting drift detection for timer ${activeTimer.item_id} with duration ${activeTimer.duration_seconds}s`);
+                  console.log(`🔄 PhotoView: Timer ${activeTimer.item_id} is running - WebSocket will handle updates`);
                   
-                  driftDetector.startMonitoring(
-                    parseInt(activeTimer.item_id),
-                    dbStartedAt,
-                    activeTimer.duration_seconds,
-                    (serverElapsed) => {
-                      console.log(`🔄 PhotoView DriftDetector: Syncing with server elapsed: ${serverElapsed}s`);
-                      // Update timer progress with server elapsed time
-                      setTimerProgress(prev => ({
-                        ...prev,
-                        [parseInt(activeTimer.item_id)]: {
-                          ...prev[parseInt(activeTimer.item_id)],
-                          elapsed: serverElapsed
-                        }
-                      }));
-                    }
-                  );
-                  
-      // Initial sync to get the correct server elapsed time
-      try {
-        console.log(`🔄 PhotoView DriftDetector: Starting initial sync for timer ${activeTimer.item_id}`);
-        await driftDetector.forceSync(parseInt(activeTimer.item_id), async () => {
-          const activeTimerData = await DatabaseService.getActiveTimer(event.id);
-          const serverElapsed = activeTimerData?.elapsed_seconds || 0;
-          console.log(`🔄 PhotoView DriftDetector: Initial server elapsed: ${serverElapsed}s for timer ${activeTimer.item_id}`);
-          return serverElapsed;
-        });
-      } catch (error) {
-        console.warn(`⚠️ PhotoView DriftDetector: Failed initial sync for timer ${activeTimer.item_id}:`, error);
-      }
-
-      // Set up periodic drift sync (like GreenRoom/RunOfShow)
-      const driftSyncInterval = setInterval(async () => {
-        try {
-          console.log(`🔄 PhotoView DriftDetector: Starting periodic sync for timer ${activeTimer.item_id}`);
-          await driftDetector.forceSync(parseInt(activeTimer.item_id), async () => {
-            const activeTimerData = await DatabaseService.getActiveTimer(event.id);
-            const serverElapsed = activeTimerData?.elapsed_seconds || 0;
-            console.log(`🔄 PhotoView DriftDetector: Server returned elapsed: ${serverElapsed}s for timer ${activeTimer.item_id}`);
-            return serverElapsed;
-          });
-        } catch (error) {
-          console.warn(`⚠️ PhotoView DriftDetector: Failed to sync timer ${activeTimer.item_id}:`, error);
-        }
-      }, 30000); // Force sync every 30 seconds
-                  
-                  // Store the drift sync interval for cleanup (we'll need to add this to state)
-                  // For now, we'll let it run - in a production app you'd want to store and clean this up
+                  // WebSocket-only approach - no drift sync needed
                 }
                 
                 // Note: Sub cue timers are handled separately by loadActiveSubCueTimerFromSupabase()
@@ -587,67 +542,206 @@ const PhotoViewPage: React.FC = () => {
     }
   };
 
-  // Real-time subscription for active timer changes
+  // WebSocket connection for active timer changes
   useEffect(() => {
     if (!event?.id) return;
-
-    // Load initial data
-    loadActiveTimer();
-
-    // Set up real-time subscription for active_timers table
-    const activeTimerSubscription = supabase
-      .channel('active_timers_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'active_timers',
-          filter: `event_id=eq.${event.id}`
-        },
-        (payload) => {
-          console.log('🔄 Real-time active timer change detected:', payload);
-          // Reload active timer data when changes occur
-          loadActiveTimer();
+    
+    loadActiveTimer(); // Load initial data
+    
+    console.log('🔌 Setting up WebSocket connection for PhotoView timer updates');
+    
+    const callbacks = {
+      onTimerUpdated: (data: any) => {
+        console.log('📡 PhotoView: Timer updated via WebSocket');
+        // Update timer state directly from WebSocket data
+        if (data && data.item_id) {
+          setTimerProgress(prev => ({
+            ...prev,
+            [data.item_id]: {
+              elapsed: data.elapsed_seconds || 0,
+              total: data.duration_seconds || 300,
+              startedAt: data.started_at ? new Date(data.started_at) : null
+            }
+          }));
         }
-      )
-      .subscribe();
+      },
+      onTimerStopped: (data: any) => {
+        console.log('📡 PhotoView: Timer stopped via WebSocket');
+        // Clear timer state when stopped
+        if (data && data.item_id) {
+          setActiveItemId(null);
+          setTimerProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[data.item_id];
+            return newProgress;
+          });
+        }
+      },
+      onTimersStopped: (data: any) => {
+        console.log('📡 PhotoView: All timers stopped via WebSocket');
+        // Clear all timer states
+        setActiveItemId(null);
+        setTimerProgress({});
+      },
+      onTimerStarted: (data: any) => {
+        console.log('📡 PhotoView: Timer started via WebSocket');
+        // Update active item when timer starts
+        if (data && data.item_id) {
+          setActiveItemId(data.item_id);
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log(`🔌 PhotoView WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      },
+      onInitialSync: async () => {
+        console.log('🔄 PhotoView: WebSocket initial sync triggered - loading current state');
+        
+        // Load current active timer
+        try {
+          const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
+          if (activeTimerResponse.ok) {
+            const activeTimers = await activeTimerResponse.json();
+            console.log('🔄 PhotoView initial sync: Loaded active timers:', activeTimers);
+            
+            if (activeTimers && activeTimers.length > 0) {
+              const activeTimer = activeTimers[0]; // PhotoView typically shows one active timer
+              
+              setActiveItemId(parseInt(activeTimer.item_id));
+              setTimerState(activeTimer.timer_state);
+              setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
+              
+              // Update timer progress
+              setTimerProgress({
+                [parseInt(activeTimer.item_id)]: {
+                  elapsed: activeTimer.elapsed_seconds || 0,
+                  total: activeTimer.duration_seconds || 300,
+                  startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
+                }
+              });
+              
+              console.log('🔄 PhotoView: Initial sync completed - timer state restored');
+            } else {
+              // No active timer
+              setActiveItemId(null);
+              setTimerState(null);
+              setLoadedItems({});
+              setTimerProgress({});
+              console.log('🔄 PhotoView: Initial sync completed - no active timer');
+            }
+          }
+        } catch (error) {
+          console.error('❌ PhotoView: Initial sync failed to load active timer:', error);
+        }
+      }
+    };
+
+    // Connect to WebSocket
+    socketClient.connect(event.id, callbacks);
+
+    // Handle tab visibility changes - resync when user returns to tab
+    const handleVisibilityChange = () => {
+      if (!document.hidden && socketClient.isConnected()) {
+        console.log('🔄 PhotoView: Tab became visible - triggering resync');
+        // Trigger initial sync again
+        callbacks.onInitialSync?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      console.log('🔄 Cleaning up active timer subscription');
-      supabase.removeChannel(activeTimerSubscription);
+      console.log('🔄 Cleaning up PhotoView WebSocket connection');
+      socketClient.disconnect(event.id);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [event?.id]);
 
-  // Real-time subscription for sub-cue timer changes
+  // WebSocket connection for sub-cue timer changes
   useEffect(() => {
     if (!event?.id) return;
     
     // Load initial sub-cue timer data
     loadActiveSubCueTimerFromSupabase();
 
-    // Set up real-time subscription for sub_cue_timers table
-    const subCueTimerSubscription = supabase
-      .channel('sub_cue_timers_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'sub_cue_timers',
-          filter: `event_id=eq.${event.id}`
-        },
-        (payload) => {
-          console.log('🟠 Real-time sub-cue timer change detected:', payload);
-          // Reload sub-cue timer data when changes occur
-          loadActiveSubCueTimerFromSupabase();
-        }
-      )
-      .subscribe();
+    console.log('🔌 Setting up WebSocket connection for PhotoView sub-cue timer updates');
     
+    const callbacks = {
+      onSubCueTimerStarted: (data: any) => {
+        console.log('📡 PhotoView: Sub-cue timer started via WebSocket');
+        // Update sub-cue timer state when started
+        if (data && data.item_id) {
+          setSecondaryTimer({
+            itemId: parseInt(data.item_id),
+            duration: data.duration_seconds || 300,
+            remaining: data.duration_seconds || 300,
+            isActive: true,
+            startedAt: data.started_at ? new Date(data.started_at) : new Date(),
+            timerState: 'running',
+            cue: data.cue_display || 'CUE',
+            segmentName: data.segment_name || 'Segment'
+          });
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log(`🔌 PhotoView sub-cue WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      },
+      onInitialSync: async () => {
+        console.log('🔄 PhotoView: Sub-cue WebSocket initial sync triggered');
+        
+        // Load current sub-cue timer
+        try {
+          const subCueTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/sub-cue-timers/${event?.id}`);
+          if (subCueTimerResponse.ok) {
+            const subCueTimers = await subCueTimerResponse.json();
+            console.log('🔄 PhotoView sub-cue initial sync: Loaded sub-cue timers:', subCueTimers);
+            
+            if (subCueTimers && subCueTimers.length > 0) {
+              const subCueTimer = subCueTimers[0]; // PhotoView typically shows one sub-cue timer
+              
+              if (subCueTimer.is_running) {
+                setSecondaryTimer({
+                  itemId: parseInt(subCueTimer.item_id),
+                  duration: subCueTimer.duration_seconds || 300,
+                  remaining: subCueTimer.remaining_seconds || 300,
+                  isActive: true,
+                  startedAt: subCueTimer.started_at ? new Date(subCueTimer.started_at) : new Date(),
+                  timerState: 'running',
+                  cue: subCueTimer.cue_display || 'CUE',
+                  segmentName: subCueTimer.segment_name || 'Segment'
+                });
+              }
+              
+              console.log('🔄 PhotoView: Sub-cue initial sync completed - timer state restored');
+            } else {
+              // No active sub-cue timer
+              setSecondaryTimer(null);
+              console.log('🔄 PhotoView: Sub-cue initial sync completed - no active sub-cue timer');
+            }
+          }
+        } catch (error) {
+          console.error('❌ PhotoView: Sub-cue initial sync failed:', error);
+        }
+      }
+    };
+
+    // Connect to WebSocket for sub-cue timer updates
+    socketClient.connect(event.id, callbacks);
+
+    // Handle tab visibility changes - resync when user returns to tab
+    const handleSubCueVisibilityChange = () => {
+      if (!document.hidden && socketClient.isConnected()) {
+        console.log('🔄 PhotoView: Sub-cue tab became visible - triggering resync');
+        // Trigger initial sync again
+        callbacks.onInitialSync?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleSubCueVisibilityChange);
+
     return () => {
-      console.log('🟠 Cleaning up sub-cue timer subscription');
-      supabase.removeChannel(subCueTimerSubscription);
+      console.log('🔄 Cleaning up PhotoView sub-cue WebSocket connection');
+      socketClient.disconnect(event.id);
+      document.removeEventListener('visibilitychange', handleSubCueVisibilityChange);
     };
   }, [event?.id]);
 
@@ -675,8 +769,7 @@ const PhotoViewPage: React.FC = () => {
           }
         }));
         
-        // Update drift detector with local elapsed time
-        driftDetector.updateLocalElapsed(activeItemId, elapsed);
+        // Drift detector removed - WebSocket handles all sync
         
         // Debug logging for first few seconds
         if (elapsed <= 10) {
@@ -691,11 +784,11 @@ const PhotoViewPage: React.FC = () => {
     }
   }, [activeItemId, timerState]); // Removed timerProgress to prevent constant restarts
 
-  // Cleanup drift detector on component unmount
+  // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
     return () => {
-      console.log('🔄 PhotoView: Cleaning up drift detector on component unmount');
-      driftDetector.destroy();
+      console.log('🔄 PhotoView: Cleaning up on component unmount');
+      // Drift detector removed - using WebSocket-only approach
     };
   }, []);
 
@@ -736,10 +829,10 @@ const PhotoViewPage: React.FC = () => {
       try {
         // Try to load from Supabase first
         if (event?.id || eventId) {
-          console.log('🔄 Loading from Supabase for event:', event?.id || eventId);
+          console.log('🔄 Loading from API for event:', event?.id || eventId);
           const data = await DatabaseService.getRunOfShowData(event?.id || eventId);
           if (data?.schedule_items) {
-            console.log('✅ Loaded from Supabase:', data);
+            console.log('✅ Loaded from API:', data);
             const formattedSchedule = data.schedule_items.map((item: any) => {
               return {
                 ...item,
@@ -849,6 +942,85 @@ const PhotoViewPage: React.FC = () => {
 
     loadSchedule();
   }, [event?.id, eventId]);
+
+  // WebSocket connection for schedule changes
+  useEffect(() => {
+    if (!event?.id) return;
+
+    console.log('🔌 Setting up WebSocket connection for PhotoView schedule updates');
+    
+    const callbacks = {
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 PhotoView: Run of show data updated via WebSocket');
+        // Update schedule data directly from WebSocket
+        if (data && data.schedule_items) {
+          const formattedSchedule = data.schedule_items.map((item: any) => {
+            return {
+              ...item,
+              isPublic: item.isPublic || false
+            };
+          });
+          setSchedule(formattedSchedule);
+        }
+        // Update master start time if provided
+        if (data && data.settings && data.settings.masterStartTime) {
+          setMasterStartTime(data.settings.masterStartTime);
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log(`🔌 PhotoView schedule WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      },
+      onInitialSync: async () => {
+        console.log('🔄 PhotoView: Schedule WebSocket initial sync triggered');
+        
+        // Load current schedule data
+        try {
+          const scheduleResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/run-of-show-data/${event?.id}`);
+          if (scheduleResponse.ok) {
+            const data = await scheduleResponse.json();
+            console.log('🔄 PhotoView schedule initial sync: Loaded schedule data');
+            
+            if (data && data.schedule_items) {
+              const formattedSchedule = data.schedule_items.map((item: any) => {
+                return {
+                  ...item,
+                  isPublic: item.isPublic || false
+                };
+              });
+              setSchedule(formattedSchedule);
+            }
+            if (data && data.settings && data.settings.masterStartTime) {
+              setMasterStartTime(data.settings.masterStartTime);
+            }
+            
+            console.log('🔄 PhotoView: Schedule initial sync completed');
+          }
+        } catch (error) {
+          console.error('❌ PhotoView: Schedule initial sync failed:', error);
+        }
+      }
+    };
+
+    // Connect to WebSocket for schedule updates
+    socketClient.connect(event.id, callbacks);
+
+    // Handle tab visibility changes - resync when user returns to tab
+    const handleScheduleVisibilityChange = () => {
+      if (!document.hidden && socketClient.isConnected()) {
+        console.log('🔄 PhotoView: Schedule tab became visible - triggering resync');
+        // Trigger initial sync again
+        callbacks.onInitialSync?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleScheduleVisibilityChange);
+
+    return () => {
+      console.log('🔄 Cleaning up PhotoView schedule WebSocket connection');
+      socketClient.disconnect(event.id);
+      document.removeEventListener('visibilitychange', handleScheduleVisibilityChange);
+    };
+  }, [event?.id]);
 
   // Get the current item and next 2 items (same logic as Green Room)
   const getPreviewItems = () => {
