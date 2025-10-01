@@ -477,6 +477,83 @@ app.get('/api/timer-messages/:eventId', async (req, res) => {
   }
 });
 
+// Create a new timer message
+app.post('/api/timer-messages', async (req, res) => {
+  try {
+    const { event_id, message, enabled, sent_by, sent_by_name, sent_by_role } = req.body;
+    
+    if (!event_id || !message) {
+      return res.status(400).json({ error: 'event_id and message are required' });
+    }
+    
+    // First, disable any existing active messages for this event
+    await pool.query(
+      'UPDATE timer_messages SET enabled = false WHERE event_id = $1 AND enabled = true',
+      [event_id]
+    );
+    
+    // Create the new message
+    const result = await pool.query(
+      `INSERT INTO timer_messages 
+       (event_id, message, enabled, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+       RETURNING *`,
+      [event_id, message, enabled !== undefined ? enabled : true, sent_by, sent_by_name, sent_by_role]
+    );
+    
+    // Broadcast update via WebSocket
+    broadcastUpdate(event_id, 'timerMessageUpdated', result.rows[0]);
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating timer message:', error);
+    res.status(500).json({ error: 'Failed to create timer message' });
+  }
+});
+
+// Update a timer message
+app.put('/api/timer-messages/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    
+    // Build dynamic update query
+    const updateFields = [];
+    const values = [];
+    let paramCount = 1;
+    
+    Object.keys(updates).forEach(key => {
+      if (key !== 'id' && key !== 'created_at') {
+        updateFields.push(`${key} = $${paramCount}`);
+        values.push(updates[key]);
+        paramCount++;
+      }
+    });
+    
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+    
+    updateFields.push(`updated_at = NOW()`);
+    values.push(id);
+    
+    const query = `UPDATE timer_messages SET ${updateFields.join(', ')} WHERE id = $${paramCount} RETURNING *`;
+    const result = await pool.query(query, values);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Timer message not found' });
+    }
+    
+    // Broadcast update via WebSocket
+    broadcastUpdate(result.rows[0].event_id, 'timerMessageUpdated', result.rows[0]);
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating timer message:', error);
+    res.status(500).json({ error: 'Failed to update timer message' });
+  }
+});
+
 // Server-Sent Events support
 const SSEConnections = new Map(); // Store active SSE connections by eventId
 

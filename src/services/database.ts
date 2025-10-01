@@ -1335,26 +1335,24 @@ export class DatabaseService {
   // Timer Message Methods
   static async saveTimerMessage(message: Omit<TimerMessage, 'id' | 'created_at' | 'updated_at'>): Promise<TimerMessage | null> {
     try {
-      console.log('🔄 Saving timer message to Supabase:', message);
+      console.log('🔄 Saving timer message via API:', message);
       
-      if (true) { // Always use localStorage fallback since we're not using Supabase
-        console.warn('Supabase not configured, using localStorage fallback');
+      const response = await fetch(`${API_BASE_URL}/api/timer-messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message)
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Timer message saved via API:', result);
+        return result;
+      } else {
+        console.error('❌ Failed to save timer message via API:', response.status, response.statusText);
         return this.saveTimerMessageToLocalStorage(message);
       }
-
-      const { data, error } = await supabase
-        .from('timer_messages')
-        .insert([message])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error saving timer message:', error);
-        return this.saveTimerMessageToLocalStorage(message);
-      }
-
-      console.log('✅ Timer message saved to Supabase:', data);
-      return data;
     } catch (error) {
       console.error('❌ Error saving timer message:', error);
       return this.saveTimerMessageToLocalStorage(message);
@@ -1379,22 +1377,23 @@ export class DatabaseService {
 
   static async updateTimerMessage(id: string, updates: Partial<TimerMessage>): Promise<boolean> {
     try {
-      if (true) { // Always use localStorage fallback since we're not using Supabase
-        console.warn('Supabase not configured, using localStorage fallback');
+      console.log('🔄 Updating timer message via API:', { id, updates });
+      
+      const response = await fetch(`${API_BASE_URL}/api/timer-messages/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates)
+      });
+
+      if (response.ok) {
+        console.log('✅ Timer message updated via API');
+        return true;
+      } else {
+        console.error('❌ Failed to update timer message via API:', response.status, response.statusText);
         return this.updateTimerMessageInLocalStorage(id, updates);
       }
-
-      const { error } = await supabase
-        .from('timer_messages')
-        .update(updates)
-        .eq('id', id);
-
-      if (error) {
-        console.error('Error updating timer message:', error);
-        return this.updateTimerMessageInLocalStorage(id, updates);
-      }
-
-      return true;
     } catch (error) {
       console.error('❌ Error updating timer message:', error);
       return this.updateTimerMessageInLocalStorage(id, updates);
@@ -1407,23 +1406,17 @@ export class DatabaseService {
 
   static async getTimerMessagesForEvent(eventId: string): Promise<TimerMessage[]> {
     try {
-      if (true) { // Always use localStorage fallback since we're not using Supabase
-        console.warn('Supabase not configured, using localStorage fallback');
+      console.log('🔄 Getting timer messages via API:', eventId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/timer-messages/${eventId}`);
+      if (response.ok) {
+        const messages = await response.json();
+        console.log('✅ Timer messages loaded via API:', messages.length);
+        return messages;
+      } else {
+        console.error('❌ Failed to load timer messages via API:', response.status, response.statusText);
         return this.getTimerMessagesFromLocalStorage().filter(msg => msg.event_id === eventId);
       }
-
-      const { data, error } = await supabase
-        .from('timer_messages')
-        .select('*')
-        .eq('event_id', eventId)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Error loading timer messages:', error);
-        return this.getTimerMessagesFromLocalStorage().filter(msg => msg.event_id === eventId);
-      }
-
-      return data || [];
     } catch (error) {
       console.error('❌ Error loading timer messages:', error);
       return this.getTimerMessagesFromLocalStorage().filter(msg => msg.event_id === eventId);

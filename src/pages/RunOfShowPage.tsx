@@ -10,7 +10,6 @@ import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import CompleteChangeLog from '../components/CompleteChangeLog';
-import DriftStatusIndicator from '../components/DriftStatusIndicator';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';
@@ -7127,14 +7126,6 @@ const RunOfShowPage: React.FC = () => {
                   {formatTime(getRemainingTime())}
                 </div>
                 {/* Drift Status Indicator - positioned in bottom-right corner */}
-                {activeItemId && (
-                  <div className="absolute bottom-1 right-1">
-                    <DriftStatusIndicator 
-                      itemId={activeItemId} 
-                      className="flex-shrink-0"
-                    />
-                  </div>
-                )}
               </div>
             </div>
           </div>
