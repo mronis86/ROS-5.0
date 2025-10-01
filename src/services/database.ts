@@ -754,30 +754,28 @@ export class DatabaseService {
   // Update timer duration
   static async updateTimerDuration(eventId: string, itemId: number, newDurationSeconds: number): Promise<boolean> {
     try {
-      if (true) { // Always use localStorage fallback since we're not using Supabase
-        console.warn('Supabase not configured, timer duration will not sync across clients');
-        return false;
-      }
+      console.log(`🔄 Updating timer duration via API for event ${eventId}, item ${itemId} to ${newDurationSeconds}s`);
 
-      console.log(`🔄 Updating timer duration for event ${eventId}, item ${itemId} to ${newDurationSeconds}s`);
-
-      const { data, error } = await supabase
-        .from('active_timers')
-        .update({
+      const response = await fetch(`${API_BASE_URL}/api/active-timers/${eventId}/${itemId}/duration`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           duration_seconds: newDurationSeconds
         })
-        .eq('event_id', eventId)
-        .eq('item_id', itemId);
+      });
 
-      if (error) {
-        console.error('❌ Error updating timer duration in Supabase:', error);
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Timer duration updated successfully via API:', result);
+        return true;
+      } else {
+        console.error('❌ Failed to update timer duration via API:', response.status, response.statusText);
         return false;
       }
-
-      console.log('✅ Timer duration updated in Supabase:', data);
-      return true;
     } catch (error) {
-      console.error('Error updating timer duration:', error);
+      console.error('❌ Error updating timer duration:', error);
       return false;
     }
   }

@@ -314,6 +314,46 @@ app.put('/api/active-timers/stop', async (req, res) => {
   }
 });
 
+// Update timer duration
+app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
+  try {
+    const { eventId, itemId } = req.params;
+    const { duration_seconds } = req.body;
+    
+    if (!duration_seconds || duration_seconds < 0) {
+      return res.status(400).json({ error: 'duration_seconds must be a positive number' });
+    }
+    
+    // Update the timer duration
+    const result = await pool.query(
+      'UPDATE active_timers SET duration_seconds = $1, updated_at = NOW() WHERE event_id = $2 AND item_id = $3',
+      [duration_seconds, eventId, itemId]
+    );
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Active timer not found' });
+    }
+    
+    // Get the updated timer data
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 AND item_id = $2',
+      [eventId, itemId]
+    );
+    
+    // Broadcast update via WebSocket
+    broadcastUpdate(eventId, 'timerUpdated', timerResult.rows[0]);
+    
+    res.json({ 
+      success: true, 
+      message: 'Timer duration updated',
+      timer: timerResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating timer duration:', error);
+    res.status(500).json({ error: 'Failed to update timer duration' });
+  }
+});
+
 // Sub Cue Timers endpoints
 app.get('/api/sub-cue-timers/:eventId', async (req, res) => {
   try {
