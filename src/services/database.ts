@@ -887,42 +887,35 @@ export class DatabaseService {
 
   static async startSubCueTimer(eventId: string, itemId: number, userId: string, durationSeconds: number, rowNumber?: number, cueDisplay?: string, timerId?: string) {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping start sub-cue timer');
-        return { data: null, error: null };
-      }
-
-      console.log('🔄 Calling start_sub_cue_timer_for_event with params:', {
-        p_event_id: eventId,
-        p_item_id: itemId.toString(),
-        p_user_id: userId,
-        p_duration_seconds: durationSeconds,
-        p_row_is: rowNumber,
-        p_cue_is: cueDisplay,
-        p_timer_id: timerId
+      console.log('🔄 Starting sub-cue timer via API:', { eventId, itemId, userId, durationSeconds, rowNumber, cueDisplay, timerId });
+      
+      const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event_id: eventId,
+          item_id: itemId,
+          user_id: userId,
+          duration_seconds: durationSeconds,
+          row_number: rowNumber,
+          cue_display: cueDisplay,
+          timer_id: timerId,
+          is_active: true,
+          is_running: true,
+          started_at: new Date().toISOString()
+        })
       });
-      
-      console.log('🔄 About to call RPC function...');
-      
-      const { data, error } = await supabase.rpc('start_sub_cue_timer_for_event', {
-        p_event_id: eventId,
-        p_item_id: itemId.toString(),
-        p_user_id: userId,
-        p_duration_seconds: durationSeconds,
-        p_row_is: rowNumber || null,
-        p_cue_is: cueDisplay || null,
-        p_timer_id: timerId || null
-      });
-      
-      console.log('🔄 RPC response:', { data, error });
 
-      if (error) {
-        console.error('❌ Error starting sub-cue timer:', error);
-        console.error('❌ Error details:', JSON.stringify(error, null, 2));
-        return { data: null, error };
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Sub-cue timer started successfully via API:', result);
+        return { data: result, error: null };
+      } else {
+        console.error('❌ Failed to start sub-cue timer via API:', response.status, response.statusText);
+        return { data: null, error: { message: `HTTP ${response.status}` } };
       }
-
-      return { data, error: null };
     } catch (error) {
       console.error('❌ Error starting sub-cue timer:', error);
       return { data: null, error };

@@ -4407,6 +4407,16 @@ const RunOfShowPage: React.FC = () => {
           }));
         }
       },
+      onSubCueTimerStarted: (data: any) => {
+        console.log('📡 Real-time: Sub-cue timer started via WebSocket');
+        // Update sub-cue timer state when started
+        if (data && data.item_id) {
+          setActiveTimers(prev => ({
+            ...prev,
+            [data.item_id]: true
+          }));
+        }
+      },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
       }

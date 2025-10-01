@@ -321,6 +321,58 @@ app.get('/api/sub-cue-timers/:eventId', async (req, res) => {
   }
 });
 
+app.post('/api/sub-cue-timers', async (req, res) => {
+  try {
+    const { 
+      event_id, 
+      item_id, 
+      user_id, 
+      duration_seconds, 
+      row_number, 
+      cue_display, 
+      timer_id,
+      is_active,
+      is_running,
+      started_at
+    } = req.body;
+    
+    // Stop any existing sub-cue timers for this event first
+    await pool.query(
+      'UPDATE sub_cue_timers SET is_running = false, is_active = false, updated_at = NOW() WHERE event_id = $1',
+      [event_id]
+    );
+    
+    // Insert new sub-cue timer
+    const result = await pool.query(
+      `INSERT INTO sub_cue_timers 
+       (event_id, item_id, user_id, duration_seconds, row_number, cue_display, timer_id, 
+        is_active, is_running, started_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       RETURNING *`,
+      [
+        event_id, 
+        item_id, 
+        user_id, 
+        duration_seconds, 
+        row_number, 
+        cue_display, 
+        timer_id,
+        is_active !== undefined ? is_active : true,
+        is_running !== undefined ? is_running : true,
+        started_at || new Date().toISOString()
+      ]
+    );
+    
+    // Broadcast update via WebSocket
+    broadcastUpdate(event_id, 'subCueTimerStarted', result.rows[0]);
+    
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error starting sub-cue timer:', error);
+    res.status(500).json({ error: 'Failed to start sub-cue timer' });
+  }
+});
+
 // Change Log endpoints
 app.get('/api/change-log/:eventId', async (req, res) => {
   try {
