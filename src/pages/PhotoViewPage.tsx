@@ -415,143 +415,18 @@ const PhotoViewPage: React.FC = () => {
     return () => clearInterval(timer);
   }, [isUserEditing, isSyncing]);
 
-  // Load active sub-cue timer from Supabase (matches Run of Show page)
-  const loadActiveSubCueTimerFromSupabase = async () => {
-    if (!event?.id) return;
 
-    console.log('🟠 Polling for sub-cue timer...');
 
-    try {
-      // First check if there's any active timer
-      const { data: hasActive } = await DatabaseService.hasActiveSubCueTimer(event.id);
-      
-      if (!hasActive) {
-        console.log('🟠 No active sub-cue timer found, clearing local state');
-        setSecondaryTimer(null);
-        return;
-      }
-
-      // If there is an active timer, get the details
-      const { data: subCueTimerData, error } = await DatabaseService.getActiveSubCueTimer(event.id);
-      
-      console.log('🟠 Sub-cue timer data from Supabase:', subCueTimerData);
-      
-      if (error) {
-        console.error('❌ Error loading sub-cue timer:', error);
-        return;
-      }
-
-      if (subCueTimerData && subCueTimerData.is_active && subCueTimerData.is_running) {
-        console.log('🟠 Sub-cue timer loaded:', subCueTimerData.item_id, 'Duration:', subCueTimerData.duration_seconds, 's', 'Active:', subCueTimerData.is_active, 'Running:', subCueTimerData.is_running);
-        
-        // Set up sub-cue timer state
-        const itemId = parseInt(subCueTimerData.item_id);
-        const startedAt = new Date(subCueTimerData.started_at);
-        const now = new Date();
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-        const remaining = Math.max(0, subCueTimerData.duration_seconds - elapsed);
-        
-        // Find the item in schedule to get cue and segmentName
-        const subCueItem = schedule.find(item => item.id === itemId);
-        
-        setSecondaryTimer({
-          itemId: itemId,
-          remaining: remaining,
-          duration: subCueTimerData.duration_seconds,
-          isActive: true,
-          startedAt: startedAt,
-          timerState: 'running' as const,
-          cue: subCueItem?.customFields?.cue || 'CUE',
-          segmentName: subCueItem?.segmentName || ''
-        });
-        
-        console.log('🟠 Set secondaryTimer state for PhotoView:', {
-          itemId,
-          remaining,
-          duration: subCueTimerData.duration_seconds,
-          cue: subCueItem?.customFields?.cue || 'CUE',
-          segmentName: subCueItem?.segmentName || ''
-        });
-      } else {
-        console.log('🟠 Sub-cue timer found but not active or not running, clearing local state');
-        setSecondaryTimer(null);
-      }
-    } catch (error) {
-      console.error('❌ Error loading sub-cue timer:', error);
-      setSecondaryTimer(null);
-    }
-  };
-
-  // Load active timer data
-  const loadActiveTimer = async () => {
-    if (!event?.id) return;
-
-    try {
-      console.log('🔄 Loading active timer for PhotoView...');
-      const activeTimer = await DatabaseService.getActiveTimer(event.id);
-      
-      if (activeTimer) {
-        console.log('🔄 Active timer found:', activeTimer);
-        console.log('🔄 Timer state:', activeTimer.timer_state);
-        console.log('🔄 Item ID:', activeTimer.item_id);
-        
-                setActiveItemId(parseInt(activeTimer.item_id));
-                setTimerState(activeTimer.timer_state);
-                setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
-                
-                // Set activeTimers based on timer state
-                if (activeTimer.timer_state === 'running') {
-                  setActiveTimers({ [parseInt(activeTimer.item_id)]: true });
-                } else {
-                  setActiveTimers({});
-                }
-                
-                // Set timer progress with database elapsed time as baseline
-                const dbElapsed = activeTimer.elapsed_seconds || 0;
-                const dbStartedAt = activeTimer.started_at ? new Date(activeTimer.started_at) : null;
-                
-                setTimerProgress({
-                  [parseInt(activeTimer.item_id)]: {
-                    elapsed: dbElapsed,
-                    total: activeTimer.duration_seconds || 0,
-                    startedAt: dbStartedAt
-                  }
-                });
-                
-                // Drift detection removed - WebSocket handles all timer synchronization
-                if (activeTimer.timer_state === 'running' && dbStartedAt && activeTimer.duration_seconds) {
-                  console.log(`🔄 PhotoView: Timer ${activeTimer.item_id} is running - WebSocket will handle updates`);
-                  
-                  // WebSocket-only approach - no drift sync needed
-                }
-                
-                // Note: Sub cue timers are handled separately by loadActiveSubCueTimerFromSupabase()
-      } else {
-        console.log('🔄 No active timer found');
-        setActiveItemId(null);
-        setTimerState(null);
-        setLoadedItems({});
-        setTimerProgress({});
-        setActiveTimers({});
-        setSecondaryTimer(null);
-        setSubCueTimers({});
-      }
-    } catch (error) {
-      console.error('❌ Error loading active timer:', error);
-    }
-  };
 
   // WebSocket connection for active timer changes
   useEffect(() => {
     if (!event?.id) return;
     
-    loadActiveTimer(); // Load initial data
-    
     console.log('🔌 Setting up WebSocket connection for PhotoView timer updates');
     
     const callbacks = {
       onTimerUpdated: (data: any) => {
-        console.log('📡 PhotoView: Timer updated via WebSocket');
+        console.log('📡 PhotoView: Timer updated via WebSocket', data);
         // Update timer state directly from WebSocket data
         if (data && data.item_id) {
           setTimerProgress(prev => ({
@@ -567,13 +442,14 @@ const PhotoViewPage: React.FC = () => {
           if (data.is_running) {
             setTimerState('running');
             setActiveItemId(data.item_id);
+            setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
           } else {
             setTimerState('loaded');
           }
         }
       },
       onTimerStopped: (data: any) => {
-        console.log('📡 PhotoView: Timer stopped via WebSocket');
+        console.log('📡 PhotoView: Timer stopped via WebSocket', data);
         // Clear timer state when stopped
         if (data && data.item_id) {
           setActiveItemId(null);
@@ -591,7 +467,7 @@ const PhotoViewPage: React.FC = () => {
         }
       },
       onTimersStopped: (data: any) => {
-        console.log('📡 PhotoView: All timers stopped via WebSocket');
+        console.log('📡 PhotoView: All timers stopped via WebSocket', data);
         // Clear all timer states
         setActiveItemId(null);
         setTimerState(null);
@@ -599,12 +475,74 @@ const PhotoViewPage: React.FC = () => {
         setTimerProgress({});
       },
       onTimerStarted: (data: any) => {
-        console.log('📡 PhotoView: Timer started via WebSocket');
+        console.log('📡 PhotoView: Timer started via WebSocket', data);
         // Update active item and timer state when timer starts
         if (data && data.item_id) {
           setActiveItemId(data.item_id);
           setTimerState('running');
           setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
+          
+          // Update timer progress with start time
+          setTimerProgress(prev => ({
+            ...prev,
+            [data.item_id]: {
+              elapsed: 0,
+              total: data.duration_seconds || 300,
+              startedAt: data.started_at ? new Date(data.started_at) : new Date()
+            }
+          }));
+        }
+      },
+      onSubCueTimerStarted: (data: any) => {
+        console.log('📡 PhotoView: Sub-cue timer started via WebSocket', data);
+        // Handle sub-cue timer start
+        if (data && data.item_id) {
+          setSecondaryTimer({
+            itemId: data.item_id,
+            duration: data.duration_seconds || 60,
+            startTime: data.started_at ? new Date(data.started_at) : new Date(),
+            isActive: true
+          });
+        }
+      },
+      onActiveTimersUpdated: (data: any) => {
+        console.log('📡 PhotoView: Active timers updated via WebSocket', data);
+        // Handle active timers update (for cue loading)
+        if (data && Array.isArray(data)) {
+          if (data.length > 0) {
+            const activeTimer = data[0];
+            setActiveItemId(parseInt(activeTimer.item_id));
+            setTimerState(activeTimer.is_running ? 'running' : 'loaded');
+            setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
+            
+            setTimerProgress({
+              [parseInt(activeTimer.item_id)]: {
+                elapsed: activeTimer.elapsed_seconds || 0,
+                total: activeTimer.duration_seconds || 300,
+                startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
+              }
+            });
+          } else {
+            // No active timers - clear state
+            setActiveItemId(null);
+            setTimerState(null);
+            setLoadedItems({});
+            setTimerProgress({});
+          }
+        }
+      },
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 PhotoView: Run of show data updated via WebSocket', data);
+        // Handle schedule updates
+        if (data && data.schedule_items) {
+          const formattedSchedule = data.schedule_items.map((item: any) => ({
+            ...item,
+            startTime: item.start_time || '09:00',
+            durationHours: Math.floor((item.duration_seconds || 300) / 3600),
+            durationMinutes: Math.floor(((item.duration_seconds || 300) % 3600) / 60),
+            durationSeconds: (item.duration_seconds || 300) % 60
+          }));
+          setSchedule(formattedSchedule);
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -677,9 +615,6 @@ const PhotoViewPage: React.FC = () => {
   useEffect(() => {
     if (!event?.id) return;
     
-    // Load initial sub-cue timer data
-    loadActiveSubCueTimerFromSupabase();
-
     console.log('🔌 Setting up WebSocket connection for PhotoView sub-cue timer updates');
     
     const callbacks = {
