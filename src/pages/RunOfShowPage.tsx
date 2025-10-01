@@ -1000,7 +1000,7 @@ const RunOfShowPage: React.FC = () => {
       loadCompletedCuesFromAPI();
       
       // Load active timer from API
-      // loadActiveTimerFromAPI(); // Disabled to prevent timer corruption
+      loadActiveTimerFromAPI(); // Load current active timer state from database
       
       // Load active sub-cue timers from API
       loadActiveSubCueTimersFromAPI();
@@ -4418,40 +4418,8 @@ const RunOfShowPage: React.FC = () => {
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');
         
-        // Load current active timers
-        try {
-          const activeTimersResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
-          if (activeTimersResponse.ok) {
-            const activeTimers = await activeTimersResponse.json();
-            console.log('🔄 Initial sync: Loaded active timers:', activeTimers);
-            
-            // Update active timers state
-            if (activeTimers && activeTimers.length > 0) {
-              const newActiveTimers: Record<number, boolean> = {};
-              activeTimers.forEach((timer: any) => {
-                if (timer.item_id && timer.is_active && timer.is_running) {
-                  newActiveTimers[timer.item_id] = true;
-                }
-              });
-              setActiveTimers(newActiveTimers);
-              
-              // Update timer progress for running timers
-              const newTimerProgress: {[key: number]: {elapsed: number, total: number, startedAt: Date | null}} = {};
-              activeTimers.forEach((timer: any) => {
-                if (timer.item_id && timer.is_active && timer.is_running) {
-                  newTimerProgress[timer.item_id] = {
-                    elapsed: timer.elapsed_seconds || 0,
-                    total: timer.duration_seconds || 300,
-                    startedAt: timer.started_at ? new Date(timer.started_at) : null
-                  };
-                }
-              });
-              setTimerProgress(newTimerProgress);
-            }
-          }
-        } catch (error) {
-          console.error('❌ Initial sync failed to load active timers:', error);
-        }
+        // Load current active timer state using the proper function
+        await loadActiveTimerFromAPI();
         
         // Load current completed cues
         try {

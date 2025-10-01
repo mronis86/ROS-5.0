@@ -668,7 +668,8 @@ export class DatabaseService {
           is_running: false,
           started_at: null,
           last_loaded_cue_id: itemId,
-          cue_is: cueDisplay
+          cue_is: cueDisplay,
+          duration_seconds: totalDurationSeconds
         })
       });
 
@@ -703,7 +704,8 @@ export class DatabaseService {
           is_running: true,
           started_at: startedAt || new Date().toISOString(),
           last_loaded_cue_id: itemId,
-          cue_is: cueDisplay
+          cue_is: cueDisplay,
+          duration_seconds: totalDurationSeconds
         })
       });
 
