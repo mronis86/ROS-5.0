@@ -348,7 +348,7 @@ const RunOfShowPage: React.FC = () => {
             return newMap;
           }
           
-        return prev;
+          return prev;
         }
       });
         }, 5000); // 5 second delay - only log after user stops editing
