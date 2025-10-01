@@ -1,9 +1,9 @@
 import { apiClient } from './api-client';
 
 // API Base URL for direct fetch calls
-const API_BASE_URL = process.env.VITE_API_BASE_URL || 
-  (process.env.NODE_ENV === 'production' 
-    ? 'https://your-app.railway.app'  // Replace with your Railway URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+  (import.meta.env.PROD 
+    ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
     : 'http://localhost:3001');
 
 export interface CalendarEvent {

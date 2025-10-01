@@ -1,6 +1,6 @@
 // API Client for communicating with our Express API server
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? 'https://your-api-domain.com'  // Replace with your deployed API URL
+const API_BASE_URL = import.meta.env.PROD 
+  ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
   : 'http://localhost:3001';
 
 // Smart caching system
