@@ -235,21 +235,38 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
 
 app.post('/api/active-timers', async (req, res) => {
   try {
-    const { event_id, item_id, user_id, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is } = req.body;
+    const { event_id, item_id, user_id, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is, duration_seconds } = req.body;
     
     // Provide default values for required fields
     const user_name = 'Unknown User';
     const user_role = 'OPERATOR';
     const started_at_value = started_at || new Date().toISOString();
     
+    // Use UPSERT to ensure only ONE active timer per event
+    // If a record exists for this event, update it. Otherwise, insert a new one.
     const result = await pool.query(
-      `INSERT INTO active_timers (event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO active_timers (event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+       ON CONFLICT (event_id) 
+       DO UPDATE SET 
+         item_id = EXCLUDED.item_id,
+         user_id = EXCLUDED.user_id,
+         user_name = EXCLUDED.user_name,
+         user_role = EXCLUDED.user_role,
+         timer_state = EXCLUDED.timer_state,
+         is_active = EXCLUDED.is_active,
+         is_running = EXCLUDED.is_running,
+         started_at = EXCLUDED.started_at,
+         last_loaded_cue_id = EXCLUDED.last_loaded_cue_id,
+         cue_is = EXCLUDED.cue_is,
+         duration_seconds = EXCLUDED.duration_seconds,
+         elapsed_seconds = EXCLUDED.elapsed_seconds,
+         updated_at = NOW()
        RETURNING *`,
-      [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is]
+      [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is, duration_seconds || 300, 0]
     );
     
-    // Broadcast update via SSE
+    // Broadcast update via WebSocket
     broadcastUpdate(event_id, 'timerUpdated', result.rows[0]);
     
     res.status(201).json(result.rows[0]);
@@ -264,16 +281,16 @@ app.put('/api/active-timers/stop-all', async (req, res) => {
   try {
     const { event_id, user_id } = req.body;
     
-    // Stop all active timers for the event
+    // Stop the single active timer for the event
     const result = await pool.query(
       `UPDATE active_timers 
        SET is_running = false, is_active = false, updated_at = NOW()
-       WHERE event_id = $1 AND is_running = true
+       WHERE event_id = $1
        RETURNING *`,
       [event_id]
     );
     
-    // Broadcast update via SSE
+    // Broadcast update via WebSocket
     broadcastUpdate(event_id, 'timersStopped', { count: result.rows.length });
     
     res.json({ 
@@ -292,15 +309,16 @@ app.put('/api/active-timers/stop', async (req, res) => {
   try {
     const { event_id, item_id, user_id } = req.body;
     
+    // Update the single active timer record for this event
     const result = await pool.query(
       `UPDATE active_timers 
        SET is_running = false, is_active = false, updated_at = NOW()
-       WHERE event_id = $1 AND item_id = $2 AND is_running = true
+       WHERE event_id = $1 AND (item_id = $2 OR item_id IS NULL)
        RETURNING *`,
       [event_id, item_id]
     );
     
-    // Broadcast update via SSE
+    // Broadcast update via WebSocket
     broadcastUpdate(event_id, 'timerStopped', result.rows[0]);
     
     res.json({ 
