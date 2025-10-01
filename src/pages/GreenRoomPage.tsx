@@ -3,7 +3,6 @@ import { useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
-import DriftStatusIndicator from '../components/DriftStatusIndicator';
 import { socketClient } from '../services/socket-client';
 
 interface ScheduleItem {
@@ -752,14 +751,6 @@ const GreenRoomPage: React.FC = () => {
       {/* Content Overlay */}
       <div className="relative z-10">
         {/* Drift Status Indicator - Top Left Corner */}
-        {activeItemId && (
-          <div className="absolute top-4 left-4 z-20">
-            <DriftStatusIndicator 
-              itemId={activeItemId} 
-              className="flex-shrink-0"
-            />
-          </div>
-        )}
         
         {/* Header - Event Name and Timer */}
         <div className="p-6 flex items-center">

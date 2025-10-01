@@ -4,7 +4,6 @@ import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 // import { supabase } from '../services/supabase'; // REMOVED: Using WebSocket-only approach
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
-import DriftStatusIndicator from '../components/DriftStatusIndicator';
 import { socketClient } from '../services/socket-client';
 
 interface ScheduleItem {
@@ -563,6 +562,14 @@ const PhotoViewPage: React.FC = () => {
               startedAt: data.started_at ? new Date(data.started_at) : null
             }
           }));
+          
+          // Update timer state based on is_running
+          if (data.is_running) {
+            setTimerState('running');
+            setActiveItemId(data.item_id);
+          } else {
+            setTimerState('loaded');
+          }
         }
       },
       onTimerStopped: (data: any) => {
@@ -570,6 +577,12 @@ const PhotoViewPage: React.FC = () => {
         // Clear timer state when stopped
         if (data && data.item_id) {
           setActiveItemId(null);
+          setTimerState(null);
+          setLoadedItems(prev => {
+            const newLoaded = { ...prev };
+            delete newLoaded[data.item_id];
+            return newLoaded;
+          });
           setTimerProgress(prev => {
             const newProgress = { ...prev };
             delete newProgress[data.item_id];
@@ -581,13 +594,17 @@ const PhotoViewPage: React.FC = () => {
         console.log('📡 PhotoView: All timers stopped via WebSocket');
         // Clear all timer states
         setActiveItemId(null);
+        setTimerState(null);
+        setLoadedItems({});
         setTimerProgress({});
       },
       onTimerStarted: (data: any) => {
         console.log('📡 PhotoView: Timer started via WebSocket');
-        // Update active item when timer starts
+        // Update active item and timer state when timer starts
         if (data && data.item_id) {
           setActiveItemId(data.item_id);
+          setTimerState('running');
+          setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -1144,14 +1161,6 @@ const PhotoViewPage: React.FC = () => {
               {formatTime(getRemainingTime())}
             </div>
             {/* Drift Status Indicator - positioned in bottom-right corner */}
-            {activeItemId && (
-              <div className="absolute bottom-1 right-1">
-                <DriftStatusIndicator 
-                  itemId={activeItemId} 
-                  className="flex-shrink-0"
-                />
-              </div>
-            )}
           </div>
         </div>
       </div>
