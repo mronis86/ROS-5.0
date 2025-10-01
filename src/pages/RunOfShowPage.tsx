@@ -3560,6 +3560,12 @@ const RunOfShowPage: React.FC = () => {
       
       const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
       console.log('🔄 Calculated total seconds:', totalSeconds);
+      console.log('🔄 Item duration breakdown:', {
+        durationHours: item.durationHours,
+        durationMinutes: item.durationMinutes,
+        durationSeconds: item.durationSeconds,
+        totalSeconds: totalSeconds
+      });
       
       // Convert itemId to integer if it's a string
       const numericItemId = typeof itemId === 'string' ? parseInt(itemId) : itemId;

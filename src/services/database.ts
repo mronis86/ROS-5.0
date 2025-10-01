@@ -653,6 +653,15 @@ export class DatabaseService {
   static async loadCue(eventId: string, itemId: number, userId: string, totalDurationSeconds: number, rowNumber?: number, cueDisplay?: string, timerId?: string): Promise<boolean> {
     try {
       console.log('🔄 Loading CUE via API:', { eventId, itemId, userId, totalDurationSeconds, rowNumber, cueDisplay, timerId });
+      console.log('🔄 DatabaseService.loadCue parameters:', {
+        eventId,
+        itemId,
+        userId,
+        totalDurationSeconds,
+        rowNumber,
+        cueDisplay,
+        timerId
+      });
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers`, {
         method: 'POST',
