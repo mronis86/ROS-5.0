@@ -1090,10 +1090,10 @@ const RunOfShowPage: React.FC = () => {
     // Initial sync
     syncCompletedCues();
     
-    // Poll every 2 minutes - Socket.IO/SSE handle real-time updates, polling as fallback
-    const interval = setInterval(syncCompletedCues, 2 * 60 * 1000);
+    // DISABLED: WebSocket handles real-time updates, no polling needed
+    // const interval = setInterval(syncCompletedCues, 2 * 60 * 1000);
     
-    return () => clearInterval(interval);
+    // return () => clearInterval(interval); // No interval to clean up
   }, [event?.id]);
 
   // Separate polling for sub-cue timers
@@ -4355,10 +4355,24 @@ const RunOfShowPage: React.FC = () => {
         // loadFromAPI();
       },
       onCompletedCuesUpdated: (data: any) => {
-        console.log('📡 Real-time: Completed cues updated');
-        // Trigger a refresh of completed cues
-        if (typeof syncCompletedCues === 'function') {
-          syncCompletedCues();
+        console.log('📡 Real-time: Completed cues updated via WebSocket');
+        // Update completed cues state directly from WebSocket data - no API polling needed!
+        if (data && data.removed && data.item_id) {
+          // Remove completed cue
+          setCompletedCues(prev => prev.filter(cue => cue.item_id !== data.item_id));
+        } else if (data && Array.isArray(data)) {
+          // Full array of completed cues (from GET request)
+          setCompletedCues(data);
+        } else if (data && data.item_id) {
+          // Add or update single completed cue
+          setCompletedCues(prev => {
+            const existing = prev.find(cue => cue.item_id === data.item_id);
+            if (existing) {
+              return prev.map(cue => cue.item_id === data.item_id ? { ...cue, ...data } : cue);
+            } else {
+              return [...prev, data];
+            }
+          });
         }
       },
       onTimerUpdated: (data: any) => {
@@ -4415,6 +4429,19 @@ const RunOfShowPage: React.FC = () => {
             ...prev,
             [data.item_id]: true
           }));
+        }
+      },
+      onActiveTimersUpdated: (data: any) => {
+        console.log('📡 Real-time: Active timers updated via WebSocket');
+        // Update active timers state directly from WebSocket data - no API polling needed!
+        if (data && Array.isArray(data)) {
+          const newActiveTimers: Record<number, boolean> = {};
+          data.forEach((timer: any) => {
+            if (timer.item_id && timer.is_active && timer.is_running) {
+              newActiveTimers[timer.item_id] = true;
+            }
+          });
+          setActiveTimers(newActiveTimers);
         }
       },
       onConnectionChange: (connected: boolean) => {

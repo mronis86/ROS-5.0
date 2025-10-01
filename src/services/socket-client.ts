@@ -14,6 +14,7 @@ interface SocketCallbacks {
   onTimersStopped?: (data: any) => void;
   onTimerStarted?: (data: any) => void;
   onSubCueTimerStarted?: (data: any) => void;
+  onActiveTimersUpdated?: (data: any) => void; // NEW!
   onConnectionChange?: (connected: boolean) => void;
 }
 
@@ -73,6 +74,9 @@ class SocketClient {
           break;
         case 'subCueTimerStarted':
           this.callbacks.onSubCueTimerStarted?.(message.data);
+          break;
+        case 'activeTimersUpdated': // NEW!
+          this.callbacks.onActiveTimersUpdated?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);

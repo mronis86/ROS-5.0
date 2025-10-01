@@ -167,6 +167,10 @@ app.get('/api/completed-cues/:eventId', async (req, res) => {
       'SELECT * FROM completed_cues WHERE event_id = $1',
       [eventId]
     );
+    
+    // Broadcast completed cues update via WebSocket for real-time sync
+    broadcastUpdate(eventId, 'completedCuesUpdated', result.rows);
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching completed cues:', error);
@@ -218,6 +222,10 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
       'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
       [eventId]
     );
+    
+    // Broadcast active timers update via WebSocket for real-time sync
+    broadcastUpdate(eventId, 'activeTimersUpdated', result.rows);
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching active timers:', error);
