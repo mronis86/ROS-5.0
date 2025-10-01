@@ -246,8 +246,9 @@ app.post('/api/active-timers', async (req, res) => {
       // For running timers, use provided started_at or current time
       started_at_value = (started_at && started_at !== 'null') ? started_at : new Date().toISOString();
     } else {
-      // For loaded timers, use null or provided started_at
-      started_at_value = (started_at && started_at !== 'null') ? started_at : null;
+      // For loaded timers, use a placeholder timestamp (NOT NULL constraint requires a value)
+      // We'll use a far future date to indicate "not started yet"
+      started_at_value = (started_at && started_at !== 'null') ? started_at : '2099-12-31T23:59:59.999Z';
     }
     
     console.log('🔄 Processing active timer request:', {
