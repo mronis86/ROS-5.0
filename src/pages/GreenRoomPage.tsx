@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
-import { driftDetector } from '../services/driftDetector';
+// import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import DriftStatusIndicator from '../components/DriftStatusIndicator';
 import { socketClient } from '../services/socket-client';
 
@@ -201,72 +201,9 @@ const GreenRoomPage: React.FC = () => {
         setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
         console.log('🔄 Set loaded items:', { [parseInt(activeTimer.item_id)]: true });
         
-        // Start drift monitoring for running timers
+        // Drift detection removed - WebSocket handles all timer synchronization
         if (activeTimer.timer_state === 'running' && activeTimer.started_at) {
-          const startedAt = new Date(activeTimer.started_at);
-          const duration = activeTimer.duration_seconds;
-          
-          console.log(`🔄 Green Room: Starting drift detection for timer ${activeTimer.item_id} with duration ${duration}s`);
-          
-          // Stop any existing drift detection
-          driftDetector.stopMonitoring(parseInt(activeTimer.item_id));
-          
-          // Start drift detection for the new timer
-          driftDetector.startMonitoring(
-            parseInt(activeTimer.item_id),
-            startedAt,
-            duration,
-            (serverElapsed) => {
-              console.log(`🔄 Green Room DriftDetector: Syncing timer ${activeTimer.item_id} with server elapsed: ${serverElapsed}s`);
-              
-              // Mark this timer as server-synced
-              setServerSyncedTimers(prev => {
-                const newSet = new Set(prev);
-                newSet.add(parseInt(activeTimer.item_id));
-                return newSet;
-              });
-              
-              // Update the timer progress with server-synced elapsed time
-              setTimerProgress(prev => ({
-                ...prev,
-                [parseInt(activeTimer.item_id)]: {
-                  ...prev[parseInt(activeTimer.item_id)],
-                  elapsed: serverElapsed
-                }
-              }));
-            }
-          );
-          
-          // Initial sync to get the correct server elapsed time
-          try {
-            console.log(`🔄 Green Room DriftDetector: Starting initial sync for timer ${activeTimer.item_id}`);
-            await driftDetector.forceSync(parseInt(activeTimer.item_id), async () => {
-              const activeTimerData = await DatabaseService.getActiveTimer(event.id);
-              const serverElapsed = activeTimerData?.elapsed_seconds || 0;
-              console.log(`🔄 Green Room DriftDetector: Initial server elapsed: ${serverElapsed}s for timer ${activeTimer.item_id}`);
-              return serverElapsed;
-            });
-          } catch (error) {
-            console.warn(`⚠️ Green Room DriftDetector: Failed initial sync for timer ${activeTimer.item_id}:`, error);
-          }
-          
-          // Set up periodic drift sync
-          const driftSyncInterval = setInterval(async () => {
-            try {
-              console.log(`🔄 Green Room DriftDetector: Starting periodic sync for timer ${activeTimer.item_id}`);
-              await driftDetector.forceSync(parseInt(activeTimer.item_id), async () => {
-                const activeTimer = await DatabaseService.getActiveTimer(event.id);
-                const serverElapsed = activeTimer?.elapsed_seconds || 0;
-                console.log(`🔄 Green Room DriftDetector: Server returned elapsed: ${serverElapsed}s for timer ${activeTimer.item_id}`);
-                return serverElapsed;
-              });
-            } catch (error) {
-              console.warn(`⚠️ Green Room DriftDetector: Failed to sync timer ${activeTimer.item_id}:`, error);
-            }
-          }, 30000); // Force sync every 30 seconds
-          
-          // Store the drift sync interval for cleanup
-          setLocalTimerInterval(driftSyncInterval);
+          console.log(`🔄 Green Room: Timer ${activeTimer.item_id} is running - WebSocket will handle updates`);
         }
         
         // Use elapsed_seconds from database (already calculated)
@@ -284,15 +221,7 @@ const GreenRoomPage: React.FC = () => {
         setLoadedItems({});
         setTimerProgress({});
         
-        // Stop drift detection
-        if (activeItemId) {
-          driftDetector.stopMonitoring(activeItemId);
-          setServerSyncedTimers(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(activeItemId);
-            return newSet;
-          });
-        }
+        // Drift detection removed - WebSocket-only approach
         
         // Clear drift sync interval
         if (localTimerInterval) {
@@ -355,15 +284,67 @@ const GreenRoomPage: React.FC = () => {
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 Green Room WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      },
+      onInitialSync: async () => {
+        console.log('🔄 Green Room: WebSocket initial sync triggered - loading current state');
+        
+        // Load current active timer
+        try {
+          const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
+          if (activeTimerResponse.ok) {
+            const activeTimers = await activeTimerResponse.json();
+            console.log('🔄 Green Room initial sync: Loaded active timers:', activeTimers);
+            
+            if (activeTimers && activeTimers.length > 0) {
+              const activeTimer = activeTimers[0]; // Green Room typically shows one active timer
+              
+              setActiveItemId(parseInt(activeTimer.item_id));
+              setTimerState(activeTimer.timer_state);
+              setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
+              
+              // Update timer progress
+              setTimerProgress({
+                [parseInt(activeTimer.item_id)]: {
+                  elapsed: activeTimer.elapsed_seconds || 0,
+                  total: activeTimer.duration_seconds || 300,
+                  startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
+                }
+              });
+              
+              console.log('🔄 Green Room: Initial sync completed - timer state restored');
+            } else {
+              // No active timer
+              setActiveItemId(null);
+              setTimerState(null);
+              setLoadedItems({});
+              setTimerProgress({});
+              console.log('🔄 Green Room: Initial sync completed - no active timer');
+            }
+          }
+        } catch (error) {
+          console.error('❌ Green Room: Initial sync failed to load active timer:', error);
+        }
       }
     };
 
     // Connect to WebSocket
     socketClient.connect(event.id, callbacks);
 
+    // Handle tab visibility changes - resync when user returns to tab
+    const handleVisibilityChange = () => {
+      if (!document.hidden && socketClient.isConnected()) {
+        console.log('🔄 Green Room: Tab became visible - triggering resync');
+        // Trigger initial sync again
+        callbacks.onInitialSync?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       console.log('🔄 Cleaning up Green Room WebSocket connection');
       socketClient.disconnect(event.id);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [event?.id]);
 
@@ -391,8 +372,7 @@ const GreenRoomPage: React.FC = () => {
           }
         }));
         
-        // Update drift detector with local elapsed time
-        driftDetector.updateLocalElapsed(activeItemId, elapsed);
+        // Drift detector removed - WebSocket handles all sync
         
         // Debug logging for first few seconds
         if (elapsed <= 10) {
@@ -407,11 +387,11 @@ const GreenRoomPage: React.FC = () => {
     }
   }, [activeItemId, timerState]); // Removed timerProgress to prevent constant restarts
 
-  // Cleanup drift detector on component unmount
+  // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
     return () => {
-      console.log('🔄 Green Room: Cleaning up drift detector on component unmount');
-      driftDetector.destroy();
+      console.log('🔄 Green Room: Cleaning up on component unmount');
+      // Drift detector removed - using WebSocket-only approach
       
       // Clear any remaining intervals
       if (localTimerInterval) {
@@ -574,15 +554,50 @@ const GreenRoomPage: React.FC = () => {
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 Green Room schedule WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      },
+      onInitialSync: async () => {
+        console.log('🔄 Green Room: Schedule WebSocket initial sync triggered');
+        
+        // Load current schedule data
+        try {
+          const scheduleResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/run-of-show-data/${event?.id}`);
+          if (scheduleResponse.ok) {
+            const data = await scheduleResponse.json();
+            console.log('🔄 Green Room schedule initial sync: Loaded schedule data');
+            
+            if (data && data.schedule_items) {
+              setSchedule(data.schedule_items);
+            }
+            if (data && data.settings && data.settings.masterStartTime) {
+              setMasterStartTime(data.settings.masterStartTime);
+            }
+            
+            console.log('🔄 Green Room: Schedule initial sync completed');
+          }
+        } catch (error) {
+          console.error('❌ Green Room: Schedule initial sync failed:', error);
+        }
       }
     };
 
     // Connect to WebSocket for schedule updates
     socketClient.connect(event.id, callbacks);
 
+    // Handle tab visibility changes - resync when user returns to tab
+    const handleScheduleVisibilityChange = () => {
+      if (!document.hidden && socketClient.isConnected()) {
+        console.log('🔄 Green Room: Schedule tab became visible - triggering resync');
+        // Trigger initial sync again
+        callbacks.onInitialSync?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleScheduleVisibilityChange);
+
     return () => {
       console.log('🔄 Cleaning up Green Room schedule WebSocket connection');
       socketClient.disconnect(event.id);
+      document.removeEventListener('visibilitychange', handleScheduleVisibilityChange);
     };
   }, [event?.id]);
 
