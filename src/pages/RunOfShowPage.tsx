@@ -16,7 +16,7 @@ import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal from '../components/DisplayModal';
 import ExcelImportModal from '../components/ExcelImportModal';
-import { driftDetector } from '../services/driftDetector';
+// import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 
 // Speaker interface/type definition
 interface Speaker {
@@ -1211,11 +1211,11 @@ const RunOfShowPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [event?.id, user?.id, schedule]);
 
-  // Cleanup drift detector on component unmount
+  // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
     return () => {
-      console.log('🔄 Cleaning up drift detector on component unmount');
-      driftDetector.destroy();
+      console.log('🔄 Cleaning up on component unmount');
+      // Drift detector removed - using WebSocket-only approach
     };
   }, []);
 
@@ -1372,41 +1372,10 @@ const RunOfShowPage: React.FC = () => {
             }
           });
 
-          // Start drift monitoring for running timers (even on Browser B)
+          // Timer monitoring removed - using WebSocket-only approach
+          // WebSocket will handle all timer updates in real-time
           if (activeTimer.timer_state === 'running' && activeTimer.started_at) {
-            const startedAt = new Date(activeTimer.started_at);
-            const duration = activeTimer.duration_seconds;
-            
-            console.log(`🔄 Browser B: Starting drift detection for timer ${activeTimer.item_id} with duration ${duration}s`);
-            
-            driftDetector.startMonitoring(
-              activeTimer.item_id,
-              startedAt,
-              duration,
-              (serverElapsed) => {
-                console.log(`🔄 Browser B DriftDetector: Syncing timer ${activeTimer.item_id} with server elapsed: ${serverElapsed}s`);
-                
-                // Mark this timer as server-synced
-                setServerSyncedTimers(prev => {
-                  const newSet = new Set([...prev, activeTimer.item_id]);
-                  console.log(`🔄 Browser B DriftDetector: Marking timer ${activeTimer.item_id} as server-synced. Server-synced timers:`, Array.from(newSet));
-                  return newSet;
-                });
-                
-                // Update the timer progress with server-synced elapsed time
-                setTimerProgress(prev => {
-                  const newProgress = {
-                    ...prev,
-                    [activeTimer.item_id]: {
-                      ...prev[activeTimer.item_id],
-                      elapsed: serverElapsed
-                    }
-                  };
-                  console.log(`🔄 Browser B DriftDetector: Updated timer ${activeTimer.item_id} progress to elapsed: ${serverElapsed}s`);
-                  return newProgress;
-                });
-              }
-            );
+            console.log(`🔄 Browser B: Timer ${activeTimer.item_id} is running - WebSocket will handle updates`);
           }
         } else {
           // No active timer, clear any existing timer progress
@@ -4446,6 +4415,56 @@ const RunOfShowPage: React.FC = () => {
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      },
+      onInitialSync: async () => {
+        console.log('🔄 WebSocket initial sync triggered - loading current state');
+        
+        // Load current active timers
+        try {
+          const activeTimersResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
+          if (activeTimersResponse.ok) {
+            const activeTimers = await activeTimersResponse.json();
+            console.log('🔄 Initial sync: Loaded active timers:', activeTimers);
+            
+            // Update active timers state
+            if (activeTimers && activeTimers.length > 0) {
+              const newActiveTimers: Record<number, boolean> = {};
+              activeTimers.forEach((timer: any) => {
+                if (timer.item_id && timer.is_active && timer.is_running) {
+                  newActiveTimers[timer.item_id] = true;
+                }
+              });
+              setActiveTimers(newActiveTimers);
+              
+              // Update timer progress for running timers
+              const newTimerProgress: {[key: number]: {elapsed: number, total: number, startedAt: Date | null}} = {};
+              activeTimers.forEach((timer: any) => {
+                if (timer.item_id && timer.is_active && timer.is_running) {
+                  newTimerProgress[timer.item_id] = {
+                    elapsed: timer.elapsed_seconds || 0,
+                    total: timer.duration_seconds || 300,
+                    startedAt: timer.started_at ? new Date(timer.started_at) : null
+                  };
+                }
+              });
+              setTimerProgress(newTimerProgress);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Initial sync failed to load active timers:', error);
+        }
+        
+        // Load current completed cues
+        try {
+          const completedCuesResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues/${event?.id}`);
+          if (completedCuesResponse.ok) {
+            const completedCues = await completedCuesResponse.json();
+            console.log('🔄 Initial sync: Loaded completed cues:', completedCues);
+            setCompletedCues(completedCues || []);
+          }
+        } catch (error) {
+          console.error('❌ Initial sync failed to load completed cues:', error);
+        }
       }
     };
 
@@ -4453,11 +4472,23 @@ const RunOfShowPage: React.FC = () => {
     // sseClient.connect(event.id, callbacks); // DISABLED: SSE causes excessive API calls
     socketClient.connect(event.id, callbacks);
 
+    // Handle tab visibility changes - resync when user returns to tab
+    const handleVisibilityChange = () => {
+      if (!document.hidden && socketClient.isConnected()) {
+        console.log('🔄 Tab became visible - triggering resync');
+        // Trigger initial sync again
+        callbacks.onInitialSync?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     // Cleanup on unmount
     return () => {
       console.log('🔌 Disconnecting WebSocket connections for event:', event.id);
       // sseClient.disconnect(event.id); // DISABLED: SSE causes excessive API calls
       socketClient.disconnect(event.id);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [event?.id]);
 
@@ -5259,8 +5290,7 @@ const RunOfShowPage: React.FC = () => {
         return newIntervals;
       });
       
-      // Stop drift detection for this timer
-      driftDetector.stopMonitoring(itemId);
+      // Drift detection removed - using WebSocket-only approach
       
       // Remove from server-synced timers
       setServerSyncedTimers(prev => {
@@ -5377,14 +5407,8 @@ const RunOfShowPage: React.FC = () => {
         const timer = setInterval(() => {
           setTimerProgress(prev => {
             if (prev[itemId]) {
-              // Check if this timer is being server-synced by drift detector
-              // Only skip local updates for Browser A (the timer starter), not Browser B
-              // But allow local updates for newly loaded cues that haven't started yet
-              if (serverSyncedTimers.has(itemId) && activeTimers[itemId] && prev[itemId]?.startedAt) {
-                // Don't update elapsed time - let drift detector handle it
-                console.log(`🔄 Timer ${itemId}: Skipping local update - using server-synced time (Browser A)`);
-                return prev;
-              }
+              // WebSocket-only approach - no drift detection needed
+              // Local timer updates are for smooth UI only, WebSocket provides authoritative time
               
               const currentTime = Date.now();
               const startedAtValue = prev[itemId].startedAt;
@@ -5403,8 +5427,7 @@ const RunOfShowPage: React.FC = () => {
               const elapsed = Math.floor((currentTime - startTime) / 1000);
               const remaining = totalSeconds - elapsed; // Allow negative values for overrun
               
-              // Update drift detector with local elapsed time
-              driftDetector.updateLocalElapsed(itemId, elapsed);
+              // Drift detector removed - WebSocket handles all sync
               
               // Debug logging for first few seconds
               if (elapsed <= 10) {
@@ -5428,42 +5451,11 @@ const RunOfShowPage: React.FC = () => {
         // Don't clear completed state when starting a timer - let it persist
         
         // Start drift detection for long-running timers
-        console.log(`🔄 Starting drift detection for timer ${itemId} with duration ${totalSeconds}s`);
-        console.log(`🔄 Drift detector config:`, driftDetector.getConfig());
+        // Drift detection removed - WebSocket handles all timer synchronization
+        console.log(`🔄 Timer ${itemId} started - WebSocket will handle all synchronization`);
         
-        driftDetector.startMonitoring(
-          itemId,
-          now,
-          totalSeconds,
-          (serverElapsed) => {
-            console.log(`🔄 DriftDetector: Syncing timer ${itemId} with server elapsed: ${serverElapsed}s`);
-            
-            // Mark this timer as server-synced
-            setServerSyncedTimers(prev => {
-              const newSet = new Set([...prev, itemId]);
-              console.log(`🔄 DriftDetector: Marking timer ${itemId} as server-synced. Server-synced timers:`, Array.from(newSet));
-              return newSet;
-            });
-            
-            // Update the timer progress with server-synced elapsed time
-            setTimerProgress(prev => {
-              const newProgress = {
-                ...prev,
-                [itemId]: {
-                  ...prev[itemId],
-                  elapsed: serverElapsed
-                }
-              };
-              console.log(`🔄 DriftDetector: Updated timer ${itemId} progress to elapsed: ${serverElapsed}s`);
-              return newProgress;
-            });
-          }
-        );
-        
-        // Check if drift detector is monitoring this timer
-        const driftStatus = driftDetector.getStatus();
-        console.log(`🔄 Drift detector status after starting:`, driftStatus);
-        console.log(`🔄 Timer ${itemId} will run locally until first drift sync`);
+        // WebSocket-only approach - no drift detection needed
+        console.log(`🔄 Timer ${itemId} will receive updates via WebSocket`);
         
         // Calculate row number and cue display for database
         const currentIndex = schedule.findIndex(scheduleItem => scheduleItem.id === itemId);
@@ -5493,24 +5485,7 @@ const RunOfShowPage: React.FC = () => {
           console.log('⚠️ Could not save last loaded CUE as running (migration may not be run):', error);
         }
         
-        // Set up periodic drift detection sync
-        const driftSyncInterval = setInterval(async () => {
-          try {
-            console.log(`🔄 DriftDetector: Starting periodic sync for timer ${itemId}`);
-            await driftDetector.forceSync(itemId, async () => {
-              const activeTimer = await DatabaseService.getActiveTimer(event.id);
-              const serverElapsed = activeTimer?.elapsed_seconds || 0;
-              console.log(`🔄 DriftDetector: Server returned elapsed: ${serverElapsed}s for timer ${itemId}`);
-              return serverElapsed;
-            });
-            console.log(`🔄 DriftDetector: Periodic sync completed for timer ${itemId}`);
-          } catch (error) {
-            console.warn(`⚠️ DriftDetector: Failed to sync timer ${itemId}:`, error);
-          }
-        }, 30000); // Force sync every 30 seconds
-        
-        // Store the drift sync interval for cleanup
-        setActiveTimerIntervals(prev => ({ ...prev, [`${itemId}_drift`]: driftSyncInterval }));
+        // WebSocket-only approach - no periodic drift sync needed
         
         // Keep using local timer for now (database sync disabled)
         console.log('✅ Timer started locally with drift detection enabled');
@@ -5575,8 +5550,7 @@ const RunOfShowPage: React.FC = () => {
         return newIntervals;
       });
       
-      // Stop drift detection
-      driftDetector.stopMonitoring(itemId);
+      // Drift detection removed - WebSocket-only approach
       
       // Remove from server-synced timers
       setServerSyncedTimers(prev => {

@@ -16,6 +16,7 @@ interface SocketCallbacks {
   onSubCueTimerStarted?: (data: any) => void;
   onActiveTimersUpdated?: (data: any) => void; // NEW!
   onConnectionChange?: (connected: boolean) => void;
+  onInitialSync?: () => Promise<void>; // NEW! For initial sync on connect
 }
 
 class SocketClient {
@@ -48,6 +49,9 @@ class SocketClient {
       
       // Join the event room
       this.socket?.emit('joinEvent', eventId);
+      
+      // CRITICAL: Immediately sync current state on connect/reconnect
+      this.performInitialSync(eventId);
     });
 
     this.socket.on('update', (message: any) => {
@@ -131,6 +135,26 @@ class SocketClient {
 
   getEventId(): string | null {
     return this.eventId;
+  }
+
+  /**
+   * Perform initial sync when WebSocket connects
+   * This ensures we get current state when reconnecting or joining mid-timer
+   */
+  private async performInitialSync(eventId: string) {
+    try {
+      console.log('🔄 Performing initial sync on WebSocket connect...');
+      
+      // Call the initial sync callback if provided
+      if (this.callbacks.onInitialSync) {
+        await this.callbacks.onInitialSync();
+        console.log('✅ Initial sync completed via callback');
+      } else {
+        console.log('⚠️ No initial sync callback provided');
+      }
+    } catch (error) {
+      console.error('❌ Initial sync failed:', error);
+    }
   }
 }
 
