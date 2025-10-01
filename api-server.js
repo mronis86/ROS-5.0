@@ -240,7 +240,20 @@ app.post('/api/active-timers', async (req, res) => {
     // Provide default values for required fields
     const user_name = 'Unknown User';
     const user_role = 'OPERATOR';
-    const started_at_value = started_at || new Date().toISOString();
+    // Handle started_at based on timer state
+    let started_at_value;
+    if (timer_state === 'running') {
+      // For running timers, use provided started_at or current time
+      started_at_value = (started_at && started_at !== 'null') ? started_at : new Date().toISOString();
+    } else {
+      // For loaded timers, use null or provided started_at
+      started_at_value = (started_at && started_at !== 'null') ? started_at : null;
+    }
+    
+    console.log('🔄 Processing active timer request:', {
+      event_id, item_id, timer_state, is_active, is_running, 
+      started_at_original: started_at, started_at_value, duration_seconds
+    });
     
     // Use UPSERT to ensure only ONE active timer per event
     // If a record exists for this event, update it. Otherwise, insert a new one.
