@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Clock from '../components/Clock';
 import { DatabaseService } from '../services/database';
-import { supabase } from '../services/supabase';
+import { socketClient } from '../services/socket-client';
 
 const ClockPage: React.FC = () => {
   const location = useLocation();
@@ -85,7 +85,7 @@ const ClockPage: React.FC = () => {
     window.close();
   };
 
-  // Real-time subscription for timer message changes
+  // WebSocket-based real-time updates for timer messages
   useEffect(() => {
     if (!eventId) return;
 
@@ -93,7 +93,7 @@ const ClockPage: React.FC = () => {
       try {
         const message = await DatabaseService.getTimerMessage(eventId);
         setSupabaseMessage(message);
-        console.log('📨 Loaded timer message from Supabase:', message);
+        console.log('📨 Loaded timer message from API:', message);
       } catch (error) {
         console.error('❌ Error loading timer message:', error);
       }
@@ -101,27 +101,28 @@ const ClockPage: React.FC = () => {
 
     loadMessage(); // Load initial data
 
-    // Set up real-time subscription for timer_messages table
-    const messageSubscription = supabase
-      .channel('timer_messages_changes')
-      .on(
-        'postgres_changes',
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'timer_messages', 
-          filter: `event_id=eq.${eventId}` 
-        },
-        (payload) => {
-          console.log('📨 Real-time timer message change detected:', payload);
-          loadMessage(); // Reload message data when changes occur
+    // Set up WebSocket connection for real-time updates
+    const callbacks = {
+      onTimerMessageUpdated: (data: any) => {
+        console.log('📨 WebSocket: Timer message updated:', data);
+        if (data && data.event_id === eventId) {
+          setSupabaseMessage(data);
         }
-      )
-      .subscribe();
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log('📨 Clock: WebSocket connection status:', connected);
+        if (connected) {
+          // Reload message when reconnected
+          loadMessage();
+        }
+      }
+    };
+
+    socketClient.connect(eventId, callbacks);
 
     return () => {
-      console.log('📨 Cleaning up timer message subscription');
-      supabase.removeChannel(messageSubscription);
+      console.log('📨 Cleaning up Clock WebSocket connection');
+      socketClient.disconnect(eventId);
     };
   }, [eventId]);
 

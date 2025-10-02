@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { driftDetector } from '../services/driftDetector';
-import { supabase } from '../services/supabase';
+import { socketClient } from '../services/socket-client';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -58,14 +58,14 @@ const Clock: React.FC<ClockProps> = ({
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
 
-  // Clock component always runs in Supabase-only mode
+  // Clock component always runs in WebSocket-only mode
 
-  // Clock always uses Supabase data, no props handling needed
+  // Clock always uses WebSocket data, no props handling needed
 
   // Update timer progress when props change or hybrid data changes
   useEffect(() => {
     if (supabaseOnly && hybridTimerData?.activeTimer) {
-      // Use hybrid data when in Supabase-only mode
+      // Use hybrid data when in WebSocket-only mode
       const activeTimer = hybridTimerData.activeTimer;
       
       if (activeTimer.is_running && activeTimer.is_active) {
@@ -132,11 +132,11 @@ const Clock: React.FC<ClockProps> = ({
   // Message loading is now handled by ClockPage via real-time subscriptions
   // No need for polling here since ClockPage already manages this
 
-  // Hybrid mode: Fetch timer data from Supabase when supabaseOnly is true
+  // WebSocket mode: Fetch timer data via WebSocket when supabaseOnly is true
   useEffect(() => {
     if (!supabaseOnly || !eventId) {
-      // Clear any existing real-time subscriptions (handled in cleanup)
-      // Reset timer tracking when exiting hybrid mode
+      // Clear any existing WebSocket connections (handled in cleanup)
+      // Reset timer tracking when exiting WebSocket mode
       setLastActiveTimerId(null);
       setLastActiveItemId(null);
       setLastActiveStartTime(null);
@@ -159,7 +159,7 @@ const Clock: React.FC<ClockProps> = ({
       return;
     }
 
-    console.log('🔄 Clock: Setting up real-time subscription for eventId:', eventId);
+    console.log('🔄 Clock: Setting up WebSocket connection for eventId:', eventId);
 
     const loadActiveTimer = async () => {
       if (isLoading) {
@@ -169,7 +169,7 @@ const Clock: React.FC<ClockProps> = ({
       
       try {
         setIsLoading(true);
-        console.log('🔄 Loading active timer from Supabase...');
+        console.log('🔄 Loading active timer from API...');
         const activeTimer = await DatabaseService.getActiveTimer(eventId);
         if (activeTimer) {
           setHybridTimerData(prev => ({
@@ -318,22 +318,34 @@ const Clock: React.FC<ClockProps> = ({
     // Load initial data once
     loadActiveTimer();
 
-    // Set up real-time subscription for active_timers table changes
-    const activeTimerSubscription = supabase
-      .channel('active_timers_changes_clock')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'active_timers', filter: `event_id=eq.${eventId}` },
-        (payload) => {
-          console.log('🔄 Clock: Real-time active timer change detected:', payload);
+    // Set up WebSocket connection for real-time timer updates
+    const callbacks = {
+      onTimerUpdated: (data: any) => {
+        console.log('🔄 Clock: WebSocket timer update received:', data);
+        if (data && data.event_id === eventId) {
           loadActiveTimer(); // Reload active timer when changes occur
         }
-      )
-      .subscribe();
+      },
+      onActiveTimersUpdated: (data: any) => {
+        console.log('🔄 Clock: WebSocket active timers update received:', data);
+        if (data && data.event_id === eventId) {
+          loadActiveTimer(); // Reload active timer when changes occur
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log('🔄 Clock: WebSocket connection status:', connected);
+        if (connected) {
+          // Reload timer when reconnected
+          loadActiveTimer();
+        }
+      }
+    };
+
+    socketClient.connect(eventId, callbacks);
 
     return () => {
-      console.log('🔄 Clock: Cleaning up real-time subscriptions');
-      supabase.removeChannel(activeTimerSubscription);
+      console.log('🔄 Clock: Cleaning up WebSocket connection');
+      socketClient.disconnect(eventId);
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component
 
@@ -348,9 +360,9 @@ const Clock: React.FC<ClockProps> = ({
     return () => clearInterval(interval);
   }, [supabaseOnly, hybridTimerData?.secondaryTimer]);
 
-  // Clock always uses Supabase data, no props mode needed
+  // Clock always uses WebSocket data, no props mode needed
 
-  // Always run local timer for smooth updates in Supabase-only mode
+  // Always run local timer for smooth updates in WebSocket-only mode
   useEffect(() => {
     if (!supabaseOnly || !hybridTimerData?.activeTimer) return;
 
@@ -434,7 +446,7 @@ const Clock: React.FC<ClockProps> = ({
     const progress = timerProgress;
     const remaining = progress.total - progress.elapsed;
     
-    // In hybrid mode, check if timer is actually running
+    // In WebSocket mode, check if timer is actually running
     if (supabaseOnly && hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
@@ -451,7 +463,7 @@ const Clock: React.FC<ClockProps> = ({
     const progress = timerProgress;
     const remainingSeconds = progress.total - progress.elapsed;
     
-    // In hybrid mode, check if timer is actually running
+    // In WebSocket mode, check if timer is actually running
     if (supabaseOnly && hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
@@ -468,7 +480,7 @@ const Clock: React.FC<ClockProps> = ({
     const progress = timerProgress;
     const remainingSeconds = progress.total - progress.elapsed;
     
-    // In hybrid mode, check if timer is actually running
+    // In WebSocket mode, check if timer is actually running
     if (supabaseOnly && hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
@@ -555,7 +567,7 @@ const Clock: React.FC<ClockProps> = ({
                 
                 return 'No CUE';
               } else {
-                // Clock always runs in Supabase-only mode
+                // Clock always runs in WebSocket-only mode
                 return 'No CUE';
               }
             })()}
@@ -604,7 +616,7 @@ const Clock: React.FC<ClockProps> = ({
             className="px-4 py-2 rounded-lg font-bold text-lg bg-purple-600 text-white cursor-default"
             disabled
           >
-            SUPABASE ONLY
+            WEBSOCKET ONLY
           </button>
         )}
         </div>
@@ -788,7 +800,7 @@ const Clock: React.FC<ClockProps> = ({
                 const formattedCue = cue.replace(/CUE(\d+)/, 'CUE $1');
                 return segmentName ? `${formattedCue} - ${segmentName}` : formattedCue;
               } else {
-                // Clock always runs in Supabase-only mode
+                // Clock always runs in WebSocket-only mode
                 return 'No CUE';
               }
             })()}
@@ -865,7 +877,7 @@ const Clock: React.FC<ClockProps> = ({
                   remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
                 }
               } else {
-                // Clock always runs in Supabase-only mode
+                // Clock always runs in WebSocket-only mode
                 remaining = 0;
               }
               
