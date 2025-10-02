@@ -213,25 +213,7 @@ app.post('/api/completed-cues', async (req, res) => {
   }
 });
 
-app.delete('/api/completed-cues', async (req, res) => {
-  try {
-    const { event_id, item_id, user_id } = req.body;
-    const result = await pool.query(
-      'DELETE FROM completed_cues WHERE event_id = $1 AND item_id = $2 AND user_id = $3 RETURNING *',
-      [event_id, item_id, user_id]
-    );
-    
-    // Broadcast update via SSE
-    broadcastUpdate(event_id, 'completedCuesUpdated', { removed: true, item_id, user_id });
-    
-    res.status(204).send();
-  } catch (error) {
-    console.error('Error unmarking cue as completed:', error);
-    res.status(500).json({ error: 'Failed to unmark cue as completed' });
-  }
-});
-
-// Delete all completed cues for an event
+// Delete all completed cues for an event (MUST come first - more specific route)
 app.delete('/api/completed-cues/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
@@ -251,6 +233,25 @@ app.delete('/api/completed-cues/:eventId', async (req, res) => {
   } catch (error) {
     console.error('❌ Error clearing all completed cues from Neon:', error);
     res.status(500).json({ error: 'Failed to clear all completed cues' });
+  }
+});
+
+// Delete a single completed cue
+app.delete('/api/completed-cues', async (req, res) => {
+  try {
+    const { event_id, item_id, user_id } = req.body;
+    const result = await pool.query(
+      'DELETE FROM completed_cues WHERE event_id = $1 AND item_id = $2 AND user_id = $3 RETURNING *',
+      [event_id, item_id, user_id]
+    );
+    
+    // Broadcast update via SSE
+    broadcastUpdate(event_id, 'completedCuesUpdated', { removed: true, item_id, user_id });
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error unmarking cue as completed:', error);
+    res.status(500).json({ error: 'Failed to unmark cue as completed' });
   }
 });
 
