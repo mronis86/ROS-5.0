@@ -8067,7 +8067,7 @@ const RunOfShowPage: React.FC = () => {
                          // Match item_id with both string and number comparison
                          const hybridItemId = hybridTimerData?.activeTimer?.item_id;
                          const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
-                         const isHybridActive = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
+                         const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
                          const isHybridLoaded = isMatch && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
                          
                          // Debug: Log highlighting decisions for this item (reduced logging)
@@ -8076,13 +8076,13 @@ const RunOfShowPage: React.FC = () => {
                              hybridTimerItemId: hybridItemId,
                              isRunning: hybridTimerData.activeTimer.is_running,
                              isActive: hybridTimerData.activeTimer.is_active,
-                             isHybridActive,
+                             isHybridRunning,
                              isHybridLoaded,
                              isMatch
                            });
                          }
                          
-                         return isHybridActive ? 'bg-green-900 border-green-500' : isHybridLoaded ? 'bg-blue-900 border-blue-500' : null;
+                         return isHybridRunning ? 'bg-green-900 border-green-500' : isHybridLoaded ? 'bg-blue-900 border-blue-500' : null;
                        })() ||
                        // Fallback to old logic for compatibility
                          activeTimers[item.id]
@@ -8095,6 +8095,8 @@ const RunOfShowPage: React.FC = () => {
                          ? 'bg-gray-900 border-gray-700 opacity-40'
                          : loadedCueDependents.has(item.id)
                          ? 'bg-amber-800 border-amber-600'
+                         : item.isIndented
+                         ? 'bg-amber-950 border-amber-600'
                          : index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
                      }`}
                      style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
@@ -8596,25 +8598,25 @@ const RunOfShowPage: React.FC = () => {
                        className={`border-b-2 border-slate-600 flex ${
                          // Use hybrid timer data for real-time highlighting (ClockPage style)
                          (() => {
-                           // Match item_id with both string and number comparison
-                           const hybridItemId = hybridTimerData?.activeTimer?.item_id;
-                           const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
-                           const isHybridActive = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                           const isHybridLoaded = isMatch && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
-                           
-                           // Debug: Log highlighting decisions for this item (reduced logging)
-                           if (isMatch && Math.random() < 0.01) {
-                             console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                               hybridTimerItemId: hybridItemId,
-                               isRunning: hybridTimerData.activeTimer.is_running,
-                               isActive: hybridTimerData.activeTimer.is_active,
-                               isHybridActive,
-                               isHybridLoaded,
-                               isMatch
-                             });
-                           }
-                           
-                           return isHybridActive ? 'bg-green-950' : isHybridLoaded ? 'bg-blue-950' : null;
+                         // Match item_id with both string and number comparison
+                         const hybridItemId = hybridTimerData?.activeTimer?.item_id;
+                         const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
+                         const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
+                         const isHybridLoaded = isMatch && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
+                         
+                         // Debug: Log highlighting decisions for this item (reduced logging)
+                         if (isMatch && Math.random() < 0.01) {
+                           console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
+                             hybridTimerItemId: hybridItemId,
+                             isRunning: hybridTimerData.activeTimer.is_running,
+                             isActive: hybridTimerData.activeTimer.is_active,
+                             isHybridRunning,
+                             isHybridLoaded,
+                             isMatch
+                           });
+                         }
+                         
+                         return isHybridRunning ? 'bg-green-950' : isHybridLoaded ? 'bg-blue-950' : null;
                          })() ||
                          // Fallback to old logic for compatibility
                            activeTimers[item.id]
@@ -8626,6 +8628,8 @@ const RunOfShowPage: React.FC = () => {
                            : stoppedItems.has(item.id)
                            ? 'bg-gray-900 opacity-40'
                            : loadedCueDependents.has(item.id)
+                           ? 'bg-amber-950 border-amber-600'
+                           : item.isIndented
                            ? 'bg-amber-950 border-amber-600'
                            : lastLoadedCueId === item.id
                            ? 'bg-purple-950 border-purple-400'
