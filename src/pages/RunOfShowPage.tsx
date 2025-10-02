@@ -8064,17 +8064,21 @@ const RunOfShowPage: React.FC = () => {
                      className={`border-b-2 border-slate-600 flex items-center justify-center gap-1 ${
                        // Use hybrid timer data for real-time highlighting (ClockPage style)
                        (() => {
-                         const isHybridActive = hybridTimerData?.activeTimer?.item_id === item.id && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                         const isHybridLoaded = hybridTimerData?.activeTimer?.item_id === item.id && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
+                         // Match item_id with both string and number comparison
+                         const hybridItemId = hybridTimerData?.activeTimer?.item_id;
+                         const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
+                         const isHybridActive = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
+                         const isHybridLoaded = isMatch && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
                          
                          // Debug: Log highlighting decisions for this item (reduced logging)
-                         if (hybridTimerData?.activeTimer?.item_id === item.id && Math.random() < 0.01) {
+                         if (isMatch && Math.random() < 0.01) {
                            console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                             hybridTimerItemId: hybridTimerData.activeTimer.item_id,
+                             hybridTimerItemId: hybridItemId,
                              isRunning: hybridTimerData.activeTimer.is_running,
                              isActive: hybridTimerData.activeTimer.is_active,
                              isHybridActive,
-                             isHybridLoaded
+                             isHybridLoaded,
+                             isMatch
                            });
                          }
                          
@@ -8592,17 +8596,21 @@ const RunOfShowPage: React.FC = () => {
                        className={`border-b-2 border-slate-600 flex ${
                          // Use hybrid timer data for real-time highlighting (ClockPage style)
                          (() => {
-                           const isHybridActive = hybridTimerData?.activeTimer?.item_id === item.id && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                           const isHybridLoaded = hybridTimerData?.activeTimer?.item_id === item.id && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
+                           // Match item_id with both string and number comparison
+                           const hybridItemId = hybridTimerData?.activeTimer?.item_id;
+                           const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
+                           const isHybridActive = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
+                           const isHybridLoaded = isMatch && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
                            
                            // Debug: Log highlighting decisions for this item (reduced logging)
-                           if (hybridTimerData?.activeTimer?.item_id === item.id && Math.random() < 0.01) {
+                           if (isMatch && Math.random() < 0.01) {
                              console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                               hybridTimerItemId: hybridTimerData.activeTimer.item_id,
+                               hybridTimerItemId: hybridItemId,
                                isRunning: hybridTimerData.activeTimer.is_running,
                                isActive: hybridTimerData.activeTimer.is_active,
                                isHybridActive,
-                               isHybridLoaded
+                               isHybridLoaded,
+                               isMatch
                              });
                            }
                            
