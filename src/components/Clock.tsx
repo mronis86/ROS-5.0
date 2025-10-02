@@ -97,16 +97,16 @@ const Clock: React.FC<ClockProps> = ({
     } else if (supabaseOnly && hybridTimerData?.activeTimer && !hybridTimerData?.activeTimer?.is_running) {
       // Timer is loaded but not running - show 0 elapsed
       const activeTimer = hybridTimerData.activeTimer;
-      setTimerProgress({
-        elapsed: 0,
-        total: activeTimer.duration_seconds || 0
-      });
+        setTimerProgress({
+          elapsed: 0,
+          total: activeTimer.duration_seconds || 0
+        });
     } else if (supabaseOnly && !hybridTimerData?.activeTimer) {
       // No active timer - clear display
-      setTimerProgress({
+    setTimerProgress({
         elapsed: 0,
         total: 0
-      });
+    });
     }
   }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, supabaseOnly]);
 
@@ -190,13 +190,13 @@ const Clock: React.FC<ClockProps> = ({
         try {
           console.log('🔄 Clock: Loading sub-cue timers and messages on initial load...');
           
-          // Load current sub-cue timers
-          const subCueTimers = await DatabaseService.getActiveSubCueTimers(eventId);
-          if (subCueTimers && subCueTimers.length > 0) {
-            // Find the first running sub-cue timer
-            const runningSubCueTimer = subCueTimers.find(timer => 
-              timer.timer_state === 'running' || timer.is_running === true
-            );
+           // Load current sub-cue timers
+           const subCueTimersResult = await DatabaseService.getActiveSubCueTimers(eventId);
+           if (subCueTimersResult && subCueTimersResult.data && subCueTimersResult.data.length > 0) {
+             // Find the first running sub-cue timer
+             const runningSubCueTimer = subCueTimersResult.data.find(timer => 
+               timer.timer_state === 'running' || timer.is_running === true
+             );
             if (runningSubCueTimer) {
               setHybridTimerData(prev => ({
                 ...prev,
@@ -392,10 +392,10 @@ const Clock: React.FC<ClockProps> = ({
         console.log('🔄 Clock: Performing initial sync for sub-cue timers and messages');
         try {
           // Load current sub-cue timers
-          const subCueTimers = await DatabaseService.getActiveSubCueTimers(eventId);
-          if (subCueTimers && subCueTimers.length > 0) {
+          const subCueTimersResult = await DatabaseService.getActiveSubCueTimers(eventId);
+          if (subCueTimersResult && subCueTimersResult.data && subCueTimersResult.data.length > 0) {
             // Find the first running sub-cue timer
-            const runningSubCueTimer = subCueTimers.find(timer => 
+            const runningSubCueTimer = subCueTimersResult.data.find(timer => 
               timer.timer_state === 'running' || timer.is_running === true
             );
             if (runningSubCueTimer) {
@@ -594,56 +594,56 @@ const Clock: React.FC<ClockProps> = ({
             {(() => {
               if (supabaseOnly) {
                 if (hybridTimerData?.activeTimer) {
-                  const activeTimer = hybridTimerData.activeTimer;
-                  const lastLoadedCue = hybridTimerData?.lastLoadedCue;
-                  const cueData = hybridTimerData?.cueData;
+                const activeTimer = hybridTimerData.activeTimer;
+                const lastLoadedCue = hybridTimerData?.lastLoadedCue;
+                const cueData = hybridTimerData?.cueData;
+                
+                // Try CUE data from active timer cue_is column first
+                if (activeTimer.cue_is) {
+                  return activeTimer.cue_is;
+                }
+                
+                // Try CUE data from schedule/items table second
+                if (cueData) {
+                  console.log('🔍 CUE data structure:', cueData);
+                  console.log('🔍 CUE data fields:', Object.keys(cueData));
                   
-                  // Try CUE data from active timer cue_is column first
-                  if (activeTimer.cue_is) {
-                    return activeTimer.cue_is;
-                  }
-                  
-                  // Try CUE data from schedule/items table second
-                  if (cueData) {
-                    console.log('🔍 CUE data structure:', cueData);
-                    console.log('🔍 CUE data fields:', Object.keys(cueData));
-                    
-                    const cueDisplay = cueData.customFields?.cue || cueData.cue || cueData.cue_display || cueData.name || cueData.title;
-                    const segmentName = cueData.segmentName || cueData.segment_name || cueData.segment;
-                    
-                    if (cueDisplay) {
-                      console.log('✅ Found CUE display:', cueDisplay);
-                      return cueDisplay;
-                    }
-                  }
-                  
-                  // Try active timer other fields
-                  const cueDisplay = activeTimer.cue_display || activeTimer.cue;
-                  const segmentName = activeTimer.segment_name || activeTimer.segmentName;
+                  const cueDisplay = cueData.customFields?.cue || cueData.cue || cueData.cue_display || cueData.name || cueData.title;
+                  const segmentName = cueData.segmentName || cueData.segment_name || cueData.segment;
                   
                   if (cueDisplay) {
+                    console.log('✅ Found CUE display:', cueDisplay);
                     return cueDisplay;
                   }
-                  
-                  // Fallback to last loaded cue
-                  if (lastLoadedCue) {
-                    const lastCueDisplay = lastLoadedCue.cue_display || lastLoadedCue.cue;
-                    const lastSegmentName = lastLoadedCue.segment_name || lastLoadedCue.segmentName;
-                    if (lastCueDisplay) {
-                      return lastCueDisplay;
-                    }
+                }
+                
+                // Try active timer other fields
+                const cueDisplay = activeTimer.cue_display || activeTimer.cue;
+                const segmentName = activeTimer.segment_name || activeTimer.segmentName;
+                
+                if (cueDisplay) {
+                  return cueDisplay;
+                }
+                
+                // Fallback to last loaded cue
+                if (lastLoadedCue) {
+                  const lastCueDisplay = lastLoadedCue.cue_display || lastLoadedCue.cue;
+                  const lastSegmentName = lastLoadedCue.segment_name || lastLoadedCue.segmentName;
+                  if (lastCueDisplay) {
+                    return lastCueDisplay;
                   }
-                  
-                  // Final fallback: Generate CUE display from item_id
-                  if (activeTimer.item_id) {
-                    // Extract a meaningful CUE number from the item_id
-                    const itemIdStr = activeTimer.item_id.toString();
-                    const lastDigits = itemIdStr.slice(-4); // Get last 4 digits
-                    return `CUE ${lastDigits}`;
-                  }
-                  
-                  return 'No CUE';
-                } else {
+                }
+                
+                // Final fallback: Generate CUE display from item_id
+                if (activeTimer.item_id) {
+                  // Extract a meaningful CUE number from the item_id
+                  const itemIdStr = activeTimer.item_id.toString();
+                  const lastDigits = itemIdStr.slice(-4); // Get last 4 digits
+                  return `CUE ${lastDigits}`;
+                }
+                
+                return 'No CUE';
+              } else {
                   // No active timer - show "No Cue"
                   return 'No Cue';
                 }
@@ -793,12 +793,16 @@ const Clock: React.FC<ClockProps> = ({
         </div>
       )}
 
-      {/* Secondary Timer Display - Bottom layout when message is active, center when no message */}
+      {/* Secondary Timer Display - Only when NO message is active */}
       {(() => {
         // Check if we have a secondary timer in either mode
         if (supabaseOnly) {
           const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
           if (!currentSecondaryTimer) return false;
+          
+          // Check if there's a message active - if so, don't show this timer (use the new layout instead)
+          const hasMessage = (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled);
+          if (hasMessage) return false;
           
           console.log('🔍 Clock: Secondary timer data:', {
             is_running: currentSecondaryTimer.is_running,
@@ -1007,7 +1011,7 @@ const Clock: React.FC<ClockProps> = ({
         
         return hasSecondaryTimer && hasMessage;
       })() && (
-        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/3 transform -translate-x-1/2">
+        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-10">
           {/* Overtime Indicator - Above main timer when both message and secondary timer are active */}
           {getRemainingTime() < 0 && (
             <div className="mb-2">
@@ -1022,6 +1026,72 @@ const Clock: React.FC<ClockProps> = ({
             style={{ color: getProgressBarColor() }}
           >
             {formatTime(getRemainingTime())}
+          </div>
+        </div>
+      )}
+
+      {/* Sub-cue Timer Display - When there's both a secondary timer AND a message (small layout) */}
+      {(() => {
+        let hasSecondaryTimer = false;
+        
+        if (supabaseOnly) {
+          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          if (currentSecondaryTimer) {
+            // Check if timer has expired (reached zero or negative)
+            if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
+              const now = new Date();
+              const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
+              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+              const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
+              const remaining = Math.max(0, totalDuration - elapsed);
+              
+              // Only show as active if timer hasn't expired
+              hasSecondaryTimer = remaining > 0;
+            } else {
+              hasSecondaryTimer = true; // Show if timer is stopped but not expired
+            }
+          }
+        } else {
+          hasSecondaryTimer = !!secondaryTimer;
+        }
+        
+        const hasMessage = supabaseOnly ? 
+          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        
+        return hasSecondaryTimer && hasMessage;
+      })() && (
+        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 right-10 text-orange-400">
+          {/* Sub-cue CUE and Segment Name */}
+          <div className="text-lg mb-2 font-bold">
+            {(() => {
+              const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+              const cueDisplay = currentSecondaryTimer.cue_display || currentSecondaryTimer.cue || `CUE ${currentSecondaryTimer.item_id}`;
+              const segmentName = currentSecondaryTimer.segment_name || currentSecondaryTimer.segmentName || 'Segment';
+              return `${cueDisplay} - ${segmentName}`;
+            })()}
+          </div>
+          
+          {/* Sub-cue Countdown Timer */}
+          <div className="font-mono text-3xl font-bold">
+            {(() => {
+              const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+              const now = new Date();
+              const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
+              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+              const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
+              const remaining = Math.max(0, totalDuration - elapsed);
+              
+              const hours = Math.floor(remaining / 3600);
+              const minutes = Math.floor((remaining % 3600) / 60);
+              const seconds = remaining % 60;
+              
+              if (hours > 0) {
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+              } else {
+                return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+              }
+            })()}
           </div>
         </div>
       )}

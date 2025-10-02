@@ -59,6 +59,7 @@ const PhotoViewPage: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isUserEditing, setIsUserEditing] = useState<boolean>(false);
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
+  const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [activeTimers, setActiveTimers] = useState<{[key: number]: boolean}>({});
   const [showNotes, setShowNotes] = useState<boolean>(true);
   const [secondaryTimer, setSecondaryTimer] = useState<{
@@ -71,6 +72,53 @@ const PhotoViewPage: React.FC = () => {
     cue: string;
     segmentName: string;
   } | null>(null);
+
+  // Reset all states function (called from WebSocket events)
+  const resetAllStates = async () => {
+    console.log('🔄 PhotoView: Resetting all states from RunOfShow reset...');
+    
+    // Clear all timer states and highlights
+    setActiveItemId(null);
+    setTimerState(null);
+    setLoadedItems({});
+    setTimerProgress({});
+    setActiveTimers({});
+    setSubCueTimers({});
+    setSubCueTimerProgress({});
+    setSecondaryTimer(null);
+    
+    // Clear indented state locally first
+    setSchedule(prevSchedule => 
+      prevSchedule.map(item => ({
+        ...item,
+        isIndented: false
+      }))
+    );
+    
+    // Reload schedule data from database to get the latest state
+    if (event?.id) {
+      try {
+        console.log('🔄 PhotoView: Reloading schedule data after reset...');
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        if (data?.schedule_items) {
+          const formattedSchedule = data.schedule_items.map((item: any) => ({
+            ...item,
+            isPublic: item.isPublic || false,
+            isIndented: false // Force clear indented state
+          }));
+          setSchedule(formattedSchedule);
+          console.log('✅ PhotoView: Schedule data reloaded and indented state cleared');
+        }
+      } catch (error) {
+        console.warn('⚠️ PhotoView: Failed to reload schedule data:', error);
+        // Fallback: clear indented state locally (already done above)
+        console.log('✅ PhotoView: Using local fallback to clear indented state');
+      }
+    }
+    
+    console.log('✅ PhotoView: All states and highlights reset successfully');
+  };
+
 
   // Helper function to format cue display with proper spacing (matches Run of Show)
   const formatCueDisplay = (cue: string | undefined) => {
@@ -572,12 +620,24 @@ const PhotoViewPage: React.FC = () => {
         console.log('📡 PhotoView: Sub-cue timer started via WebSocket', data);
         // Handle sub-cue timer start
         if (data && data.item_id) {
+          const itemId = parseInt(data.item_id);
           // Find the schedule item to get cue and segment name
-          const scheduleItem = schedule.find(item => item.id === parseInt(data.item_id));
+          const scheduleItem = schedule.find(item => item.id === itemId);
+          
+          // Set sub-cue timer progress
+          setSubCueTimerProgress(prev => ({
+            ...prev,
+            [itemId]: {
+              elapsed: data.elapsed_seconds || 0,
+              total: data.duration_seconds || 60,
+              startedAt: data.started_at ? new Date(data.started_at) : new Date()
+            }
+          }));
+          
           setSecondaryTimer({
-            itemId: parseInt(data.item_id),
+            itemId: itemId,
             duration: data.duration_seconds || 60,
-            remaining: data.duration_seconds || 60,
+            remaining: Math.max(0, (data.duration_seconds || 60) - (data.elapsed_seconds || 0)),
             isActive: true,
             startedAt: data.started_at ? new Date(data.started_at) : new Date(),
             timerState: 'running',
@@ -589,6 +649,14 @@ const PhotoViewPage: React.FC = () => {
       onSubCueTimerStopped: (data: any) => {
         console.log('📡 PhotoView: Sub-cue timer stopped via WebSocket', data);
         // Clear sub-cue timer when stopped
+        if (data && data.item_id) {
+          const itemId = parseInt(data.item_id);
+          setSubCueTimerProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[itemId];
+            return newProgress;
+          });
+        }
         setSecondaryTimer(null);
       },
       onActiveTimersUpdated: (data: any) => {
@@ -632,6 +700,13 @@ const PhotoViewPage: React.FC = () => {
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 PhotoView WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+      },
+      onResetAllStates: (data: any) => {
+        console.log('📡 PhotoView: Reset all states triggered via WebSocket', data);
+        console.log('🔄 PhotoView: About to call resetAllStates function');
+        // Clear all states when RunOfShowPage resets
+        resetAllStates();
+        console.log('✅ PhotoView: resetAllStates function called');
       },
       onInitialSync: async () => {
         console.log('🔄 PhotoView: WebSocket initial sync triggered - loading current state');
@@ -686,35 +761,64 @@ const PhotoViewPage: React.FC = () => {
           console.error('❌ PhotoView: Initial sync failed to load active timer:', error);
         }
         
-        // Load current sub-cue timer
+        // Load current sub-cue timers using DatabaseService (like RunOfShowPage)
         try {
-          const subCueTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/sub-cue-timers/${event?.id}`);
-          if (subCueTimerResponse.ok) {
-            const subCueTimerData = await subCueTimerResponse.json();
-            console.log('🔄 PhotoView initial sync: Loaded sub-cue timer:', subCueTimerData);
+          const { data: subCueTimers, error } = await DatabaseService.getActiveSubCueTimers(event?.id);
+          
+          if (error) {
+            console.error('❌ PhotoView: Error loading sub-cue timers:', error);
+            setSecondaryTimer(null);
+            return;
+          }
+
+          if (subCueTimers && subCueTimers.length > 0) {
+            console.log('🔄 PhotoView initial sync: Loaded sub-cue timers:', subCueTimers);
+            console.log('🔄 PhotoView: Sub-cue timer data structure:', subCueTimers[0]);
+            console.log('🔄 PhotoView: Available fields:', Object.keys(subCueTimers[0]));
+            console.log('🔄 PhotoView: Looking for timer_state === "running"');
+            console.log('🔄 PhotoView: All timer states:', subCueTimers.map(t => ({ id: t.item_id, state: t.timer_state, is_running: t.is_running })));
             
-            if (subCueTimerData && subCueTimerData.item_id && subCueTimerData.is_running) {
-              // Find the schedule item to get cue and segment name
-              const scheduleItem = schedule.find(item => item.id === parseInt(subCueTimerData.item_id));
+            // Find the first running sub-cue timer
+            const runningTimer = subCueTimers.find(timer => timer.timer_state === 'running' || timer.is_running === true);
+            console.log('🔄 PhotoView: Found running timer:', runningTimer);
+            
+            if (runningTimer) {
+              const itemId = parseInt(runningTimer.item_id);
+              const scheduleItem = schedule.find(item => item.id === itemId);
+              
+              // Set sub-cue timer progress
+              setSubCueTimerProgress(prev => ({
+                ...prev,
+                [itemId]: {
+                  elapsed: runningTimer.elapsed_seconds || 0,
+                  total: runningTimer.duration_seconds || 60,
+                  startedAt: runningTimer.started_at ? new Date(runningTimer.started_at) : new Date()
+                }
+              }));
+              
               setSecondaryTimer({
-                itemId: parseInt(subCueTimerData.item_id),
-                duration: subCueTimerData.duration_seconds || 60,
-                remaining: subCueTimerData.duration_seconds || 60,
+                itemId: itemId,
+                duration: runningTimer.duration_seconds || 60,
+                remaining: Math.max(0, (runningTimer.duration_seconds || 60) - (runningTimer.elapsed_seconds || 0)),
                 isActive: true,
-                startedAt: subCueTimerData.started_at ? new Date(subCueTimerData.started_at) : new Date(),
+                startedAt: runningTimer.started_at ? new Date(runningTimer.started_at) : new Date(),
                 timerState: 'running',
-                cue: scheduleItem?.customFields?.cue || `CUE ${subCueTimerData.item_id}`,
+                cue: scheduleItem?.customFields?.cue || `CUE ${runningTimer.item_id}`,
                 segmentName: scheduleItem?.segmentName || 'Segment'
               });
               
               console.log('🔄 PhotoView: Initial sync completed - sub-cue timer restored');
             } else {
               setSecondaryTimer(null);
-              console.log('🔄 PhotoView: Initial sync completed - no active sub-cue timer');
+              console.log('🔄 PhotoView: Initial sync completed - no running sub-cue timer');
             }
+          } else {
+            setSecondaryTimer(null);
+            console.log('🔄 PhotoView: Initial sync completed - no active sub-cue timers');
           }
         } catch (error) {
-          console.error('❌ PhotoView: Initial sync failed to load sub-cue timer:', error);
+          console.error('❌ PhotoView: Initial sync failed to load sub-cue timers:', error);
+          setSecondaryTimer(null);
         }
       }
     };
@@ -779,6 +883,61 @@ const PhotoViewPage: React.FC = () => {
       };
     }
   }, [activeItemId, timerState]); // Removed timerProgress to prevent constant restarts
+
+  // Local timer updates for sub-cue timers
+  useEffect(() => {
+    const subCueTimerIds = Object.keys(subCueTimerProgress);
+    if (subCueTimerIds.length === 0) return;
+
+    const intervals: NodeJS.Timeout[] = [];
+
+    subCueTimerIds.forEach(timerId => {
+      const itemId = parseInt(timerId);
+      const progress = subCueTimerProgress[itemId];
+      
+      if (progress && progress.startedAt) {
+        const interval = setInterval(() => {
+          setSubCueTimerProgress(prev => {
+            if (prev[itemId] && prev[itemId].startedAt) {
+              const startedAt = prev[itemId].startedAt;
+              const now = new Date();
+              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+              
+              return {
+                ...prev,
+                [itemId]: {
+                  ...prev[itemId],
+                  elapsed: elapsed
+                }
+              };
+            }
+            return prev;
+          });
+          
+          // Update secondary timer remaining time
+          setSecondaryTimer(prev => {
+            if (prev && prev.itemId === itemId) {
+              const currentProgress = subCueTimerProgress[itemId];
+              if (currentProgress) {
+                const remaining = Math.max(0, currentProgress.total - currentProgress.elapsed);
+                return {
+                  ...prev,
+                  remaining: remaining
+                };
+              }
+            }
+            return prev;
+          });
+        }, 100);
+        
+        intervals.push(interval);
+      }
+    });
+
+    return () => {
+      intervals.forEach(interval => clearInterval(interval));
+    };
+  }, [subCueTimerProgress]);
 
   // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
@@ -1144,11 +1303,10 @@ const PhotoViewPage: React.FC = () => {
             const pptQAString = pptQA.length > 0 ? pptQA.join('/') : 'None';
             
             return (
-              <div key={item.id}               className={`${
+              <div key={item.id} className={`${
                 isIndented ? 'border-4 border-orange-400' :
                 isActive ? (
-                  isRunning ? 'border-4 border-green-400' : 
-                  timerState === 'stopped' ? 'border-4 border-purple-400' : 'border-4 border-blue-400'
+                  isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400'
                 ) : 
                 'border border-slate-600'
               }`}>
@@ -1156,8 +1314,7 @@ const PhotoViewPage: React.FC = () => {
                         <div className={`grid grid-cols-11 gap-0 ${
                           isIndented ? 'bg-amber-950' : 
                           isActive ? (
-                            isRunning ? 'bg-green-950' : 
-                            timerState === 'stopped' ? 'bg-purple-950' : 'bg-blue-950'
+                            isRunning ? 'bg-green-950' : 'bg-blue-950'
                           ) : 
                           'bg-slate-900'
                         }`} style={{ minHeight: '200px' }}>

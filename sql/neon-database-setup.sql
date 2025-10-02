@@ -146,3 +146,4 @@ COMMENT ON TABLE active_timers IS 'Stores active timer sessions for run of show 
 COMMENT ON TABLE sub_cue_timers IS 'Stores active sub-cue timer sessions';
 COMMENT ON TABLE completed_cues IS 'Stores completed cue records';
 COMMENT ON TABLE timer_actions IS 'Stores timer action history';
+

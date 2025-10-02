@@ -3458,6 +3458,12 @@ const RunOfShowPage: React.FC = () => {
     );
     console.log('🔄 Stop all timers result:', stopResult);
     
+    // Stop any running sub-cue timer when loading a new cue
+    if (secondaryTimer) {
+      console.log('🛑 Stopping sub-cue timer because new cue is being loaded');
+      await stopSecondaryTimer();
+    }
+    
     // Mark the previously active CUE as stopped (if there was one)
     if (activeItemId && activeItemId !== itemId) {
       setStoppedItems(prev => new Set([...prev, activeItemId]));
@@ -5385,6 +5391,12 @@ const RunOfShowPage: React.FC = () => {
         delete newProgress[itemId];
         return newProgress;
       });
+
+      // Stop any running sub-cue timer when main timer is stopped
+      if (secondaryTimer) {
+        console.log('🛑 Stopping sub-cue timer because main timer was stopped');
+        await stopSecondaryTimer();
+      }
 
       // Update active_timers table in API
       console.log('🔄 Stopping timer in API for item:', itemId);

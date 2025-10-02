@@ -130,3 +130,4 @@ class AuthService {
 
 export const authService = AuthService.getInstance();
 export type { User, AuthState };
+

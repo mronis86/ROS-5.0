@@ -15,3 +15,4 @@ ADD CONSTRAINT unique_event_id UNIQUE (event_id);
 
 -- Add index for better performance
 CREATE INDEX IF NOT EXISTS idx_active_timers_event_id ON active_timers(event_id);
+

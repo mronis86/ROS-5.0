@@ -19,6 +19,7 @@ interface SocketCallbacks {
   onResetAllStates?: (data: any) => void; // NEW! For reset events
   onConnectionChange?: (connected: boolean) => void;
   onInitialSync?: () => Promise<void>; // NEW! For initial sync on connect
+  onTimerMessageUpdated?: (data: any) => void; // NEW! For ClockPage messages
 }
 
 class SocketClient {
@@ -91,6 +92,10 @@ class SocketClient {
           break;
         case 'resetAllStates': // NEW!
           this.callbacks.onResetAllStates?.(message.data);
+          break;
+        case 'timerMessageUpdated': // NEW! For ClockPage messages
+          console.log('📡 SocketClient: Received timerMessageUpdated event:', message.data);
+          this.callbacks.onTimerMessageUpdated?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);

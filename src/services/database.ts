@@ -1166,24 +1166,26 @@ export class DatabaseService {
 
   static async clearAllActiveTimersForEvent(eventId: string): Promise<boolean> {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping clear all active timers');
+      // Use the existing stop-all endpoint instead of DELETE
+      console.log('🔄 Clearing all active timers for event via API:', eventId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/active-timers/stop-all`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event_id: eventId
+        })
+      });
+
+      if (!response.ok) {
+        console.error('❌ Error clearing all active timers via API:', response.statusText);
         return false;
       }
 
-      console.log('🔄 Clearing all active timers for event:', eventId);
-
-      const { error } = await supabase
-        .from('active_timers')
-        .delete()
-        .eq('event_id', eventId);
-
-      if (error) {
-        console.error('❌ Error clearing all active timers:', error);
-        return false;
-      }
-
-      console.log('✅ All active timers cleared for event:', eventId);
+      const result = await response.json();
+      console.log('✅ All active timers cleared for event via API:', eventId, result);
       return true;
     } catch (error) {
       console.error('❌ Error clearing all active timers:', error);
