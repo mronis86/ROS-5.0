@@ -155,20 +155,7 @@ const Clock: React.FC<ClockProps> = ({
       setLastActiveItemId(null);
       setLastActiveStartTime(null);
       
-      // Clean up drift detection
-      if (lastActiveTimerId) {
-        const itemId = parseInt(lastActiveTimerId.split('_')[0]);
-        driftDetector.stopMonitoring(itemId);
-      }
-      
-      // Clear drift sync interval
-      if (localTimerInterval) {
-        clearInterval(localTimerInterval);
-        setLocalTimerInterval(null);
-      }
-      
-      // Clear server-synced timers
-      setServerSyncedTimers(new Set());
+      // WebSocket provides real-time updates, no drift detection cleanup needed
       
       return;
     }
@@ -197,6 +184,39 @@ const Clock: React.FC<ClockProps> = ({
             activeTimer: null
           }));
           console.log('❌ No active timer found or timer is stopped');
+        }
+        
+        // Also load sub-cue timers and messages on initial load
+        try {
+          console.log('🔄 Clock: Loading sub-cue timers and messages on initial load...');
+          
+          // Load current sub-cue timers
+          const subCueTimers = await DatabaseService.getActiveSubCueTimers(eventId);
+          if (subCueTimers && subCueTimers.length > 0) {
+            // Find the first running sub-cue timer
+            const runningSubCueTimer = subCueTimers.find(timer => 
+              timer.timer_state === 'running' || timer.is_running === true
+            );
+            if (runningSubCueTimer) {
+              setHybridTimerData(prev => ({
+                ...prev,
+                secondaryTimer: runningSubCueTimer
+              }));
+              console.log('✅ Clock: Initial load - sub-cue timer loaded:', runningSubCueTimer);
+            }
+          }
+          
+          // Load current timer message
+          const timerMessage = await DatabaseService.getTimerMessage(eventId);
+          if (timerMessage) {
+            setHybridTimerData(prev => ({
+              ...prev,
+              timerMessage: timerMessage
+            }));
+            console.log('✅ Clock: Initial load - timer message loaded:', timerMessage);
+          }
+        } catch (error) {
+          console.error('❌ Clock: Initial load failed to load sub-cue timers and messages:', error);
         }
         
         // Check if active timer has changed (cue jump detection)
