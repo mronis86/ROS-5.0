@@ -180,10 +180,23 @@ app.get('/api/completed-cues/:eventId', async (req, res) => {
 
 app.post('/api/completed-cues', async (req, res) => {
   try {
-    const { event_id, item_id, user_id } = req.body;
+    const { event_id, item_id, user_id, cue_id, user_name, user_role } = req.body;
+    
+    if (!event_id || !item_id || !user_id) {
+      return res.status(400).json({ error: 'event_id, item_id, and user_id are required' });
+    }
+    
     const result = await pool.query(
-      'INSERT INTO completed_cues (event_id, item_id, user_id) VALUES ($1, $2, $3) RETURNING *',
-      [event_id, item_id, user_id]
+      `INSERT INTO completed_cues (event_id, item_id, cue_id, user_id, user_name, user_role, completed_at) 
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+      [
+        event_id, 
+        item_id, 
+        cue_id || `CUE ${item_id}`,
+        user_id,
+        user_name || 'Unknown User',
+        user_role || 'VIEWER'
+      ]
     );
     
     // Broadcast update via SSE
@@ -548,6 +561,37 @@ app.post('/api/timer-messages', async (req, res) => {
   } catch (error) {
     console.error('Error creating timer message:', error);
     res.status(500).json({ error: 'Failed to create timer message' });
+  }
+});
+
+// Stop sub-cue timers
+app.put('/api/sub-cue-timers/stop', async (req, res) => {
+  try {
+    const { event_id, item_id } = req.body;
+    
+    if (!event_id) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
+    
+    // Stop sub-cue timers (all for event, or specific item if provided)
+    const query = item_id 
+      ? 'UPDATE sub_cue_timers SET is_running = false, is_active = false, updated_at = NOW() WHERE event_id = $1 AND item_id = $2 RETURNING *'
+      : 'UPDATE sub_cue_timers SET is_running = false, is_active = false, updated_at = NOW() WHERE event_id = $1 RETURNING *';
+    
+    const params = item_id ? [event_id, item_id] : [event_id];
+    const result = await pool.query(query, params);
+    
+    // Broadcast update via WebSocket
+    broadcastUpdate(event_id, 'subCueTimerStopped', { event_id, item_id, stopped_count: result.rows.length });
+    
+    res.json({ 
+      message: `Stopped ${result.rows.length} sub-cue timer(s)`,
+      stopped_count: result.rows.length,
+      timers: result.rows
+    });
+  } catch (error) {
+    console.error('Error stopping sub-cue timers:', error);
+    res.status(500).json({ error: 'Failed to stop sub-cue timers' });
   }
 });
 

@@ -960,23 +960,28 @@ export class DatabaseService {
 
   static async stopSubCueTimer(eventId: string, itemId?: number) {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping stop sub-cue timer');
-        return { data: null, error: null };
-      }
-
-      const { data, error } = await supabase.rpc('stop_sub_cue_timer_for_event', {
-        p_event_id: eventId,
-        p_item_id: null
+      console.log('🔄 Stopping sub-cue timer via API:', { eventId, itemId });
+      
+      // Update all sub-cue timers for this event to stopped
+      const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers/stop`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event_id: eventId,
+          item_id: itemId || null
+        })
       });
 
-      if (error) {
-        console.error('❌ Error stopping sub-cue timer:', error);
-        console.error('❌ Error details:', JSON.stringify(error, null, 2));
-        return { data: null, error };
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Sub-cue timer stopped successfully via API:', result);
+        return { data: result, error: null };
+      } else {
+        console.error('❌ Failed to stop sub-cue timer via API:', response.status, response.statusText);
+        return { data: null, error: { message: `HTTP ${response.status}` } };
       }
-
-      return { data, error: null };
     } catch (error) {
       console.error('❌ Error stopping sub-cue timer:', error);
       return { data: null, error };
@@ -1207,7 +1212,7 @@ export class DatabaseService {
   // Mark a cue as completed
   static async markCueCompleted(eventId: string, itemId: number, cueId: string, userId: string, userName: string, userRole: string): Promise<boolean> {
     try {
-      console.log('🟣 Marking cue as completed via API:', { eventId, itemId, userId });
+      console.log('🟣 Marking cue as completed via API:', { eventId, itemId, userId, userName, userRole });
       
       const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues`, {
         method: 'POST',
@@ -1217,7 +1222,10 @@ export class DatabaseService {
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
-          user_id: userId
+          cue_id: cueId,
+          user_id: userId,
+          user_name: userName,
+          user_role: userRole
         })
       });
 
