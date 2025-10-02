@@ -293,15 +293,17 @@ app.post('/api/active-timers', async (req, res) => {
 // Stop all timers for an event
 app.put('/api/active-timers/stop-all', async (req, res) => {
   try {
-    const { event_id, user_id } = req.body;
+    const { event_id, user_id, user_name, user_role } = req.body;
     
     // Stop the single active timer for the event
     const result = await pool.query(
       `UPDATE active_timers 
-       SET is_running = false, is_active = false, updated_at = NOW()
+       SET is_running = false, is_active = false, timer_state = 'stopped',
+           user_id = COALESCE($2, user_id), user_name = COALESCE($3, user_name), user_role = COALESCE($4, user_role),
+           updated_at = NOW()
        WHERE event_id = $1
        RETURNING *`,
-      [event_id]
+      [event_id, user_id, user_name, user_role]
     );
     
     // Broadcast update via WebSocket
@@ -321,15 +323,17 @@ app.put('/api/active-timers/stop-all', async (req, res) => {
 // Stop a specific timer
 app.put('/api/active-timers/stop', async (req, res) => {
   try {
-    const { event_id, item_id, user_id } = req.body;
+    const { event_id, item_id, user_id, user_name, user_role } = req.body;
     
     // Update the single active timer record for this event
     const result = await pool.query(
       `UPDATE active_timers 
-       SET is_running = false, is_active = false, updated_at = NOW()
+       SET is_running = false, is_active = false, timer_state = 'stopped', 
+           user_id = COALESCE($3, user_id), user_name = COALESCE($4, user_name), user_role = COALESCE($5, user_role),
+           updated_at = NOW()
        WHERE event_id = $1 AND (item_id = $2 OR item_id IS NULL)
        RETURNING *`,
-      [event_id, item_id]
+      [event_id, item_id, user_id, user_name, user_role]
     );
     
     // Broadcast update via WebSocket

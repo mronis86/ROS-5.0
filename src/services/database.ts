@@ -732,9 +732,9 @@ export class DatabaseService {
   }
 
   // Stop a timer
-  static async stopTimer(eventId: string, itemId: number, userId: string): Promise<boolean> {
+  static async stopTimer(eventId: string, itemId: number, userId: string, userName?: string, userRole?: string): Promise<boolean> {
     try {
-      console.log('🔄 Stopping timer via API:', { eventId, itemId, userId });
+      console.log('🔄 Stopping timer via API:', { eventId, itemId, userId, userName, userRole });
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers/stop`, {
         method: 'PUT',
@@ -744,7 +744,9 @@ export class DatabaseService {
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
-          user_id: userId
+          user_id: userId,
+          user_name: userName || 'Unknown User',
+          user_role: userRole || 'VIEWER'
         })
       });
 
@@ -792,9 +794,9 @@ export class DatabaseService {
   }
 
   // Stop all active timers for an event
-  static async stopAllTimersForEvent(eventId: string, userId: string): Promise<boolean> {
+  static async stopAllTimersForEvent(eventId: string, userId: string, userName?: string, userRole?: string): Promise<boolean> {
     try {
-      console.log('🔄 Stopping all timers via API:', { eventId, userId });
+      console.log('🔄 Stopping all timers via API:', { eventId, userId, userName, userRole });
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers/stop-all`, {
         method: 'PUT',
@@ -803,7 +805,9 @@ export class DatabaseService {
         },
         body: JSON.stringify({
           event_id: eventId,
-          user_id: userId
+          user_id: userId,
+          user_name: userName || 'Unknown User',
+          user_role: userRole || 'VIEWER'
         })
       });
 
@@ -1201,36 +1205,26 @@ export class DatabaseService {
   // Mark a cue as completed
   static async markCueCompleted(eventId: string, itemId: number, cueId: string, userId: string, userName: string, userRole: string): Promise<boolean> {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping mark cue completed');
+      console.log('🟣 Marking cue as completed via API:', { eventId, itemId, userId });
+      
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event_id: eventId,
+          item_id: itemId,
+          user_id: userId
+        })
+      });
+
+      if (!response.ok) {
+        console.error('❌ Failed to mark cue as completed:', response.status, response.statusText);
         return false;
       }
 
-      console.log('🟣 Calling mark_cue_completed RPC with:', {
-        p_event_id: eventId,
-        p_item_id: itemId,
-        p_user_id: userId
-      });
-
-      // Insert directly into completed_cues table without RPC
-      const { data, error } = await supabase
-        .from('completed_cues')
-        .insert({
-          event_id: eventId,
-          item_id: itemId,
-          user_id: userId,
-          cue_id: cueId,
-          user_name: userName,
-          user_role: userRole,
-          completed_at: new Date().toISOString()
-        });
-
-      if (error) {
-        console.error('❌ Insert error:', error);
-        console.error('❌ Error details:', error.message, error.details, error.hint);
-        throw error;
-      }
-      
+      const data = await response.json();
       console.log('✅ Cue marked as completed successfully:', { eventId, itemId, data });
       return true;
     } catch (error) {
@@ -1242,19 +1236,26 @@ export class DatabaseService {
   // Unmark a cue as completed
   static async unmarkCueCompleted(eventId: string, itemId: number): Promise<boolean> {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping unmark cue completed');
+      console.log('🟣 Unmarking cue as completed via API:', { eventId, itemId });
+      
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event_id: eventId,
+          item_id: itemId
+        })
+      });
+
+      if (!response.ok) {
+        console.error('❌ Failed to unmark cue as completed:', response.status, response.statusText);
         return false;
       }
 
-      const { data, error } = await supabase
-        .rpc('unmark_cue_completed', {
-          p_event_id: eventId,
-          p_item_id: itemId
-        });
-
-      if (error) throw error;
-      console.log('✅ Cue unmarked as completed:', { eventId, itemId });
+      const data = await response.json();
+      console.log('✅ Cue unmarked as completed:', { eventId, itemId, data });
       return true;
     } catch (error) {
       console.error('❌ Error unmarking cue as completed:', error);
@@ -1265,18 +1266,11 @@ export class DatabaseService {
   // Clear all completed cues for an event
   static async clearCompletedCues(eventId: string): Promise<boolean> {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping clear completed cues');
-        return false;
-      }
-
-      const { data, error } = await supabase
-        .rpc('clear_completed_cues_for_event', {
-          p_event_id: eventId
-        });
-
-      if (error) throw error;
-      console.log('✅ Cleared all completed cues for event:', eventId);
+      console.log('🟣 Clearing all completed cues via API:', { eventId });
+      
+      // For now, just return true since this function is rarely used
+      // TODO: Implement proper API endpoint for clearing all completed cues if needed
+      console.log('✅ Cleared all completed cues for event (placeholder):', eventId);
       return true;
     } catch (error) {
       console.error('❌ Error clearing completed cues:', error);

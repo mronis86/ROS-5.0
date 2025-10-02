@@ -1,7 +1,5 @@
 // API Client for communicating with our Express API server
-const API_BASE_URL = import.meta.env.PROD 
-  ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
-  : 'http://localhost:3001';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
 // Smart caching system
 interface CacheEntry<T> {

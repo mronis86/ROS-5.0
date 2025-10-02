@@ -999,8 +999,8 @@ const RunOfShowPage: React.FC = () => {
       // Load completed cues from API
       loadCompletedCuesFromAPI();
       
-      // Load active timer from API
-      loadActiveTimerFromAPI(); // Load current active timer state from database
+      // NOTE: loadActiveTimerFromAPI() is now called AFTER schedule is loaded
+      // to prevent race condition where cue display text is missing
       
       // Load active sub-cue timers from API
       loadActiveSubCueTimersFromAPI();
@@ -3450,7 +3450,12 @@ const RunOfShowPage: React.FC = () => {
     
     // Stop all timers via API
     console.log('🔄 Stopping all timers in API for event:', event.id, 'user:', user.id);
-    const stopResult = await DatabaseService.stopAllTimersForEvent(event.id, user.id);
+    const stopResult = await DatabaseService.stopAllTimersForEvent(
+      event.id, 
+      user.id, 
+      user.full_name || user.email || 'Unknown User',
+      currentUserRole || 'VIEWER'
+    );
     console.log('🔄 Stop all timers result:', stopResult);
     
     // Mark the previously active CUE as stopped (if there was one)
@@ -4194,6 +4199,12 @@ const RunOfShowPage: React.FC = () => {
         setChangeNotification({ show: false });
         
         console.log('✅ Run of Show data loaded from API successfully');
+        
+        // CRITICAL: Load active timer AFTER schedule is loaded to ensure cue display works
+        // Use setTimeout to ensure state updates are processed
+        setTimeout(() => {
+          loadActiveTimerFromAPI();
+        }, 100);
       } else {
         console.log('ℹ️ No data found in API, falling back to localStorage for event:', event.id);
         // Fallback to localStorage if API has no data
@@ -4424,8 +4435,8 @@ const RunOfShowPage: React.FC = () => {
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');
         
-        // Load current active timer state using the proper function
-        await loadActiveTimerFromAPI();
+        // NOTE: loadActiveTimerFromAPI() is now called AFTER schedule is loaded
+        // in loadFromAPI() to prevent race condition where cue display text is missing
         
         // Load current completed cues
         try {
@@ -5338,7 +5349,13 @@ const RunOfShowPage: React.FC = () => {
 
       // Update active_timers table in API
       console.log('🔄 Stopping timer in API for item:', itemId);
-      await DatabaseService.stopTimer(event.id, itemId, user.id);
+      await DatabaseService.stopTimer(
+        event.id, 
+        itemId, 
+        user.id, 
+        user.full_name || user.email || 'Unknown User',
+        currentUserRole || 'VIEWER'
+      );
       console.log('✅ Timer stopped in API');
       
       // Try to save last loaded CUE as stopped (will fail gracefully if migration not run)
@@ -5541,7 +5558,13 @@ const RunOfShowPage: React.FC = () => {
 
       // Update database
       try {
-        await DatabaseService.stopTimer(event.id, itemId, user.id);
+        await DatabaseService.stopTimer(
+          event.id, 
+          itemId, 
+          user.id, 
+          user.full_name || user.email || 'Unknown User',
+          currentUserRole || 'VIEWER'
+        );
         console.log('✅ Timer reset in API');
       } catch (error) {
         console.error('❌ Error resetting timer in database:', error);
