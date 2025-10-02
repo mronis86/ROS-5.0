@@ -8232,10 +8232,8 @@ const RunOfShowPage: React.FC = () => {
                            if (Math.random() < 0.1) { // 10% chance to log
                              console.log('🔍 Indented Debug:', {
                                itemId: item.id,
-                               itemName: item.segmentName,
                                isIndented: item.isIndented,
-                               currentIndex,
-                               parentItem: parentItem ? { id: parentItem.id, name: parentItem.segmentName } : null,
+                               parentId: parentItem?.id,
                                hybridTimerItemId: hybridTimerData?.activeTimer?.item_id,
                                hybridTimerActive: hybridTimerData?.activeTimer?.is_active,
                                hybridTimerRunning: hybridTimerData?.activeTimer?.is_running,
@@ -8800,10 +8798,8 @@ const RunOfShowPage: React.FC = () => {
                            if (Math.random() < 0.1) { // 10% chance to log
                              console.log('🔍 Indented Debug (2nd):', {
                                itemId: item.id,
-                               itemName: item.segmentName,
                                isIndented: item.isIndented,
-                               currentIndex,
-                               parentItem: parentItem ? { id: parentItem.id, name: parentItem.segmentName } : null,
+                               parentId: parentItem?.id,
                                hybridTimerItemId: hybridTimerData?.activeTimer?.item_id,
                                hybridTimerActive: hybridTimerData?.activeTimer?.is_active,
                                hybridTimerRunning: hybridTimerData?.activeTimer?.is_running,
