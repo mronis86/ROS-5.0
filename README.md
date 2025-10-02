@@ -11,6 +11,27 @@ A Python GUI application that functions as an OSC server, capable of authenticat
 - **Timer Controls**: Process OSC commands for cue loading and timer management
 - **Real-time Updates**: Auto-refresh functionality for schedule changes
 
+## 🚀 Optimized Python Live Graphics Generator
+
+A modern Python desktop application for generating live graphics files for VMIX:
+
+- **✅ WebSocket + API + Neon Database** - Real-time updates
+- **✅ 90%+ Egress Reduction** - Minimal data usage
+- **✅ Multiple Output Formats** - XML/CSV for VMIX
+- **✅ Cross-Platform** - Works on Windows, Mac, Linux
+
+**Quick Start:**
+```bash
+# Run from main directory
+start_optimized_graphics.bat
+
+# Or navigate to folder
+cd optimized-python-graphics
+run_optimized_graphics.bat
+```
+
+**Location:** `optimized-python-graphics/` folder
+
 ## Installation
 
 1. **Install Python 3.8+** (if not already installed)

@@ -53,6 +53,10 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Note: Authentication is now handled by Neon Auth
+// Users are automatically synced to neon_auth.users_sync table
+// No custom authentication endpoints needed
+
 // Calendar Events endpoints
 app.get('/api/calendar-events', async (req, res) => {
   try {
@@ -224,6 +228,29 @@ app.delete('/api/completed-cues', async (req, res) => {
   } catch (error) {
     console.error('Error unmarking cue as completed:', error);
     res.status(500).json({ error: 'Failed to unmark cue as completed' });
+  }
+});
+
+// Delete all completed cues for an event
+app.delete('/api/completed-cues/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    console.log(`🗑️ Deleting all completed cues for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'DELETE FROM completed_cues WHERE event_id = $1 RETURNING *',
+      [eventId]
+    );
+    
+    console.log(`✅ Deleted ${result.rows.length} completed cues from Neon database for event: ${eventId}`);
+    
+    // Broadcast update via SSE
+    broadcastUpdate(eventId, 'completedCuesUpdated', { cleared: true, count: result.rows.length });
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('❌ Error clearing all completed cues from Neon:', error);
+    res.status(500).json({ error: 'Failed to clear all completed cues' });
   }
 });
 
@@ -746,6 +773,24 @@ io.on('connection', (socket) => {
     console.log(`🔌 Socket.IO client ${socket.id} left event:${eventId}`);
   });
   
+  // Handle reset all states event
+  socket.on('resetAllStates', (data) => {
+    console.log(`🔄 Reset all states requested for event: ${data.eventId}`);
+    // Broadcast reset event to all clients in the event room
+    io.to(`event:${data.eventId}`).emit('update', {
+      type: 'resetAllStates',
+      data: { eventId: data.eventId }
+    });
+    
+    // Also broadcast completed cues cleared event
+    io.to(`event:${data.eventId}`).emit('update', {
+      type: 'completedCuesUpdated',
+      data: { cleared: true, eventId: data.eventId }
+    });
+    
+    console.log(`📡 Reset all states and completed cues cleared broadcasted to event:${data.eventId}`);
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`🔌 Socket.IO client disconnected: ${socket.id}`);

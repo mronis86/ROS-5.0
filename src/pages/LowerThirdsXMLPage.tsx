@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { supabase } from '../services/supabase';
+import { DatabaseService } from '../services/database';
+import { socketClient } from '../services/socket-client';
 
 interface Speaker {
   slot: number;
@@ -141,7 +142,7 @@ const LowerThirdsXMLPage: React.FC = () => {
     return xmlHeader + xmlContent;
   };
 
-  // Fetch data from Supabase run_of_show_data table
+  // Fetch data using DatabaseService (replaces direct Supabase calls)
   const fetchLowerThirds = async () => {
     try {
       setIsLoading(true);
@@ -153,16 +154,8 @@ const LowerThirdsXMLPage: React.FC = () => {
 
       console.log('📊 Fetching lower thirds data for event:', eventId);
 
-      // Fetch from run_of_show_data table
-      const { data, error: fetchError } = await supabase
-        .from('run_of_show_data')
-        .select('*')
-        .eq('event_id', eventId)
-        .single();
-
-      if (fetchError) {
-        throw new Error(`Database error: ${fetchError.message}`);
-      }
+      // Use DatabaseService instead of direct Supabase calls
+      const data = await DatabaseService.getRunOfShowData(eventId);
 
       if (!data || !data.schedule_items) {
         setLowerThirds([]);
@@ -218,21 +211,80 @@ const LowerThirdsXMLPage: React.FC = () => {
     }
   };
 
-  // Initial fetch
+  // WebSocket-based real-time updates (replaces high-egress polling)
   useEffect(() => {
+    if (!eventId) {
+      console.log('❌ No event ID, skipping WebSocket connection');
+      return;
+    }
+
+    console.log('🔄 Setting up WebSocket connection for Lower Thirds XML page');
+
+    // Load initial data
     fetchLowerThirds();
+
+    const callbacks = {
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 Lower Thirds XML: WebSocket data update received:', data);
+        if (data && data.schedule_items) {
+          // Process the updated data
+          const scheduleItems: ScheduleItem[] = data.schedule_items;
+          const lowerThirdsData: LowerThird[] = [];
+
+          scheduleItems.forEach((item, index) => {
+            const baseEntry: LowerThird = {
+              id: `${item.id}-row`,
+              title: '',
+              subtitle: '',
+              is_active: true,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              segmentName: item.segmentName || '',
+              cue: item.customFields?.cue || '',
+              program: item.programType || '',
+              speakers: []
+            };
+
+            // Add speakers if available
+            if (item.speakersText && item.speakersText.trim()) {
+              try {
+                const speakersArray: Speaker[] = JSON.parse(item.speakersText);
+                const sortedSpeakers = speakersArray.sort((a, b) => a.slot - b.slot);
+
+                baseEntry.speakers = sortedSpeakers.map(speaker => ({
+                  title: speaker.fullName || '',
+                  subtitle: speaker.title && speaker.org ? `${speaker.title}\n${speaker.org}` : speaker.title || speaker.org || '',
+                  photo: speaker.photoLink || ''
+                }));
+              } catch (error) {
+                console.log('Error parsing speakers JSON for item:', item.id, error);
+              }
+            }
+            
+            lowerThirdsData.push(baseEntry);
+          });
+
+          setLowerThirds(lowerThirdsData);
+          setLastUpdated(new Date());
+          console.log('✅ Lower Thirds XML: Data updated via WebSocket');
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log('📡 Lower Thirds XML: WebSocket connection status:', connected);
+        if (connected) {
+          // Reload data when reconnected
+          fetchLowerThirds();
+        }
+      }
+    };
+
+    socketClient.connect(eventId, callbacks);
+
+    return () => {
+      console.log('🔄 Lower Thirds XML: Cleaning up WebSocket connection');
+      socketClient.disconnect(eventId);
+    };
   }, [eventId]);
-
-  // Auto-refresh mechanism
-  useEffect(() => {
-    if (!eventId) return;
-
-    const interval = setInterval(() => {
-      fetchLowerThirds();
-    }, refreshInterval * 1000);
-
-    return () => clearInterval(interval);
-  }, [eventId, refreshInterval]);
 
   // Handle manual refresh
   const handleRefresh = () => {
@@ -375,9 +427,9 @@ const LowerThirdsXMLPage: React.FC = () => {
 
         {/* Controls */}
         <div className="bg-gray-800 rounded-lg p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <label className="block text-sm font-medium">
                 Refresh Interval (seconds)
               </label>
               <select
@@ -390,9 +442,6 @@ const LowerThirdsXMLPage: React.FC = () => {
                 <option value={30}>30 seconds</option>
                 <option value={60}>1 minute</option>
               </select>
-            </div>
-            
-            <div className="flex items-end">
               <button
                 onClick={handleRefresh}
                 disabled={isLoading}

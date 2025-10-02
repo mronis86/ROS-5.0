@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { supabase } from '../services/supabase';
+import { DatabaseService } from '../services/database';
+import { socketClient } from '../services/socket-client';
 
 interface ScheduleItem {
   id: string;
@@ -118,15 +119,8 @@ const ScheduleXMLPage: React.FC = () => {
 
       console.log('📅 Fetching schedule data for event:', eventId);
 
-      const { data, error: fetchError } = await supabase
-        .from('run_of_show_data')
-        .select('*')
-        .eq('event_id', eventId)
-        .single();
-
-      if (fetchError) {
-        throw new Error(`Database error: ${fetchError.message}`);
-      }
+      // Use DatabaseService instead of direct Supabase calls
+      const data = await DatabaseService.getRunOfShowData(eventId);
 
       if (!data || !data.schedule_items) {
         setScheduleItems([]);
@@ -171,12 +165,68 @@ const ScheduleXMLPage: React.FC = () => {
     }
   };
 
+  // WebSocket-based real-time updates (replaces high-egress polling)
   useEffect(() => {
+    if (!eventId) {
+      console.log('❌ No event ID, skipping WebSocket connection');
+      return;
+    }
+
+    console.log('🔄 Setting up WebSocket connection for Schedule XML page');
+
+    // Load initial data
     fetchScheduleData();
-    
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(fetchScheduleData, 10000);
-    return () => clearInterval(interval);
+
+    const callbacks = {
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 Schedule XML: WebSocket data update received:', data);
+        if (data && data.schedule_items) {
+          // Process the updated data
+          const scheduleItemsData: ScheduleItem[] = [];
+          const items = data.schedule_items;
+          const masterStartTime = data.settings?.masterStartTime || '';
+
+          // Filter for public items only
+          const publicItems = items.filter((item: any) => item.isPublic);
+
+          publicItems.forEach((item: any, index: number) => {
+            const startTime = calculateStartTime(items, item, masterStartTime);
+            
+            const baseEntry: ScheduleItem = {
+              id: `${item.id}-schedule`,
+              title: item.segmentName || 'Untitled Segment',
+              subtitle: '',
+              is_active: true,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              segmentName: item.segmentName || 'Untitled Segment',
+              startTime: startTime || 'No Start Time',
+              speakers: []
+            };
+            
+            scheduleItemsData.push(baseEntry);
+          });
+
+          setScheduleItems(scheduleItemsData);
+          setLastUpdated(new Date());
+          console.log('✅ Schedule XML: Data updated via WebSocket');
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log('📡 Schedule XML: WebSocket connection status:', connected);
+        if (connected) {
+          // Reload data when reconnected
+          fetchScheduleData();
+        }
+      }
+    };
+
+    socketClient.connect(eventId, callbacks);
+
+    return () => {
+      console.log('🔄 Schedule XML: Cleaning up WebSocket connection');
+      socketClient.disconnect(eventId);
+    };
   }, [eventId]);
 
   const generateXML = (data: ScheduleItem[]): string => {

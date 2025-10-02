@@ -1278,14 +1278,24 @@ export class DatabaseService {
   // Clear all completed cues for an event
   static async clearCompletedCues(eventId: string): Promise<boolean> {
     try {
-      console.log('🟣 Clearing all completed cues via API:', { eventId });
+      console.log('🟣 Clearing all completed cues from Neon database via API:', { eventId });
       
-      // For now, just return true since this function is rarely used
-      // TODO: Implement proper API endpoint for clearing all completed cues if needed
-      console.log('✅ Cleared all completed cues for event (placeholder):', eventId);
+      const response = await fetch(`${API_BASE_URL}/api/completed-cues/${eventId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        console.error('❌ Error clearing completed cues from Neon via API:', response.statusText);
+        return false;
+      }
+
+      console.log('✅ Successfully deleted all completed cues from Neon database for event:', eventId);
       return true;
     } catch (error) {
-      console.error('❌ Error clearing completed cues:', error);
+      console.error('❌ Error clearing completed cues from Neon:', error);
       return false;
     }
   }

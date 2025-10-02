@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
+import { socketClient } from '../services/socket-client';
 
 interface ScheduleItem {
   id: number;
@@ -48,7 +49,7 @@ const GraphicsLinksPage: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Initialize schedule data
+  // Initialize schedule data - optimized for minimal egress
   useEffect(() => {
     const loadInitialData = async () => {
       console.log('=== GRAPHICS LINKS PAGE INITIALIZATION ===');
@@ -57,23 +58,8 @@ const GraphicsLinksPage: React.FC = () => {
       console.log('Final event object:', event);
       
       try {
-        // Try to load from Supabase first
-        if (event?.id) {
-          console.log('🔄 Loading from Supabase for event:', event.id);
-          const data = await DatabaseService.getRunOfShowData(event.id);
-          if (data) {
-            console.log('✅ Loaded from Supabase:', data);
-            console.log('Schedule items from Supabase:', data.schedule_items?.length || 0);
-            console.log('Sample schedule item:', data.schedule_items?.[0]);
-            setSchedule(data.schedule_items || []);
-            setLastChangeAt(data.updated_at || null);
-            setIsLoading(false);
-            return;
-          }
-        }
-        
-        // Fallback to localStorage
-        console.log('📱 Falling back to localStorage...');
+        // Try localStorage first (fastest, no egress)
+        console.log('📱 Loading from localStorage first...');
         let savedSchedule: string | null = null;
         
         // First try with event ID if available
@@ -102,6 +88,19 @@ const GraphicsLinksPage: React.FC = () => {
           const parsedSchedule = JSON.parse(savedSchedule);
           console.log('📱 Loaded from localStorage:', parsedSchedule);
           setSchedule(parsedSchedule);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Only fallback to API if no localStorage data found
+        if (event?.id) {
+          console.log('🔄 No localStorage data, loading from API for event:', event.id);
+          const data = await DatabaseService.getRunOfShowData(event.id);
+          if (data) {
+            console.log('✅ Loaded from API:', data);
+            setSchedule(data.schedule_items || []);
+            setLastChangeAt(data.updated_at || null);
+          }
         }
       } catch (error) {
         console.error('❌ Error loading initial data:', error);
@@ -113,116 +112,56 @@ const GraphicsLinksPage: React.FC = () => {
     loadInitialData();
   }, [event?.id, eventId]);
 
-  // Real-time change detection
+  // WebSocket-based real-time updates (replaces high-egress polling)
   useEffect(() => {
     if (!event?.id) {
-      console.log('❌ No event ID, skipping change detection');
+      console.log('❌ No event ID, skipping WebSocket connection');
       return;
     }
 
-    console.log('🔄 Starting change detection for Graphics Links page');
+    console.log('🔄 Setting up WebSocket connection for Graphics Links page');
 
-    const checkForChanges = async () => {
-      try {
-        console.log('🔄 Checking for changes in Graphics Links...');
-        const changeInfo = await DatabaseService.checkForChanges(event.id, lastChangeAt ?? undefined);
-        
-        if (changeInfo.hasChanges) {
-          console.log('🔄 Changes detected in Graphics Links:', changeInfo);
-          setIsUpdating(true);
-          
-          // Load the updated data
-          const data = await DatabaseService.loadChangesDynamically(event.id);
-          if (data) {
-            console.log('📥 Loading updated data for Graphics Links:', data);
-            console.log('📥 Updated schedule items:', data.schedule_items?.length || 0);
-            console.log('📥 Sample updated item:', data.schedule_items?.[0]);
-            setSchedule(data.schedule_items || []);
-            setLastChangeAt(data.updated_at || null);
-            setLastUpdated(new Date());
-            console.log('✅ Graphics Links data updated');
-          }
-          setIsUpdating(false);
-        } else {
-          console.log('✅ No changes detected in Graphics Links');
-        }
-      } catch (error) {
-        console.error('❌ Error checking for changes in Graphics Links:', error);
-      }
-    };
-
-    // Check immediately
-    checkForChanges();
-    
-    // Then check every 5 seconds (more frequent for real-time updates)
-    const interval = setInterval(checkForChanges, 5000);
-    
-    return () => clearInterval(interval);
-  }, [event?.id, lastChangeAt]);
-
-  // Listen for localStorage changes to update schedule in real-time
-  useEffect(() => {
-    const handleStorageChange = () => {
-      console.log('🔄 localStorage changed, updating schedule...');
-      
-      // Try to get the latest schedule data
-      let savedSchedule: string | null = null;
-      
-      if (event?.id) {
-        const scheduleKey = `runOfShowSchedule_${event.id}`;
-        savedSchedule = localStorage.getItem(scheduleKey);
-      }
-      
-      if (!savedSchedule && eventId) {
-        const urlScheduleKey = `runOfShowSchedule_${eventId}`;
-        savedSchedule = localStorage.getItem(urlScheduleKey);
-      }
-      
-      if (!savedSchedule) {
-        const keys = Object.keys(localStorage);
-        const scheduleKeys = keys.filter(key => key.startsWith('runOfShowSchedule_'));
-        if (scheduleKeys.length > 0) {
-          const latestKey = scheduleKeys[scheduleKeys.length - 1];
-          savedSchedule = localStorage.getItem(latestKey);
-        }
-      }
-      
-      if (savedSchedule) {
-        try {
-          setIsUpdating(true);
-          const newSchedule = JSON.parse(savedSchedule);
-          console.log('📝 Updated schedule from localStorage:', newSchedule);
-          console.log('📝 Schedule items count:', newSchedule.length);
-          console.log('📝 Sample item with speakers:', newSchedule.find((item: any) => item.speakersText));
-          setSchedule(newSchedule);
+    const callbacks = {
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 Graphics Links: WebSocket data update received:', data);
+        if (data && data.schedule_items) {
+          setSchedule(data.schedule_items);
+          setLastChangeAt(data.updated_at || null);
           setLastUpdated(new Date());
-          setIsUpdating(false);
-        } catch (error) {
-          console.log('Error parsing updated schedule:', error);
-          setIsUpdating(false);
+          console.log('✅ Graphics Links: Schedule updated via WebSocket');
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log('📡 Graphics Links: WebSocket connection status:', connected);
+        if (connected) {
+          // Reload data when reconnected
+          const loadData = async () => {
+            try {
+              const data = await DatabaseService.getRunOfShowData(event.id);
+              if (data) {
+                setSchedule(data.schedule_items || []);
+                setLastChangeAt(data.updated_at || null);
+                console.log('✅ Graphics Links: Data reloaded on reconnection');
+              }
+            } catch (error) {
+              console.error('❌ Graphics Links: Error reloading data on reconnection:', error);
+            }
+          };
+          loadData();
         }
       }
     };
 
-    // Listen for storage events (changes from other tabs/windows)
-    window.addEventListener('storage', handleStorageChange);
-    
-    // Also listen for custom events (for same-tab updates)
-    window.addEventListener('scheduleUpdated', handleStorageChange);
-    
-    // Poll for changes every 1 second for more real-time updates
-    const pollInterval = setInterval(() => {
-      console.log('🔍 Polling for schedule changes...');
-      handleStorageChange();
-    }, 1000);
-    
-    // Cleanup
+    socketClient.connect(event.id, callbacks);
+
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('scheduleUpdated', handleStorageChange);
-      clearInterval(pollInterval);
+      console.log('🔄 Graphics Links: Cleaning up WebSocket connection');
+      socketClient.disconnect(event.id);
     };
-  }, [event?.id, eventId]);
+  }, [event?.id]);
+
+  // Note: localStorage polling removed - WebSocket handles real-time updates
+  // Static JSON generation will load fresh data when needed
 
   // JSON sanitization function for VMIX compatibility
   const sanitizeJSONForVMIX = (obj: any): any => {
@@ -247,43 +186,56 @@ const GraphicsLinksPage: React.FC = () => {
   };
 
   const generateScheduleJSON = async () => {
-    // Use the schedule state that was loaded during initialization
     console.log('=== GRAPHICS LINKS JSON GENERATION ===');
-    console.log('Using schedule from state:', schedule);
     
-    // Get master start time from Supabase data (same as live pages)
-    let masterStartTime = '';
-    
+    // Load fresh schedule data when generating JSON
+    let currentSchedule = schedule;
     try {
       if (event?.id) {
         const data = await DatabaseService.getRunOfShowData(event.id);
-        if (data?.settings?.masterStartTime) {
-          masterStartTime = data.settings.masterStartTime;
-          console.log('Master start time from Supabase:', masterStartTime);
+        if (data?.schedule_items) {
+          currentSchedule = data.schedule_items;
+          console.log('✅ Loaded fresh schedule data for JSON generation');
         }
       }
     } catch (error) {
-      console.log('Error getting master start time from Supabase:', error);
+      console.log('⚠️ Using cached schedule data:', error);
     }
     
-    // Fallback to localStorage if Supabase fails
-    if (!masterStartTime) {
-      const keys = Object.keys(localStorage);
-      const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
-      
-      if (masterTimeKeys.length > 0) {
-        const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
-        const savedMasterTime = localStorage.getItem(latestMasterKey);
-        if (savedMasterTime) {
-          masterStartTime = savedMasterTime;
-          console.log('Master start time from localStorage:', masterStartTime);
+    console.log('Using schedule data:', currentSchedule);
+    
+    // Get master start time - try localStorage first (no egress)
+    let masterStartTime = '';
+    
+    // Try localStorage first (fastest, no egress)
+    const keys = Object.keys(localStorage);
+    const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
+    
+    if (masterTimeKeys.length > 0) {
+      const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
+      const savedMasterTime = localStorage.getItem(latestMasterKey);
+      if (savedMasterTime) {
+        masterStartTime = savedMasterTime;
+        console.log('Master start time from localStorage:', masterStartTime);
+      }
+    }
+    
+    // Only fallback to API if localStorage fails
+    if (!masterStartTime && event?.id) {
+      try {
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        if (data?.settings?.masterStartTime) {
+          masterStartTime = data.settings.masterStartTime;
+          console.log('Master start time from API:', masterStartTime);
         }
+      } catch (error) {
+        console.log('Error getting master start time from API:', error);
       }
     }
     
     // Calculate start time function (same as RunOfShowPage)
     const calculateStartTime = (index: number) => {
-      const currentItem = schedule[index];
+      const currentItem = currentSchedule[index];
       if (!currentItem) return '';
       
       // If this item is indented, return empty string (no start time)
@@ -297,7 +249,7 @@ const GraphicsLinksPage: React.FC = () => {
       // Calculate total seconds from the beginning up to this item
       let totalSeconds = 0;
       for (let i = 0; i < index; i++) {
-        const item = schedule[i];
+        const item = currentSchedule[i];
         // Only count non-indented items
         if (!item.isIndented) {
           totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
@@ -322,15 +274,15 @@ const GraphicsLinksPage: React.FC = () => {
     };
     
     console.log('=== FINAL DATA SUMMARY ===');
-    console.log('Schedule from state:', schedule);
+    console.log('Schedule data:', currentSchedule);
     console.log('Master start time:', masterStartTime);
     console.log('=== END FINAL DATA SUMMARY ===');
     
     // Filter for public items and create clean data
-    const publicItems = schedule
+    const publicItems = currentSchedule
       .filter(item => item.isPublic === true)
       .map(item => {
-        const itemIndex = schedule.findIndex(s => s.id === item.id);
+        const itemIndex = currentSchedule.findIndex(s => s.id === item.id);
         const calculatedStartTime = calculateStartTime(itemIndex);
         
         return {
@@ -359,16 +311,31 @@ const GraphicsLinksPage: React.FC = () => {
     window.open(url, '_blank');
   };
 
-  const generateLowerThirdsJSON = () => {
+  const generateLowerThirdsJSON = async () => {
     console.log('=== GENERATING LOWER THIRDS JSON ===');
     console.log('Event ID from URL:', eventId);
     console.log('Event object:', event);
-    console.log('Using schedule from state:', schedule);
-    console.log('Schedule length:', schedule.length);
-    console.log('First few items:', schedule.slice(0, 3));
+    
+    // Load fresh schedule data when generating JSON
+    let currentSchedule = schedule;
+    try {
+      if (event?.id) {
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        if (data?.schedule_items) {
+          currentSchedule = data.schedule_items;
+          console.log('✅ Loaded fresh schedule data for Lower Thirds JSON');
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ Using cached schedule data for Lower Thirds:', error);
+    }
+    
+    console.log('Using schedule data:', currentSchedule);
+    console.log('Schedule length:', currentSchedule.length);
+    console.log('First few items:', currentSchedule.slice(0, 3));
     
     // Debug: Check for speakers data in schedule
-    const itemsWithSpeakers = schedule.filter(item => item.speakersText && item.speakersText.trim());
+    const itemsWithSpeakers = currentSchedule.filter(item => item.speakersText && item.speakersText.trim());
     console.log('Items with speakers data:', itemsWithSpeakers.length);
     console.log('Items with speakers:', itemsWithSpeakers.map(item => ({
       segmentName: item.segmentName,
@@ -377,7 +344,7 @@ const GraphicsLinksPage: React.FC = () => {
     })));
     
     // Check if we have the right event data
-    if (schedule.length === 0) {
+    if (currentSchedule.length === 0) {
       console.log('⚠️ NO SCHEDULE DATA FOUND!');
       console.log('Available localStorage keys:', Object.keys(localStorage));
       console.log('Looking for keys with event ID:', eventId);
@@ -402,7 +369,7 @@ const GraphicsLinksPage: React.FC = () => {
       
       let totalMinutes = 0;
       for (let i = 0; i < index; i++) {
-        const item = schedule[i];
+        const item = currentSchedule[i];
         totalMinutes += (item.durationHours * 60) + item.durationMinutes;
       }
       
@@ -420,7 +387,7 @@ const GraphicsLinksPage: React.FC = () => {
     // Create horizontal table structure - one row per CUE/segment with all speakers
     const cueRows: any[] = [];
     
-    schedule.forEach((item, itemIndex) => {
+    currentSchedule.forEach((item, itemIndex) => {
       console.log('Processing item:', item.segmentName, 'Speakers:', item.speakersText);
       console.log('Item details:', {
         id: item.id,
@@ -672,8 +639,23 @@ const GraphicsLinksPage: React.FC = () => {
 
   const generateCustomGraphicsJSON = async () => {
     console.log('🔍 Starting generateCustomGraphicsJSON');
-    console.log('🔍 Current schedule state:', schedule);
-    console.log('🔍 Schedule length:', schedule.length);
+    
+    // Load fresh schedule data when generating JSON
+    let currentSchedule = schedule;
+    try {
+      if (event?.id) {
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        if (data?.schedule_items) {
+          currentSchedule = data.schedule_items;
+          console.log('✅ Loaded fresh schedule data for Custom Graphics JSON');
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ Using cached schedule data for Custom Graphics:', error);
+    }
+    
+    console.log('🔍 Current schedule data:', currentSchedule);
+    console.log('🔍 Schedule length:', currentSchedule.length);
     
     // Get master start time from localStorage
     let masterStartTime = '';
@@ -694,7 +676,7 @@ const GraphicsLinksPage: React.FC = () => {
       
       let totalMinutes = 0;
       for (let i = 0; i < index; i++) {
-        const item = schedule[i];
+        const item = currentSchedule[i];
         totalMinutes += (item.durationHours * 60) + item.durationMinutes;
       }
       
@@ -709,20 +691,11 @@ const GraphicsLinksPage: React.FC = () => {
       });
     };
 
-    // Get custom columns from localStorage or Supabase
+    // Get custom columns - try localStorage first (no egress)
     let customColumns: any[] = [];
-    try {
-      if (event?.id) {
-        const data = await DatabaseService.getRunOfShowData(event.id);
-        customColumns = data?.custom_columns || [];
-        console.log('🔍 Custom columns from Supabase:', customColumns);
-      }
-    } catch (error) {
-      console.log('Error getting custom columns from Supabase:', error);
-    }
     
-    // Fallback to localStorage if Supabase fails
-    if (customColumns.length === 0 && event?.id) {
+    // Try localStorage first (fastest, no egress)
+    if (event?.id) {
       const savedCustomColumns = localStorage.getItem(`customColumns_${event.id}`);
       if (savedCustomColumns) {
         customColumns = JSON.parse(savedCustomColumns);
@@ -730,13 +703,24 @@ const GraphicsLinksPage: React.FC = () => {
       }
     }
     
+    // Only fallback to API if localStorage fails
+    if (customColumns.length === 0 && event?.id) {
+      try {
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        customColumns = data?.custom_columns || [];
+        console.log('🔍 Custom columns from API:', customColumns);
+      } catch (error) {
+        console.log('Error getting custom columns from API:', error);
+      }
+    }
+    
     console.log('🔍 Final custom columns for graphics:', customColumns);
-    console.log('🔍 Schedule data for graphics:', schedule);
-    console.log('🔍 Schedule length:', schedule.length);
-    console.log('🔍 Public items:', schedule.filter(item => item.isPublic).length);
+    console.log('🔍 Schedule data for graphics:', currentSchedule);
+    console.log('🔍 Schedule length:', currentSchedule.length);
+    console.log('🔍 Public items:', currentSchedule.filter(item => item.isPublic).length);
 
     // Generate custom graphics from schedule items with all custom columns
-    const customGraphics = schedule
+    const customGraphics = currentSchedule
       .filter(item => item.isPublic)
       .map(item => {
         // Create base object with standard fields
@@ -745,7 +729,7 @@ const GraphicsLinksPage: React.FC = () => {
           text: item.segmentName || 'Custom Graphic',
           duration: `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`,
           cue: item.customFields.cue || 'CUE##',
-          startTime: calculateStartTime(schedule.findIndex(s => s.id === item.id)),
+          startTime: calculateStartTime(currentSchedule.findIndex(s => s.id === item.id)),
           notes: item.notes || ''
         };
         
@@ -902,19 +886,7 @@ const GraphicsLinksPage: React.FC = () => {
                 setIsLoading(true);
                 
                 try {
-                  if (event?.id) {
-                    // Try Supabase first
-                    const data = await DatabaseService.getRunOfShowData(event.id);
-                    if (data) {
-                      setSchedule(data.schedule_items || []);
-                      setLastChangeAt(data.updated_at || null);
-                      console.log('✅ Refreshed from Supabase');
-                      alert('Data refreshed from database!');
-                      return;
-                    }
-                  }
-                  
-                  // Fallback to localStorage
+                  // Try localStorage first (fastest, no egress)
                   let savedSchedule: string | null = null;
                   
                   if (event?.id) {
@@ -938,9 +910,25 @@ const GraphicsLinksPage: React.FC = () => {
                   
                   if (savedSchedule) {
                     const newSchedule = JSON.parse(savedSchedule);
-                    console.log('📝 Manually refreshed schedule:', newSchedule);
+                    console.log('📝 Refreshed from localStorage:', newSchedule);
                     setSchedule(newSchedule);
+                    setLastUpdated(new Date());
                     alert('Data refreshed from local storage!');
+                    return;
+                  }
+                  
+                  // Only fallback to API if no localStorage data
+                  if (event?.id) {
+                    const data = await DatabaseService.getRunOfShowData(event.id);
+                    if (data) {
+                      setSchedule(data.schedule_items || []);
+                      setLastChangeAt(data.updated_at || null);
+                      setLastUpdated(new Date());
+                      console.log('✅ Refreshed from API');
+                      alert('Data refreshed from database!');
+                    } else {
+                      alert('No schedule data found');
+                    }
                   } else {
                     alert('No schedule data found');
                   }
@@ -959,6 +947,7 @@ const GraphicsLinksPage: React.FC = () => {
           <p className="text-slate-300 mb-8">
             Click the buttons below to generate url links that VMIX can use as data sources for graphics.
             <span className="text-green-400 font-medium"> ✨ Live pages updates automatically when content changes! </span>
+            <span className="text-blue-400 font-medium"> 🚀 Optimized for minimal data usage with WebSocket updates! </span>
             Use "Refresh Data" if changes don't appear automatically.
           </p>
 
@@ -969,7 +958,14 @@ const GraphicsLinksPage: React.FC = () => {
               <h3 className="text-xl font-semibold text-white mb-4 text-center">Lower Thirds</h3>
               <div className="space-y-3 mt-auto">
                 <button
-                  onClick={generateLowerThirdsJSON}
+                  onClick={async () => {
+                    try {
+                      await generateLowerThirdsJSON();
+                    } catch (error) {
+                      console.error('Error generating lower thirds JSON:', error);
+                      alert('Error generating lower thirds JSON');
+                    }
+                  }}
                   className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
                 >
                   📄 Generate Static JSON
@@ -1107,6 +1103,11 @@ const GraphicsLinksPage: React.FC = () => {
             <div className="mt-2 p-3 bg-yellow-900 rounded-lg">
               <p className="text-yellow-200 text-sm">
                 <strong>Format Options:</strong> JSON (recommended), XML, or CSV - choose what works best with your VMIX setup
+              </p>
+            </div>
+            <div className="mt-2 p-3 bg-purple-900 rounded-lg">
+              <p className="text-purple-200 text-sm">
+                <strong>🚀 Performance Optimized:</strong> This page now uses WebSocket for real-time updates and localStorage caching to minimize data usage and improve performance
               </p>
             </div>
           </div>

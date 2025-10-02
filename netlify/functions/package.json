@@ -4,6 +4,6 @@
   "description": "Netlify Functions for CSV/XML API endpoints",
   "main": "index.js",
   "dependencies": {
-    "@supabase/supabase-js": "^2.57.0"
+    "pg": "^8.11.3"
   }
 }

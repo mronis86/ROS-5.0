@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { supabase } from '../services/supabase';
+import { DatabaseService } from '../services/database';
+import { socketClient } from '../services/socket-client';
 
 interface CustomColumnItem {
   id: string;
@@ -96,15 +97,8 @@ const CustomColumnsXMLPage: React.FC = () => {
 
       console.log('📊 Fetching custom columns data for event:', eventId);
 
-      const { data, error: fetchError } = await supabase
-        .from('run_of_show_data')
-        .select('*')
-        .eq('event_id', eventId)
-        .single();
-
-      if (fetchError) {
-        throw new Error(`Database error: ${fetchError.message}`);
-      }
+      // Use DatabaseService instead of direct Supabase calls
+      const data = await DatabaseService.getRunOfShowData(eventId);
 
       if (!data || !data.schedule_items) {
         setCustomColumns([]);
@@ -147,10 +141,66 @@ const CustomColumnsXMLPage: React.FC = () => {
     }
   };
 
+  // WebSocket-based real-time updates (replaces high-egress polling)
   useEffect(() => {
+    if (!eventId) {
+      console.log('❌ No event ID, skipping WebSocket connection');
+      return;
+    }
+
+    console.log('🔄 Setting up WebSocket connection for Custom Columns XML page');
+
+    // Load initial data
     fetchCustomColumns();
-    const interval = setInterval(fetchCustomColumns, 10000); // Auto-refresh every 10 seconds
-    return () => clearInterval(interval);
+
+    const callbacks = {
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 Custom Columns XML: WebSocket data update received:', data);
+        if (data && data.schedule_items) {
+          // Process the updated data
+          const scheduleItems: CustomColumnItem[] = data.schedule_items;
+          const customColumns = data.custom_columns || [];
+          const customColumnsData: CustomColumnEntry[] = [];
+
+          // Filter for public items only
+          const publicItems = scheduleItems.filter(item => item.isPublic);
+
+          // Get custom column names
+          const customColumnNames = customColumns
+            .filter(col => col.name)
+            .map(col => col.name);
+
+          publicItems.forEach((item, index) => {
+            const baseEntry: CustomColumnEntry = {
+              id: `${item.id}-custom`,
+              row: index + 1,
+              cue: item.customFields?.cue || 'CUE##',
+              customFields: item.customFields || {}
+            };
+            
+            customColumnsData.push(baseEntry);
+          });
+
+          setCustomColumns(customColumnsData);
+          setLastUpdated(new Date());
+          console.log('✅ Custom Columns XML: Data updated via WebSocket');
+        }
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log('📡 Custom Columns XML: WebSocket connection status:', connected);
+        if (connected) {
+          // Reload data when reconnected
+          fetchCustomColumns();
+        }
+      }
+    };
+
+    socketClient.connect(eventId, callbacks);
+
+    return () => {
+      console.log('🔄 Custom Columns XML: Cleaning up WebSocket connection');
+      socketClient.disconnect(eventId);
+    };
   }, [eventId]);
 
   const generateXML = (data: CustomColumnEntry[]): string => {
@@ -301,6 +351,7 @@ const CustomColumnsXMLPage: React.FC = () => {
               </p>
             )}
           </div>
+
 
           <div className="flex space-x-4 mb-6">
             <button

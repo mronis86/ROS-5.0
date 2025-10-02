@@ -623,10 +623,6 @@ const RunOfShowPage: React.FC = () => {
   const [timerProgress, setTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
-  
-  // ClockPage-style hybrid timer data for real-time updates
-  const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
-  const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
@@ -3165,14 +3161,6 @@ const RunOfShowPage: React.FC = () => {
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values
   const getRemainingTime = () => {
-    // Use hybrid timer data (ClockPage style) for real-time updates
-    if (hybridTimerData?.activeTimer) {
-      const progress = hybridTimerProgress;
-      const remaining = progress.total - progress.elapsed;
-      return remaining;
-    }
-    
-    // Fallback to old logic for compatibility
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -3230,16 +3218,6 @@ const RunOfShowPage: React.FC = () => {
 
   // Get remaining percentage for progress bar
   const getRemainingPercentage = () => {
-    // Use hybrid timer data (ClockPage style) for real-time updates
-    if (hybridTimerData?.activeTimer) {
-      const progress = hybridTimerProgress;
-      const remainingSeconds = progress.total - progress.elapsed;
-      // Handle negative values (overrun) - show 0% when overrun
-      if (remainingSeconds < 0) return 0;
-      return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
-    }
-    
-    // Fallback to old logic for compatibility
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -3275,24 +3253,6 @@ const RunOfShowPage: React.FC = () => {
 
   // Get progress bar color based on remaining time
   const getProgressBarColor = () => {
-    // Use hybrid timer data (ClockPage style) for real-time updates
-    if (hybridTimerData?.activeTimer) {
-      const progress = hybridTimerProgress;
-      const remainingSeconds = progress.total - progress.elapsed;
-      
-      // Color based on remaining time
-      if (remainingSeconds < 0) { // Overrun - red
-        return 'bg-red-500';
-      } else if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
-      } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
-        return '#f59e0b'; // Yellow
-      } else { // Less than 30 seconds
-        return '#ef4444'; // Red
-      }
-    }
-    
-    // Fallback to old logic for compatibility
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -3352,22 +3312,6 @@ const RunOfShowPage: React.FC = () => {
 
   // Get countdown color based on remaining time
   const getCountdownColor = () => {
-    // Use hybrid timer data (ClockPage style) for real-time updates
-    if (hybridTimerData?.activeTimer) {
-      const progress = hybridTimerProgress;
-      const remainingSeconds = progress.total - progress.elapsed;
-      
-      // Color based on remaining time
-      if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
-      } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
-        return '#f59e0b'; // Yellow
-      } else { // Less than 30 seconds
-        return '#ef4444'; // Red
-      }
-    }
-    
-    // Fallback to old logic for compatibility
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -4418,11 +4362,7 @@ const RunOfShowPage: React.FC = () => {
       onCompletedCuesUpdated: (data: any) => {
         console.log('📡 Real-time: Completed cues updated via WebSocket');
         // Update completed cues state directly from WebSocket data - no API polling needed!
-        if (data && data.cleared) {
-          // All completed cues cleared (from reset button)
-          console.log('📡 Real-time: All completed cues cleared via WebSocket');
-          setCompletedCues({});
-        } else if (data && data.removed && data.item_id) {
+        if (data && data.removed && data.item_id) {
           // Remove completed cue
           setCompletedCues(prev => {
             const newCompleted = { ...prev };
@@ -4444,65 +4384,41 @@ const RunOfShowPage: React.FC = () => {
           }));
         }
       },
-      onResetAllStates: (data: any) => {
-        console.log('📡 Real-time: Reset all states received via WebSocket');
-        // Clear all states when reset is triggered from another browser
-        setActiveTimers({});
-        setSubCueTimers({});
-        setTimerProgress({});
-        setSubCueTimerProgress({});
-        setCompletedCues({});
-        setActiveItemId(null);
-        setStoppedItems(new Set());
-        setLoadedCueDependents(new Set());
-        setLastLoadedCueId(null);
-        setHybridTimerData({ activeTimer: null });
-        
-        // Clear indented state from all schedule items
-        setSchedule(prevSchedule => 
-          prevSchedule.map(item => ({
-            ...item,
-            isIndented: false
-          }))
-        );
-        
-        console.log('✅ RunOfShow: All states reset via WebSocket');
-      },
       onTimerUpdated: (data: any) => {
         console.log('📡 Real-time: Timer updated via WebSocket');
-        console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
-        if (data && data.event_id === event?.id) {
-          // Update hybrid timer data directly from WebSocket (ClockPage style)
-          setHybridTimerData(prev => ({
+        // Update timer state directly from WebSocket data - no polling needed!
+        if (data && data.item_id) {
+          setTimerProgress(prev => ({
             ...prev,
-            activeTimer: data
+            [data.item_id]: {
+              elapsed: data.elapsed_seconds || 0,
+              total: data.duration_seconds || 300,
+              startedAt: data.started_at ? new Date(data.started_at) : null
+            }
           }));
-          console.log('✅ RunOfShow: Timer updated via WebSocket:', data);
-        } else {
-          console.log('⚠️ RunOfShow: Timer update ignored - event ID mismatch or no data');
         }
       },
       onTimerStopped: (data: any) => {
         console.log('📡 Real-time: Timer stopped via WebSocket');
-        if (data && data.event_id === event?.id) {
-          // Clear hybrid timer data when stopped (ClockPage style)
-          setHybridTimerData(prev => ({
-            ...prev,
-            activeTimer: null
-          }));
-          console.log('✅ RunOfShow: Timer cleared via WebSocket');
+        // Clear timer state when stopped
+        if (data && data.item_id) {
+          setActiveTimers(prev => {
+            const newTimers = { ...prev };
+            delete newTimers[data.item_id];
+            return newTimers;
+          });
+          setTimerProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[data.item_id];
+            return newProgress;
+          });
         }
       },
       onTimersStopped: (data: any) => {
         console.log('📡 Real-time: All timers stopped via WebSocket');
-        if (data && data.event_id === event?.id) {
-          // Clear hybrid timer data when all stopped (ClockPage style)
-          setHybridTimerData(prev => ({
-            ...prev,
-            activeTimer: null
-          }));
-          console.log('✅ RunOfShow: All timers cleared via WebSocket');
-        }
+        // Clear all timer states
+        setActiveTimers({});
+        setTimerProgress({});
       },
       onTimerStarted: (data: any) => {
         console.log('📡 Real-time: Timer started via WebSocket');
@@ -4516,56 +4432,25 @@ const RunOfShowPage: React.FC = () => {
       },
       onSubCueTimerStarted: (data: any) => {
         console.log('📡 Real-time: Sub-cue timer started via WebSocket');
-        if (data && data.event_id === event?.id) {
-          // Update hybrid timer data with sub-cue timer (ClockPage style)
-          setHybridTimerData(prev => ({
+        // Update sub-cue timer state when started
+        if (data && data.item_id) {
+          setActiveTimers(prev => ({
             ...prev,
-            secondaryTimer: data
+            [data.item_id]: true
           }));
-          console.log('✅ RunOfShow: Sub-cue timer started via WebSocket:', data);
-        }
-      },
-      onSubCueTimerStopped: (data: any) => {
-        console.log('📡 Real-time: Sub-cue timer stopped via WebSocket');
-        if (data && data.event_id === event?.id) {
-          // Clear hybrid timer data sub-cue timer (ClockPage style)
-          setHybridTimerData(prev => ({
-            ...prev,
-            secondaryTimer: null
-          }));
-          console.log('✅ RunOfShow: Sub-cue timer stopped via WebSocket');
         }
       },
       onActiveTimersUpdated: (data: any) => {
         console.log('📡 Real-time: Active timers updated via WebSocket');
-        
-        // Handle array format (from server broadcast) - ClockPage style
-        let timerData = data;
-        if (Array.isArray(data) && data.length > 0) {
-          timerData = data[0]; // Take first timer from array
-          console.log('📡 RunOfShow: Processing first timer from array:', timerData);
-        }
-        
-        console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: timerData?.event_id === event?.id });
-        if (timerData && timerData.event_id === event?.id) {
-          // Check if timer is stopped
-          if (timerData.timer_state === 'stopped' || !timerData.is_active) {
-            // Clear timer data when stopped
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: null
-            }));
-            console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data');
-          } else {
-            // Update timer data directly from WebSocket
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: timerData
-            }));
-            console.log('✅ RunOfShow: Active timer updated via WebSocket:', timerData);
-          }
-        } else {
-          console.log('⚠️ RunOfShow: Active timers update ignored - event ID mismatch or no data');
+        // Update active timers state directly from WebSocket data - no API polling needed!
+        if (data && Array.isArray(data)) {
+          const newActiveTimers: Record<number, boolean> = {};
+          data.forEach((timer: any) => {
+            if (timer.item_id && timer.is_active && timer.is_running) {
+              newActiveTimers[timer.item_id] = true;
+            }
+          });
+          setActiveTimers(newActiveTimers);
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -4614,46 +4499,6 @@ const RunOfShowPage: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [event?.id]);
-
-  // Real-time countdown timer for running timers (ClockPage style)
-  useEffect(() => {
-    if (hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active) {
-      const activeTimer = hybridTimerData.activeTimer;
-      const startedAt = new Date(activeTimer.started_at);
-      const total = activeTimer.duration_seconds || 0;
-      
-      const updateCountdown = () => {
-        const now = new Date();
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-        
-        setHybridTimerProgress({
-          elapsed: elapsed,
-          total: total
-        });
-      };
-      
-      // Update immediately
-      updateCountdown();
-      
-      // Set up interval for real-time updates
-      const interval = setInterval(updateCountdown, 1000);
-      
-      return () => clearInterval(interval);
-    } else if (hybridTimerData?.activeTimer && !hybridTimerData?.activeTimer?.is_running) {
-      // Timer is loaded but not running - show 0 elapsed
-      const activeTimer = hybridTimerData.activeTimer;
-      setHybridTimerProgress({
-        elapsed: 0,
-        total: activeTimer.duration_seconds || 0
-      });
-    } else if (!hybridTimerData?.activeTimer) {
-      // No active timer - clear display
-      setHybridTimerProgress({
-        elapsed: 0,
-        total: 0
-      });
-    }
-  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer]);
 
   // Debug: Monitor schedule changes
   useEffect(() => {
@@ -7303,79 +7148,7 @@ const RunOfShowPage: React.FC = () => {
             {/* Countdown Timer and Action Buttons - Top Right */}
             <div className="flex items-center gap-6">
               <div className="text-center">
-                {hybridTimerData?.activeTimer ? (
-                  <div className={`text-lg font-bold ${
-                    hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? 'text-green-400'
-                      : 'text-yellow-400'
-                  }`}>
-                    {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? 'RUNNING'
-                      : 'LOADED'
-                    } -                     {(() => {
-                      // Try to find the schedule item with proper type conversion
-                      const itemId = hybridTimerData.activeTimer.item_id;
-                      const scheduleItem = schedule.find(item => 
-                        item.id === itemId || 
-                        item.id === parseInt(itemId) || 
-                        parseInt(item.id) === parseInt(itemId)
-                      );
-                      
-                      // Debug: Log only occasionally to reduce spam
-                      if (Math.random() < 0.01) {
-                        console.log('🔍 RunOfShow: Hybrid timer data:', hybridTimerData.activeTimer);
-                        console.log('🔍 RunOfShow: Looking for item_id:', hybridTimerData.activeTimer.item_id, typeof hybridTimerData.activeTimer.item_id);
-                        console.log('🔍 RunOfShow: Found schedule item:', scheduleItem);
-                      }
-                      
-                      if (scheduleItem?.customFields?.cue) {
-                        return formatCueDisplay(scheduleItem.customFields.cue);
-                      } else {
-                        // Fallback: show item_id or try to get cue from timer data
-                        console.log('🔍 RunOfShow: No schedule item found, using fallback');
-                        return `CUE ${itemId}`;
-                      }
-                    })()}
-                    {(hybridTimerData?.secondaryTimer || secondaryTimer) && (
-                      <div className="text-lg text-orange-400 mt-0.5 font-bold">
-                        {(() => {
-                          // Debug: Log sub-cue timer data
-                          console.log('🔍 RunOfShow: Sub-cue timer check:', {
-                            hasHybridSecondary: !!hybridTimerData?.secondaryTimer,
-                            hasOldSecondary: !!secondaryTimer,
-                            hybridData: hybridTimerData?.secondaryTimer
-                          });
-                          
-                          // Use hybrid timer data first, fallback to old secondaryTimer
-                          const subCueTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
-                          if (hybridTimerData?.secondaryTimer) {
-                            // Use hybrid timer data (ClockPage style)
-                            const scheduleItem = schedule.find(item => 
-                              item.id === hybridTimerData.secondaryTimer.item_id || 
-                              item.id === parseInt(hybridTimerData.secondaryTimer.item_id)
-                            );
-                            const cueDisplay = scheduleItem?.customFields?.cue || 
-                                              hybridTimerData.secondaryTimer.cue_display || 
-                                              hybridTimerData.secondaryTimer.cue || 
-                                              `CUE ${hybridTimerData.secondaryTimer.item_id}`;
-                            
-                            // Calculate remaining time for sub-cue
-                            const now = new Date();
-                            const startedAt = new Date(hybridTimerData.secondaryTimer.started_at || hybridTimerData.secondaryTimer.created_at);
-                            const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                            const total = hybridTimerData.secondaryTimer.duration_seconds || hybridTimerData.secondaryTimer.duration || 60;
-                            const remaining = Math.max(0, total - elapsed);
-                            
-                            return `${formatCueDisplay(cueDisplay)} - ${formatSubCueTime(remaining)}`;
-                          } else {
-                            // Fallback to old secondaryTimer logic
-                            return `${formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - ${formatSubCueTime(secondaryTimer.remaining)}`;
-                          }
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                ) : Object.keys(activeTimers).length > 0 ? (
+                {Object.keys(activeTimers).length > 0 ? (
                   <div className="text-lg text-green-400 font-bold">
                     RUNNING - {formatCueDisplay(schedule.find(item => activeTimers[item.id])?.customFields.cue)}
                     {secondaryTimer && (
@@ -8062,26 +7835,7 @@ const RunOfShowPage: React.FC = () => {
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                      className={`border-b-2 border-slate-600 flex items-center justify-center gap-1 ${
-                       // Use hybrid timer data for real-time highlighting (ClockPage style)
-                       (() => {
-                         const isHybridActive = hybridTimerData?.activeTimer?.item_id === item.id && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                         const isHybridLoaded = hybridTimerData?.activeTimer?.item_id === item.id && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
-                         
-                         // Debug: Log highlighting decisions for this item (reduced logging)
-                         if (hybridTimerData?.activeTimer?.item_id === item.id && Math.random() < 0.01) {
-                           console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                             hybridTimerItemId: hybridTimerData.activeTimer.item_id,
-                             isRunning: hybridTimerData.activeTimer.is_running,
-                             isActive: hybridTimerData.activeTimer.is_active,
-                             isHybridActive,
-                             isHybridLoaded
-                           });
-                         }
-                         
-                         return isHybridActive ? 'bg-green-900 border-green-500' : isHybridLoaded ? 'bg-blue-900 border-blue-500' : null;
-                       })() ||
-                       // Fallback to old logic for compatibility
-                         activeTimers[item.id]
+                       activeTimers[item.id]
                          ? 'bg-green-900 border-green-500' 
                          : activeItemId === item.id
                          ? 'bg-blue-900 border-blue-500'
@@ -8590,26 +8344,7 @@ const RunOfShowPage: React.FC = () => {
                        key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                        data-item-id={item.id}
                        className={`border-b-2 border-slate-600 flex ${
-                         // Use hybrid timer data for real-time highlighting (ClockPage style)
-                         (() => {
-                           const isHybridActive = hybridTimerData?.activeTimer?.item_id === item.id && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                           const isHybridLoaded = hybridTimerData?.activeTimer?.item_id === item.id && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
-                           
-                           // Debug: Log highlighting decisions for this item (reduced logging)
-                           if (hybridTimerData?.activeTimer?.item_id === item.id && Math.random() < 0.01) {
-                             console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                               hybridTimerItemId: hybridTimerData.activeTimer.item_id,
-                               isRunning: hybridTimerData.activeTimer.is_running,
-                               isActive: hybridTimerData.activeTimer.is_active,
-                               isHybridActive,
-                               isHybridLoaded
-                             });
-                           }
-                           
-                           return isHybridActive ? 'bg-green-950' : isHybridLoaded ? 'bg-blue-950' : null;
-                         })() ||
-                         // Fallback to old logic for compatibility
-                           activeTimers[item.id]
+                         activeTimers[item.id]
                            ? 'bg-green-950'
                            : activeItemId === item.id
                            ? 'bg-blue-950'

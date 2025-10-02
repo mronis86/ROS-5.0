@@ -1,0 +1,558 @@
+#!/usr/bin/env python3
+"""
+Fixed Optimized Live Graphics Generator
+Based on the working minimal version with full functionality
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import requests
+import socketio
+import time
+import threading
+import json
+import csv
+import os
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+import queue
+
+class FixedGraphicsGenerator:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Fixed Optimized Live Graphics Generator - Socket.IO + Neon")
+        self.root.geometry("1000x700")
+        
+        # API Configuration
+        self.api_base_url = 'https://ros-50-production.up.railway.app'
+        self.sio = None
+        self.is_connected = False
+        self.is_running = False
+        
+        # Data storage
+        self.schedule_data = None
+        self.last_update = None
+        self.message_queue = queue.Queue()
+        self.update_thread = None
+        
+        self.setup_ui()
+    
+    def setup_ui(self):
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="Fixed Optimized Live Graphics Generator", 
+                               font=('Arial', 16, 'bold'))
+        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        
+        subtitle_label = ttk.Label(main_frame, text="Socket.IO + API + Neon Database", 
+                                  font=('Arial', 10), foreground='blue')
+        subtitle_label.grid(row=1, column=0, columnspan=3, pady=(0, 20))
+        
+        # Connection status
+        status_frame = ttk.LabelFrame(main_frame, text="Connection Status", padding="10")
+        status_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        self.status_label = ttk.Label(status_frame, text="Disconnected", foreground='red')
+        self.status_label.grid(row=0, column=0, sticky=tk.W)
+        
+        api_label = ttk.Label(status_frame, text=f"API: {self.api_base_url}", 
+                             font=('Arial', 8), foreground='gray')
+        api_label.grid(row=1, column=0, sticky=tk.W, pady=(5, 0))
+        
+        # Input fields
+        input_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
+        input_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Event ID
+        ttk.Label(input_frame, text="Event ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.event_id = tk.StringVar()
+        event_entry = ttk.Entry(input_frame, textvariable=self.event_id, width=30)
+        event_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        # Output folder
+        ttk.Label(input_frame, text="Output Folder:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.output_folder = tk.StringVar()
+        folder_frame = ttk.Frame(input_frame)
+        folder_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        folder_entry = ttk.Entry(folder_frame, textvariable=self.output_folder, width=25)
+        folder_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        ttk.Button(folder_frame, text="Browse", command=self.browse_folder).grid(row=0, column=1, padx=(5, 0))
+        
+        # Configure grid weights for input frame
+        input_frame.columnconfigure(1, weight=1)
+        folder_frame.columnconfigure(0, weight=1)
+        
+        # Control buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=4, column=0, columnspan=3, pady=20)
+        
+        self.connect_btn = ttk.Button(button_frame, text="Connect", command=self.toggle_connection)
+        self.connect_btn.grid(row=0, column=0, padx=5)
+        
+        self.generate_btn = ttk.Button(button_frame, text="Generate Files", 
+                                      command=self.generate_files, state='disabled')
+        self.generate_btn.grid(row=0, column=1, padx=5)
+        
+        ttk.Button(button_frame, text="Refresh Data", 
+                   command=self.refresh_data).grid(row=0, column=2, padx=5)
+        
+        ttk.Button(button_frame, text="Open Folder", 
+                   command=self.open_folder).grid(row=0, column=3, padx=5)
+        
+        # Auto-regenerate checkbox
+        self.auto_regenerate = tk.BooleanVar(value=True)
+        auto_check = ttk.Checkbutton(button_frame, text="Auto-update files on data change", 
+                                   variable=self.auto_regenerate)
+        auto_check.grid(row=1, column=0, columnspan=4, pady=(10, 0))
+        
+        # Live data display
+        data_frame = ttk.LabelFrame(main_frame, text="Live Data", padding="10")
+        data_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        
+        self.data_text = tk.Text(data_frame, height=15, width=80)
+        data_scrollbar = ttk.Scrollbar(data_frame, orient="vertical", command=self.data_text.yview)
+        self.data_text.configure(yscrollcommand=data_scrollbar.set)
+        
+        self.data_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        data_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure grid weights
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(2, weight=1)
+        main_frame.rowconfigure(5, weight=1)
+        data_frame.columnconfigure(0, weight=1)
+        data_frame.rowconfigure(0, weight=1)
+    
+    def browse_folder(self):
+        """Browse for output folder"""
+        folder = filedialog.askdirectory()
+        if folder:
+            self.output_folder.set(folder)
+    
+    def log_message(self, message):
+        """Add message to log"""
+        timestamp = time.strftime("%H:%M:%S")
+        self.data_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.data_text.see(tk.END)
+        self.root.update_idletasks()
+    
+    def update_status(self, text, color='black'):
+        """Update status label"""
+        self.status_label.config(text=text, foreground=color)
+        self.root.update_idletasks()
+    
+    def toggle_connection(self):
+        if not self.is_connected:
+            self.connect()
+        else:
+            self.disconnect()
+    
+    def connect(self):
+        """Connect to server"""
+        if not self.event_id.get():
+            messagebox.showerror("Error", "Please enter an Event ID")
+            return
+        
+        try:
+            self.log_message("Starting connection...")
+            self.update_status("Connecting...", 'orange')
+            
+            # Test API connection
+            self.log_message("Testing API connection...")
+            response = requests.get(f"{self.api_base_url}/health", timeout=10)
+            if response.status_code == 200:
+                self.log_message("SUCCESS: API connection successful")
+            else:
+                raise Exception(f"API returned status: {response.status_code}")
+            
+            # Test Socket.IO connection
+            self.log_message("Testing Socket.IO connection...")
+            self.sio = socketio.Client()
+            
+            @self.sio.event
+            def connect():
+                self.log_message("SUCCESS: Socket.IO connected")
+                self.update_status("Connected via Socket.IO", 'green')
+                self.connect_btn.config(text="Disconnect")
+                self.is_connected = True
+                # Join the event room
+                self.sio.emit('join_event', {'eventId': self.event_id.get()})
+                self.log_message("Joined event room")
+            
+            @self.sio.event
+            def disconnect():
+                self.log_message("Socket.IO disconnected")
+                self.update_status("Disconnected", 'red')
+                self.connect_btn.config(text="Connect")
+                self.is_connected = False
+            
+            @self.sio.event
+            def update(data):
+                """Handle real-time updates"""
+                try:
+                    self.log_message("Received real-time update")
+                    self.message_queue.put(data)
+                except Exception as e:
+                    self.log_message(f"ERROR: Update processing error: {str(e)}")
+            
+            @self.sio.event
+            def connect_error(data):
+                self.log_message(f"ERROR: Socket.IO connection error: {data}")
+                self.update_status("Connection failed", 'red')
+            
+            # Connect
+            self.sio.connect(self.api_base_url)
+            
+            # Wait for connection
+            max_wait = 5
+            wait_time = 0
+            while wait_time < max_wait:
+                if self.sio.connected:
+                    self.log_message("SUCCESS: Socket.IO connection confirmed")
+                    break
+                time.sleep(0.5)
+                wait_time += 0.5
+            else:
+                raise Exception("Socket.IO connection timeout")
+            
+            # Start data update thread
+            self.start_update_thread()
+            
+            # Enable generate button
+            self.generate_btn.config(state='normal')
+            
+        except Exception as e:
+            self.log_message(f"ERROR: Connection failed: {str(e)}")
+            self.update_status("Connection failed", 'red')
+            if self.sio:
+                try:
+                    self.sio.disconnect()
+                except:
+                    pass
+                self.sio = None
+    
+    def disconnect(self):
+        """Disconnect from server"""
+        if self.sio:
+            self.sio.disconnect()
+            self.sio = None
+        self.is_connected = False
+        self.connect_btn.config(text="Connect")
+        self.generate_btn.config(state='disabled')
+        self.update_status("Disconnected", 'red')
+        self.log_message("Disconnected from server")
+        
+        # Stop update thread
+        if self.update_thread and self.update_thread.is_alive():
+            self.update_thread.join(timeout=1)
+    
+    def start_update_thread(self):
+        """Start thread to process Socket.IO messages and update data"""
+        def update_loop():
+            while self.is_connected:
+                try:
+                    # Process Socket.IO messages
+                    while not self.message_queue.empty():
+                        message = self.message_queue.get_nowait()
+                        self.process_websocket_message(message)
+                    
+                    # Update data display
+                    self.update_data_display()
+                    
+                    time.sleep(0.1)  # Small delay to prevent high CPU usage
+                    
+                except Exception as e:
+                    self.log_message(f"ERROR: Update thread error: {str(e)}")
+                    time.sleep(1)
+        
+        self.update_thread = threading.Thread(target=update_loop, daemon=True)
+        self.update_thread.start()
+    
+    def process_websocket_message(self, message):
+        """Process incoming Socket.IO messages"""
+        try:
+            if message.get('type') == 'runOfShowDataUpdated':
+                self.log_message("Received real-time data update")
+                self.schedule_data = message.get('data')
+                self.last_update = datetime.now()
+                # Auto-regenerate files if enabled and output folder is set
+                if self.auto_regenerate.get() and self.output_folder.get() and self.schedule_data:
+                    self.auto_regenerate_files()
+            elif message.get('type') == 'timerUpdated':
+                self.log_message("Received timer update")
+            elif message.get('type') == 'activeTimersUpdated':
+                self.log_message("Received active timers update")
+        except Exception as e:
+            self.log_message(f"ERROR: Message processing error: {str(e)}")
+    
+    def refresh_data(self):
+        """Manually refresh data from API"""
+        if not self.event_id.get():
+            messagebox.showerror("Error", "Please enter an Event ID")
+            return
+        
+        try:
+            self.log_message("Refreshing data...")
+            self.update_status("Refreshing data...", 'orange')
+            url = f"{self.api_base_url}/api/run-of-show-data/{self.event_id.get()}"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            self.schedule_data = response.json()
+            self.last_update = datetime.now()
+            self.update_data_display()
+            self.update_status("Data refreshed", 'green')
+            self.log_message("SUCCESS: Data refreshed from API")
+            
+        except Exception as e:
+            self.log_message(f"ERROR: Refresh failed: {str(e)}")
+            self.update_status("Refresh failed", 'red')
+    
+    def update_data_display(self):
+        """Update the data display in the UI"""
+        if not self.schedule_data:
+            return
+        
+        try:
+            # Clear previous data
+            self.data_text.delete(1.0, tk.END)
+            
+            # Display basic info
+            self.data_text.insert(tk.END, f"Live Graphics Data\n")
+            self.data_text.insert(tk.END, f"Event ID: {self.event_id.get()}\n")
+            self.data_text.insert(tk.END, f"Last Update: {self.last_update.strftime('%H:%M:%S') if self.last_update else 'Never'}\n")
+            self.data_text.insert(tk.END, f"Connection: {'Socket.IO' if self.is_connected else 'Disconnected'}\n\n")
+            
+            # Display schedule items
+            if 'schedule_items' in self.schedule_data:
+                items = self.schedule_data['schedule_items']
+                self.data_text.insert(tk.END, f"Schedule Items ({len(items)} total):\n")
+                
+                for i, item in enumerate(items[:10]):  # Show first 10 items
+                    self.data_text.insert(tk.END, f"  {i+1}. {item.get('segmentName', 'Unnamed')}\n")
+                
+                if len(items) > 10:
+                    self.data_text.insert(tk.END, f"  ... and {len(items) - 10} more items\n")
+            
+            # Display custom columns
+            if 'custom_columns' in self.schedule_data:
+                columns = self.schedule_data['custom_columns']
+                self.data_text.insert(tk.END, f"\nCustom Columns ({len(columns)} total):\n")
+                for col in columns[:5]:  # Show first 5 columns
+                    self.data_text.insert(tk.END, f"  - {col.get('name', 'Unnamed')}\n")
+            
+        except Exception as e:
+            self.log_message(f"ERROR: Display update error: {str(e)}")
+    
+    def generate_files(self):
+        """Generate graphics files"""
+        if not self.output_folder.get():
+            messagebox.showerror("Error", "Please select an output folder")
+            return
+        
+        if not self.schedule_data:
+            messagebox.showerror("Error", "No data available. Please refresh data first.")
+            return
+        
+        try:
+            self.log_message("Generating files...")
+            self.update_status("Generating files...", 'orange')
+            
+            # Generate schedule XML
+            self.generate_schedule_xml()
+            
+            # Generate schedule CSV
+            self.generate_schedule_csv()
+            
+            # Generate lower thirds XML
+            self.generate_lower_thirds_xml()
+            
+            # Generate lower thirds CSV
+            self.generate_lower_thirds_csv()
+            
+            # Generate custom columns XML
+            self.generate_custom_columns_xml()
+            
+            # Generate custom columns CSV
+            self.generate_custom_columns_csv()
+            
+            self.update_status("Files generated successfully", 'green')
+            self.log_message("SUCCESS: All graphics files generated")
+            
+        except Exception as e:
+            self.log_message(f"ERROR: Generation failed: {str(e)}")
+            self.update_status("Generation failed", 'red')
+    
+    def auto_regenerate_files(self):
+        """Auto-regenerate files when data changes (low egress)"""
+        try:
+            self.log_message("Auto-regenerating files due to data change...")
+            
+            # Generate all files silently (no UI updates to avoid spam)
+            self.generate_schedule_xml()
+            self.generate_schedule_csv()
+            self.generate_lower_thirds_xml()
+            self.generate_lower_thirds_csv()
+            self.generate_custom_columns_xml()
+            self.generate_custom_columns_csv()
+            
+            self.log_message("SUCCESS: Files auto-updated")
+            
+        except Exception as e:
+            self.log_message(f"ERROR: Auto-regeneration failed: {str(e)}")
+    
+    def generate_schedule_xml(self):
+        """Generate schedule XML file"""
+        filename = os.path.join(self.output_folder.get(), "schedule.xml")
+        
+        root = ET.Element("schedule")
+        root.set("event_id", self.event_id.get())
+        root.set("generated_at", datetime.now().isoformat())
+        
+        if 'schedule_items' in self.schedule_data:
+            for item in self.schedule_data['schedule_items']:
+                item_elem = ET.SubElement(root, "item")
+                item_elem.set("id", str(item.get('id', '')))
+                item_elem.set("name", item.get('segmentName', ''))
+                item_elem.set("start_time", item.get('startTime', ''))
+                item_elem.set("duration", str(item.get('duration', 0)))
+                
+                # Add notes
+                if item.get('notes'):
+                    notes_elem = ET.SubElement(item_elem, "notes")
+                    notes_elem.text = item.get('notes', '')
+                
+                # Add speakers
+                if item.get('speakers'):
+                    speakers_elem = ET.SubElement(item_elem, "speakers")
+                    for speaker in item.get('speakers', []):
+                        speaker_elem = ET.SubElement(speakers_elem, "speaker")
+                        speaker_elem.text = speaker.get('name', '')
+        
+        tree = ET.ElementTree(root)
+        tree.write(filename, encoding='utf-8', xml_declaration=True)
+        
+        self.log_message(f"SUCCESS: Generated {filename}")
+    
+    def generate_schedule_csv(self):
+        """Generate schedule CSV file"""
+        filename = os.path.join(self.output_folder.get(), "schedule.csv")
+        
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['ID', 'Name', 'Start Time', 'Duration', 'Notes', 'Speakers'])
+            
+            if 'schedule_items' in self.schedule_data:
+                for item in self.schedule_data['schedule_items']:
+                    speakers = ', '.join([s.get('name', '') for s in item.get('speakers', [])])
+                    writer.writerow([
+                        item.get('id', ''),
+                        item.get('segmentName', ''),
+                        item.get('startTime', ''),
+                        item.get('duration', 0),
+                        item.get('notes', ''),
+                        speakers
+                    ])
+        
+        self.log_message(f"SUCCESS: Generated {filename}")
+    
+    def generate_lower_thirds_xml(self):
+        """Generate lower thirds XML file"""
+        filename = os.path.join(self.output_folder.get(), "lower_thirds.xml")
+        
+        root = ET.Element("lower_thirds")
+        root.set("event_id", self.event_id.get())
+        root.set("generated_at", datetime.now().isoformat())
+        
+        if 'schedule_items' in self.schedule_data:
+            for item in self.schedule_data['schedule_items']:
+                if item.get('speakers'):
+                    for speaker in item.get('speakers', []):
+                        speaker_elem = ET.SubElement(root, "speaker")
+                        speaker_elem.set("name", speaker.get('name', ''))
+                        speaker_elem.set("title", speaker.get('title', ''))
+                        speaker_elem.set("segment", item.get('segmentName', ''))
+        
+        tree = ET.ElementTree(root)
+        tree.write(filename, encoding='utf-8', xml_declaration=True)
+        
+        self.log_message(f"SUCCESS: Generated {filename}")
+    
+    def generate_lower_thirds_csv(self):
+        """Generate lower thirds CSV file"""
+        filename = os.path.join(self.output_folder.get(), "lower_thirds.csv")
+        
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Name', 'Title', 'Segment'])
+            
+            if 'schedule_items' in self.schedule_data:
+                for item in self.schedule_data['schedule_items']:
+                    if item.get('speakers'):
+                        for speaker in item.get('speakers', []):
+                            writer.writerow([
+                                speaker.get('name', ''),
+                                speaker.get('title', ''),
+                                item.get('segmentName', '')
+                            ])
+        
+        self.log_message(f"SUCCESS: Generated {filename}")
+    
+    def generate_custom_columns_xml(self):
+        """Generate custom columns XML file"""
+        filename = os.path.join(self.output_folder.get(), "custom_columns.xml")
+        
+        root = ET.Element("custom_columns")
+        root.set("event_id", self.event_id.get())
+        root.set("generated_at", datetime.now().isoformat())
+        
+        if 'custom_columns' in self.schedule_data:
+            for col in self.schedule_data['custom_columns']:
+                col_elem = ET.SubElement(root, "column")
+                col_elem.set("name", col.get('name', ''))
+                col_elem.set("type", col.get('type', ''))
+                col_elem.set("required", str(col.get('required', False)))
+        
+        tree = ET.ElementTree(root)
+        tree.write(filename, encoding='utf-8', xml_declaration=True)
+        
+        self.log_message(f"SUCCESS: Generated {filename}")
+    
+    def generate_custom_columns_csv(self):
+        """Generate custom columns CSV file"""
+        filename = os.path.join(self.output_folder.get(), "custom_columns.csv")
+        
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Name', 'Type', 'Required'])
+            
+            if 'custom_columns' in self.schedule_data:
+                for col in self.schedule_data['custom_columns']:
+                    writer.writerow([
+                        col.get('name', ''),
+                        col.get('type', ''),
+                        col.get('required', False)
+                    ])
+        
+        self.log_message(f"SUCCESS: Generated {filename}")
+    
+    def open_folder(self):
+        """Open output folder"""
+        if self.output_folder.get():
+            os.startfile(self.output_folder.get())
+        else:
+            messagebox.showwarning("Warning", "Please select an output folder first")
+
+def main():
+    root = tk.Tk()
+    app = FixedGraphicsGenerator(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()

@@ -1,10 +1,23 @@
 exports.handler = async (event, context) => {
-  const { createClient } = require('@supabase/supabase-js');
+  const { Pool } = require('pg');
   
-  // Supabase configuration
-  const supabaseUrl = 'https://huqijhevmtgardkyeowa.supabase.co';
-  const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1cWlqaGV2bXRnYXJka3llb3dhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNDgyNTQsImV4cCI6MjA3MjgyNDI1NH0.1G81Zif1YWQwISEGJw4XMzY89Rlvh6Jda1-j-roPZBk';
-  const supabase = createClient(supabaseUrl, supabaseKey);
+  // Neon database configuration
+  const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL;
+  
+  if (!connectionString) {
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'text/csv' },
+      body: 'Error,Database not configured'
+    };
+  }
+
+  const pool = new Pool({
+    connectionString,
+    ssl: {
+      rejectUnauthorized: false
+    }
+  });
 
   const eventId = event.queryStringParameters?.eventId;
 
@@ -17,20 +30,22 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    // Fetch from run_of_show_data table
-    const { data: runOfShowData, error } = await supabase
-      .from('run_of_show_data')
-      .select('*')
-      .eq('event_id', eventId)
-      .single();
+    // Fetch from run_of_show_data table using Neon database
+    const { rows: runOfShowDataRows, error } = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
 
     if (error) {
+      console.error('Database error:', error);
       return {
         statusCode: 500,
         headers: { 'Content-Type': 'text/csv' },
         body: 'Error,Database error'
       };
     }
+
+    const runOfShowData = runOfShowDataRows[0];
 
     if (!runOfShowData || !runOfShowData.schedule_items) {
       return {
@@ -93,10 +108,14 @@ exports.handler = async (event, context) => {
     };
     
   } catch (error) {
+    console.error('Error in custom-columns-csv function:', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'text/csv' },
       body: 'Error,Internal server error'
     };
+  } finally {
+    // Close the database connection
+    await pool.end();
   }
 };

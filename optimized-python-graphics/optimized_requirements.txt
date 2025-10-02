@@ -1,0 +1,13 @@
+# Optimized Live Graphics Generator Requirements
+# WebSocket + API + Neon Database
+
+# Core dependencies
+requests>=2.31.0
+python-socketio>=5.8.0
+
+# GUI framework (built into Python)
+# tkinter is included with Python standard library
+
+# Optional: For enhanced functionality
+# python-dotenv>=1.0.0  # For environment variables
+# psutil>=5.9.0         # For system monitoring
