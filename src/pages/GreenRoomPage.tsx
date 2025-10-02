@@ -681,6 +681,7 @@ const GreenRoomPage: React.FC = () => {
   // Calculate expected finish time from active timer
   const getExpectedFinishTime = () => {
     if (!activeItemId || !timerProgress[activeItemId]) return 'No Timer';
+    if (timerState !== 'running') return 'Timer Stopped';
     
     const progress = timerProgress[activeItemId];
     if (!progress.startedAt) return 'Not Started';
@@ -713,6 +714,9 @@ const GreenRoomPage: React.FC = () => {
   // Calculate remaining time from active timer (shows negative for overtime)
   const getRemainingTime = () => {
     if (!activeItemId || !timerProgress[activeItemId]) return '00:00';
+    
+    // If timer is not running, show 00:00
+    if (timerState !== 'running') return '00:00';
 
     const progress = timerProgress[activeItemId];
     const remaining = progress.total - progress.elapsed; // Allow negative values
@@ -723,6 +727,7 @@ const GreenRoomPage: React.FC = () => {
   // Check if timer is in overtime
   const isOvertime = () => {
     if (!activeItemId || !timerProgress[activeItemId]) return false;
+    if (timerState !== 'running') return false; // Only show overtime when timer is running
     const progress = timerProgress[activeItemId];
     return progress.total - progress.elapsed < 0;
   };
