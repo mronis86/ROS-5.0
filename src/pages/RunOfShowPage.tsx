@@ -1214,6 +1214,75 @@ const RunOfShowPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [event?.id, user?.id, schedule]);
 
+  // 20-second sync timer for schedule changes (content sync between browsers)
+  useEffect(() => {
+    if (!event?.id || !user) return;
+    
+    console.log('🔄 Starting 20-second sync timer for schedule changes');
+    
+    const syncInterval = setInterval(async () => {
+      try {
+        // Check if we should skip this sync
+        if (!isPageVisible || isUserEditing) {
+          console.log('⏭️ Skipping 20s sync - page not visible or user editing');
+          return;
+        }
+        
+        // Check for changes from other users
+        const changeInfo = await DatabaseService.checkForChanges(event.id, lastChangeAt);
+        if (changeInfo && changeInfo.hasChanges && changeInfo.lastChangeAt) {
+          console.log('🔄 20s sync: Changes detected from other users, loading latest data');
+          
+          // Load the latest schedule data from the database
+          const latestData = await DatabaseService.getRunOfShowData(event.id);
+          if (latestData) {
+            // Only update if the data is different from what we have locally
+            const localDataHash = JSON.stringify({
+              schedule: schedule,
+              customColumns: customColumns,
+              settings: { eventName, masterStartTime, dayStartTimes }
+            });
+            const remoteDataHash = JSON.stringify({
+              schedule: latestData.schedule_items,
+              customColumns: latestData.custom_columns,
+              settings: latestData.settings
+            });
+            
+            if (localDataHash !== remoteDataHash) {
+              console.log('🔄 20s sync: Updating local data with remote changes');
+              
+              // Update local state with remote data
+              setSchedule(latestData.schedule_items || []);
+              setCustomColumns(latestData.custom_columns || []);
+              
+              if (latestData.settings) {
+                setEventName(latestData.settings.eventName || eventName);
+                setMasterStartTime(latestData.settings.masterStartTime || masterStartTime);
+                setDayStartTimes(latestData.settings.dayStartTimes || dayStartTimes);
+              }
+              
+              // Update last change timestamp
+              setLastChangeAt(changeInfo.lastChangeAt);
+              
+              console.log('✅ 20s sync: Local data updated with remote changes');
+            } else {
+              console.log('⏭️ 20s sync: No changes to sync (data is identical)');
+            }
+          }
+        } else {
+          console.log('⏭️ 20s sync: No changes detected from other users');
+        }
+      } catch (error) {
+        console.error('❌ 20s sync error:', error);
+      }
+    }, 20000); // 20 seconds
+    
+    return () => {
+      console.log('🧹 Cleaning up 20-second sync timer');
+      clearInterval(syncInterval);
+    };
+  }, [event?.id, user?.id, isPageVisible, isUserEditing, lastChangeAt, schedule, customColumns, eventName, masterStartTime, dayStartTimes]);
+
   // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
     return () => {
