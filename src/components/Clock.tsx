@@ -177,7 +177,7 @@ const Clock: React.FC<ClockProps> = ({
         setIsLoading(true);
         console.log('🔄 Loading active timer from API...');
         const activeTimer = await DatabaseService.getActiveTimer(eventId);
-        if (activeTimer) {
+        if (activeTimer && activeTimer.timer_state !== 'stopped' && activeTimer.is_active) {
           setHybridTimerData(prev => ({
             ...prev,
             activeTimer: activeTimer
@@ -188,11 +188,11 @@ const Clock: React.FC<ClockProps> = ({
             ...prev,
             activeTimer: null
           }));
-          console.log('❌ No active timer found');
+          console.log('❌ No active timer found or timer is stopped');
         }
         
         // Check if active timer has changed (cue jump detection)
-        if (activeTimer && supabaseOnly) {
+        if (activeTimer && activeTimer.timer_state !== 'stopped' && activeTimer.is_active && supabaseOnly) {
           const currentActiveTimerId = `${activeTimer.item_id}_${activeTimer.started_at}`;
           const currentItemId = activeTimer.item_id;
           
