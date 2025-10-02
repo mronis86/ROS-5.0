@@ -193,6 +193,11 @@ const PhotoViewPage: React.FC = () => {
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values (matches Run of Show)
   const getRemainingTime = () => {
+    // If timer state is stopped, return 0
+    if (timerState === 'stopped') {
+      return 0;
+    }
+    
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -215,6 +220,11 @@ const PhotoViewPage: React.FC = () => {
 
   // Get remaining percentage for progress bar (matches FullScreenTimer)
   const getRemainingPercentage = () => {
+    // If timer state is stopped, return 0
+    if (timerState === 'stopped') {
+      return 0;
+    }
+    
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -1035,7 +1045,7 @@ const PhotoViewPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-lg text-slate-300 font-bold">
-                  NO CUES
+                  NO CUES SELECTED
                 </div>
               )}
             </div>
