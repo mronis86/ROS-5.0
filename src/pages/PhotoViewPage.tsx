@@ -431,10 +431,18 @@ const PhotoViewPage: React.FC = () => {
           const activeTimerResponseData = await activeTimerResponse.json();
           console.log('🔄 PhotoView: Loaded active timer on mount:', activeTimerResponseData);
           
-          // Handle the actual API response format: { value: [...], Count: 1 }
-          const activeTimerData = activeTimerResponseData.value && activeTimerResponseData.value.length > 0 
-            ? activeTimerResponseData.value[0] 
-            : activeTimerResponseData;
+          // Handle the actual API response format - check if it's an array or object
+          let activeTimerData;
+          if (Array.isArray(activeTimerResponseData)) {
+            // Direct array response
+            activeTimerData = activeTimerResponseData.length > 0 ? activeTimerResponseData[0] : null;
+          } else if (activeTimerResponseData.value && Array.isArray(activeTimerResponseData.value)) {
+            // Wrapped in value property
+            activeTimerData = activeTimerResponseData.value.length > 0 ? activeTimerResponseData.value[0] : null;
+          } else {
+            // Direct object response
+            activeTimerData = activeTimerResponseData;
+          }
           
           console.log('🔄 PhotoView: Processed active timer data:', activeTimerData);
           
@@ -620,10 +628,18 @@ const PhotoViewPage: React.FC = () => {
             const activeTimerResponseData = await activeTimerResponse.json();
             console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerResponseData);
             
-            // Handle the actual API response format: { value: [...], Count: 1 }
-            const activeTimerData = activeTimerResponseData.value && activeTimerResponseData.value.length > 0 
-              ? activeTimerResponseData.value[0] 
-              : activeTimerResponseData;
+            // Handle the actual API response format - check if it's an array or object
+            let activeTimerData;
+            if (Array.isArray(activeTimerResponseData)) {
+              // Direct array response
+              activeTimerData = activeTimerResponseData.length > 0 ? activeTimerResponseData[0] : null;
+            } else if (activeTimerResponseData.value && Array.isArray(activeTimerResponseData.value)) {
+              // Wrapped in value property
+              activeTimerData = activeTimerResponseData.value.length > 0 ? activeTimerResponseData.value[0] : null;
+            } else {
+              // Direct object response
+              activeTimerData = activeTimerResponseData;
+            }
             
             console.log('🔄 PhotoView initial sync: Processed active timer data:', activeTimerData);
             
