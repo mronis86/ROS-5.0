@@ -428,8 +428,15 @@ const PhotoViewPage: React.FC = () => {
         const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event.id}`);
         
         if (activeTimerResponse.ok) {
-          const activeTimerData = await activeTimerResponse.json();
-          console.log('🔄 PhotoView: Loaded active timer on mount:', activeTimerData);
+          const activeTimerResponseData = await activeTimerResponse.json();
+          console.log('🔄 PhotoView: Loaded active timer on mount:', activeTimerResponseData);
+          
+          // Handle the actual API response format: { value: [...], Count: 1 }
+          const activeTimerData = activeTimerResponseData.value && activeTimerResponseData.value.length > 0 
+            ? activeTimerResponseData.value[0] 
+            : activeTimerResponseData;
+          
+          console.log('🔄 PhotoView: Processed active timer data:', activeTimerData);
           
           if (activeTimerData && activeTimerData.item_id) {
             setActiveItemId(parseInt(activeTimerData.item_id));
@@ -445,15 +452,15 @@ const PhotoViewPage: React.FC = () => {
             });
             
             console.log('✅ PhotoView: Active timer state loaded on mount');
-          } else {
+      } else {
             setActiveItemId(null);
             setTimerState(null);
             setLoadedItems({});
             setTimerProgress({});
             console.log('✅ PhotoView: No active timer found on mount');
           }
-        }
-      } catch (error) {
+      }
+    } catch (error) {
         console.error('❌ PhotoView: Error loading active timer on mount:', error);
       }
     };
@@ -464,7 +471,7 @@ const PhotoViewPage: React.FC = () => {
   // WebSocket connection for active timer changes
   useEffect(() => {
     if (!event?.id) return;
-    
+
     console.log('🔌 Setting up WebSocket connection for PhotoView timer updates');
     
     const callbacks = {
@@ -528,15 +535,15 @@ const PhotoViewPage: React.FC = () => {
           setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
           
           // Update timer progress with start time
-          setTimerProgress(prev => ({
-            ...prev,
+                      setTimerProgress(prev => ({
+                        ...prev,
             [parseInt(data.item_id)]: {
               elapsed: 0,
               total: data.duration_seconds || 300,
               startedAt: data.started_at ? new Date(data.started_at) : new Date()
-            }
-          }));
-        }
+                        }
+                      }));
+                    }
       },
       onSubCueTimerStarted: (data: any) => {
         console.log('📡 PhotoView: Sub-cue timer started via WebSocket', data);
@@ -610,8 +617,15 @@ const PhotoViewPage: React.FC = () => {
         try {
           const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
           if (activeTimerResponse.ok) {
-            const activeTimerData = await activeTimerResponse.json();
-            console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerData);
+            const activeTimerResponseData = await activeTimerResponse.json();
+            console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerResponseData);
+            
+            // Handle the actual API response format: { value: [...], Count: 1 }
+            const activeTimerData = activeTimerResponseData.value && activeTimerResponseData.value.length > 0 
+              ? activeTimerResponseData.value[0] 
+              : activeTimerResponseData;
+            
+            console.log('🔄 PhotoView initial sync: Processed active timer data:', activeTimerData);
             
             if (activeTimerData && activeTimerData.item_id) {
               setActiveItemId(parseInt(activeTimerData.item_id));
@@ -687,7 +701,7 @@ const PhotoViewPage: React.FC = () => {
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
+    
     return () => {
       console.log('🔄 Cleaning up PhotoView WebSocket connection');
       socketClient.disconnect(event.id);
