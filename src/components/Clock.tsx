@@ -48,7 +48,7 @@ const Clock: React.FC<ClockProps> = ({
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [messageLoading, setMessageLoading] = useState(false);
   const [supabaseOnly, setSupabaseOnly] = useState(true);
-  const [hybridTimerData, setHybridTimerData] = useState<any>(null);
+  const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
   const [secondaryTimerUpdate, setSecondaryTimerUpdate] = useState(0);
   const [secondaryTimerStartTime, setSecondaryTimerStartTime] = useState<Date | null>(null);
   const [lastActiveTimerId, setLastActiveTimerId] = useState<string | null>(null);
@@ -336,10 +336,18 @@ const Clock: React.FC<ClockProps> = ({
       },
       onActiveTimersUpdated: (data: any) => {
         console.log('🔄 Clock: WebSocket active timers update received:', data);
-        console.log('🔄 Clock: Event ID check:', { received: data?.event_id, expected: eventId, match: data?.event_id === eventId });
-        if (data && data.event_id === eventId) {
+        
+        // Handle array format (from server broadcast)
+        let timerData = data;
+        if (Array.isArray(data) && data.length > 0) {
+          timerData = data[0]; // Take first timer from array
+          console.log('🔄 Clock: Processing first timer from array:', timerData);
+        }
+        
+        console.log('🔄 Clock: Event ID check:', { received: timerData?.event_id, expected: eventId, match: timerData?.event_id === eventId });
+        if (timerData && timerData.event_id === eventId) {
           // Check if timer is stopped
-          if (data.timer_state === 'stopped' || !data.is_active) {
+          if (timerData.timer_state === 'stopped' || !timerData.is_active) {
             // Clear timer data when stopped
             setHybridTimerData(prev => ({
               ...prev,
@@ -350,9 +358,9 @@ const Clock: React.FC<ClockProps> = ({
             // Update timer data directly from WebSocket
             setHybridTimerData(prev => ({
               ...prev,
-              activeTimer: data
+              activeTimer: timerData
             }));
-            console.log('✅ Clock: Active timer updated via WebSocket:', data);
+            console.log('✅ Clock: Active timer updated via WebSocket:', timerData);
           }
         } else {
           console.log('⚠️ Clock: Active timers update ignored - event ID mismatch or no data');
