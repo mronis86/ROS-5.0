@@ -435,18 +435,25 @@ app.post('/api/sub-cue-timers', async (req, res) => {
       started_at
     } = req.body;
     
-    // Stop any existing sub-cue timers for this event first
-    await pool.query(
-      'UPDATE sub_cue_timers SET is_running = false, is_active = false, updated_at = NOW() WHERE event_id = $1',
-      [event_id]
-    );
-    
-    // Insert new sub-cue timer
+    // Use UPSERT to ensure only one sub-cue timer per event (like active_timers)
     const result = await pool.query(
       `INSERT INTO sub_cue_timers 
        (event_id, item_id, user_id, user_name, user_role, duration_seconds, row_number, cue_display, timer_id, 
         is_active, is_running, started_at, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+       ON CONFLICT (event_id) DO UPDATE SET
+         item_id = EXCLUDED.item_id,
+         user_id = EXCLUDED.user_id,
+         user_name = EXCLUDED.user_name,
+         user_role = EXCLUDED.user_role,
+         duration_seconds = EXCLUDED.duration_seconds,
+         row_number = EXCLUDED.row_number,
+         cue_display = EXCLUDED.cue_display,
+         timer_id = EXCLUDED.timer_id,
+         is_active = EXCLUDED.is_active,
+         is_running = EXCLUDED.is_running,
+         started_at = EXCLUDED.started_at,
+         updated_at = NOW()
        RETURNING *`,
       [
         event_id, 
