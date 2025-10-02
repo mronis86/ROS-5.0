@@ -357,8 +357,19 @@ const Clock: React.FC<ClockProps> = ({
           console.log('✅ Clock: Sub-cue timer stopped via WebSocket');
         }
       },
+      onTimerMessageUpdated: (data: any) => {
+        console.log('📨 Clock: WebSocket timer message updated:', data);
+        if (data && data.event_id === eventId) {
+          // Update timer message data
+          setHybridTimerData(prev => ({
+            ...prev,
+            timerMessage: data
+          }));
+          console.log('✅ Clock: Timer message updated via WebSocket:', data);
+        }
+      },
       onInitialSync: async () => {
-        console.log('🔄 Clock: Performing initial sync for sub-cue timers');
+        console.log('🔄 Clock: Performing initial sync for sub-cue timers and messages');
         try {
           // Load current sub-cue timers
           const subCueTimers = await DatabaseService.getActiveSubCueTimers(eventId);
@@ -375,8 +386,18 @@ const Clock: React.FC<ClockProps> = ({
               console.log('✅ Clock: Initial sync - sub-cue timer loaded:', runningSubCueTimer);
             }
           }
+          
+          // Load current timer message
+          const timerMessage = await DatabaseService.getTimerMessage(eventId);
+          if (timerMessage) {
+            setHybridTimerData(prev => ({
+              ...prev,
+              timerMessage: timerMessage
+            }));
+            console.log('✅ Clock: Initial sync - timer message loaded:', timerMessage);
+          }
         } catch (error) {
-          console.error('❌ Clock: Initial sync failed to load sub-cue timers:', error);
+          console.error('❌ Clock: Initial sync failed to load sub-cue timers and messages:', error);
         }
       },
       onConnectionChange: (connected: boolean) => {
