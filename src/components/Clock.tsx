@@ -335,6 +335,50 @@ const Clock: React.FC<ClockProps> = ({
           console.log('✅ Clock: All timers cleared via WebSocket');
         }
       },
+      onSubCueTimerStarted: (data: any) => {
+        console.log('🔄 Clock: WebSocket sub-cue timer started:', data);
+        if (data && data.event_id === eventId) {
+          // Update secondary timer data
+          setHybridTimerData(prev => ({
+            ...prev,
+            secondaryTimer: data
+          }));
+          console.log('✅ Clock: Sub-cue timer started via WebSocket:', data);
+        }
+      },
+      onSubCueTimerStopped: (data: any) => {
+        console.log('🔄 Clock: WebSocket sub-cue timer stopped:', data);
+        if (data && data.event_id === eventId) {
+          // Clear secondary timer data
+          setHybridTimerData(prev => ({
+            ...prev,
+            secondaryTimer: null
+          }));
+          console.log('✅ Clock: Sub-cue timer stopped via WebSocket');
+        }
+      },
+      onInitialSync: async () => {
+        console.log('🔄 Clock: Performing initial sync for sub-cue timers');
+        try {
+          // Load current sub-cue timers
+          const subCueTimers = await DatabaseService.getActiveSubCueTimers(eventId);
+          if (subCueTimers && subCueTimers.length > 0) {
+            // Find the first running sub-cue timer
+            const runningSubCueTimer = subCueTimers.find(timer => 
+              timer.timer_state === 'running' || timer.is_running === true
+            );
+            if (runningSubCueTimer) {
+              setHybridTimerData(prev => ({
+                ...prev,
+                secondaryTimer: runningSubCueTimer
+              }));
+              console.log('✅ Clock: Initial sync - sub-cue timer loaded:', runningSubCueTimer);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Clock: Initial sync failed to load sub-cue timers:', error);
+        }
+      },
       onConnectionChange: (connected: boolean) => {
         console.log('🔄 Clock: WebSocket connection status:', connected);
         if (connected) {
