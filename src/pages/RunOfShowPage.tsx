@@ -4469,6 +4469,10 @@ const RunOfShowPage: React.FC = () => {
           }
         }
         
+        // Skip change detection to prevent delays
+        setSkipNextSync(true);
+        console.log('⏭️ Real-time: Skipping change detection to prevent delays');
+        
         // Update last change timestamp
         if (data.updated_at) {
           setLastChangeAt(data.updated_at);
@@ -8157,18 +8161,16 @@ const RunOfShowPage: React.FC = () => {
                            });
                          }
                          
-                         // Return hybrid timer result or fallback to old logic
+                         // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
                          if (isHybridRunning) return 'bg-green-900 border-green-500';
                          if (isHybridLoaded) return 'bg-blue-900 border-blue-500';
                          
-                         // Fallback to old logic for compatibility
-                         if (activeTimers[item.id]) return 'bg-green-900 border-green-500';
-                         if (activeItemId === item.id) return 'bg-blue-900 border-blue-500';
+                         // Only use old logic for completed/stopped states (not active states)
                          if (completedCues[item.id]) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-800 border-amber-600';
                          // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented && (isHybridLoaded || activeItemId === item.id)) return 'bg-amber-950 border-amber-600';
+                         if (item.isIndented && isHybridLoaded) return 'bg-amber-950 border-amber-600';
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                        })()
                      }`}
@@ -8689,18 +8691,16 @@ const RunOfShowPage: React.FC = () => {
                            });
                          }
                          
-                         // Return hybrid timer result or fallback to old logic
+                         // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
                          if (isHybridRunning) return 'bg-green-950';
                          if (isHybridLoaded) return 'bg-blue-950';
                          
-                         // Fallback to old logic for compatibility
-                         if (activeTimers[item.id]) return 'bg-green-950';
-                         if (activeItemId === item.id) return 'bg-blue-950';
+                         // Only use old logic for completed/stopped states (not active states)
                          if (completedCues[item.id]) return 'bg-gray-900 opacity-40';
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
                          // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented && (isHybridLoaded || activeItemId === item.id)) return 'bg-amber-950 border-amber-600';
+                         if (item.isIndented && isHybridLoaded) return 'bg-amber-950 border-amber-600';
                          if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                          })()
