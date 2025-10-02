@@ -281,6 +281,46 @@ const GreenRoomPage: React.FC = () => {
           setActiveItemId(data.item_id);
         }
       },
+      onActiveTimersUpdated: (data: any) => {
+        console.log('📡 Green Room: Active timers updated via WebSocket', data);
+        // Handle active timers update from active_timers table
+        if (data && data.item_id) {
+          if (data.timer_state === 'running' || data.timer_state === 'loaded') {
+            setActiveItemId(parseInt(data.item_id));
+            setTimerState(data.timer_state);
+            setLoadedItems(prev => ({
+              ...prev,
+              [data.item_id]: true
+            }));
+            console.log('🔄 Green Room: Updated active item and timer state:', {
+              itemId: data.item_id,
+              timerState: data.timer_state,
+              activeItemId: data.item_id
+            });
+          } else {
+            // Timer is stopped
+            setLoadedItems(prev => {
+              const newLoaded = { ...prev };
+              delete newLoaded[data.item_id];
+              return newLoaded;
+            });
+            if (String(activeItemId) === String(data.item_id)) {
+              setActiveItemId(null);
+              setTimerState(null);
+            }
+            console.log('🔄 Green Room: Cleared timer state for item:', data.item_id);
+          }
+        }
+      },
+      onResetAllStates: (data: any) => {
+        console.log('📡 Green Room: Reset all states triggered via WebSocket', data);
+        // Clear all states when RunOfShowPage resets
+        setActiveItemId(null);
+        setTimerState(null);
+        setLoadedItems({});
+        setTimerProgress({});
+        console.log('✅ Green Room: All states cleared via reset');
+      },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 Green Room WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
       },
