@@ -3741,7 +3741,7 @@ const RunOfShowPage: React.FC = () => {
         
         console.log('🔄 Starting sub-cue timer in database:', { eventId: event.id, itemId, userId: user.id, durationSeconds: totalSeconds, rowNumber, cueDisplay, timerId });
         try {
-          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId);
+          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
           console.log('✅ Sub-cue timer synced to database:', result);
           if (result?.error) {
             console.error('❌ Sub-cue timer database error:', result.error);
@@ -5713,7 +5713,7 @@ const RunOfShowPage: React.FC = () => {
         // Start sub-cue timer (SQL function will handle stopping existing ones)
         try {
           console.log('🔄 Starting sub-cue timer for item:', itemId, '(will auto-stop any existing timers)');
-          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId);
+          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
           console.log('✅ Secondary timer started in Supabase for item:', itemId, 'Result:', result);
           if (result?.error) {
             console.error('❌ Secondary timer database error:', result.error);

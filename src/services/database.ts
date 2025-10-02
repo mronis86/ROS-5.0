@@ -898,9 +898,9 @@ export class DatabaseService {
     }
   }
 
-  static async startSubCueTimer(eventId: string, itemId: number, userId: string, durationSeconds: number, rowNumber?: number, cueDisplay?: string, timerId?: string) {
+  static async startSubCueTimer(eventId: string, itemId: number, userId: string, durationSeconds: number, rowNumber?: number, cueDisplay?: string, timerId?: string, userName?: string, userRole?: string) {
     try {
-      console.log('🔄 Starting sub-cue timer via API:', { eventId, itemId, userId, durationSeconds, rowNumber, cueDisplay, timerId });
+      console.log('🔄 Starting sub-cue timer via API:', { eventId, itemId, userId, durationSeconds, rowNumber, cueDisplay, timerId, userName, userRole });
       
       const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers`, {
         method: 'POST',
@@ -911,6 +911,8 @@ export class DatabaseService {
           event_id: eventId,
           item_id: itemId,
           user_id: userId,
+          user_name: userName || 'Unknown User',
+          user_role: userRole || 'VIEWER',
           duration_seconds: durationSeconds,
           row_number: rowNumber,
           cue_display: cueDisplay,

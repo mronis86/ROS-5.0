@@ -411,6 +411,8 @@ app.post('/api/sub-cue-timers', async (req, res) => {
       event_id, 
       item_id, 
       user_id, 
+      user_name,
+      user_role,
       duration_seconds, 
       row_number, 
       cue_display, 
@@ -429,14 +431,16 @@ app.post('/api/sub-cue-timers', async (req, res) => {
     // Insert new sub-cue timer
     const result = await pool.query(
       `INSERT INTO sub_cue_timers 
-       (event_id, item_id, user_id, duration_seconds, row_number, cue_display, timer_id, 
+       (event_id, item_id, user_id, user_name, user_role, duration_seconds, row_number, cue_display, timer_id, 
         is_active, is_running, started_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
        RETURNING *`,
       [
         event_id, 
         item_id, 
-        user_id, 
+        user_id,
+        user_name || 'Unknown User',
+        user_role || 'VIEWER',
         duration_seconds, 
         row_number, 
         cue_display, 
