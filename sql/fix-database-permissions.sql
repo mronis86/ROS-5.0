@@ -1,14 +1,14 @@
 -- Fix Database Permissions for Neon
--- This script grants the necessary permissions for anonymous users to delete from tables
+-- This script grants the necessary permissions for public access to delete from tables
 
--- Grant permissions for anonymous/public access
--- Allow anonymous users to perform all operations on these tables
-GRANT ALL ON TABLE active_timers TO anon;
-GRANT ALL ON TABLE sub_cue_timers TO anon;
-GRANT ALL ON TABLE completed_cues TO anon;
-GRANT ALL ON TABLE timer_actions TO anon;
+-- Grant permissions for public access (allows anonymous users)
+-- Allow public users to perform all operations on these tables
+GRANT ALL ON TABLE active_timers TO public;
+GRANT ALL ON TABLE sub_cue_timers TO public;
+GRANT ALL ON TABLE completed_cues TO public;
+GRANT ALL ON TABLE timer_actions TO public;
 
--- Grant permissions for authenticated users
+-- Grant permissions for authenticated users (if they exist)
 GRANT ALL ON TABLE active_timers TO authenticated;
 GRANT ALL ON TABLE sub_cue_timers TO authenticated;
 GRANT ALL ON TABLE completed_cues TO authenticated;
@@ -21,7 +21,7 @@ GRANT ALL ON TABLE completed_cues TO service_role;
 GRANT ALL ON TABLE timer_actions TO service_role;
 
 -- Grant sequence permissions (for UUID generation)
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO public;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 
