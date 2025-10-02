@@ -708,7 +708,7 @@ function broadcastUpdate(eventId, updateType, data) {
   
   // Send via WebSocket (Socket.IO) - PRIMARY method
   if (io) {
-    io.to(eventId).emit('update', message);
+    io.to(`event:${eventId}`).emit('update', message);
     console.log(`🔌 WebSocket broadcast sent for event ${eventId}: ${updateType}`);
   }
 }
