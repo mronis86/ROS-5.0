@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
-import { driftDetector } from '../services/driftDetector';
 import { socketClient } from '../services/socket-client';
 
 interface ClockProps {
@@ -54,8 +53,6 @@ const Clock: React.FC<ClockProps> = ({
   const [lastActiveTimerId, setLastActiveTimerId] = useState<string | null>(null);
   const [lastActiveItemId, setLastActiveItemId] = useState<number | null>(null);
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
-  const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
-  const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
 
   // Clock component always runs in WebSocket-only mode
@@ -239,59 +236,7 @@ const Clock: React.FC<ClockProps> = ({
             // The local timer will automatically restart due to the dependency change
           }
           
-          // Start drift detection for the new active timer (only if it's actually new or changed)
-          if (activeTimer.is_running && activeTimer.is_active && activeTimer.started_at) {
-            const startedAt = new Date(activeTimer.started_at);
-            const duration = activeTimer.duration_seconds;
-            
-            // Only restart drift detection if the timer has actually changed
-            const shouldStartDriftDetection = 
-              !lastActiveTimerId || 
-              lastActiveTimerId !== currentActiveTimerId ||
-              lastActiveStartTime !== currentStartTime;
-            
-            if (shouldStartDriftDetection) {
-              console.log(`🔄 Starting drift detection for timer ${currentItemId} with duration ${duration}s`);
-              
-              // Stop any existing drift detection
-              driftDetector.stopMonitoring(currentItemId);
-              
-              // Start drift detection for the new timer
-              driftDetector.startMonitoring(
-                currentItemId,
-                startedAt,
-                duration,
-                (serverElapsed) => {
-                  console.log(`🔄 DriftDetector: Syncing timer ${currentItemId} with server elapsed: ${serverElapsed}s`);
-                  // Note: We don't update timer progress here anymore - let the local timer handle it
-                  // The drift detector is just for monitoring, not for UI updates
-                  
-                  // Mark this timer as server-synced for monitoring purposes
-                  setServerSyncedTimers(prev => new Set(prev).add(currentItemId));
-                }
-              );
-            } else {
-              console.log(`🔄 Timer ${currentItemId} unchanged - skipping drift detection restart`);
-            }
-            
-            // Set up periodic drift sync
-            const driftSyncInterval = setInterval(async () => {
-              try {
-                console.log(`🔄 DriftDetector: Starting periodic sync for timer ${currentItemId}`);
-                await driftDetector.forceSync(currentItemId, async () => {
-                  const activeTimer = await DatabaseService.getActiveTimer(eventId);
-                  const serverElapsed = activeTimer?.elapsed_seconds || 0;
-                  console.log(`🔄 DriftDetector: Server returned elapsed: ${serverElapsed}s for timer ${currentItemId}`);
-                  return serverElapsed;
-                });
-              } catch (error) {
-                console.warn(`⚠️ DriftDetector: Failed to sync timer ${currentItemId}:`, error);
-              }
-            }, 30000); // Force sync every 30 seconds
-            
-            // Store the drift sync interval for cleanup
-            setLocalTimerInterval(driftSyncInterval);
-          }
+          // WebSocket provides real-time updates, no drift detection needed
           
           setLastActiveTimerId(currentActiveTimerId);
           setLastActiveItemId(currentItemId);
@@ -304,22 +249,7 @@ const Clock: React.FC<ClockProps> = ({
             secondaryTimer: null
           }));
           
-          // Stop drift detection
-          if (lastActiveTimerId) {
-            const itemId = parseInt(lastActiveTimerId.split('_')[0]);
-            driftDetector.stopMonitoring(itemId);
-            setServerSyncedTimers(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(itemId);
-              return newSet;
-            });
-          }
-          
-          // Clear drift sync interval
-          if (localTimerInterval) {
-            clearInterval(localTimerInterval);
-            setLocalTimerInterval(null);
-          }
+          // WebSocket provides real-time updates, no drift detection cleanup needed
           
           setLastActiveTimerId(null);
           setLastActiveItemId(null);
@@ -459,8 +389,7 @@ const Clock: React.FC<ClockProps> = ({
           total: duration
         }));
         
-        // Update drift detector with local elapsed time
-        driftDetector.updateLocalElapsed(itemId, elapsed);
+        // WebSocket provides real-time updates, no drift detection needed
         
         // Debug logging for first few seconds
         if (elapsed <= 10) {
@@ -475,18 +404,7 @@ const Clock: React.FC<ClockProps> = ({
     }
   }, [supabaseOnly, lastActiveStartTime]); // Removed hybridTimerData?.activeTimer to prevent constant restarts
 
-  // Cleanup drift detector on component unmount
-  useEffect(() => {
-    return () => {
-      console.log('🔄 Cleaning up drift detector on component unmount');
-      driftDetector.destroy();
-      
-      // Clear any remaining intervals
-      if (localTimerInterval) {
-        clearInterval(localTimerInterval);
-      }
-    };
-  }, []);
+  // WebSocket provides real-time updates, no drift detection cleanup needed
 
   // Helper function to format time (same as RunOfShowPage) - handles negative values
   const formatTime = (seconds: number) => {
