@@ -4500,6 +4500,7 @@ const RunOfShowPage: React.FC = () => {
     };
   }, [event?.id]);
 
+
   // Debug: Monitor schedule changes
   useEffect(() => {
     console.log('📊 Schedule state changed:', {
