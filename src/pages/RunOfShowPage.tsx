@@ -1106,10 +1106,10 @@ const RunOfShowPage: React.FC = () => {
     // Initial sync
     syncSubCueTimers();
     
-    // Poll every 30 seconds - Socket.IO/SSE handle real-time updates, polling as fallback
-    const interval = setInterval(syncSubCueTimers, 30 * 1000);
+    // DISABLED: WebSocket handles real-time updates, no polling needed
+    // const interval = setInterval(syncSubCueTimers, 30 * 1000);
     
-    return () => clearInterval(interval);
+    // return () => clearInterval(interval); // No interval to clean up
   }, [event?.id]);
 
   // Separate polling for top text display (LOADED/RUNNING states) - no countdown interference
@@ -1208,10 +1208,10 @@ const RunOfShowPage: React.FC = () => {
     // Initial sync
     syncTopTextDisplay();
     
-    // Poll every 10 seconds - Socket.IO/SSE handle real-time updates, polling as fallback
-    const interval = setInterval(syncTopTextDisplay, 10 * 1000);
+    // DISABLED: WebSocket handles real-time updates, no polling needed
+    // const interval = setInterval(syncTopTextDisplay, 10 * 1000);
     
-    return () => clearInterval(interval);
+    // return () => clearInterval(interval); // No interval to clean up
   }, [event?.id, user?.id, schedule]);
 
   // Real-time WebSocket sync for schedule changes (replaces 20-second polling)
