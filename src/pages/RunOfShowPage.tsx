@@ -8211,11 +8211,13 @@ const RunOfShowPage: React.FC = () => {
                            // Check if the parent cue (non-indented item above) is loaded
                            const currentIndex = schedule.findIndex(s => s.id === item.id);
                            let parentCueLoaded = false;
+                           let parentItem = null;
                            
                            // Look for the first non-indented item above this indented item
                            for (let i = currentIndex - 1; i >= 0; i--) {
-                             const parentItem = schedule[i];
-                             if (!parentItem.isIndented) {
+                             const candidateParent = schedule[i];
+                             if (!candidateParent.isIndented) {
+                               parentItem = candidateParent;
                                // Found the parent item, check if it's loaded
                                parentCueLoaded = (hybridTimerData?.activeTimer?.item_id && 
                                  (parseInt(String(hybridTimerData.activeTimer.item_id)) === parentItem.id || 
@@ -8224,6 +8226,22 @@ const RunOfShowPage: React.FC = () => {
                                  hybridTimerData.activeTimer.is_active && !hybridTimerData.activeTimer.is_running;
                                break;
                              }
+                           }
+                           
+                           // Debug logging for indented highlighting
+                           if (Math.random() < 0.1) { // 10% chance to log
+                             console.log('🔍 Indented Debug:', {
+                               itemId: item.id,
+                               itemName: item.segmentName,
+                               isIndented: item.isIndented,
+                               currentIndex,
+                               parentItem: parentItem ? { id: parentItem.id, name: parentItem.segmentName } : null,
+                               hybridTimerItemId: hybridTimerData?.activeTimer?.item_id,
+                               hybridTimerActive: hybridTimerData?.activeTimer?.is_active,
+                               hybridTimerRunning: hybridTimerData?.activeTimer?.is_running,
+                               parentCueLoaded,
+                               shouldHighlight: parentCueLoaded
+                             });
                            }
                            
                            if (parentCueLoaded) return 'bg-amber-950 border-amber-600';
@@ -8761,11 +8779,13 @@ const RunOfShowPage: React.FC = () => {
                            // Check if the parent cue (non-indented item above) is loaded
                            const currentIndex = schedule.findIndex(s => s.id === item.id);
                            let parentCueLoaded = false;
+                           let parentItem = null;
                            
                            // Look for the first non-indented item above this indented item
                            for (let i = currentIndex - 1; i >= 0; i--) {
-                             const parentItem = schedule[i];
-                             if (!parentItem.isIndented) {
+                             const candidateParent = schedule[i];
+                             if (!candidateParent.isIndented) {
+                               parentItem = candidateParent;
                                // Found the parent item, check if it's loaded
                                parentCueLoaded = (hybridTimerData?.activeTimer?.item_id && 
                                  (parseInt(String(hybridTimerData.activeTimer.item_id)) === parentItem.id || 
@@ -8774,6 +8794,22 @@ const RunOfShowPage: React.FC = () => {
                                  hybridTimerData.activeTimer.is_active && !hybridTimerData.activeTimer.is_running;
                                break;
                              }
+                           }
+                           
+                           // Debug logging for indented highlighting
+                           if (Math.random() < 0.1) { // 10% chance to log
+                             console.log('🔍 Indented Debug (2nd):', {
+                               itemId: item.id,
+                               itemName: item.segmentName,
+                               isIndented: item.isIndented,
+                               currentIndex,
+                               parentItem: parentItem ? { id: parentItem.id, name: parentItem.segmentName } : null,
+                               hybridTimerItemId: hybridTimerData?.activeTimer?.item_id,
+                               hybridTimerActive: hybridTimerData?.activeTimer?.is_active,
+                               hybridTimerRunning: hybridTimerData?.activeTimer?.is_running,
+                               parentCueLoaded,
+                               shouldHighlight: parentCueLoaded
+                             });
                            }
                            
                            if (parentCueLoaded) return 'bg-amber-950 border-amber-600';
