@@ -285,6 +285,11 @@ const PhotoViewPage: React.FC = () => {
 
   // Get countdown color based on remaining time (matches progress bar colors)
   const getCountdownColor = () => {
+    // If no cue is selected (no activeItemId or timerState is stopped), show white
+    if (!activeItemId || timerState === 'stopped' || timerState === null) {
+      return '#ffffff'; // White
+    }
+    
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -668,16 +673,16 @@ const PhotoViewPage: React.FC = () => {
               });
               
               console.log('🔄 PhotoView: Initial sync completed - timer state restored');
-            } else {
+      } else {
               // No active timer
-              setActiveItemId(null);
-              setTimerState(null);
-              setLoadedItems({});
-              setTimerProgress({});
+        setActiveItemId(null);
+        setTimerState(null);
+        setLoadedItems({});
+        setTimerProgress({});
               console.log('🔄 PhotoView: Initial sync completed - no active timer');
             }
-          }
-        } catch (error) {
+      }
+    } catch (error) {
           console.error('❌ PhotoView: Initial sync failed to load active timer:', error);
         }
         
@@ -1045,7 +1050,7 @@ const PhotoViewPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-lg text-slate-300 font-bold">
-                  NO CUES SELECTED
+                  NO CUE SELECTED
                 </div>
               )}
             </div>
