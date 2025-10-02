@@ -323,13 +323,55 @@ const Clock: React.FC<ClockProps> = ({
       onTimerUpdated: (data: any) => {
         console.log('🔄 Clock: WebSocket timer update received:', data);
         if (data && data.event_id === eventId) {
-          loadActiveTimer(); // Reload active timer when changes occur
+          // Update timer data directly from WebSocket
+          setHybridTimerData(prev => ({
+            ...prev,
+            activeTimer: data
+          }));
+          console.log('✅ Clock: Timer updated via WebSocket:', data);
         }
       },
       onActiveTimersUpdated: (data: any) => {
         console.log('🔄 Clock: WebSocket active timers update received:', data);
         if (data && data.event_id === eventId) {
-          loadActiveTimer(); // Reload active timer when changes occur
+          // Check if timer is stopped
+          if (data.timer_state === 'stopped' || !data.is_active) {
+            // Clear timer data when stopped
+            setHybridTimerData(prev => ({
+              ...prev,
+              activeTimer: null
+            }));
+            console.log('✅ Clock: Timer stopped via WebSocket - cleared timer data');
+          } else {
+            // Update timer data directly from WebSocket
+            setHybridTimerData(prev => ({
+              ...prev,
+              activeTimer: data
+            }));
+            console.log('✅ Clock: Active timer updated via WebSocket:', data);
+          }
+        }
+      },
+      onTimerStopped: (data: any) => {
+        console.log('🔄 Clock: WebSocket timer stopped:', data);
+        if (data && data.event_id === eventId) {
+          // Clear timer data when stopped
+          setHybridTimerData(prev => ({
+            ...prev,
+            activeTimer: null
+          }));
+          console.log('✅ Clock: Timer cleared via WebSocket');
+        }
+      },
+      onTimersStopped: (data: any) => {
+        console.log('🔄 Clock: WebSocket all timers stopped:', data);
+        if (data && data.event_id === eventId) {
+          // Clear timer data when all stopped
+          setHybridTimerData(prev => ({
+            ...prev,
+            activeTimer: null
+          }));
+          console.log('✅ Clock: All timers cleared via WebSocket');
         }
       },
       onConnectionChange: (connected: boolean) => {
