@@ -3793,6 +3793,20 @@ const RunOfShowPage: React.FC = () => {
     setActiveItemId(null);
     setStoppedItems(new Set());
     setLoadedCueDependents(new Set()); // Clear dependent row highlighting
+    setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
+    
+    // Clear indented state from all schedule items
+    setSchedule(prevSchedule => 
+      prevSchedule.map(item => ({
+        ...item,
+        isIndented: false
+      }))
+    );
+    
+    // Emit reset event to other connected pages (like PhotoViewPage)
+    console.log('📡 RunOfShow: Emitting reset all states event to other pages');
+    socketClient.emitResetAllStates();
+    console.log('✅ RunOfShow: Reset all states event emitted');
   };
 
   // Open full-screen timer in new window
@@ -4344,20 +4358,24 @@ const RunOfShowPage: React.FC = () => {
         // Update completed cues state directly from WebSocket data - no API polling needed!
         if (data && data.removed && data.item_id) {
           // Remove completed cue
-          setCompletedCues(prev => prev.filter(cue => cue.item_id !== data.item_id));
+          setCompletedCues(prev => {
+            const newCompleted = { ...prev };
+            delete newCompleted[data.item_id];
+            return newCompleted;
+          });
         } else if (data && Array.isArray(data)) {
-          // Full array of completed cues (from GET request)
-          setCompletedCues(data);
+          // Full array of completed cues (from GET request) - convert to object format
+          const completedObject = data.reduce((acc, cue) => {
+            acc[cue.item_id] = true;
+            return acc;
+          }, {});
+          setCompletedCues(completedObject);
         } else if (data && data.item_id) {
           // Add or update single completed cue
-          setCompletedCues(prev => {
-            const existing = prev.find(cue => cue.item_id === data.item_id);
-            if (existing) {
-              return prev.map(cue => cue.item_id === data.item_id ? { ...cue, ...data } : cue);
-            } else {
-              return [...prev, data];
-            }
-          });
+          setCompletedCues(prev => ({
+            ...prev,
+            [data.item_id]: true
+          }));
         }
       },
       onTimerUpdated: (data: any) => {
@@ -5283,7 +5301,11 @@ const RunOfShowPage: React.FC = () => {
         return newSet;
       });
       
-      setCompletedCues(prev => ({ ...prev, [itemId]: true }));
+      setCompletedCues(prev => {
+        const newCompleted = { ...prev, [itemId]: true };
+        console.log('🔄 ToggleTimer: Updated completedCues for main item:', itemId, 'new state:', newCompleted);
+        return newCompleted;
+      });
       // Add to stopped items for inactive styling
       setStoppedItems(prev => new Set([...prev, itemId]));
       
@@ -5305,26 +5327,43 @@ const RunOfShowPage: React.FC = () => {
       
       // Also complete any indented items that are part of this CUE group
       const currentIndex = schedule.findIndex(item => item.id === itemId);
+      console.log('🔄 ToggleTimer: Current index for item', itemId, ':', currentIndex);
+      
       if (currentIndex !== -1) {
+        console.log('🔄 ToggleTimer: Looking for indented items after index', currentIndex);
         // Find all indented items that follow this CUE until the next non-indented item
         for (let i = currentIndex + 1; i < schedule.length; i++) {
+          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', schedule[i].isIndented);
           if (schedule[i].isIndented) {
-            setCompletedCues(prev => ({ ...prev, [schedule[i].id]: true }));
+            console.log('🔄 ToggleTimer: Marking indented item as completed:', schedule[i].id, schedule[i].segmentName);
+            setCompletedCues(prev => {
+              const newCompleted = { ...prev, [schedule[i].id]: true };
+              console.log('🔄 ToggleTimer: Updated completedCues for indented item:', schedule[i].id, 'new state:', newCompleted);
+              return newCompleted;
+            });
             setStoppedItems(prev => new Set([...prev, schedule[i].id]));
             // Mark indented items as completed in database too
-            await DatabaseService.markCueCompleted(
-              event.id, 
-              schedule[i].id, 
-              schedule[i].customFields?.cue || 'CUE', 
-              user.id, 
-              user.full_name || user.email || 'Unknown User',
-              currentUserRole || 'VIEWER'
-            );
+            try {
+              await DatabaseService.markCueCompleted(
+                event.id, 
+                schedule[i].id, 
+                schedule[i].customFields?.cue || 'CUE', 
+                user.id, 
+                user.full_name || user.email || 'Unknown User',
+                currentUserRole || 'VIEWER'
+              );
+              console.log('✅ ToggleTimer: Successfully marked indented item as completed in database:', schedule[i].id);
+            } catch (error) {
+              console.error('❌ ToggleTimer: Failed to mark indented item as completed in database:', schedule[i].id, error);
+            }
           } else {
             // Stop when we hit a non-indented item (next CUE group)
+            console.log('🔄 ToggleTimer: Hit non-indented item, stopping search at index', i);
             break;
           }
         }
+      } else {
+        console.log('⚠️ ToggleTimer: Could not find current item in schedule:', itemId);
       }
       
       // Don't clear dependent row highlighting when timer is stopped - they should stay highlighted
@@ -7788,12 +7827,12 @@ const RunOfShowPage: React.FC = () => {
                          ? 'bg-green-900 border-green-500' 
                          : activeItemId === item.id
                          ? 'bg-blue-900 border-blue-500'
-                         : loadedCueDependents.has(item.id)
-                         ? 'bg-amber-800 border-amber-600'
                          : completedCues[item.id]
                          ? 'bg-gray-900 border-gray-700 opacity-40'
                          : stoppedItems.has(item.id)
                          ? 'bg-gray-900 border-gray-700 opacity-40'
+                         : loadedCueDependents.has(item.id)
+                         ? 'bg-amber-800 border-amber-600'
                          : index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
                      }`}
                      style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
@@ -8297,12 +8336,12 @@ const RunOfShowPage: React.FC = () => {
                            ? 'bg-green-950'
                            : activeItemId === item.id
                            ? 'bg-blue-950'
-                           : loadedCueDependents.has(item.id)
-                           ? 'bg-amber-950 border-amber-600'
                            : completedCues[item.id]
                            ? 'bg-gray-900 opacity-40'
                            : stoppedItems.has(item.id)
                            ? 'bg-gray-900 opacity-40'
+                           : loadedCueDependents.has(item.id)
+                           ? 'bg-amber-950 border-amber-600'
                            : lastLoadedCueId === item.id
                            ? 'bg-purple-950 border-purple-400'
                            : index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
