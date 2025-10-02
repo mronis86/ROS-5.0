@@ -87,14 +87,20 @@ const Clock: React.FC<ClockProps> = ({
           total: activeTimer.duration_seconds || 0
         });
       }
+    } else if (supabaseOnly && !hybridTimerData?.activeTimer) {
+      // No active timer - clear the display
+      setTimerProgress({
+        elapsed: 0,
+        total: 0
+      });
     } else {
       // Use props data when not in hybrid mode
-    setTimerProgress({
-      elapsed: elapsedTime,
-      total: totalDuration
-    });
+      setTimerProgress({
+        elapsed: elapsedTime,
+        total: totalDuration
+      });
     }
-  }, [elapsedTime, totalDuration, supabaseOnly]); // Removed hybridTimerData to prevent constant restarts
+  }, [hybridTimerData, elapsedTime, totalDuration, supabaseOnly]);
 
   // Update current time every second
   useEffect(() => {
@@ -572,56 +578,61 @@ const Clock: React.FC<ClockProps> = ({
         <div className="text-white flex items-center justify-end gap-3 whitespace-nowrap">
           <span>
             {(() => {
-              if (supabaseOnly && hybridTimerData?.activeTimer) {
-                const activeTimer = hybridTimerData.activeTimer;
-                const lastLoadedCue = hybridTimerData?.lastLoadedCue;
-                const cueData = hybridTimerData?.cueData;
-                
-                // Try CUE data from active timer cue_is column first
-                if (activeTimer.cue_is) {
-                  return activeTimer.cue_is;
-                }
-                
-                // Try CUE data from schedule/items table second
-                if (cueData) {
-                  console.log('🔍 CUE data structure:', cueData);
-                  console.log('🔍 CUE data fields:', Object.keys(cueData));
+              if (supabaseOnly) {
+                if (hybridTimerData?.activeTimer) {
+                  const activeTimer = hybridTimerData.activeTimer;
+                  const lastLoadedCue = hybridTimerData?.lastLoadedCue;
+                  const cueData = hybridTimerData?.cueData;
                   
-                  const cueDisplay = cueData.customFields?.cue || cueData.cue || cueData.cue_display || cueData.name || cueData.title;
-                  const segmentName = cueData.segmentName || cueData.segment_name || cueData.segment;
+                  // Try CUE data from active timer cue_is column first
+                  if (activeTimer.cue_is) {
+                    return activeTimer.cue_is;
+                  }
+                  
+                  // Try CUE data from schedule/items table second
+                  if (cueData) {
+                    console.log('🔍 CUE data structure:', cueData);
+                    console.log('🔍 CUE data fields:', Object.keys(cueData));
+                    
+                    const cueDisplay = cueData.customFields?.cue || cueData.cue || cueData.cue_display || cueData.name || cueData.title;
+                    const segmentName = cueData.segmentName || cueData.segment_name || cueData.segment;
+                    
+                    if (cueDisplay) {
+                      console.log('✅ Found CUE display:', cueDisplay);
+                      return cueDisplay;
+                    }
+                  }
+                  
+                  // Try active timer other fields
+                  const cueDisplay = activeTimer.cue_display || activeTimer.cue;
+                  const segmentName = activeTimer.segment_name || activeTimer.segmentName;
                   
                   if (cueDisplay) {
-                    console.log('✅ Found CUE display:', cueDisplay);
                     return cueDisplay;
                   }
-                }
-                
-                // Try active timer other fields
-                const cueDisplay = activeTimer.cue_display || activeTimer.cue;
-                const segmentName = activeTimer.segment_name || activeTimer.segmentName;
-                
-                if (cueDisplay) {
-                  return cueDisplay;
-                }
-                
-                // Fallback to last loaded cue
-                if (lastLoadedCue) {
-                  const lastCueDisplay = lastLoadedCue.cue_display || lastLoadedCue.cue;
-                  const lastSegmentName = lastLoadedCue.segment_name || lastLoadedCue.segmentName;
-                  if (lastCueDisplay) {
-                    return lastCueDisplay;
+                  
+                  // Fallback to last loaded cue
+                  if (lastLoadedCue) {
+                    const lastCueDisplay = lastLoadedCue.cue_display || lastLoadedCue.cue;
+                    const lastSegmentName = lastLoadedCue.segment_name || lastLoadedCue.segmentName;
+                    if (lastCueDisplay) {
+                      return lastCueDisplay;
+                    }
                   }
+                  
+                  // Final fallback: Generate CUE display from item_id
+                  if (activeTimer.item_id) {
+                    // Extract a meaningful CUE number from the item_id
+                    const itemIdStr = activeTimer.item_id.toString();
+                    const lastDigits = itemIdStr.slice(-4); // Get last 4 digits
+                    return `CUE ${lastDigits}`;
+                  }
+                  
+                  return 'No CUE';
+                } else {
+                  // No active timer - show "No Cue"
+                  return 'No Cue';
                 }
-                
-                // Final fallback: Generate CUE display from item_id
-                if (activeTimer.item_id) {
-                  // Extract a meaningful CUE number from the item_id
-                  const itemIdStr = activeTimer.item_id.toString();
-                  const lastDigits = itemIdStr.slice(-4); // Get last 4 digits
-                  return `CUE ${lastDigits}`;
-                }
-                
-                return 'No CUE';
               } else {
                 // Clock always runs in WebSocket-only mode
                 return 'No CUE';
