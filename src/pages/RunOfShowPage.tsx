@@ -1214,74 +1214,19 @@ const RunOfShowPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [event?.id, user?.id, schedule]);
 
-  // 20-second sync timer for schedule changes (content sync between browsers)
+  // Real-time WebSocket sync for schedule changes (replaces 20-second polling)
   useEffect(() => {
     if (!event?.id || !user) return;
     
-    console.log('🔄 Starting 20-second sync timer for schedule changes');
+    console.log('🔄 Setting up real-time WebSocket sync for schedule changes');
     
-    const syncInterval = setInterval(async () => {
-      try {
-        // Check if we should skip this sync
-        if (!isPageVisible || isUserEditing) {
-          console.log('⏭️ Skipping 20s sync - page not visible or user editing');
-          return;
-        }
-        
-        // Check for changes from other users
-        const changeInfo = await DatabaseService.checkForChanges(event.id, lastChangeAt);
-        if (changeInfo && changeInfo.hasChanges && changeInfo.lastChangeAt) {
-          console.log('🔄 20s sync: Changes detected from other users, loading latest data');
-          
-          // Load the latest schedule data from the database
-          const latestData = await DatabaseService.getRunOfShowData(event.id);
-          if (latestData) {
-            // Only update if the data is different from what we have locally
-            const localDataHash = JSON.stringify({
-              schedule: schedule,
-              customColumns: customColumns,
-              settings: { eventName, masterStartTime, dayStartTimes }
-            });
-            const remoteDataHash = JSON.stringify({
-              schedule: latestData.schedule_items,
-              customColumns: latestData.custom_columns,
-              settings: latestData.settings
-            });
-            
-            if (localDataHash !== remoteDataHash) {
-              console.log('🔄 20s sync: Updating local data with remote changes');
-              
-              // Update local state with remote data
-              setSchedule(latestData.schedule_items || []);
-              setCustomColumns(latestData.custom_columns || []);
-              
-              if (latestData.settings) {
-                setEventName(latestData.settings.eventName || eventName);
-                setMasterStartTime(latestData.settings.masterStartTime || masterStartTime);
-                setDayStartTimes(latestData.settings.dayStartTimes || dayStartTimes);
-              }
-              
-              // Update last change timestamp
-              setLastChangeAt(changeInfo.lastChangeAt);
-              
-              console.log('✅ 20s sync: Local data updated with remote changes');
-            } else {
-              console.log('⏭️ 20s sync: No changes to sync (data is identical)');
-            }
-          }
-        } else {
-          console.log('⏭️ 20s sync: No changes detected from other users');
-        }
-      } catch (error) {
-        console.error('❌ 20s sync error:', error);
-      }
-    }, 20000); // 20 seconds
+    // WebSocket will handle real-time updates via onRunOfShowDataUpdated callback
+    // No polling needed - updates are instant when other users make changes
     
     return () => {
-      console.log('🧹 Cleaning up 20-second sync timer');
-      clearInterval(syncInterval);
+      console.log('🧹 Real-time WebSocket sync cleanup (no timer to clear)');
     };
-  }, [event?.id, user?.id, isPageVisible, isUserEditing, lastChangeAt, schedule, customColumns, eventName, masterStartTime, dayStartTimes]);
+  }, [event?.id, user?.id]);
 
   // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
@@ -4480,9 +4425,56 @@ const RunOfShowPage: React.FC = () => {
     
     const callbacks = {
       onRunOfShowDataUpdated: (data: any) => {
-        console.log('📡 Real-time: Run of show data updated');
-        // Don't reload automatically to prevent save loops
-        // loadFromAPI();
+        console.log('📡 Real-time: Run of show data updated via WebSocket');
+        
+        // Skip if this update was made by the current user (prevent save loops)
+        if (data && data.last_modified_by === user?.id) {
+          console.log('⏭️ Skipping WebSocket update - change made by current user');
+          return;
+        }
+        
+        // Skip if user is actively editing (prevent conflicts)
+        if (isUserEditing) {
+          console.log('⏭️ Skipping WebSocket update - user is actively editing');
+          return;
+        }
+        
+        console.log('🔄 Real-time: Updating local data with remote changes');
+        
+        // Update schedule items
+        if (data.schedule_items && Array.isArray(data.schedule_items)) {
+          setSchedule(data.schedule_items);
+          console.log('✅ Real-time: Schedule items updated');
+        }
+        
+        // Update custom columns
+        if (data.custom_columns && Array.isArray(data.custom_columns)) {
+          setCustomColumns(data.custom_columns);
+          console.log('✅ Real-time: Custom columns updated');
+        }
+        
+        // Update settings
+        if (data.settings) {
+          if (data.settings.eventName !== undefined) {
+            setEventName(data.settings.eventName);
+            console.log('✅ Real-time: Event name updated');
+          }
+          if (data.settings.masterStartTime !== undefined) {
+            setMasterStartTime(data.settings.masterStartTime);
+            console.log('✅ Real-time: Master start time updated');
+          }
+          if (data.settings.dayStartTimes !== undefined) {
+            setDayStartTimes(data.settings.dayStartTimes);
+            console.log('✅ Real-time: Day start times updated');
+          }
+        }
+        
+        // Update last change timestamp
+        if (data.updated_at) {
+          setLastChangeAt(data.updated_at);
+        }
+        
+        console.log('✅ Real-time: All schedule data updated via WebSocket');
       },
       onCompletedCuesUpdated: (data: any) => {
         console.log('📡 Real-time: Completed cues updated via WebSocket');
