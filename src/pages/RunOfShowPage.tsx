@@ -4555,7 +4555,10 @@ const RunOfShowPage: React.FC = () => {
               ...prev,
               activeTimer: null
             }));
-            console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data');
+            // Also clear old state to prevent hanging blue highlighting
+            setActiveItemId(null);
+            setActiveTimers({});
+            console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
           } else {
             // Update timer data directly from WebSocket
             setHybridTimerData(prev => ({
@@ -8068,7 +8071,7 @@ const RunOfShowPage: React.FC = () => {
                          const hybridItemId = hybridTimerData?.activeTimer?.item_id;
                          const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
                          const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                         const isHybridLoaded = isMatch && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
+                         const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
                          
                          // Debug: Log highlighting decisions for this item (reduced logging)
                          if (isMatch && Math.random() < 0.01) {
@@ -8082,22 +8085,20 @@ const RunOfShowPage: React.FC = () => {
                            });
                          }
                          
-                         return isHybridRunning ? 'bg-green-900 border-green-500' : isHybridLoaded ? 'bg-blue-900 border-blue-500' : null;
-                       })() ||
-                       // Fallback to old logic for compatibility
-                         activeTimers[item.id]
-                         ? 'bg-green-900 border-green-500' 
-                         : activeItemId === item.id
-                         ? 'bg-blue-900 border-blue-500'
-                         : completedCues[item.id]
-                         ? 'bg-gray-900 border-gray-700 opacity-40'
-                         : stoppedItems.has(item.id)
-                         ? 'bg-gray-900 border-gray-700 opacity-40'
-                         : loadedCueDependents.has(item.id)
-                         ? 'bg-amber-800 border-amber-600'
-                         : item.isIndented
-                         ? 'bg-amber-950 border-amber-600'
-                         : index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
+                         // Return hybrid timer result or fallback to old logic
+                         if (isHybridRunning) return 'bg-green-900 border-green-500';
+                         if (isHybridLoaded) return 'bg-blue-900 border-blue-500';
+                         
+                         // Fallback to old logic for compatibility
+                         if (activeTimers[item.id]) return 'bg-green-900 border-green-500';
+                         if (activeItemId === item.id) return 'bg-blue-900 border-blue-500';
+                         if (completedCues[item.id]) return 'bg-gray-900 border-gray-700 opacity-40';
+                         if (stoppedItems.has(item.id)) return 'bg-gray-900 border-gray-700 opacity-40';
+                         if (loadedCueDependents.has(item.id)) return 'bg-amber-800 border-amber-600';
+                         // Only show orange for indented items when the cue above is loaded
+                         if (item.isIndented && (isHybridLoaded || activeItemId === item.id)) return 'bg-amber-950 border-amber-600';
+                         return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
+                       })()
                      }`}
                      style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                    >
@@ -8602,7 +8603,7 @@ const RunOfShowPage: React.FC = () => {
                          const hybridItemId = hybridTimerData?.activeTimer?.item_id;
                          const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
                          const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                         const isHybridLoaded = isMatch && (!hybridTimerData?.activeTimer?.is_running || !hybridTimerData?.activeTimer?.is_active);
+                         const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
                          
                          // Debug: Log highlighting decisions for this item (reduced logging)
                          if (isMatch && Math.random() < 0.01) {
@@ -8616,24 +8617,21 @@ const RunOfShowPage: React.FC = () => {
                            });
                          }
                          
-                         return isHybridRunning ? 'bg-green-950' : isHybridLoaded ? 'bg-blue-950' : null;
-                         })() ||
+                         // Return hybrid timer result or fallback to old logic
+                         if (isHybridRunning) return 'bg-green-950';
+                         if (isHybridLoaded) return 'bg-blue-950';
+                         
                          // Fallback to old logic for compatibility
-                           activeTimers[item.id]
-                           ? 'bg-green-950'
-                           : activeItemId === item.id
-                           ? 'bg-blue-950'
-                           : completedCues[item.id]
-                           ? 'bg-gray-900 opacity-40'
-                           : stoppedItems.has(item.id)
-                           ? 'bg-gray-900 opacity-40'
-                           : loadedCueDependents.has(item.id)
-                           ? 'bg-amber-950 border-amber-600'
-                           : item.isIndented
-                           ? 'bg-amber-950 border-amber-600'
-                           : lastLoadedCueId === item.id
-                           ? 'bg-purple-950 border-purple-400'
-                           : index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
+                         if (activeTimers[item.id]) return 'bg-green-950';
+                         if (activeItemId === item.id) return 'bg-blue-950';
+                         if (completedCues[item.id]) return 'bg-gray-900 opacity-40';
+                         if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
+                         if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
+                         // Only show orange for indented items when the cue above is loaded
+                         if (item.isIndented && (isHybridLoaded || activeItemId === item.id)) return 'bg-amber-950 border-amber-600';
+                         if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
+                         return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
+                         })()
                        }`}
                        style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                      >
