@@ -438,13 +438,15 @@ const PhotoViewPage: React.FC = () => {
             }
           }));
           
-          // Update timer state based on is_running
-          if (data.is_running) {
+          // Update timer state based on timer_state from active_timers table
+          if (data.timer_state === 'running') {
             setTimerState('running');
-            setActiveItemId(data.item_id);
-            setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
-          } else {
+            setActiveItemId(parseInt(data.item_id));
+            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
+          } else if (data.timer_state === 'loaded') {
             setTimerState('loaded');
+            setActiveItemId(parseInt(data.item_id));
+            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
           }
         }
       },
@@ -456,12 +458,12 @@ const PhotoViewPage: React.FC = () => {
           setTimerState(null);
           setLoadedItems(prev => {
             const newLoaded = { ...prev };
-            delete newLoaded[data.item_id];
+            delete newLoaded[parseInt(data.item_id)];
             return newLoaded;
           });
           setTimerProgress(prev => {
             const newProgress = { ...prev };
-            delete newProgress[data.item_id];
+            delete newProgress[parseInt(data.item_id)];
             return newProgress;
           });
         }
@@ -478,14 +480,14 @@ const PhotoViewPage: React.FC = () => {
         console.log('📡 PhotoView: Timer started via WebSocket', data);
         // Update active item and timer state when timer starts
         if (data && data.item_id) {
-          setActiveItemId(data.item_id);
+          setActiveItemId(parseInt(data.item_id));
           setTimerState('running');
-          setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
+          setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
           
           // Update timer progress with start time
           setTimerProgress(prev => ({
             ...prev,
-            [data.item_id]: {
+            [parseInt(data.item_id)]: {
               elapsed: 0,
               total: data.duration_seconds || 300,
               startedAt: data.started_at ? new Date(data.started_at) : new Date()
@@ -497,33 +499,43 @@ const PhotoViewPage: React.FC = () => {
         console.log('📡 PhotoView: Sub-cue timer started via WebSocket', data);
         // Handle sub-cue timer start
         if (data && data.item_id) {
+          // Find the schedule item to get cue and segment name
+          const scheduleItem = schedule.find(item => item.id === parseInt(data.item_id));
           setSecondaryTimer({
-            itemId: data.item_id,
+            itemId: parseInt(data.item_id),
             duration: data.duration_seconds || 60,
-            startTime: data.started_at ? new Date(data.started_at) : new Date(),
-            isActive: true
+            remaining: data.duration_seconds || 60,
+            isActive: true,
+            startedAt: data.started_at ? new Date(data.started_at) : new Date(),
+            timerState: 'running',
+            cue: scheduleItem?.customFields?.cue || `CUE ${data.item_id}`,
+            segmentName: scheduleItem?.segmentName || 'Segment'
           });
         }
       },
+      onSubCueTimerStopped: (data: any) => {
+        console.log('📡 PhotoView: Sub-cue timer stopped via WebSocket', data);
+        // Clear sub-cue timer when stopped
+        setSecondaryTimer(null);
+      },
       onActiveTimersUpdated: (data: any) => {
         console.log('📡 PhotoView: Active timers updated via WebSocket', data);
-        // Handle active timers update (for cue loading)
-        if (data && Array.isArray(data)) {
-          if (data.length > 0) {
-            const activeTimer = data[0];
-            setActiveItemId(parseInt(activeTimer.item_id));
-            setTimerState(activeTimer.is_running ? 'running' : 'loaded');
-            setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
+        // Handle active timers update from active_timers table
+        if (data && data.item_id) {
+          if (data.timer_state === 'running' || data.timer_state === 'loaded') {
+            setActiveItemId(parseInt(data.item_id));
+            setTimerState(data.timer_state);
+            setLoadedItems({ [parseInt(data.item_id)]: true });
             
             setTimerProgress({
-              [parseInt(activeTimer.item_id)]: {
-                elapsed: activeTimer.elapsed_seconds || 0,
-                total: activeTimer.duration_seconds || 300,
-                startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
+              [parseInt(data.item_id)]: {
+                elapsed: data.elapsed_seconds || 0,
+                total: data.duration_seconds || 300,
+                startedAt: data.started_at ? new Date(data.started_at) : null
               }
             });
-          } else {
-            // No active timers - clear state
+          } else if (data.timer_state === 'stopped') {
+            // Timer stopped - clear state
             setActiveItemId(null);
             setTimerState(null);
             setLoadedItems({});
@@ -555,22 +567,20 @@ const PhotoViewPage: React.FC = () => {
         try {
           const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
           if (activeTimerResponse.ok) {
-            const activeTimers = await activeTimerResponse.json();
-            console.log('🔄 PhotoView initial sync: Loaded active timers:', activeTimers);
+            const activeTimerData = await activeTimerResponse.json();
+            console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerData);
             
-            if (activeTimers && activeTimers.length > 0) {
-              const activeTimer = activeTimers[0]; // PhotoView typically shows one active timer
-              
-              setActiveItemId(parseInt(activeTimer.item_id));
-              setTimerState(activeTimer.timer_state);
-              setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
+            if (activeTimerData && activeTimerData.item_id) {
+              setActiveItemId(parseInt(activeTimerData.item_id));
+              setTimerState(activeTimerData.timer_state);
+              setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
               
               // Update timer progress
               setTimerProgress({
-                [parseInt(activeTimer.item_id)]: {
-                  elapsed: activeTimer.elapsed_seconds || 0,
-                  total: activeTimer.duration_seconds || 300,
-                  startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
+                [parseInt(activeTimerData.item_id)]: {
+                  elapsed: activeTimerData.elapsed_seconds || 0,
+                  total: activeTimerData.duration_seconds || 300,
+                  startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null
                 }
               });
               
@@ -586,6 +596,37 @@ const PhotoViewPage: React.FC = () => {
           }
         } catch (error) {
           console.error('❌ PhotoView: Initial sync failed to load active timer:', error);
+        }
+        
+        // Load current sub-cue timer
+        try {
+          const subCueTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/sub-cue-timers/${event?.id}`);
+          if (subCueTimerResponse.ok) {
+            const subCueTimerData = await subCueTimerResponse.json();
+            console.log('🔄 PhotoView initial sync: Loaded sub-cue timer:', subCueTimerData);
+            
+            if (subCueTimerData && subCueTimerData.item_id && subCueTimerData.is_running) {
+              // Find the schedule item to get cue and segment name
+              const scheduleItem = schedule.find(item => item.id === parseInt(subCueTimerData.item_id));
+              setSecondaryTimer({
+                itemId: parseInt(subCueTimerData.item_id),
+                duration: subCueTimerData.duration_seconds || 60,
+                remaining: subCueTimerData.duration_seconds || 60,
+                isActive: true,
+                startedAt: subCueTimerData.started_at ? new Date(subCueTimerData.started_at) : new Date(),
+                timerState: 'running',
+                cue: scheduleItem?.customFields?.cue || `CUE ${subCueTimerData.item_id}`,
+                segmentName: scheduleItem?.segmentName || 'Segment'
+              });
+              
+              console.log('🔄 PhotoView: Initial sync completed - sub-cue timer restored');
+            } else {
+              setSecondaryTimer(null);
+              console.log('🔄 PhotoView: Initial sync completed - no active sub-cue timer');
+            }
+          }
+        } catch (error) {
+          console.error('❌ PhotoView: Initial sync failed to load sub-cue timer:', error);
         }
       }
     };
@@ -609,7 +650,7 @@ const PhotoViewPage: React.FC = () => {
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [event?.id]);
+  }, [event?.id, schedule]);
 
 
   // Local timer updates for smooth countdown/progress bar (like GreenRoom/RunOfShow)
@@ -906,22 +947,22 @@ const PhotoViewPage: React.FC = () => {
         <div className="flex items-center space-x-6">
             {/* Status Text Display */}
             <div className="text-center">
-              {Object.keys(activeTimers).length > 0 ? (
+              {timerState === 'running' && activeItemId ? (
                 <div className="text-lg text-green-400 font-bold">
-                  RUNNING - {formatCueDisplay(schedule.find(item => activeTimers[item.id])?.customFields.cue)}
+                  RUNNING - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields?.cue)}
                   {secondaryTimer && secondaryTimer.isActive && (
                     <div className="text-lg text-orange-400 mt-0.5 font-bold">
                       {formatCueDisplay(secondaryTimer.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
                     </div>
                   )}
                 </div>
-              ) : activeItemId && timerProgress[activeItemId] ? (
+              ) : timerState === 'loaded' && activeItemId ? (
                 <div className="text-lg text-yellow-400 font-bold">
-                  LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields.cue)}
+                  LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields?.cue)}
                 </div>
               ) : (
                 <div className="text-lg text-slate-300 font-bold">
-                  No CUE Selected
+                  NO CUES
                 </div>
               )}
             </div>

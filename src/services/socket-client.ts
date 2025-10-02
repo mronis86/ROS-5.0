@@ -14,6 +14,7 @@ interface SocketCallbacks {
   onTimersStopped?: (data: any) => void;
   onTimerStarted?: (data: any) => void;
   onSubCueTimerStarted?: (data: any) => void;
+  onSubCueTimerStopped?: (data: any) => void; // NEW!
   onActiveTimersUpdated?: (data: any) => void; // NEW!
   onConnectionChange?: (connected: boolean) => void;
   onInitialSync?: () => Promise<void>; // NEW! For initial sync on connect
@@ -78,6 +79,9 @@ class SocketClient {
           break;
         case 'subCueTimerStarted':
           this.callbacks.onSubCueTimerStarted?.(message.data);
+          break;
+        case 'subCueTimerStopped':
+          this.callbacks.onSubCueTimerStopped?.(message.data);
           break;
         case 'activeTimersUpdated': // NEW!
           this.callbacks.onActiveTimersUpdated?.(message.data);
