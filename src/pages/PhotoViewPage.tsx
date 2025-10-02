@@ -418,6 +418,49 @@ const PhotoViewPage: React.FC = () => {
 
 
 
+  // Load active timer state immediately on mount (fallback)
+  useEffect(() => {
+    if (!event?.id) return;
+    
+    const loadActiveTimerState = async () => {
+      try {
+        console.log('🔄 PhotoView: Loading active timer state on mount...');
+        const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event.id}`);
+        
+        if (activeTimerResponse.ok) {
+          const activeTimerData = await activeTimerResponse.json();
+          console.log('🔄 PhotoView: Loaded active timer on mount:', activeTimerData);
+          
+          if (activeTimerData && activeTimerData.item_id) {
+            setActiveItemId(parseInt(activeTimerData.item_id));
+            setTimerState(activeTimerData.timer_state);
+            setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
+            
+            setTimerProgress({
+              [parseInt(activeTimerData.item_id)]: {
+                elapsed: activeTimerData.elapsed_seconds || 0,
+                total: activeTimerData.duration_seconds || 300,
+                startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null
+              }
+            });
+            
+            console.log('✅ PhotoView: Active timer state loaded on mount');
+          } else {
+            setActiveItemId(null);
+            setTimerState(null);
+            setLoadedItems({});
+            setTimerProgress({});
+            console.log('✅ PhotoView: No active timer found on mount');
+          }
+        }
+      } catch (error) {
+        console.error('❌ PhotoView: Error loading active timer on mount:', error);
+      }
+    };
+    
+    loadActiveTimerState();
+  }, [event?.id]);
+
   // WebSocket connection for active timer changes
   useEffect(() => {
     if (!event?.id) return;
