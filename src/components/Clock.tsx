@@ -322,6 +322,7 @@ const Clock: React.FC<ClockProps> = ({
     const callbacks = {
       onTimerUpdated: (data: any) => {
         console.log('🔄 Clock: WebSocket timer update received:', data);
+        console.log('🔄 Clock: Event ID check:', { received: data?.event_id, expected: eventId, match: data?.event_id === eventId });
         if (data && data.event_id === eventId) {
           // Update timer data directly from WebSocket
           setHybridTimerData(prev => ({
@@ -329,10 +330,13 @@ const Clock: React.FC<ClockProps> = ({
             activeTimer: data
           }));
           console.log('✅ Clock: Timer updated via WebSocket:', data);
+        } else {
+          console.log('⚠️ Clock: Timer update ignored - event ID mismatch or no data');
         }
       },
       onActiveTimersUpdated: (data: any) => {
         console.log('🔄 Clock: WebSocket active timers update received:', data);
+        console.log('🔄 Clock: Event ID check:', { received: data?.event_id, expected: eventId, match: data?.event_id === eventId });
         if (data && data.event_id === eventId) {
           // Check if timer is stopped
           if (data.timer_state === 'stopped' || !data.is_active) {
@@ -350,6 +354,8 @@ const Clock: React.FC<ClockProps> = ({
             }));
             console.log('✅ Clock: Active timer updated via WebSocket:', data);
           }
+        } else {
+          console.log('⚠️ Clock: Active timers update ignored - event ID mismatch or no data');
         }
       },
       onTimerStopped: (data: any) => {
