@@ -160,6 +160,13 @@ class SocketClient {
     }
   }
 
+  emitSyncRequest() {
+    if (this.socket && this.eventId) {
+      console.log('📡 Emitting sync request event');
+      this.socket.emit('requestSync', { eventId: this.eventId });
+    }
+  }
+
   /**
    * Perform initial sync when WebSocket connects
    * This ensures we get current state when reconnecting or joining mid-timer

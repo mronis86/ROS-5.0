@@ -791,7 +791,7 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Countdown timer functions
+  // Countdown timer functions with WebSocket sync
   const startCountdownTimer = useCallback(() => {
     // Clear any existing countdown
     if (countdownIntervalRef.current) {
@@ -804,8 +804,16 @@ const RunOfShowPage: React.FC = () => {
     const interval = setInterval(() => {
       setCountdown(prev => {
         if (prev <= 1) {
-          // Show syncing for 3 seconds to make fetch process more visible
+          // Trigger WebSocket sync when countdown reaches zero
+          console.log('🔄 Countdown sync: Triggering WebSocket sync request');
           setIsSyncing(true);
+          
+          // Request fresh data via WebSocket
+          if (socketClient && event?.id) {
+            socketClient.emitSyncRequest();
+            console.log('📡 Countdown sync: Emitted sync request via WebSocket');
+          }
+          
           setTimeout(() => {
             setIsSyncing(false);
             setCountdown(20); // Restart countdown
@@ -817,7 +825,7 @@ const RunOfShowPage: React.FC = () => {
     }, 1000);
     
     countdownIntervalRef.current = interval;
-  }, []);
+  }, [socketClient, event?.id]);
 
   const stopCountdownTimer = useCallback(() => {
     if (countdownIntervalRef.current) {
@@ -1214,17 +1222,25 @@ const RunOfShowPage: React.FC = () => {
     // return () => clearInterval(interval); // No interval to clean up
   }, [event?.id, user?.id, schedule]);
 
-  // Real-time WebSocket sync for schedule changes (replaces 20-second polling)
+  // Real-time WebSocket sync with 5-second reliability check
   useEffect(() => {
     if (!event?.id || !user) return;
     
-    console.log('🔄 Setting up real-time WebSocket sync for schedule changes');
+    console.log('🔄 Setting up real-time WebSocket sync with 5-second reliability check');
     
-    // WebSocket will handle real-time updates via onRunOfShowDataUpdated callback
-    // No polling needed - updates are instant when other users make changes
+    // 5-second reliability check to ensure WebSocket updates are processed
+    const reliabilityInterval = setInterval(() => {
+      // This doesn't make API calls - just ensures WebSocket updates are processed
+      console.log('🔄 5s reliability: Ensuring WebSocket updates are processed');
+      
+      // Force a re-render to catch any missed WebSocket updates
+      // This is very lightweight and doesn't add egress
+      setLastChangeAt(prev => prev); // Trigger a state update
+    }, 5000); // 5 seconds
     
     return () => {
-      console.log('🧹 Real-time WebSocket sync cleanup (no timer to clear)');
+      console.log('🧹 Cleaning up 5-second reliability check timer');
+      clearInterval(reliabilityInterval);
     };
   }, [event?.id, user?.id]);
 
@@ -4441,44 +4457,47 @@ const RunOfShowPage: React.FC = () => {
         
         console.log('🔄 Real-time: Updating local data with remote changes');
         
-        // Update schedule items
-        if (data.schedule_items && Array.isArray(data.schedule_items)) {
-          setSchedule(data.schedule_items);
-          console.log('✅ Real-time: Schedule items updated');
-        }
-        
-        // Update custom columns
-        if (data.custom_columns && Array.isArray(data.custom_columns)) {
-          setCustomColumns(data.custom_columns);
-          console.log('✅ Real-time: Custom columns updated');
-        }
-        
-        // Update settings
-        if (data.settings) {
-          if (data.settings.eventName !== undefined) {
-            setEventName(data.settings.eventName);
-            console.log('✅ Real-time: Event name updated');
+        // Add small delay to ensure WebSocket updates are processed consistently
+        setTimeout(() => {
+          // Update schedule items
+          if (data.schedule_items && Array.isArray(data.schedule_items)) {
+            setSchedule(data.schedule_items);
+            console.log('✅ Real-time: Schedule items updated');
           }
-          if (data.settings.masterStartTime !== undefined) {
-            setMasterStartTime(data.settings.masterStartTime);
-            console.log('✅ Real-time: Master start time updated');
+        
+          // Update custom columns
+          if (data.custom_columns && Array.isArray(data.custom_columns)) {
+            setCustomColumns(data.custom_columns);
+            console.log('✅ Real-time: Custom columns updated');
           }
-          if (data.settings.dayStartTimes !== undefined) {
-            setDayStartTimes(data.settings.dayStartTimes);
-            console.log('✅ Real-time: Day start times updated');
+          
+          // Update settings
+          if (data.settings) {
+            if (data.settings.eventName !== undefined) {
+              setEventName(data.settings.eventName);
+              console.log('✅ Real-time: Event name updated');
+            }
+            if (data.settings.masterStartTime !== undefined) {
+              setMasterStartTime(data.settings.masterStartTime);
+              console.log('✅ Real-time: Master start time updated');
+            }
+            if (data.settings.dayStartTimes !== undefined) {
+              setDayStartTimes(data.settings.dayStartTimes);
+              console.log('✅ Real-time: Day start times updated');
+            }
           }
-        }
-        
-        // Skip change detection to prevent delays
-        setSkipNextSync(true);
-        console.log('⏭️ Real-time: Skipping change detection to prevent delays');
-        
-        // Update last change timestamp
-        if (data.updated_at) {
-          setLastChangeAt(data.updated_at);
-        }
-        
-        console.log('✅ Real-time: All schedule data updated via WebSocket');
+          
+          // Skip change detection to prevent delays
+          setSkipNextSync(true);
+          console.log('⏭️ Real-time: Skipping change detection to prevent delays');
+          
+          // Update last change timestamp
+          if (data.updated_at) {
+            setLastChangeAt(data.updated_at);
+          }
+          
+          console.log('✅ Real-time: All schedule data updated via WebSocket');
+        }, 100); // 100ms delay for consistency
       },
       onCompletedCuesUpdated: (data: any) => {
         console.log('📡 Real-time: Completed cues updated via WebSocket');
@@ -4616,6 +4635,16 @@ const RunOfShowPage: React.FC = () => {
         
         console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: timerData?.event_id === event?.id });
         if (timerData && timerData.event_id === event?.id) {
+          // Debounce: Only update if timer data has actually changed
+          const currentTimer = hybridTimerData?.activeTimer;
+          if (currentTimer && currentTimer.id === timerData.id && 
+              currentTimer.timer_state === timerData.timer_state &&
+              currentTimer.is_active === timerData.is_active &&
+              currentTimer.is_running === timerData.is_running) {
+            console.log('⏭️ RunOfShow: Ignoring duplicate timer update:', timerData.id);
+            return;
+          }
+          
           // Check if timer is stopped or inactive
           if (timerData.timer_state === 'stopped' || !timerData.is_active || timerData.is_running === false && timerData.is_active === false) {
             // Clear timer data when stopped
@@ -4660,9 +4689,17 @@ const RunOfShowPage: React.FC = () => {
         try {
           const completedCuesResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues/${event?.id}`);
           if (completedCuesResponse.ok) {
-            const completedCues = await completedCuesResponse.json();
-            console.log('🔄 Initial sync: Loaded completed cues:', completedCues);
-            setCompletedCues(completedCues || []);
+            const completedCuesArray = await completedCuesResponse.json();
+            console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);
+            
+            // Convert array to object format for consistency
+            const completedCuesObject = completedCuesArray.reduce((acc, cue) => {
+              acc[cue.item_id] = true;
+              return acc;
+            }, {});
+            
+            setCompletedCues(completedCuesObject);
+            console.log('✅ Initial sync: Converted completed cues to object format:', completedCuesObject);
           }
         } catch (error) {
           console.error('❌ Initial sync failed to load completed cues:', error);

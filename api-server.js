@@ -792,6 +792,36 @@ io.on('connection', (socket) => {
     console.log(`📡 Reset all states and completed cues cleared broadcasted to event:${data.eventId}`);
   });
 
+  // Handle sync request event
+  socket.on('requestSync', async (data) => {
+    console.log(`🔄 Sync request received for event: ${data.eventId}`);
+    
+    try {
+      // Get fresh data from database
+      const runOfShowData = await pool.query(
+        'SELECT * FROM run_of_show_data WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [data.eventId]
+      );
+      
+      if (runOfShowData.rows.length > 0) {
+        const freshData = runOfShowData.rows[0];
+        console.log(`📡 Sync: Broadcasting fresh data for event: ${data.eventId}`);
+        
+        // Broadcast fresh data to all clients in the event room
+        io.to(`event:${data.eventId}`).emit('update', {
+          type: 'runOfShowDataUpdated',
+          data: freshData
+        });
+        
+        console.log(`✅ Sync: Fresh data broadcasted to event:${data.eventId}`);
+      } else {
+        console.log(`⚠️ Sync: No data found for event: ${data.eventId}`);
+      }
+    } catch (error) {
+      console.error('❌ Sync request error:', error);
+    }
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`🔌 Socket.IO client disconnected: ${socket.id}`);
