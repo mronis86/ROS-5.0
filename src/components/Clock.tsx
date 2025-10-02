@@ -62,45 +62,56 @@ const Clock: React.FC<ClockProps> = ({
 
   // Clock always uses WebSocket data, no props handling needed
 
-  // Update timer progress when props change or hybrid data changes
+  // Update timer progress when props change (non-WebSocket mode)
   useEffect(() => {
-    if (supabaseOnly && hybridTimerData?.activeTimer) {
-      // Use hybrid data when in WebSocket-only mode
-      const activeTimer = hybridTimerData.activeTimer;
-      
-      if (activeTimer.is_running && activeTimer.is_active) {
-        // Timer is running - calculate remaining time
-        const now = new Date();
-        const startedAt = new Date(activeTimer.started_at);
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-        const total = activeTimer.duration_seconds || 0;
-        const remaining = Math.max(0, total - elapsed);
-        
-        setTimerProgress({
-          elapsed: elapsed,
-          total: total
-        });
-      } else {
-        // Timer is not running - show 0 elapsed
-        setTimerProgress({
-          elapsed: 0,
-          total: activeTimer.duration_seconds || 0
-        });
-      }
-    } else if (supabaseOnly && !hybridTimerData?.activeTimer) {
-      // No active timer - clear the display
-      setTimerProgress({
-        elapsed: 0,
-        total: 0
-      });
-    } else {
+    if (!supabaseOnly) {
       // Use props data when not in hybrid mode
       setTimerProgress({
         elapsed: elapsedTime,
         total: totalDuration
       });
     }
-  }, [hybridTimerData, elapsedTime, totalDuration, supabaseOnly]);
+  }, [elapsedTime, totalDuration, supabaseOnly]);
+
+  // Real-time countdown timer for running timers
+  useEffect(() => {
+    if (supabaseOnly && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active) {
+      const activeTimer = hybridTimerData.activeTimer;
+      const startedAt = new Date(activeTimer.started_at);
+      const total = activeTimer.duration_seconds || 0;
+      
+      const updateCountdown = () => {
+        const now = new Date();
+        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+        
+        setTimerProgress({
+          elapsed: elapsed,
+          total: total
+        });
+      };
+      
+      // Update immediately
+      updateCountdown();
+      
+      // Set up interval for real-time updates
+      const interval = setInterval(updateCountdown, 1000);
+      
+      return () => clearInterval(interval);
+    } else if (supabaseOnly && hybridTimerData?.activeTimer && !hybridTimerData?.activeTimer?.is_running) {
+      // Timer is loaded but not running - show 0 elapsed
+      const activeTimer = hybridTimerData.activeTimer;
+      setTimerProgress({
+        elapsed: 0,
+        total: activeTimer.duration_seconds || 0
+      });
+    } else if (supabaseOnly && !hybridTimerData?.activeTimer) {
+      // No active timer - clear display
+      setTimerProgress({
+        elapsed: 0,
+        total: 0
+      });
+    }
+  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, supabaseOnly]);
 
   // Update current time every second
   useEffect(() => {
