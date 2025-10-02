@@ -8207,7 +8207,27 @@ const RunOfShowPage: React.FC = () => {
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-800 border-amber-600';
                          // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented && isHybridLoaded) return 'bg-amber-950 border-amber-600';
+                         if (item.isIndented) {
+                           // Check if the parent cue (non-indented item above) is loaded
+                           const currentIndex = schedule.findIndex(s => s.id === item.id);
+                           let parentCueLoaded = false;
+                           
+                           // Look for the first non-indented item above this indented item
+                           for (let i = currentIndex - 1; i >= 0; i--) {
+                             const parentItem = schedule[i];
+                             if (!parentItem.isIndented) {
+                               // Found the parent item, check if it's loaded
+                               parentCueLoaded = (hybridTimerData?.activeTimer?.item_id && 
+                                 (parseInt(String(hybridTimerData.activeTimer.item_id)) === parentItem.id || 
+                                  hybridTimerData.activeTimer.item_id === parentItem.id || 
+                                  String(hybridTimerData.activeTimer.item_id) === String(parentItem.id))) &&
+                                 hybridTimerData.activeTimer.is_active && !hybridTimerData.activeTimer.is_running;
+                               break;
+                             }
+                           }
+                           
+                           if (parentCueLoaded) return 'bg-amber-950 border-amber-600';
+                         }
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                        })()
                      }`}
@@ -8737,7 +8757,27 @@ const RunOfShowPage: React.FC = () => {
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
                          // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented && isHybridLoaded) return 'bg-amber-950 border-amber-600';
+                         if (item.isIndented) {
+                           // Check if the parent cue (non-indented item above) is loaded
+                           const currentIndex = schedule.findIndex(s => s.id === item.id);
+                           let parentCueLoaded = false;
+                           
+                           // Look for the first non-indented item above this indented item
+                           for (let i = currentIndex - 1; i >= 0; i--) {
+                             const parentItem = schedule[i];
+                             if (!parentItem.isIndented) {
+                               // Found the parent item, check if it's loaded
+                               parentCueLoaded = (hybridTimerData?.activeTimer?.item_id && 
+                                 (parseInt(String(hybridTimerData.activeTimer.item_id)) === parentItem.id || 
+                                  hybridTimerData.activeTimer.item_id === parentItem.id || 
+                                  String(hybridTimerData.activeTimer.item_id) === String(parentItem.id))) &&
+                                 hybridTimerData.activeTimer.is_active && !hybridTimerData.activeTimer.is_running;
+                               break;
+                             }
+                           }
+                           
+                           if (parentCueLoaded) return 'bg-amber-950 border-amber-600';
+                         }
                          if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                          })()
