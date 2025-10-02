@@ -1144,15 +1144,21 @@ const PhotoViewPage: React.FC = () => {
             const pptQAString = pptQA.length > 0 ? pptQA.join('/') : 'None';
             
             return (
-              <div key={item.id} className={`${
+              <div key={item.id}               className={`${
                 isIndented ? 'border-4 border-orange-400' :
-                isActive ? (isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400') : 
+                isActive ? (
+                  isRunning ? 'border-4 border-green-400' : 
+                  timerState === 'stopped' ? 'border-4 border-purple-400' : 'border-4 border-blue-400'
+                ) : 
                 'border border-slate-600'
               }`}>
                         {/* Main Data Row - Made taller for better portrait image display */}
                         <div className={`grid grid-cols-11 gap-0 ${
                           isIndented ? 'bg-amber-950' : 
-                          isActive ? (isRunning ? 'bg-green-950' : 'bg-blue-950') : 
+                          isActive ? (
+                            isRunning ? 'bg-green-950' : 
+                            timerState === 'stopped' ? 'bg-purple-950' : 'bg-blue-950'
+                          ) : 
                           'bg-slate-900'
                         }`} style={{ minHeight: '200px' }}>
                   {/* CUE Column - Enhanced for taller display */}
