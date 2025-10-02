@@ -16,6 +16,7 @@ interface SocketCallbacks {
   onSubCueTimerStarted?: (data: any) => void;
   onSubCueTimerStopped?: (data: any) => void; // NEW!
   onActiveTimersUpdated?: (data: any) => void; // NEW!
+  onResetAllStates?: (data: any) => void; // NEW! For reset events
   onConnectionChange?: (connected: boolean) => void;
   onInitialSync?: () => Promise<void>; // NEW! For initial sync on connect
 }
@@ -66,6 +67,7 @@ class SocketClient {
           this.callbacks.onCompletedCuesUpdated?.(message.data);
           break;
         case 'timerUpdated':
+          console.log('📡 SocketClient: Received timerUpdated event:', message.data);
           this.callbacks.onTimerUpdated?.(message.data);
           break;
         case 'timerStopped':
@@ -84,7 +86,11 @@ class SocketClient {
           this.callbacks.onSubCueTimerStopped?.(message.data);
           break;
         case 'activeTimersUpdated': // NEW!
+          console.log('📡 SocketClient: Received activeTimersUpdated event:', message.data);
           this.callbacks.onActiveTimersUpdated?.(message.data);
+          break;
+        case 'resetAllStates': // NEW!
+          this.callbacks.onResetAllStates?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);
@@ -139,6 +145,14 @@ class SocketClient {
 
   getEventId(): string | null {
     return this.eventId;
+  }
+
+  // Emit reset all states event
+  emitResetAllStates() {
+    if (this.socket && this.eventId) {
+      console.log('📡 Emitting reset all states event');
+      this.socket.emit('resetAllStates', { eventId: this.eventId });
+    }
   }
 
   /**
