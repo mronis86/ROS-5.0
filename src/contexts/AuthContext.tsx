@@ -5,7 +5,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: any }>;
-  signIn: (email: string, password: string, fullName: string) => Promise<{ error: any }>;
+  signIn: (email: string, fullName: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   updateProfile: (updates: { full_name?: string; role?: string }) => Promise<{ error: any }>;
 }
@@ -43,8 +43,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return result;
   };
 
-  const signIn = async (email: string, password: string, fullName: string) => {
-    const result = await authService.signIn(email, password, fullName);
+  const signIn = async (email: string, fullName: string) => {
+    const result = await authService.signIn(email, fullName);
     if (!result.error) {
       setUser(authService.getCurrentUser());
     }

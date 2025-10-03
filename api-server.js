@@ -7,6 +7,9 @@ const { Server } = require('socket.io');
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Import Neon Auth Service
+const { neonAuthService } = require('./src/services/neon-auth-service');
+
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
@@ -920,6 +923,139 @@ io.on('connection', (socket) => {
   });
 });
 
+// ===== NEON AUTH API ENDPOINTS =====
+
+// Register new user
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, displayName } = req.body;
+    
+    if (!email || !password || !displayName) {
+      return res.status(400).json({ error: 'Email, password, and display name are required' });
+    }
+
+    const result = await neonAuthService.register(email, password, displayName);
+    
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    // Create session
+    const sessionToken = await neonAuthService.createSession(
+      result.user.id,
+      req.ip,
+      req.get('User-Agent')
+    );
+
+    res.status(201).json({
+      user: result.user,
+      sessionToken
+    });
+  } catch (error) {
+    console.error('❌ Auth registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// Login user
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const result = await neonAuthService.login(email, password);
+    
+    if (!result.success) {
+      return res.status(401).json({ error: result.error });
+    }
+
+    // Create session
+    const sessionToken = await neonAuthService.createSession(
+      result.user.id,
+      req.ip,
+      req.get('User-Agent')
+    );
+
+    res.json({
+      user: result.user,
+      sessionToken
+    });
+  } catch (error) {
+    console.error('❌ Auth login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Validate session
+app.get('/api/auth/validate', async (req, res) => {
+  try {
+    const sessionToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!sessionToken) {
+      return res.status(401).json({ error: 'No session token provided' });
+    }
+
+    const user = await neonAuthService.validateSession(sessionToken);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid or expired session' });
+    }
+
+    res.json({ user });
+  } catch (error) {
+    console.error('❌ Auth validation error:', error);
+    res.status(500).json({ error: 'Session validation failed' });
+  }
+});
+
+// Logout user
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const sessionToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (sessionToken) {
+      await neonAuthService.deleteSession(sessionToken);
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('❌ Auth logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// Update user profile
+app.put('/api/auth/profile', async (req, res) => {
+  try {
+    const sessionToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!sessionToken) {
+      return res.status(401).json({ error: 'No session token provided' });
+    }
+
+    const user = await neonAuthService.validateSession(sessionToken);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid or expired session' });
+    }
+
+    const { display_name, role } = req.body;
+    const result = await neonAuthService.updateUser(user.id, { display_name, role });
+    
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ user: result.user });
+  } catch (error) {
+    console.error('❌ Auth profile update error:', error);
+    res.status(500).json({ error: 'Profile update failed' });
+  }
+});
+
 // Start server
 server.listen(PORT, () => {
   console.log(`🚀 API Server running on port ${PORT}`);
@@ -927,6 +1063,7 @@ server.listen(PORT, () => {
   console.log(`🔗 Database: ${process.env.NEON_DATABASE_URL ? 'Connected to Neon' : 'Not configured'}`);
   console.log(`📡 SSE endpoint: http://localhost:${PORT}/api/events/:eventId/stream`);
   console.log(`🔌 Socket.IO endpoint: ws://localhost:${PORT}`);
+  console.log(`🔐 Auth endpoints: /api/auth/*`);
 });
 
 // Graceful shutdown

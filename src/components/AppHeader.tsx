@@ -25,7 +25,7 @@ const AppHeader: React.FC = () => {
             {/* User Details */}
             <div className="text-right">
               <p className="text-white font-semibold text-base">
-                {user.user_metadata?.full_name || user.email}
+                {user.full_name || user.email}
               </p>
               <p className="text-slate-300 text-xs">
                 {user.email}

@@ -12,6 +12,7 @@ interface FullScreenTimerProps {
   messageEnabled?: boolean;
   itemId?: number; // Add itemId for drift detection
   eventId?: string; // Add eventId for Supabase message loading
+  supabaseMessage?: TimerMessage | null; // Add supabaseMessage prop
   mainTimer?: {
     cue: string;
     segmentName: string;
@@ -23,6 +24,7 @@ interface FullScreenTimerProps {
     cue: string;
     segmentName: string;
   } | null;
+  hybridTimerData?: any; // Add hybridTimerData prop for direct RunOfShowPage communication
 }
 
 const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
@@ -34,8 +36,10 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   messageEnabled = false,
   itemId,
   eventId,
+  supabaseMessage = null,
   mainTimer = null,
-  secondaryTimer = null
+  secondaryTimer = null,
+  hybridTimerData = null
 }) => {
   const [timerProgress, setTimerProgress] = useState<{ elapsed: number; total: number }>({
     elapsed: elapsedTime,
@@ -43,10 +47,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [supabaseMessage, setSupabaseMessage] = useState<TimerMessage | null>(null);
+  // Use supabaseMessage prop instead of internal state
   const [messageLoading, setMessageLoading] = useState(false);
   const [supabaseOnly, setSupabaseOnly] = useState(false);
-  const [hybridTimerData, setHybridTimerData] = useState<any>(null);
   const [hybridPolling, setHybridPolling] = useState<NodeJS.Timeout | null>(null);
   const [secondaryTimerUpdate, setSecondaryTimerUpdate] = useState(0);
   const [lastActiveTimerId, setLastActiveTimerId] = useState<string | null>(null);
@@ -69,7 +72,30 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   // Update timer progress when props change or hybrid data changes
   useEffect(() => {
     if (supabaseOnly && hybridTimerData?.activeTimer) {
-      // Use hybrid data when in Supabase-only mode
+      // Use hybrid data when in Supabase-only mode (Neon Only ON)
+      const activeTimer = hybridTimerData.activeTimer;
+      
+      if (activeTimer.is_running && activeTimer.is_active) {
+        // Timer is running - calculate remaining time
+        const now = new Date();
+        const startedAt = new Date(activeTimer.started_at);
+        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+        const total = activeTimer.duration_seconds || 0;
+        const remaining = Math.max(0, total - elapsed);
+        
+        setTimerProgress({
+          elapsed: elapsed,
+          total: total
+        });
+      } else {
+        // Timer is not running - show 0 elapsed
+        setTimerProgress({
+          elapsed: 0,
+          total: activeTimer.duration_seconds || 0
+        });
+      }
+    } else if (!supabaseOnly && hybridTimerData?.activeTimer) {
+      // Use hybrid data when Neon Only is OFF (direct RunOfShowPage communication)
       const activeTimer = hybridTimerData.activeTimer;
       
       if (activeTimer.is_running && activeTimer.is_active) {
@@ -92,11 +118,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         });
       }
     } else {
-      // Use props data when not in hybrid mode
-    setTimerProgress({
-      elapsed: elapsedTime,
-      total: totalDuration
-    });
+      // Use props data when no hybrid data is available
+      setTimerProgress({
+        elapsed: elapsedTime,
+        total: totalDuration
+      });
     }
   }, [elapsedTime, totalDuration, supabaseOnly, hybridTimerData]);
 
@@ -119,29 +145,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     return () => document.removeEventListener('fullscreenchange', handleFullScreenChange);
   }, []);
 
-  // Load message from Supabase
-  useEffect(() => {
-    if (!eventId) return;
-
-    const loadMessage = async () => {
-      setMessageLoading(true);
-      try {
-        const message = await DatabaseService.getTimerMessage(eventId);
-        setSupabaseMessage(message);
-        console.log('📨 Loaded timer message from Supabase:', message);
-      } catch (error) {
-        console.error('❌ Error loading timer message:', error);
-      } finally {
-        setMessageLoading(false);
-      }
-    };
-
-    loadMessage();
-
-    // Poll for new messages every 5 seconds
-    const interval = setInterval(loadMessage, 5000);
-    return () => clearInterval(interval);
-  }, [eventId]);
+  // Message loading is now handled by FullScreenTimerPage via WebSocket
+  // No need for internal message loading
 
   // Hybrid mode: Fetch timer data from Supabase when supabaseOnly is true
   useEffect(() => {
@@ -369,9 +374,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     };
   }, [supabaseOnly, eventId]);
 
-  // Update secondary timer every second when in hybrid mode
+  // Update secondary timer every second when in hybrid mode (both Neon Only ON and OFF)
   useEffect(() => {
-    if (!supabaseOnly || !hybridTimerData?.secondaryTimer) return;
+    if ((!supabaseOnly && !hybridTimerData?.secondaryTimer) || (supabaseOnly && !hybridTimerData?.secondaryTimer)) return;
 
     const interval = setInterval(() => {
       setSecondaryTimerUpdate(prev => prev + 1);
@@ -380,9 +385,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     return () => clearInterval(interval);
   }, [supabaseOnly, hybridTimerData?.secondaryTimer]);
 
-  // Always run local timer for smooth updates in Supabase-only mode
+  // Always run local timer for smooth updates in both Neon Only ON and OFF modes
   useEffect(() => {
-    if (!supabaseOnly || !hybridTimerData?.activeTimer) return;
+    if (!hybridTimerData?.activeTimer) return;
 
     const activeTimer = hybridTimerData.activeTimer;
     const itemId = activeTimer.item_id;
@@ -418,7 +423,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         clearInterval(continuousTimer);
       };
     }
-  }, [supabaseOnly, hybridTimerData?.activeTimer, lastActiveStartTime]);
+  }, [hybridTimerData?.activeTimer, lastActiveStartTime]);
 
   // Cleanup drift detector on component unmount
   useEffect(() => {
@@ -464,8 +469,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     const progress = timerProgress;
     const remaining = progress.total - progress.elapsed;
     
-    // In hybrid mode, check if timer is actually running
-    if (supabaseOnly && hybridTimerData?.activeTimer) {
+    // In hybrid mode, check if timer is actually running (both Neon Only ON and OFF)
+    if (hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
         // Timer is not running, show full duration
@@ -481,8 +486,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     const progress = timerProgress;
     const remainingSeconds = progress.total - progress.elapsed;
     
-    // In hybrid mode, check if timer is actually running
-    if (supabaseOnly && hybridTimerData?.activeTimer) {
+    // In hybrid mode, check if timer is actually running (both Neon Only ON and OFF)
+    if (hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
         // Timer is not running, show 100% (full bar)
@@ -498,8 +503,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     const progress = timerProgress;
     const remainingSeconds = progress.total - progress.elapsed;
     
-    // In hybrid mode, check if timer is actually running
-    if (supabaseOnly && hybridTimerData?.activeTimer) {
+    // In hybrid mode, check if timer is actually running (both Neon Only ON and OFF)
+    if (hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
         // Timer is not running, show neutral color
@@ -534,7 +539,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         <div className="text-white flex items-center justify-end gap-3 whitespace-nowrap">
           <span>
             {(() => {
-              if (supabaseOnly && hybridTimerData?.activeTimer) {
+              if (hybridTimerData?.activeTimer) {
                 const activeTimer = hybridTimerData.activeTimer;
                 const lastLoadedCue = hybridTimerData?.lastLoadedCue;
                 const cueData = hybridTimerData?.cueData;
@@ -600,7 +605,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       </div>
 
       {/* Timer Status Indicator - Bottom Left */}
-      {!isFullScreen && supabaseOnly && hybridTimerData?.activeTimer && (
+      {!isFullScreen && hybridTimerData?.activeTimer && (
         <div className="absolute bottom-10 left-10 text-center">
           <div className={`text-lg font-bold px-4 py-2 rounded-lg ${
             hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
@@ -637,7 +642,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
                 : 'bg-gray-600 hover:bg-gray-700 text-white'
             }`}
           >
-            SUPABASE ONLY
+            NEON ONLY
           </button>
         )}
         </div>
@@ -645,13 +650,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
 
       {/* Message Display */}
       {(() => {
-        // When supabaseOnly is true, only show Supabase messages
-        if (supabaseOnly) {
-          // Use hybrid data if available, otherwise fall back to supabaseMessage
-          const displayMessage = hybridTimerData?.timerMessage || supabaseMessage;
-          return displayMessage && displayMessage.enabled;
+        // When hybridTimerData is available, use it for messages (both Neon Only ON and OFF)
+        if (hybridTimerData?.timerMessage) {
+          return hybridTimerData.timerMessage.enabled;
         }
-        // When supabaseOnly is false, show both local and Supabase messages
+        // Fallback to supabaseMessage or local message
         return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
       })() && (
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: 'translateY(-40px)' }}>
@@ -672,11 +675,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }}
           >
             {(() => {
-              // When supabaseOnly is true, only use Supabase message
-              // When supabaseOnly is false, use Supabase message if available, otherwise use local message
-              const displayMessage = supabaseOnly 
-                ? (hybridTimerData?.timerMessage?.message || supabaseMessage?.message || '')
-                : supabaseMessage?.message || message;
+              // Use hybridTimerData message if available (both Neon Only ON and OFF), otherwise fallback
+              const displayMessage = hybridTimerData?.timerMessage?.message || supabaseMessage?.message || message;
               // Break long messages into multiple lines
               const words = displayMessage.split(' ');
               let formattedMessage;
@@ -735,73 +735,64 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       {/* Secondary Timer Display - Bottom layout when message is active, center when no message */}
       {(() => {
         // Check if we have a secondary timer in either mode
-        if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
-          if (!currentSecondaryTimer) return false;
+        const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
+        if (!currentSecondaryTimer) return false;
           
-          // Hide timer if it's not running
-          if (!currentSecondaryTimer.is_running) {
-            console.log('🔍 Sub-cue timer not running - hiding');
-            return false;
-          }
-          
-          // Check if timer has expired (reached zero or negative)
-          if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-            const now = new Date();
-            const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-            const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-            const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-            const remaining = Math.max(0, totalDuration - elapsed);
-            
-            // Hide timer if it has expired (remaining <= 0)
-            if (remaining <= 0) return false;
-          }
-          
-          return true;
-        } else {
-          return !!secondaryTimer;
+        // Hide timer if it's not running
+        if (!currentSecondaryTimer.is_running) {
+          console.log('🔍 Sub-cue timer not running - hiding');
+          return false;
         }
+        
+        // Check if timer has expired (reached zero or negative)
+        if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
+          const now = new Date();
+          const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
+          const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+          const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
+          const remaining = Math.max(0, totalDuration - elapsed);
+          
+          // Hide timer if it has expired (remaining <= 0)
+          if (remaining <= 0) return false;
+        }
+        
+        return true;
       })() && (
         <div className={`absolute animate-in fade-in duration-500 ${(() => {
-          // When supabaseOnly is true, only check Supabase messages
-          if (supabaseOnly) {
-            return supabaseMessage && supabaseMessage.enabled;
+          // Check for messages (both Neon Only ON and OFF)
+          if (hybridTimerData?.timerMessage) {
+            return hybridTimerData.timerMessage.enabled;
           }
-          // When supabaseOnly is false, check both local and Supabase messages
           return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         })() ? 'bottom-20 right-1/3 transform translate-x-1/2 flex flex-col items-center' : 'inset-0 flex flex-col items-center justify-center'}`} style={{ marginTop: (() => {
-          // When supabaseOnly is true, only check Supabase messages
-          if (supabaseOnly) {
-            return supabaseMessage && supabaseMessage.enabled;
+          // Check for messages (both Neon Only ON and OFF)
+          if (hybridTimerData?.timerMessage) {
+            return hybridTimerData.timerMessage.enabled;
           }
-          // When supabaseOnly is false, check both local and Supabase messages
           return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         })() ? '0' : '-80px' }}>
           {/* CUE and Segment Name - Separated from countdown */}
           <div className={`absolute left-1/2 transform -translate-x-1/2 text-orange-400 font-bold animate-in slide-in-from-top duration-500 ${(() => {
-            // When supabaseOnly is true, only check Supabase messages
-            if (supabaseOnly) {
-              return supabaseMessage && supabaseMessage.enabled ? 'text-lg md:text-xl lg:text-2xl' : 'text-xl md:text-2xl lg:text-3xl';
+            // Check for messages (both Neon Only ON and OFF)
+            if (hybridTimerData?.timerMessage) {
+              return hybridTimerData.timerMessage.enabled ? 'text-lg md:text-xl lg:text-2xl' : 'text-xl md:text-2xl lg:text-3xl';
             }
-            // When supabaseOnly is false, check both local and Supabase messages
             return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled) ? 'text-lg md:text-xl lg:text-2xl' : 'text-xl md:text-2xl lg:text-3xl';
           })()} whitespace-nowrap ${(() => {
-            // When supabaseOnly is true, only check Supabase messages
-            if (supabaseOnly) {
-              return supabaseMessage && supabaseMessage.enabled;
+            // Check for messages (both Neon Only ON and OFF)
+            if (hybridTimerData?.timerMessage) {
+              return hybridTimerData.timerMessage.enabled;
             }
-            // When supabaseOnly is false, check both local and Supabase messages
             return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
           })() ? 'bottom-20 left-1/2 transform -translate-x-1/2' : ''}`} style={{ lineHeight: '1.2', ...(() => {
-            // When supabaseOnly is true, only check Supabase messages
-            if (supabaseOnly) {
-              return supabaseMessage && supabaseMessage.enabled ? { bottom: 'calc(5rem - 25px)' } : { top: 'calc(50% - 150px)' };
+            // Check for messages (both Neon Only ON and OFF)
+            if (hybridTimerData?.timerMessage) {
+              return hybridTimerData.timerMessage.enabled ? { bottom: 'calc(5rem - 25px)' } : { top: 'calc(50% - 150px)' };
             }
-            // When supabaseOnly is false, check both local and Supabase messages
             return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled) ? { bottom: 'calc(5rem - 25px)' } : { top: 'calc(50% - 150px)' };
           })() }}>
             {(() => {
-              const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
+              const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
               if (!currentSecondaryTimer) return '';
               
               // Handle different data structures
@@ -821,7 +812,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           {/* Large Time without Outline */}
           <div
             className={`text-orange-400 font-mono font-bold animate-in zoom-in duration-500 ${(() => {
-              const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
+              const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
               if (!currentSecondaryTimer) return 'text-3xl md:text-4xl lg:text-5xl';
               
               // Use secondaryTimerUpdate to trigger re-calculation every second
@@ -847,17 +838,13 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               
               const hours = Math.floor(remaining / 3600);
               
-              // When supabaseOnly is true, only check Supabase messages
-              if (supabaseOnly) {
-                const displayMessage = hybridTimerData?.timerMessage || supabaseMessage;
-                if (displayMessage && displayMessage.enabled) {
+              // Check for messages (both Neon Only ON and OFF)
+              if (hybridTimerData?.timerMessage) {
+                if (hybridTimerData.timerMessage.enabled) {
                   return 'text-3xl md:text-4xl lg:text-5xl';
                 }
-              } else {
-                // When supabaseOnly is false, check both local and Supabase messages
-              if ((messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled)) {
+              } else if ((messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled)) {
                 return 'text-3xl md:text-4xl lg:text-5xl';
-                }
               }
               // Increase size by 25% when no hours (MM:SS format)
               return hours === 0 
@@ -869,7 +856,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }}
           >
             {(() => {
-              const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
+              const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
               if (!currentSecondaryTimer) return '00:00';
               
               // Use secondaryTimerUpdate to trigger re-calculation every second

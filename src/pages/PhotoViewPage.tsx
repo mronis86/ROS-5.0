@@ -1331,12 +1331,6 @@ const PhotoViewPage: React.FC = () => {
                     const isRunning = timerState === 'running' && isActive;
                     const isIndented = indentedCues[item.id] || false;
                     
-                    // Debug logging for indented cues
-                    if (item.id === 1759365042173) {
-                      console.log(`🔍 PhotoView: Checking item ${item.id}, indentedCues:`, indentedCues);
-                      console.log(`🔍 PhotoView: isIndented for ${item.id}:`, isIndented);
-                    }
-                    
                     // Check if indented cue's parent is loaded/running
                     let shouldHighlightIndented = false;
                     if (isIndented) {
@@ -1344,9 +1338,6 @@ const PhotoViewPage: React.FC = () => {
                       const parentIsLoaded = loadedItems[parentId] || false;
                       const parentIsRunning = activeTimers[parentId] || false;
                       shouldHighlightIndented = parentIsLoaded || parentIsRunning;
-                      
-                      // Debug logging
-                      console.log(`🟠 PhotoView: Item ${item.id} (indented), parent ${parentId}, parent loaded: ${parentIsLoaded}, parent running: ${parentIsRunning}, should highlight: ${shouldHighlightIndented}`);
                     }
             
             // Calculate start time
@@ -1362,7 +1353,7 @@ const PhotoViewPage: React.FC = () => {
             if (item.hasQA) pptQA.push('Q&A');
             const pptQAString = pptQA.length > 0 ? pptQA.join('/') : 'None';
             
-            // Debug CSS class selection
+            // CSS class selection
             let cssClass = '';
             if (shouldHighlightIndented) {
               cssClass = 'border-4 border-orange-400';
@@ -1370,12 +1361,6 @@ const PhotoViewPage: React.FC = () => {
               cssClass = isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400';
             } else {
               cssClass = 'border border-slate-600';
-            }
-            
-            // Debug logging for CSS class
-            if (item.id === 1759365042173) {
-              console.log(`🎨 PhotoView: Item ${item.id} CSS class: "${cssClass}"`);
-              console.log(`🎨 PhotoView: shouldHighlightIndented: ${shouldHighlightIndented}, isActive: ${isActive}, isRunning: ${isRunning}`);
             }
             
             return (
