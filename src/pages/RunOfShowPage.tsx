@@ -8298,18 +8298,22 @@ const RunOfShowPage: React.FC = () => {
                          
                          // Debug logging removed to prevent console spam
                          
-                         // PHOTOVIEW LOGIC: Simple indented highlighting based on database state
+                         // INDENTED CUES: Highlight when parent is loaded OR running
                          if (indentedCues[item.id]) {
-                           // Check if the parent cue is currently loaded
                            const parentId = indentedCues[item.id].parentId;
                            const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
+                           
+                           // Check if parent is currently loaded
                            const parentIsLoaded = currentlyLoadedItemId && (
                              parseInt(String(currentlyLoadedItemId)) === parentId || 
                              currentlyLoadedItemId === parentId || 
                              String(currentlyLoadedItemId) === String(parentId)
                            );
                            
-                           if (parentIsLoaded) return 'bg-amber-950 border-amber-600';
+                           // Check if parent is running
+                           const parentIsRunning = activeTimers[parentId] !== undefined;
+                           
+                           if (parentIsLoaded || parentIsRunning) return 'bg-amber-950 border-amber-600';
                          }
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                        })()
@@ -8818,18 +8822,22 @@ const RunOfShowPage: React.FC = () => {
                          
                          // Debug logging removed to prevent console spam
                          
-                         // PHOTOVIEW LOGIC: Simple indented highlighting based on database state
+                         // INDENTED CUES: Highlight when parent is loaded OR running
                          if (indentedCues[item.id]) {
-                           // Check if the parent cue is currently loaded
                            const parentId = indentedCues[item.id].parentId;
                            const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
+                           
+                           // Check if parent is currently loaded
                            const parentIsLoaded = currentlyLoadedItemId && (
                              parseInt(String(currentlyLoadedItemId)) === parentId || 
                              currentlyLoadedItemId === parentId || 
                              String(currentlyLoadedItemId) === String(parentId)
                            );
                            
-                           if (parentIsLoaded) return 'bg-amber-950 border-amber-600';
+                           // Check if parent is running
+                           const parentIsRunning = activeTimers[parentId] !== undefined;
+                           
+                           if (parentIsLoaded || parentIsRunning) return 'bg-amber-950 border-amber-600';
                          }
                          if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
