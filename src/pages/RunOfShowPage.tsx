@@ -9605,7 +9605,7 @@ const RunOfShowPage: React.FC = () => {
                         {item.timerId || 'TIMER'}
                       </div>
                       <div className="flex flex-col gap-1">
-                        {!item.isIndented ? (
+                        {!indentedCues[item.id] ? (
                           <>
                             <button
                               onClick={async () => {
