@@ -6005,7 +6005,7 @@ const RunOfShowPage: React.FC = () => {
     if (!user || !event?.id) return;
     
     const item = schedule.find(s => s.id === itemId);
-    if (item && item.isIndented) {
+    if (item && indentedCues[itemId]) {
       const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
       
       console.log('🟠 Starting secondary timer for item:', itemId, 'Duration:', totalSeconds, 's');
