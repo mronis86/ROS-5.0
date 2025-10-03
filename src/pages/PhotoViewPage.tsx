@@ -1338,6 +1338,9 @@ const PhotoViewPage: React.FC = () => {
                       const parentIsLoaded = loadedItems[parentId] || false;
                       const parentIsRunning = activeTimers[parentId] || false;
                       shouldHighlightIndented = parentIsLoaded || parentIsRunning;
+                      
+                      // Debug logging
+                      console.log(`🟠 PhotoView: Item ${item.id} (indented), parent ${parentId}, parent loaded: ${parentIsLoaded}, parent running: ${parentIsRunning}, should highlight: ${shouldHighlightIndented}`);
                     }
             
             // Calculate start time
