@@ -8206,6 +8206,17 @@ const RunOfShowPage: React.FC = () => {
                          if (completedCues[item.id]) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-800 border-amber-600';
+                         
+                         // Debug: Check if item is indented
+                         if (Math.random() < 0.05) { // 5% chance to log
+                           console.log('🔍 Item Debug:', {
+                             itemId: item.id,
+                             itemName: item.segmentName,
+                             isIndented: item.isIndented,
+                             hasIndentedProperty: 'isIndented' in item
+                           });
+                         }
+                         
                          // Only show orange for indented items when the cue above is loaded
                          if (item.isIndented) {
                            // Check if the parent cue (non-indented item above) is loaded
@@ -8772,6 +8783,17 @@ const RunOfShowPage: React.FC = () => {
                          if (completedCues[item.id]) return 'bg-gray-900 opacity-40';
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
+                         
+                         // Debug: Check if item is indented (2nd location)
+                         if (Math.random() < 0.05) { // 5% chance to log
+                           console.log('🔍 Item Debug (2nd):', {
+                             itemId: item.id,
+                             itemName: item.segmentName,
+                             isIndented: item.isIndented,
+                             hasIndentedProperty: 'isIndented' in item
+                           });
+                         }
+                         
                          // Only show orange for indented items when the cue above is loaded
                          if (item.isIndented) {
                            // Check if the parent cue (non-indented item above) is loaded
