@@ -1362,14 +1362,24 @@ const PhotoViewPage: React.FC = () => {
             if (item.hasQA) pptQA.push('Q&A');
             const pptQAString = pptQA.length > 0 ? pptQA.join('/') : 'None';
             
+            // Debug CSS class selection
+            let cssClass = '';
+            if (shouldHighlightIndented) {
+              cssClass = 'border-4 border-orange-400';
+            } else if (isActive) {
+              cssClass = isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400';
+            } else {
+              cssClass = 'border border-slate-600';
+            }
+            
+            // Debug logging for CSS class
+            if (item.id === 1759365042173) {
+              console.log(`🎨 PhotoView: Item ${item.id} CSS class: "${cssClass}"`);
+              console.log(`🎨 PhotoView: shouldHighlightIndented: ${shouldHighlightIndented}, isActive: ${isActive}, isRunning: ${isRunning}`);
+            }
+            
             return (
-              <div key={item.id} className={`${
-                shouldHighlightIndented ? 'border-4 border-orange-400' :
-                isActive ? (
-                  isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400'
-                ) : 
-                'border border-slate-600'
-              }`}>
+              <div key={item.id} className={cssClass}>
                         {/* Main Data Row - Made taller for better portrait image display */}
                         <div className={`grid grid-cols-11 gap-0 ${
                           isIndented ? 'bg-amber-950' : 
