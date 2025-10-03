@@ -1330,6 +1330,15 @@ const PhotoViewPage: React.FC = () => {
                     const isLoaded = loadedItems[item.id];
                     const isRunning = timerState === 'running' && isActive;
                     const isIndented = indentedCues[item.id] || false;
+                    
+                    // Check if indented cue's parent is loaded/running
+                    let shouldHighlightIndented = false;
+                    if (isIndented) {
+                      const parentId = indentedCues[item.id].parentId;
+                      const parentIsLoaded = loadedItems[parentId] || false;
+                      const parentIsRunning = activeTimers[parentId] || false;
+                      shouldHighlightIndented = parentIsLoaded || parentIsRunning;
+                    }
             
             // Calculate start time
             const itemIndex = schedule.findIndex(s => s.id === item.id);
@@ -1346,7 +1355,7 @@ const PhotoViewPage: React.FC = () => {
             
             return (
               <div key={item.id} className={`${
-                isIndented ? 'border-4 border-orange-400' :
+                shouldHighlightIndented ? 'border-4 border-orange-400' :
                 isActive ? (
                   isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400'
                 ) : 
