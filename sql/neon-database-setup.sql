@@ -4,6 +4,7 @@
 -- Drop existing tables if they exist (in correct order due to foreign keys)
 DROP TABLE IF EXISTS timer_actions CASCADE;
 DROP TABLE IF EXISTS sub_cue_timers CASCADE;
+DROP TABLE IF EXISTS indented_cues CASCADE;
 DROP TABLE IF EXISTS completed_cues CASCADE;
 DROP TABLE IF EXISTS active_timers CASCADE;
 
@@ -86,6 +87,26 @@ CREATE TABLE completed_cues (
     completed_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
+-- Create indented_cues table with all required columns
+CREATE TABLE indented_cues (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    
+    -- Event and item identification
+    event_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    parent_item_id TEXT NOT NULL,
+    
+    -- User information
+    user_id TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    user_role TEXT NOT NULL,
+    
+    -- Indentation info
+    indented_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
 -- Create timer_actions table with all required columns
 CREATE TABLE timer_actions (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -122,6 +143,11 @@ CREATE INDEX idx_completed_cues_event_id ON completed_cues(event_id);
 CREATE INDEX idx_completed_cues_item_id ON completed_cues(item_id);
 CREATE INDEX idx_completed_cues_completed_at ON completed_cues(completed_at);
 
+CREATE INDEX idx_indented_cues_event_id ON indented_cues(event_id);
+CREATE INDEX idx_indented_cues_item_id ON indented_cues(item_id);
+CREATE INDEX idx_indented_cues_parent_item_id ON indented_cues(parent_item_id);
+CREATE INDEX idx_indented_cues_indented_at ON indented_cues(indented_at);
+
 CREATE INDEX idx_timer_actions_event_id ON timer_actions(event_id);
 CREATE INDEX idx_timer_actions_item_id ON timer_actions(item_id);
 CREATE INDEX idx_timer_actions_timestamp ON timer_actions(action_timestamp);
@@ -139,12 +165,14 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER update_active_timers_updated_at BEFORE UPDATE ON active_timers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_sub_cue_timers_updated_at BEFORE UPDATE ON sub_cue_timers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_completed_cues_updated_at BEFORE UPDATE ON completed_cues FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_indented_cues_updated_at BEFORE UPDATE ON indented_cues FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_timer_actions_updated_at BEFORE UPDATE ON timer_actions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Add comments
 COMMENT ON TABLE active_timers IS 'Stores active timer sessions for run of show items';
 COMMENT ON TABLE sub_cue_timers IS 'Stores active sub-cue timer sessions';
 COMMENT ON TABLE completed_cues IS 'Stores completed cue records';
+COMMENT ON TABLE indented_cues IS 'Stores indented cue relationships (sub-cues and their parent cues)';
 COMMENT ON TABLE timer_actions IS 'Stores timer action history';
 
 -- Grant permissions for public access (allows anonymous users)
@@ -152,18 +180,21 @@ COMMENT ON TABLE timer_actions IS 'Stores timer action history';
 GRANT ALL ON TABLE active_timers TO public;
 GRANT ALL ON TABLE sub_cue_timers TO public;
 GRANT ALL ON TABLE completed_cues TO public;
+GRANT ALL ON TABLE indented_cues TO public;
 GRANT ALL ON TABLE timer_actions TO public;
 
 -- Grant permissions for authenticated users (if they exist)
 GRANT ALL ON TABLE active_timers TO authenticated;
 GRANT ALL ON TABLE sub_cue_timers TO authenticated;
 GRANT ALL ON TABLE completed_cues TO authenticated;
+GRANT ALL ON TABLE indented_cues TO authenticated;
 GRANT ALL ON TABLE timer_actions TO authenticated;
 
 -- Grant permissions for service role
 GRANT ALL ON TABLE active_timers TO service_role;
 GRANT ALL ON TABLE sub_cue_timers TO service_role;
 GRANT ALL ON TABLE completed_cues TO service_role;
+GRANT ALL ON TABLE indented_cues TO service_role;
 GRANT ALL ON TABLE timer_actions TO service_role;
 
 -- Grant sequence permissions (for UUID generation)

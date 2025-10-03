@@ -255,6 +255,98 @@ app.delete('/api/completed-cues', async (req, res) => {
   }
 });
 
+// Indented Cues endpoints
+app.get('/api/indented-cues/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM indented_cues WHERE event_id = $1',
+      [eventId]
+    );
+    
+    // Broadcast indented cues update via WebSocket for real-time sync
+    broadcastUpdate(eventId, 'indentedCuesUpdated', result.rows);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching indented cues:', error);
+    res.status(500).json({ error: 'Failed to fetch indented cues' });
+  }
+});
+
+app.post('/api/indented-cues', async (req, res) => {
+  try {
+    const { event_id, item_id, parent_item_id, user_id, user_name, user_role } = req.body;
+    
+    if (!event_id || !item_id || !parent_item_id || !user_id) {
+      return res.status(400).json({ error: 'event_id, item_id, parent_item_id, and user_id are required' });
+    }
+    
+    const result = await pool.query(
+      `INSERT INTO indented_cues (event_id, item_id, parent_item_id, user_id, user_name, user_role, indented_at) 
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+      [
+        event_id, 
+        item_id, 
+        parent_item_id,
+        user_id,
+        user_name || 'Unknown User',
+        user_role || 'VIEWER'
+      ]
+    );
+    
+    // Broadcast update via SSE
+    broadcastUpdate(event_id, 'indentedCuesUpdated', result.rows[0]);
+    
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error marking cue as indented:', error);
+    res.status(500).json({ error: 'Failed to mark cue as indented' });
+  }
+});
+
+// Delete all indented cues for an event
+app.delete('/api/indented-cues/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    console.log(`🗑️ Deleting all indented cues for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'DELETE FROM indented_cues WHERE event_id = $1 RETURNING *',
+      [eventId]
+    );
+    
+    console.log(`✅ Deleted ${result.rows.length} indented cues from Neon database for event: ${eventId}`);
+    
+    // Broadcast update via SSE
+    broadcastUpdate(eventId, 'indentedCuesUpdated', { cleared: true, count: result.rows.length });
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('❌ Error clearing all indented cues from Neon:', error);
+    res.status(500).json({ error: 'Failed to clear all indented cues' });
+  }
+});
+
+// Delete a single indented cue
+app.delete('/api/indented-cues/:eventId/:itemId', async (req, res) => {
+  try {
+    const { eventId, itemId } = req.params;
+    const result = await pool.query(
+      'DELETE FROM indented_cues WHERE event_id = $1 AND item_id = $2 RETURNING *',
+      [eventId, itemId]
+    );
+    
+    // Broadcast update via SSE
+    broadcastUpdate(eventId, 'indentedCuesUpdated', { removed: true, itemId });
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error removing indented cue:', error);
+    res.status(500).json({ error: 'Failed to remove indented cue' });
+  }
+});
+
 // Active Timers endpoints
 app.get('/api/active-timers/:eventId', async (req, res) => {
   try {

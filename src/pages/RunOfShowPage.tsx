@@ -605,6 +605,7 @@ const RunOfShowPage: React.FC = () => {
   const [activeTimerIntervals, setActiveTimerIntervals] = useState<Record<number, NodeJS.Timeout>>({});
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
   const [completedCues, setCompletedCues] = useState<Record<number, boolean>>({});
+  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
@@ -1010,6 +1011,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Load completed cues from API
       loadCompletedCuesFromAPI();
+      loadIndentedCuesFromAPI();
       
       // NOTE: loadActiveTimerFromAPI() is now called AFTER schedule is loaded
       // to prevent race condition where cue display text is missing
@@ -1314,6 +1316,42 @@ const RunOfShowPage: React.FC = () => {
     } catch (error) {
       console.error('❌ Error loading completed cues from API:', error);
       console.log('💡 This means the completed_cues table or functions need to be created first');
+      console.log('📋 Please check your Neon database setup');
+    }
+  };
+
+  // Load indented cues from API
+  const loadIndentedCuesFromAPI = async () => {
+    if (!event?.id) return;
+
+    try {
+      console.log('🟠 Loading indented cues from API for event:', event.id);
+      const indentedCuesData = await DatabaseService.getIndentedCues(event.id);
+      
+      if (indentedCuesData && indentedCuesData.length > 0) {
+        console.log('🟠 Found indented cues:', indentedCuesData);
+        
+        // Convert the database data to indentedCues state format
+        const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
+        indentedCuesData.forEach((cue: any) => {
+          if (cue.item_id && cue.parent_item_id) {
+            indentedCuesMap[cue.item_id] = {
+              parentId: cue.parent_item_id,
+              userId: cue.user_id || '',
+              userName: cue.user_name || ''
+            };
+          }
+        });
+        
+        setIndentedCues(indentedCuesMap);
+        console.log('🟠 Set indentedCues state:', indentedCuesMap);
+      } else {
+        console.log('🟠 No indented cues found');
+        setIndentedCues({});
+      }
+    } catch (error) {
+      console.error('❌ Error loading indented cues from API:', error);
+      console.log('💡 This means the indented_cues table or functions need to be created first');
       console.log('📋 Please check your Neon database setup');
     }
   };
@@ -2047,6 +2085,11 @@ const RunOfShowPage: React.FC = () => {
     
     try {
       console.log('🔄 Backing up schedule data...');
+      
+      // Debug: Check if indented items are being saved
+      const indentedItems = schedule.filter(item => item.isIndented);
+      console.log('🔍 Debug - Indented items being saved:', indentedItems.length, indentedItems.map(item => ({ id: item.id, name: item.segmentName, isIndented: item.isIndented })));
+      
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
         event_name: event.name,
@@ -3887,19 +3930,15 @@ const RunOfShowPage: React.FC = () => {
     setLoadedCueDependents(new Set()); // Clear dependent row highlighting
     setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
     
-    // Clear indented state from all schedule items
-    setSchedule(prevSchedule => 
-      prevSchedule.map(item => ({
-        ...item,
-        isIndented: false
-      }))
-    );
+    // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
+    // The reset should only clear completed cues and timer states, not modify schedule structure
     
     // Emit reset event to other connected pages (like PhotoViewPage)
     console.log('📡 RunOfShow: Emitting reset all states event to other pages');
     socketClient.emitResetAllStates();
     console.log('✅ RunOfShow: Reset all states event emitted');
   };
+
 
   // Open full-screen timer in new window
   const openFullScreenTimer = () => {
@@ -4277,6 +4316,12 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔍 Debug - custom_columns:', data?.custom_columns);
       console.log('🔍 Debug - settings:', data?.settings);
       
+      // Debug: Check if any items have isIndented property
+      if (data?.schedule_items && Array.isArray(data.schedule_items)) {
+        const indentedItems = data.schedule_items.filter(item => item.isIndented);
+        console.log('🔍 Debug - Indented items loaded from database:', indentedItems.length, indentedItems.map(item => ({ id: item.id, name: item.segmentName, isIndented: item.isIndented })));
+      }
+      
       if (data) {
         console.log('📥 Data loaded from API:', {
           scheduleItemsCount: data.schedule_items?.length || 0,
@@ -4542,13 +4587,8 @@ const RunOfShowPage: React.FC = () => {
         setLastLoadedCueId(null);
         setHybridTimerData({ activeTimer: null });
         
-        // Clear indented state from all schedule items
-        setSchedule(prevSchedule => 
-          prevSchedule.map(item => ({
-            ...item,
-            isIndented: false
-          }))
-        );
+        // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
+        // The reset should only clear completed cues and timer states, not modify schedule structure
         
         console.log('✅ RunOfShow: All states reset via WebSocket');
       },
@@ -6438,7 +6478,15 @@ const RunOfShowPage: React.FC = () => {
 
   // Filter schedule by selected day
   const getFilteredSchedule = () => {
-    return schedule.filter(item => (item.day || 1) === selectedDay);
+    const filtered = schedule.filter(item => (item.day || 1) === selectedDay);
+    
+    // Debug: Check if indented items are being filtered out
+    const indentedItems = schedule.filter(item => item.isIndented);
+    const filteredIndentedItems = filtered.filter(item => item.isIndented);
+    
+    // Debug logging removed to prevent console spam
+    
+    return filtered;
   };
 
   // Handle scroll for grid headers visibility
@@ -8186,17 +8234,7 @@ const RunOfShowPage: React.FC = () => {
                          const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
                          const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
                          
-                         // Debug: Log highlighting decisions for this item (reduced logging)
-                         if (isMatch && Math.random() < 0.01) {
-                           console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                             hybridTimerItemId: hybridItemId,
-                             isRunning: hybridTimerData.activeTimer.is_running,
-                             isActive: hybridTimerData.activeTimer.is_active,
-                             isHybridRunning,
-                             isHybridLoaded,
-                             isMatch
-                           });
-                         }
+                         // Debug logging removed to prevent console spam
                          
                          // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
                          if (isHybridRunning) return 'bg-green-900 border-green-500';
@@ -8207,53 +8245,20 @@ const RunOfShowPage: React.FC = () => {
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-800 border-amber-600';
                          
-                         // Debug: Check if item is indented
-                         if (Math.random() < 0.05) { // 5% chance to log
-                           console.log('🔍 Item Debug:', {
-                             itemId: item.id,
-                             itemName: item.segmentName,
-                             isIndented: item.isIndented,
-                             hasIndentedProperty: 'isIndented' in item
-                           });
-                         }
+                         // Debug logging removed to prevent console spam
                          
-                         // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented) {
-                           // Check if the parent cue (non-indented item above) is loaded
-                           const currentIndex = schedule.findIndex(s => s.id === item.id);
-                           let parentCueLoaded = false;
-                           let parentItem = null;
+                         // PHOTOVIEW LOGIC: Simple indented highlighting based on database state
+                         if (indentedCues[item.id]) {
+                           // Check if the parent cue is currently loaded
+                           const parentId = indentedCues[item.id].parentId;
+                           const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
+                           const parentIsLoaded = currentlyLoadedItemId && (
+                             parseInt(String(currentlyLoadedItemId)) === parentId || 
+                             currentlyLoadedItemId === parentId || 
+                             String(currentlyLoadedItemId) === String(parentId)
+                           );
                            
-                           // Look for the first non-indented item above this indented item
-                           for (let i = currentIndex - 1; i >= 0; i--) {
-                             const candidateParent = schedule[i];
-                             if (!candidateParent.isIndented) {
-                               parentItem = candidateParent;
-                               // Found the parent item, check if it's loaded
-                               parentCueLoaded = (hybridTimerData?.activeTimer?.item_id && 
-                                 (parseInt(String(hybridTimerData.activeTimer.item_id)) === parentItem.id || 
-                                  hybridTimerData.activeTimer.item_id === parentItem.id || 
-                                  String(hybridTimerData.activeTimer.item_id) === String(parentItem.id))) &&
-                                 hybridTimerData.activeTimer.is_active && !hybridTimerData.activeTimer.is_running;
-                               break;
-                             }
-                           }
-                           
-                           // Debug logging for indented highlighting
-                           if (Math.random() < 0.1) { // 10% chance to log
-                             console.log('🔍 Indented Debug:', {
-                               itemId: item.id,
-                               isIndented: item.isIndented,
-                               parentId: parentItem?.id,
-                               hybridTimerItemId: hybridTimerData?.activeTimer?.item_id,
-                               hybridTimerActive: hybridTimerData?.activeTimer?.is_active,
-                               hybridTimerRunning: hybridTimerData?.activeTimer?.is_running,
-                               parentCueLoaded,
-                               shouldHighlight: parentCueLoaded
-                             });
-                           }
-                           
-                           if (parentCueLoaded) return 'bg-amber-950 border-amber-600';
+                           if (parentIsLoaded) return 'bg-amber-950 border-amber-600';
                          }
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                        })()
@@ -8763,17 +8768,7 @@ const RunOfShowPage: React.FC = () => {
                          const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
                          const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
                          
-                         // Debug: Log highlighting decisions for this item (reduced logging)
-                         if (isMatch && Math.random() < 0.01) {
-                           console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                             hybridTimerItemId: hybridItemId,
-                             isRunning: hybridTimerData.activeTimer.is_running,
-                             isActive: hybridTimerData.activeTimer.is_active,
-                             isHybridRunning,
-                             isHybridLoaded,
-                             isMatch
-                           });
-                         }
+                         // Debug logging removed to prevent console spam
                          
                          // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
                          if (isHybridRunning) return 'bg-green-950';
@@ -8784,53 +8779,20 @@ const RunOfShowPage: React.FC = () => {
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
                          
-                         // Debug: Check if item is indented (2nd location)
-                         if (Math.random() < 0.05) { // 5% chance to log
-                           console.log('🔍 Item Debug (2nd):', {
-                             itemId: item.id,
-                             itemName: item.segmentName,
-                             isIndented: item.isIndented,
-                             hasIndentedProperty: 'isIndented' in item
-                           });
-                         }
+                         // Debug logging removed to prevent console spam
                          
-                         // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented) {
-                           // Check if the parent cue (non-indented item above) is loaded
-                           const currentIndex = schedule.findIndex(s => s.id === item.id);
-                           let parentCueLoaded = false;
-                           let parentItem = null;
+                         // PHOTOVIEW LOGIC: Simple indented highlighting based on database state
+                         if (indentedCues[item.id]) {
+                           // Check if the parent cue is currently loaded
+                           const parentId = indentedCues[item.id].parentId;
+                           const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
+                           const parentIsLoaded = currentlyLoadedItemId && (
+                             parseInt(String(currentlyLoadedItemId)) === parentId || 
+                             currentlyLoadedItemId === parentId || 
+                             String(currentlyLoadedItemId) === String(parentId)
+                           );
                            
-                           // Look for the first non-indented item above this indented item
-                           for (let i = currentIndex - 1; i >= 0; i--) {
-                             const candidateParent = schedule[i];
-                             if (!candidateParent.isIndented) {
-                               parentItem = candidateParent;
-                               // Found the parent item, check if it's loaded
-                               parentCueLoaded = (hybridTimerData?.activeTimer?.item_id && 
-                                 (parseInt(String(hybridTimerData.activeTimer.item_id)) === parentItem.id || 
-                                  hybridTimerData.activeTimer.item_id === parentItem.id || 
-                                  String(hybridTimerData.activeTimer.item_id) === String(parentItem.id))) &&
-                                 hybridTimerData.activeTimer.is_active && !hybridTimerData.activeTimer.is_running;
-                               break;
-                             }
-                           }
-                           
-                           // Debug logging for indented highlighting
-                           if (Math.random() < 0.1) { // 10% chance to log
-                             console.log('🔍 Indented Debug (2nd):', {
-                               itemId: item.id,
-                               isIndented: item.isIndented,
-                               parentId: parentItem?.id,
-                               hybridTimerItemId: hybridTimerData?.activeTimer?.item_id,
-                               hybridTimerActive: hybridTimerData?.activeTimer?.is_active,
-                               hybridTimerRunning: hybridTimerData?.activeTimer?.is_running,
-                               parentCueLoaded,
-                               shouldHighlight: parentCueLoaded
-                             });
-                           }
-                           
-                           if (parentCueLoaded) return 'bg-amber-950 border-amber-600';
+                           if (parentIsLoaded) return 'bg-amber-950 border-amber-600';
                          }
                          if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
