@@ -1331,6 +1331,12 @@ const PhotoViewPage: React.FC = () => {
                     const isRunning = timerState === 'running' && isActive;
                     const isIndented = indentedCues[item.id] || false;
                     
+                    // Debug logging for indented cues
+                    if (item.id === 1759365042173) {
+                      console.log(`🔍 PhotoView: Checking item ${item.id}, indentedCues:`, indentedCues);
+                      console.log(`🔍 PhotoView: isIndented for ${item.id}:`, isIndented);
+                    }
+                    
                     // Check if indented cue's parent is loaded/running
                     let shouldHighlightIndented = false;
                     if (isIndented) {
@@ -1339,6 +1345,8 @@ const PhotoViewPage: React.FC = () => {
                       const parentIsRunning = activeTimers[parentId] || false;
                       shouldHighlightIndented = parentIsLoaded || parentIsRunning;
                       
+                      // Debug logging
+                      console.log(`🟠 PhotoView: Item ${item.id} (indented), parent ${parentId}, parent loaded: ${parentIsLoaded}, parent running: ${parentIsRunning}, should highlight: ${shouldHighlightIndented}`);
                     }
             
             // Calculate start time
