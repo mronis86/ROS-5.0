@@ -1356,6 +1356,74 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  // Find the parent cue for indenting (look up until we find a non-indented item)
+  const findParentCue = (itemId: number): number | null => {
+    const currentIndex = schedule.findIndex(item => item.id === itemId);
+    if (currentIndex === -1) return null;
+    
+    // Look backwards through the schedule to find the first non-indented item
+    for (let i = currentIndex - 1; i >= 0; i--) {
+      const candidateParent = schedule[i];
+      if (!indentedCues[candidateParent.id]) {
+        return candidateParent.id;
+      }
+    }
+    
+    return null; // No parent found
+  };
+
+  // Toggle indented status for a cue
+  const toggleIndentedCue = async (itemId: number) => {
+    if (!event?.id || !user?.id) return;
+    
+    try {
+      if (indentedCues[itemId]) {
+        // Currently indented - remove it
+        console.log('🟠 Removing indented status for item:', itemId);
+        const success = await DatabaseService.unmarkCueIndented(event.id, itemId);
+        if (success) {
+          setIndentedCues(prev => {
+            const newState = { ...prev };
+            delete newState[itemId];
+            return newState;
+          });
+          console.log('✅ Successfully removed indented status');
+        }
+      } else {
+        // Not indented - add it with parent relationship
+        const parentId = findParentCue(itemId);
+        if (!parentId) {
+          console.log('❌ No parent cue found for item:', itemId);
+          return;
+        }
+        
+        console.log('🟠 Adding indented status for item:', itemId, 'with parent:', parentId);
+        const success = await DatabaseService.markCueIndented(
+          event.id, 
+          itemId, 
+          parentId, 
+          user.id, 
+          user.name || 'Unknown User', 
+          currentUserRole || 'VIEWER'
+        );
+        
+        if (success) {
+          setIndentedCues(prev => ({
+            ...prev,
+            [itemId]: {
+              parentId: parentId,
+              userId: user.id,
+              userName: user.name || 'Unknown User'
+            }
+          }));
+          console.log('✅ Successfully added indented status');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error toggling indented status:', error);
+    }
+  };
+
   // Simple countdown sync for Browser B - only updates timerProgress, doesn't touch top text
   const startCountdownSync = useCallback(() => {
     if (!event?.id) return;
@@ -2086,9 +2154,6 @@ const RunOfShowPage: React.FC = () => {
     try {
       console.log('🔄 Backing up schedule data...');
       
-      // Debug: Check if indented items are being saved
-      const indentedItems = schedule.filter(item => item.isIndented);
-      console.log('🔍 Debug - Indented items being saved:', indentedItems.length, indentedItems.map(item => ({ id: item.id, name: item.segmentName, isIndented: item.isIndented })));
       
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
@@ -4316,11 +4381,6 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔍 Debug - custom_columns:', data?.custom_columns);
       console.log('🔍 Debug - settings:', data?.settings);
       
-      // Debug: Check if any items have isIndented property
-      if (data?.schedule_items && Array.isArray(data.schedule_items)) {
-        const indentedItems = data.schedule_items.filter(item => item.isIndented);
-        console.log('🔍 Debug - Indented items loaded from database:', indentedItems.length, indentedItems.map(item => ({ id: item.id, name: item.segmentName, isIndented: item.isIndented })));
-      }
       
       if (data) {
         console.log('📥 Data loaded from API:', {
@@ -6480,7 +6540,6 @@ const RunOfShowPage: React.FC = () => {
   const getFilteredSchedule = () => {
     const filtered = schedule.filter(item => (item.day || 1) === selectedDay);
     
-    // Debug: Check if indented items are being filtered out
     const indentedItems = schedule.filter(item => item.isIndented);
     const filteredIndentedItems = filtered.filter(item => item.isIndented);
     
@@ -8431,36 +8490,22 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot indent/unindent items. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          const oldValue = item.isIndented;
-                          setSchedule(prev => prev.map(scheduleItem => 
-                            scheduleItem.id === item.id 
-                              ? { ...scheduleItem, isIndented: !scheduleItem.isIndented }
-                              : scheduleItem
-                          ));
                           
-                          // Log the change
-                          logChange('FIELD_UPDATE', `Updated indentation for "${item.segmentName}" from ${oldValue} to ${!oldValue}`, {
-                            changeType: 'FIELD_CHANGE',
-                            itemId: item.id,
-                            itemName: item.segmentName,
-                            fieldName: 'isIndented',
-                            oldValue: oldValue,
-                            newValue: !oldValue,
-                            details: {
-                              fieldType: 'boolean',
-                              booleanChange: true
-                            }
-                          });
+                          // Use new database-backed indent logic
+                          toggleIndentedCue(item.id);
+                          
                         }}
                         className={`w-7 h-7 text-white flex items-center justify-center text-lg rounded font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
                             ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                            : 'bg-slate-600 hover:bg-slate-500'
+                            : indentedCues[item.id] 
+                              ? 'bg-orange-600 hover:bg-orange-500' 
+                              : 'bg-slate-600 hover:bg-slate-500'
                         }`}
                         disabled={currentUserRole === 'VIEWER'}
-                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot indent/unindent items' : (item.isIndented ? "Unindent (group with row above)" : "Indent (group with row above)")}
+                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot indent/unindent items' : (indentedCues[item.id] ? "Unindent (group with row above)" : "Indent (group with row above)")}
                       >
-                        {item.isIndented ? '↗' : '↘'}
+                        {indentedCues[item.id] ? '↗' : '↘'}
                       </button>
                       <button
                         onClick={() => {
