@@ -54,8 +54,8 @@ class AuthService {
 
   async signIn(email: string, fullName: string): Promise<{ error: any }> {
     try {
-      // For now, create a simple user session without real authentication
-      // In production, you'd validate credentials against your API
+      // Simple user identification - no password needed
+      // This is just for tracking who made changes
       const user: User = {
         id: `user_${Date.now()}`,
         email,

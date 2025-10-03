@@ -87,31 +87,48 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
 
     setSaving(true);
     try {
-      const { error } = await updateProfile({
-        full_name: fullName,
-        role: role,
+      // Update user metadata
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: {
+          full_name: fullName,
+          role: role
+        }
       });
 
-      if (error) {
-        console.error('Error updating profile:', error);
-        alert('Error updating profile');
-      } else {
-        setProfile(prev => prev ? { ...prev, full_name: fullName, role: role } : null);
-        setEditing(false);
-        
-        // Update localStorage with new role for current event
-        const currentEventId = new URLSearchParams(window.location.search).get('eventId') || 
-                              window.location.pathname.includes('/run-of-show') ? 'current' : null;
-        if (currentEventId) {
-          localStorage.setItem(`user_role_${currentEventId}_${user.id}`, role);
-        }
-        
-        // Close the dropdown after saving
-        if (onClose) onClose();
+      if (updateError) {
+        console.error('Error updating user metadata:', updateError);
+        setError('Failed to update profile');
+        return;
       }
+
+      // Update or insert into user_profiles table
+      const { error: upsertError } = await supabase
+        .from('user_profiles')
+        .upsert({
+          user_id: user.id,
+          full_name: fullName,
+          role: role,
+          updated_at: new Date().toISOString()
+        });
+
+      if (upsertError) {
+        console.error('Error upserting profile:', upsertError);
+        setError('Failed to save profile to database');
+        return;
+      }
+
+      // Update local state
+      setProfile(prev => prev ? {
+        ...prev,
+        full_name: fullName,
+        role: role
+      } : null);
+
+      setEditing(false);
+      setError(null);
     } catch (error) {
-      console.error('Error updating profile:', error);
-      alert('Error updating profile');
+      console.error('Error saving profile:', error);
+      setError('An unexpected error occurred');
     } finally {
       setSaving(false);
     }

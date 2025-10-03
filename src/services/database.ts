@@ -1300,6 +1300,118 @@ export class DatabaseService {
     }
   }
 
+  // INDENTED CUES METHODS - Similar to completed cues but for indented/sub-cue relationships
+
+  // Get indented cues for an event
+  static async getIndentedCues(eventId: string) {
+    try {
+      console.log('🟠 Getting indented cues via API:', eventId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        console.error('❌ Failed to get indented cues:', response.status, response.statusText);
+        return null;
+      }
+
+      const data = await response.json();
+      console.log('✅ Indented cues retrieved successfully:', data);
+      return data;
+    } catch (error) {
+      console.error('❌ Error getting indented cues:', error);
+      return null;
+    }
+  }
+
+  // Mark a cue as indented (sub-cue of parent)
+  static async markCueIndented(eventId: string, itemId: number, parentItemId: number, userId: string, userName: string, userRole: string): Promise<boolean> {
+    try {
+      console.log('🟠 Marking cue as indented via API:', { eventId, itemId, parentItemId, userId, userName, userRole });
+      
+      const response = await fetch(`${API_BASE_URL}/api/indented-cues`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event_id: eventId,
+          item_id: itemId,
+          parent_item_id: parentItemId,
+          user_id: userId,
+          user_name: userName,
+          user_role: userRole
+        })
+      });
+
+      if (!response.ok) {
+        console.error('❌ Failed to mark cue as indented:', response.status, response.statusText);
+        return false;
+      }
+
+      const data = await response.json();
+      console.log('✅ Cue marked as indented successfully:', { eventId, itemId, parentItemId, data });
+      return true;
+    } catch (error) {
+      console.error('❌ Error marking cue as indented:', error);
+      return false;
+    }
+  }
+
+  // Unmark a cue as indented
+  static async unmarkCueIndented(eventId: string, itemId: number): Promise<boolean> {
+    try {
+      console.log('🟠 Unmarking cue as indented via API:', { eventId, itemId });
+      
+      const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}/${itemId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        console.error('❌ Failed to unmark cue as indented:', response.status, response.statusText);
+        return false;
+      }
+
+      console.log('✅ Cue unmarked as indented successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Error unmarking cue as indented:', error);
+      return false;
+    }
+  }
+
+  // Clear all indented cues for an event
+  static async clearIndentedCues(eventId: string): Promise<boolean> {
+    try {
+      console.log('🟠 Clearing indented cues via API:', eventId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        console.error('❌ Failed to clear indented cues:', response.status, response.statusText);
+        return false;
+      }
+
+      console.log('✅ Indented cues cleared successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Error clearing indented cues:', error);
+      return false;
+    }
+  }
+
   // subscribeToTimerActions function removed - timer_actions table no longer used
 
 

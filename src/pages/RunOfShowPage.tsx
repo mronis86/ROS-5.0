@@ -605,6 +605,7 @@ const RunOfShowPage: React.FC = () => {
   const [activeTimerIntervals, setActiveTimerIntervals] = useState<Record<number, NodeJS.Timeout>>({});
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
   const [completedCues, setCompletedCues] = useState<Record<number, boolean>>({});
+  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
@@ -1010,6 +1011,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Load completed cues from API
       loadCompletedCuesFromAPI();
+      loadIndentedCuesFromAPI();
       
       // NOTE: loadActiveTimerFromAPI() is now called AFTER schedule is loaded
       // to prevent race condition where cue display text is missing
@@ -1315,6 +1317,110 @@ const RunOfShowPage: React.FC = () => {
       console.error('❌ Error loading completed cues from API:', error);
       console.log('💡 This means the completed_cues table or functions need to be created first');
       console.log('📋 Please check your Neon database setup');
+    }
+  };
+
+  // Load indented cues from API
+  const loadIndentedCuesFromAPI = async () => {
+    if (!event?.id) return;
+
+    try {
+      console.log('🟠 Loading indented cues from API for event:', event.id);
+      const indentedCuesData = await DatabaseService.getIndentedCues(event.id);
+      
+      if (indentedCuesData && indentedCuesData.length > 0) {
+        console.log('🟠 Found indented cues:', indentedCuesData);
+        
+        // Convert the database data to indentedCues state format
+        const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
+        indentedCuesData.forEach((cue: any) => {
+          if (cue.item_id && cue.parent_item_id) {
+            indentedCuesMap[cue.item_id] = {
+              parentId: cue.parent_item_id,
+              userId: cue.user_id || '',
+              userName: cue.user_name || ''
+            };
+          }
+        });
+        
+        setIndentedCues(indentedCuesMap);
+        console.log('🟠 Set indentedCues state:', indentedCuesMap);
+      } else {
+        console.log('🟠 No indented cues found');
+        setIndentedCues({});
+      }
+    } catch (error) {
+      console.error('❌ Error loading indented cues from API:', error);
+      console.log('💡 This means the indented_cues table or functions need to be created first');
+      console.log('📋 Please check your Neon database setup');
+    }
+  };
+
+  // Find the parent cue for indenting (look up until we find a non-indented item)
+  const findParentCue = (itemId: number): number | null => {
+    const currentIndex = schedule.findIndex(item => item.id === itemId);
+    if (currentIndex === -1) return null;
+    
+    // Look backwards through the schedule to find the first non-indented item
+    for (let i = currentIndex - 1; i >= 0; i--) {
+      const candidateParent = schedule[i];
+      if (!indentedCues[candidateParent.id]) {
+        return candidateParent.id;
+      }
+    }
+    
+    return null; // No parent found
+  };
+
+  // Toggle indented status for a cue
+  const toggleIndentedCue = async (itemId: number) => {
+    if (!event?.id || !user?.id) return;
+    
+    try {
+      if (indentedCues[itemId]) {
+        // Currently indented - remove it
+        console.log('🟠 Removing indented status for item:', itemId);
+        const success = await DatabaseService.unmarkCueIndented(event.id, itemId);
+        if (success) {
+          setIndentedCues(prev => {
+            const newState = { ...prev };
+            delete newState[itemId];
+            return newState;
+          });
+          console.log('✅ Successfully removed indented status');
+        }
+      } else {
+        // Not indented - add it with parent relationship
+        const parentId = findParentCue(itemId);
+        if (!parentId) {
+          console.log('❌ No parent cue found for item:', itemId);
+          return;
+        }
+        
+        console.log('🟠 Adding indented status for item:', itemId, 'with parent:', parentId);
+        const success = await DatabaseService.markCueIndented(
+          event.id, 
+          itemId, 
+          parentId, 
+          user.id, 
+          user.name || 'Unknown User', 
+          currentUserRole || 'VIEWER'
+        );
+        
+        if (success) {
+          setIndentedCues(prev => ({
+            ...prev,
+            [itemId]: {
+              parentId: parentId,
+              userId: user.id,
+              userName: user.name || 'Unknown User'
+            }
+          }));
+          console.log('✅ Successfully added indented status');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error toggling indented status:', error);
     }
   };
 
@@ -2047,6 +2153,8 @@ const RunOfShowPage: React.FC = () => {
     
     try {
       console.log('🔄 Backing up schedule data...');
+      
+      
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
         event_name: event.name,
@@ -3174,23 +3282,15 @@ const RunOfShowPage: React.FC = () => {
 
   // Helper function to check if the parent CUE (row above) is running
   const isParentCueRunning = (itemId: number) => {
-    const currentItem = schedule.find(item => item.id === itemId);
-    if (!currentItem || !currentItem.isIndented) return false;
+    // Check if this item is indented using the new database state
+    if (!indentedCues[itemId]) return false;
     
-    // Find the parent item (non-indented item above this indented item)
-    const currentIndex = schedule.findIndex(item => item.id === itemId);
-    if (currentIndex === -1) return false;
+    // Get the parent ID from the indented cues state
+    const parentId = indentedCues[itemId].parentId;
+    if (!parentId) return false;
     
-    // Look for the first non-indented item above this one
-    for (let i = currentIndex - 1; i >= 0; i--) {
-      const item = schedule[i];
-      if (!item.isIndented) {
-        // Found the parent item, check if it's running
-        return activeTimers[item.id] !== undefined;
-      }
-    }
-    
-    return false;
+    // Check if the parent is running
+    return activeTimers[parentId] !== undefined;
   };
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values
@@ -3887,19 +3987,15 @@ const RunOfShowPage: React.FC = () => {
     setLoadedCueDependents(new Set()); // Clear dependent row highlighting
     setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
     
-    // Clear indented state from all schedule items
-    setSchedule(prevSchedule => 
-      prevSchedule.map(item => ({
-        ...item,
-        isIndented: false
-      }))
-    );
+    // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
+    // The reset should only clear completed cues and timer states, not modify schedule structure
     
     // Emit reset event to other connected pages (like PhotoViewPage)
     console.log('📡 RunOfShow: Emitting reset all states event to other pages');
     socketClient.emitResetAllStates();
     console.log('✅ RunOfShow: Reset all states event emitted');
   };
+
 
   // Open full-screen timer in new window
   const openFullScreenTimer = () => {
@@ -4277,6 +4373,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔍 Debug - custom_columns:', data?.custom_columns);
       console.log('🔍 Debug - settings:', data?.settings);
       
+      
       if (data) {
         console.log('📥 Data loaded from API:', {
           scheduleItemsCount: data.schedule_items?.length || 0,
@@ -4542,13 +4639,8 @@ const RunOfShowPage: React.FC = () => {
         setLastLoadedCueId(null);
         setHybridTimerData({ activeTimer: null });
         
-        // Clear indented state from all schedule items
-        setSchedule(prevSchedule => 
-          prevSchedule.map(item => ({
-            ...item,
-            isIndented: false
-          }))
-        );
+        // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
+        // The reset should only clear completed cues and timer states, not modify schedule structure
         
         console.log('✅ RunOfShow: All states reset via WebSocket');
       },
@@ -5913,7 +6005,7 @@ const RunOfShowPage: React.FC = () => {
     if (!user || !event?.id) return;
     
     const item = schedule.find(s => s.id === itemId);
-    if (item && item.isIndented) {
+    if (item && indentedCues[itemId]) {
       const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
       
       console.log('🟠 Starting secondary timer for item:', itemId, 'Duration:', totalSeconds, 's');
@@ -6438,7 +6530,14 @@ const RunOfShowPage: React.FC = () => {
 
   // Filter schedule by selected day
   const getFilteredSchedule = () => {
-    return schedule.filter(item => (item.day || 1) === selectedDay);
+    const filtered = schedule.filter(item => (item.day || 1) === selectedDay);
+    
+    const indentedItems = schedule.filter(item => item.isIndented);
+    const filteredIndentedItems = filtered.filter(item => item.isIndented);
+    
+    // Debug logging removed to prevent console spam
+    
+    return filtered;
   };
 
   // Handle scroll for grid headers visibility
@@ -8186,17 +8285,7 @@ const RunOfShowPage: React.FC = () => {
                          const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
                          const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
                          
-                         // Debug: Log highlighting decisions for this item (reduced logging)
-                         if (isMatch && Math.random() < 0.01) {
-                           console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                             hybridTimerItemId: hybridItemId,
-                             isRunning: hybridTimerData.activeTimer.is_running,
-                             isActive: hybridTimerData.activeTimer.is_active,
-                             isHybridRunning,
-                             isHybridLoaded,
-                             isMatch
-                           });
-                         }
+                         // Debug logging removed to prevent console spam
                          
                          // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
                          if (isHybridRunning) return 'bg-green-900 border-green-500';
@@ -8206,8 +8295,26 @@ const RunOfShowPage: React.FC = () => {
                          if (completedCues[item.id]) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 border-gray-700 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-800 border-amber-600';
-                         // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented && isHybridLoaded) return 'bg-amber-950 border-amber-600';
+                         
+                         // Debug logging removed to prevent console spam
+                         
+                         // INDENTED CUES: Highlight when parent is loaded OR running
+                         if (indentedCues[item.id]) {
+                           const parentId = indentedCues[item.id].parentId;
+                           const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
+                           
+                           // Check if parent is currently loaded
+                           const parentIsLoaded = currentlyLoadedItemId && (
+                             parseInt(String(currentlyLoadedItemId)) === parentId || 
+                             currentlyLoadedItemId === parentId || 
+                             String(currentlyLoadedItemId) === String(parentId)
+                           );
+                           
+                           // Check if parent is running
+                           const parentIsRunning = activeTimers[parentId] !== undefined;
+                           
+                           if (parentIsLoaded || parentIsRunning) return 'bg-amber-950 border-amber-600';
+                         }
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                        })()
                      }`}
@@ -8379,36 +8486,22 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot indent/unindent items. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          const oldValue = item.isIndented;
-                          setSchedule(prev => prev.map(scheduleItem => 
-                            scheduleItem.id === item.id 
-                              ? { ...scheduleItem, isIndented: !scheduleItem.isIndented }
-                              : scheduleItem
-                          ));
                           
-                          // Log the change
-                          logChange('FIELD_UPDATE', `Updated indentation for "${item.segmentName}" from ${oldValue} to ${!oldValue}`, {
-                            changeType: 'FIELD_CHANGE',
-                            itemId: item.id,
-                            itemName: item.segmentName,
-                            fieldName: 'isIndented',
-                            oldValue: oldValue,
-                            newValue: !oldValue,
-                            details: {
-                              fieldType: 'boolean',
-                              booleanChange: true
-                            }
-                          });
+                          // Use new database-backed indent logic
+                          toggleIndentedCue(item.id);
+                          
                         }}
                         className={`w-7 h-7 text-white flex items-center justify-center text-lg rounded font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
                             ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                            : 'bg-slate-600 hover:bg-slate-500'
+                            : indentedCues[item.id] 
+                              ? 'bg-orange-600 hover:bg-orange-500' 
+                              : 'bg-slate-600 hover:bg-slate-500'
                         }`}
                         disabled={currentUserRole === 'VIEWER'}
-                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot indent/unindent items' : (item.isIndented ? "Unindent (group with row above)" : "Indent (group with row above)")}
+                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot indent/unindent items' : (indentedCues[item.id] ? "Unindent (group with row above)" : "Indent (group with row above)")}
                       >
-                        {item.isIndented ? '↗' : '↘'}
+                        {indentedCues[item.id] ? '↗' : '↘'}
                       </button>
                       <button
                         onClick={() => {
@@ -8716,17 +8809,7 @@ const RunOfShowPage: React.FC = () => {
                          const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
                          const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
                          
-                         // Debug: Log highlighting decisions for this item (reduced logging)
-                         if (isMatch && Math.random() < 0.01) {
-                           console.log('🔍 RunOfShow: Highlighting check for item', item.id, {
-                             hybridTimerItemId: hybridItemId,
-                             isRunning: hybridTimerData.activeTimer.is_running,
-                             isActive: hybridTimerData.activeTimer.is_active,
-                             isHybridRunning,
-                             isHybridLoaded,
-                             isMatch
-                           });
-                         }
+                         // Debug logging removed to prevent console spam
                          
                          // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
                          if (isHybridRunning) return 'bg-green-950';
@@ -8736,8 +8819,26 @@ const RunOfShowPage: React.FC = () => {
                          if (completedCues[item.id]) return 'bg-gray-900 opacity-40';
                          if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
                          if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
-                         // Only show orange for indented items when the cue above is loaded
-                         if (item.isIndented && isHybridLoaded) return 'bg-amber-950 border-amber-600';
+                         
+                         // Debug logging removed to prevent console spam
+                         
+                         // INDENTED CUES: Highlight when parent is loaded OR running
+                         if (indentedCues[item.id]) {
+                           const parentId = indentedCues[item.id].parentId;
+                           const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
+                           
+                           // Check if parent is currently loaded
+                           const parentIsLoaded = currentlyLoadedItemId && (
+                             parseInt(String(currentlyLoadedItemId)) === parentId || 
+                             currentlyLoadedItemId === parentId || 
+                             String(currentlyLoadedItemId) === String(parentId)
+                           );
+                           
+                           // Check if parent is running
+                           const parentIsRunning = activeTimers[parentId] !== undefined;
+                           
+                           if (parentIsLoaded || parentIsRunning) return 'bg-amber-950 border-amber-600';
+                         }
                          if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
                          return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                          })()
@@ -8750,7 +8851,7 @@ const RunOfShowPage: React.FC = () => {
                            style={{ width: columnWidths.start }}
                          >
                            <span className="text-white font-mono text-base font-bold">
-                             {item.isIndented ? '↘' : calculateStartTime(index)}
+                             {indentedCues[item.id] ? '↘' : calculateStartTime(index)}
                            </span>
                          </div>
                        )}
@@ -9504,7 +9605,7 @@ const RunOfShowPage: React.FC = () => {
                         {item.timerId || 'TIMER'}
                       </div>
                       <div className="flex flex-col gap-1">
-                        {!item.isIndented ? (
+                        {!indentedCues[item.id] ? (
                           <>
                             <button
                               onClick={async () => {

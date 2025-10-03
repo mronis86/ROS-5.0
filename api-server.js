@@ -7,6 +7,9 @@ const { Server } = require('socket.io');
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Import Neon Auth Service
+const { neonAuthService } = require('./src/services/neon-auth-service');
+
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
@@ -252,6 +255,98 @@ app.delete('/api/completed-cues', async (req, res) => {
   } catch (error) {
     console.error('Error unmarking cue as completed:', error);
     res.status(500).json({ error: 'Failed to unmark cue as completed' });
+  }
+});
+
+// Indented Cues endpoints
+app.get('/api/indented-cues/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM indented_cues WHERE event_id = $1',
+      [eventId]
+    );
+    
+    // Broadcast indented cues update via WebSocket for real-time sync
+    broadcastUpdate(eventId, 'indentedCuesUpdated', result.rows);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching indented cues:', error);
+    res.status(500).json({ error: 'Failed to fetch indented cues' });
+  }
+});
+
+app.post('/api/indented-cues', async (req, res) => {
+  try {
+    const { event_id, item_id, parent_item_id, user_id, user_name, user_role } = req.body;
+    
+    if (!event_id || !item_id || !parent_item_id || !user_id) {
+      return res.status(400).json({ error: 'event_id, item_id, parent_item_id, and user_id are required' });
+    }
+    
+    const result = await pool.query(
+      `INSERT INTO indented_cues (event_id, item_id, parent_item_id, user_id, user_name, user_role, indented_at) 
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+      [
+        event_id, 
+        item_id, 
+        parent_item_id,
+        user_id,
+        user_name || 'Unknown User',
+        user_role || 'VIEWER'
+      ]
+    );
+    
+    // Broadcast update via SSE
+    broadcastUpdate(event_id, 'indentedCuesUpdated', result.rows[0]);
+    
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error marking cue as indented:', error);
+    res.status(500).json({ error: 'Failed to mark cue as indented' });
+  }
+});
+
+// Delete all indented cues for an event
+app.delete('/api/indented-cues/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    console.log(`🗑️ Deleting all indented cues for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'DELETE FROM indented_cues WHERE event_id = $1 RETURNING *',
+      [eventId]
+    );
+    
+    console.log(`✅ Deleted ${result.rows.length} indented cues from Neon database for event: ${eventId}`);
+    
+    // Broadcast update via SSE
+    broadcastUpdate(eventId, 'indentedCuesUpdated', { cleared: true, count: result.rows.length });
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('❌ Error clearing all indented cues from Neon:', error);
+    res.status(500).json({ error: 'Failed to clear all indented cues' });
+  }
+});
+
+// Delete a single indented cue
+app.delete('/api/indented-cues/:eventId/:itemId', async (req, res) => {
+  try {
+    const { eventId, itemId } = req.params;
+    const result = await pool.query(
+      'DELETE FROM indented_cues WHERE event_id = $1 AND item_id = $2 RETURNING *',
+      [eventId, itemId]
+    );
+    
+    // Broadcast update via SSE
+    broadcastUpdate(eventId, 'indentedCuesUpdated', { removed: true, itemId });
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error removing indented cue:', error);
+    res.status(500).json({ error: 'Failed to remove indented cue' });
   }
 });
 
@@ -828,6 +923,139 @@ io.on('connection', (socket) => {
   });
 });
 
+// ===== NEON AUTH API ENDPOINTS =====
+
+// Register new user
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, displayName } = req.body;
+    
+    if (!email || !password || !displayName) {
+      return res.status(400).json({ error: 'Email, password, and display name are required' });
+    }
+
+    const result = await neonAuthService.register(email, password, displayName);
+    
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    // Create session
+    const sessionToken = await neonAuthService.createSession(
+      result.user.id,
+      req.ip,
+      req.get('User-Agent')
+    );
+
+    res.status(201).json({
+      user: result.user,
+      sessionToken
+    });
+  } catch (error) {
+    console.error('❌ Auth registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// Login user
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const result = await neonAuthService.login(email, password);
+    
+    if (!result.success) {
+      return res.status(401).json({ error: result.error });
+    }
+
+    // Create session
+    const sessionToken = await neonAuthService.createSession(
+      result.user.id,
+      req.ip,
+      req.get('User-Agent')
+    );
+
+    res.json({
+      user: result.user,
+      sessionToken
+    });
+  } catch (error) {
+    console.error('❌ Auth login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Validate session
+app.get('/api/auth/validate', async (req, res) => {
+  try {
+    const sessionToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!sessionToken) {
+      return res.status(401).json({ error: 'No session token provided' });
+    }
+
+    const user = await neonAuthService.validateSession(sessionToken);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid or expired session' });
+    }
+
+    res.json({ user });
+  } catch (error) {
+    console.error('❌ Auth validation error:', error);
+    res.status(500).json({ error: 'Session validation failed' });
+  }
+});
+
+// Logout user
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const sessionToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (sessionToken) {
+      await neonAuthService.deleteSession(sessionToken);
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('❌ Auth logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// Update user profile
+app.put('/api/auth/profile', async (req, res) => {
+  try {
+    const sessionToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!sessionToken) {
+      return res.status(401).json({ error: 'No session token provided' });
+    }
+
+    const user = await neonAuthService.validateSession(sessionToken);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid or expired session' });
+    }
+
+    const { display_name, role } = req.body;
+    const result = await neonAuthService.updateUser(user.id, { display_name, role });
+    
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ user: result.user });
+  } catch (error) {
+    console.error('❌ Auth profile update error:', error);
+    res.status(500).json({ error: 'Profile update failed' });
+  }
+});
+
 // Start server
 server.listen(PORT, () => {
   console.log(`🚀 API Server running on port ${PORT}`);
@@ -835,6 +1063,7 @@ server.listen(PORT, () => {
   console.log(`🔗 Database: ${process.env.NEON_DATABASE_URL ? 'Connected to Neon' : 'Not configured'}`);
   console.log(`📡 SSE endpoint: http://localhost:${PORT}/api/events/:eventId/stream`);
   console.log(`🔌 Socket.IO endpoint: ws://localhost:${PORT}`);
+  console.log(`🔐 Auth endpoints: /api/auth/*`);
 });
 
 // Graceful shutdown

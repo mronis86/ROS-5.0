@@ -61,6 +61,7 @@ const PhotoViewPage: React.FC = () => {
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [activeTimers, setActiveTimers] = useState<{[key: number]: boolean}>({});
+  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [showNotes, setShowNotes] = useState<boolean>(true);
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
@@ -947,6 +948,47 @@ const PhotoViewPage: React.FC = () => {
     };
   }, []);
 
+  // Load indented cues from database
+  const loadIndentedCuesFromAPI = async () => {
+    if (!event?.id) return;
+
+    try {
+      console.log('🟠 PhotoView: Loading indented cues from API for event:', event.id);
+      const indentedCuesData = await DatabaseService.getIndentedCues(event.id);
+      
+      if (indentedCuesData && indentedCuesData.length > 0) {
+        console.log('🟠 PhotoView: Found indented cues:', indentedCuesData);
+        
+        // Convert the database data to indentedCues state format
+        const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
+        indentedCuesData.forEach((cue: any) => {
+          if (cue.item_id && cue.parent_item_id) {
+            indentedCuesMap[cue.item_id] = {
+              parentId: cue.parent_item_id,
+              userId: cue.user_id || '',
+              userName: cue.user_name || ''
+            };
+          }
+        });
+        
+        setIndentedCues(indentedCuesMap);
+        console.log('🟠 PhotoView: Set indentedCues state:', indentedCuesMap);
+      } else {
+        console.log('🟠 PhotoView: No indented cues found');
+        setIndentedCues({});
+      }
+    } catch (error) {
+      console.error('❌ PhotoView: Error loading indented cues from API:', error);
+    }
+  };
+
+  // Load indented cues when event changes
+  useEffect(() => {
+    if (event?.id) {
+      loadIndentedCuesFromAPI();
+    }
+  }, [event?.id]);
+
   // Update secondaryTimer (sub cue timer) in real-time - matches Run of Show page
   useEffect(() => {
     if (!secondaryTimer) return;
@@ -1287,7 +1329,16 @@ const PhotoViewPage: React.FC = () => {
                     const isActive = String(activeItemId) === String(item.id);
                     const isLoaded = loadedItems[item.id];
                     const isRunning = timerState === 'running' && isActive;
-                    const isIndented = item.isIndented || false;
+                    const isIndented = indentedCues[item.id] || false;
+                    
+                    // Check if indented cue's parent is loaded/running
+                    let shouldHighlightIndented = false;
+                    if (isIndented) {
+                      const parentId = indentedCues[item.id].parentId;
+                      const parentIsLoaded = loadedItems[parentId] || false;
+                      const parentIsRunning = activeTimers[parentId] || false;
+                      shouldHighlightIndented = parentIsLoaded || parentIsRunning;
+                    }
             
             // Calculate start time
             const itemIndex = schedule.findIndex(s => s.id === item.id);
@@ -1302,17 +1353,21 @@ const PhotoViewPage: React.FC = () => {
             if (item.hasQA) pptQA.push('Q&A');
             const pptQAString = pptQA.length > 0 ? pptQA.join('/') : 'None';
             
+            // CSS class selection
+            let cssClass = '';
+            if (shouldHighlightIndented) {
+              cssClass = 'border-4 border-orange-400';
+            } else if (isActive) {
+              cssClass = isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400';
+            } else {
+              cssClass = 'border border-slate-600';
+            }
+            
             return (
-              <div key={item.id} className={`${
-                isIndented ? 'border-4 border-orange-400' :
-                isActive ? (
-                  isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400'
-                ) : 
-                'border border-slate-600'
-              }`}>
+              <div key={item.id} className={cssClass}>
                         {/* Main Data Row - Made taller for better portrait image display */}
                         <div className={`grid grid-cols-11 gap-0 ${
-                          isIndented ? 'bg-amber-950' : 
+                          shouldHighlightIndented ? 'bg-amber-950' : 
                           isActive ? (
                             isRunning ? 'bg-green-950' : 'bg-blue-950'
                           ) : 
