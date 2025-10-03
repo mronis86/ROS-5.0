@@ -8851,7 +8851,7 @@ const RunOfShowPage: React.FC = () => {
                            style={{ width: columnWidths.start }}
                          >
                            <span className="text-white font-mono text-base font-bold">
-                             {item.isIndented ? '↘' : calculateStartTime(index)}
+                             {indentedCues[item.id] ? '↘' : calculateStartTime(index)}
                            </span>
                          </div>
                        )}
