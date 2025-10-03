@@ -3282,23 +3282,15 @@ const RunOfShowPage: React.FC = () => {
 
   // Helper function to check if the parent CUE (row above) is running
   const isParentCueRunning = (itemId: number) => {
-    const currentItem = schedule.find(item => item.id === itemId);
-    if (!currentItem || !currentItem.isIndented) return false;
+    // Check if this item is indented using the new database state
+    if (!indentedCues[itemId]) return false;
     
-    // Find the parent item (non-indented item above this indented item)
-    const currentIndex = schedule.findIndex(item => item.id === itemId);
-    if (currentIndex === -1) return false;
+    // Get the parent ID from the indented cues state
+    const parentId = indentedCues[itemId].parentId;
+    if (!parentId) return false;
     
-    // Look for the first non-indented item above this one
-    for (let i = currentIndex - 1; i >= 0; i--) {
-      const item = schedule[i];
-      if (!item.isIndented) {
-        // Found the parent item, check if it's running
-        return activeTimers[item.id] !== undefined;
-      }
-    }
-    
-    return false;
+    // Check if the parent is running
+    return activeTimers[parentId] !== undefined;
   };
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values
