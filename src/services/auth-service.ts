@@ -52,7 +52,7 @@ class AuthService {
     }
   }
 
-  async signIn(email: string, password: string, fullName: string): Promise<{ error: any }> {
+  async signIn(email: string, fullName: string): Promise<{ error: any }> {
     try {
       // For now, create a simple user session without real authentication
       // In production, you'd validate credentials against your API
@@ -82,9 +82,9 @@ class AuthService {
     }
   }
 
-  async signUp(email: string, password: string, fullName: string): Promise<{ error: any }> {
+  async signUp(email: string, fullName: string): Promise<{ error: any }> {
     // For now, same as sign in
-    return this.signIn(email, password, fullName);
+    return this.signIn(email, fullName);
   }
 
   async signOut(): Promise<void> {
