@@ -1382,7 +1382,7 @@ const PhotoViewPage: React.FC = () => {
               <div key={item.id} className={cssClass}>
                         {/* Main Data Row - Made taller for better portrait image display */}
                         <div className={`grid grid-cols-11 gap-0 ${
-                          isIndented ? 'bg-amber-950' : 
+                          shouldHighlightIndented ? 'bg-amber-950' : 
                           isActive ? (
                             isRunning ? 'bg-green-950' : 'bg-blue-950'
                           ) : 
