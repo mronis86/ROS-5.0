@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+// import { supabase, isSupabaseConfigured } from './supabase'; // DISABLED: Supabase cleanup
 
 export interface CalendarEvent {
   id?: string;

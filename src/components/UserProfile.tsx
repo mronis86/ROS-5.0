@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
 
 interface UserProfileData {
   id: string;
@@ -22,6 +21,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('VIEWER');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const roles = [
     { value: 'VIEWER', label: 'Viewer (Read Only)' },
@@ -39,44 +39,19 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
     if (!user) return;
 
     try {
-      // Try to fetch from user_profiles table first
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
-      if (error) {
-        console.log('No profile found in database, using user metadata:', error);
-        // Fallback to user metadata if no profile exists
-        const profileData = {
-          id: user.id,
-          full_name: user.user_metadata?.full_name || user.email || 'Unknown',
-          role: user.user_metadata?.role || 'VIEWER',
-          email: user.email || '',
-          created_at: user.created_at || new Date().toISOString()
-        };
-        setProfile(profileData);
-        setFullName(profileData.full_name);
-        setRole(profileData.role);
-      } else {
-        setProfile(data);
-        setFullName(data.full_name || '');
-        setRole(data.role || 'VIEWER');
-      }
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      // Fallback to user metadata
+      // Use local auth user data directly
       const profileData = {
         id: user.id,
-        full_name: user.user_metadata?.full_name || user.email || 'Unknown',
-        role: user.user_metadata?.role || 'VIEWER',
+        full_name: user.full_name || user.email || 'Unknown',
+        role: user.role || 'VIEWER',
         email: user.email || '',
         created_at: user.created_at || new Date().toISOString()
       };
       setProfile(profileData);
       setFullName(profileData.full_name);
       setRole(profileData.role);
+    } catch (error) {
+      console.error('Error fetching profile:', error);
     } finally {
       setLoading(false);
     }
@@ -87,35 +62,11 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
 
     setSaving(true);
     try {
-      // Update user metadata
-      const { error: updateError } = await supabase.auth.updateUser({
-        data: {
-          full_name: fullName,
-          role: role
-        }
+      // Update profile using the local auth system
+      await updateProfile({
+        full_name: fullName,
+        role: role
       });
-
-      if (updateError) {
-        console.error('Error updating user metadata:', updateError);
-        setError('Failed to update profile');
-        return;
-      }
-
-      // Update or insert into user_profiles table
-      const { error: upsertError } = await supabase
-        .from('user_profiles')
-        .upsert({
-          user_id: user.id,
-          full_name: fullName,
-          role: role,
-          updated_at: new Date().toISOString()
-        });
-
-      if (upsertError) {
-        console.error('Error upserting profile:', upsertError);
-        setError('Failed to save profile to database');
-        return;
-      }
 
       // Update local state
       setProfile(prev => prev ? {
@@ -128,7 +79,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
       setError(null);
     } catch (error) {
       console.error('Error saving profile:', error);
-      setError('An unexpected error occurred');
+      setError('Failed to update profile');
     } finally {
       setSaving(false);
     }
@@ -202,6 +153,12 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
               ))}
             </select>
           </div>
+
+          {error && (
+            <div className="bg-red-900 border border-red-700 text-red-200 px-3 py-2 rounded text-sm">
+              {error}
+            </div>
+          )}
 
           <div className="flex gap-2">
             <button

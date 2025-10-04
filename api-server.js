@@ -922,6 +922,254 @@ io.on('connection', (socket) => {
   });
 });
 
+// ===========================================
+// BACKUP API ENDPOINTS
+// ===========================================
+
+// Test backup table access
+app.get('/api/backups/test', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT 1 FROM run_of_show_backups LIMIT 1');
+    res.json({ status: 'success', message: 'Backup table accessible' });
+  } catch (error) {
+    console.error('❌ Backup table test failed:', error);
+    res.status(500).json({ error: 'Backup table not accessible' });
+  }
+});
+
+// Create or update backup
+app.post('/api/backups', async (req, res) => {
+  try {
+    const {
+      event_id,
+      event_name,
+      event_date,
+      event_location,
+      backup_name,
+      backup_type,
+      schedule_data,
+      custom_columns_data,
+      event_data,
+      schedule_items_count,
+      custom_columns_count,
+      created_by,
+      created_by_name,
+      created_by_role
+    } = req.body;
+
+    console.log(`🔄 Creating/updating ${backup_type} backup for event: ${event_id}`);
+
+    // Check if backup already exists for this event and date
+    const existingBackup = await pool.query(
+      'SELECT id FROM run_of_show_backups WHERE event_id = $1 AND event_date = $2',
+      [event_id, event_date]
+    );
+
+    let result;
+
+    if (existingBackup.rows.length > 0) {
+      // Update existing backup
+      console.log(`🔄 Updating existing backup for ${event_name} on ${event_date}`);
+      
+      const updateResult = await pool.query(`
+        UPDATE run_of_show_backups 
+        SET 
+          backup_name = $1,
+          schedule_data = $2,
+          custom_columns_data = $3,
+          event_data = $4,
+          backup_type = $5,
+          event_name = $6,
+          event_location = $7,
+          schedule_items_count = $8,
+          custom_columns_count = $9,
+          created_by = $10,
+          created_by_name = $11,
+          created_by_role = $12,
+          updated_at = NOW()
+        WHERE id = $13
+        RETURNING *
+      `, [
+        backup_name,
+        JSON.stringify(schedule_data),
+        JSON.stringify(custom_columns_data),
+        JSON.stringify(event_data),
+        backup_type,
+        event_name,
+        event_location,
+        schedule_items_count,
+        custom_columns_count,
+        created_by,
+        created_by_name,
+        created_by_role,
+        existingBackup.rows[0].id
+      ]);
+
+      result = updateResult.rows[0];
+      console.log(`✅ Backup updated successfully: ${result.backup_name}`);
+    } else {
+      // Create new backup
+      console.log(`🔄 Creating new backup for ${event_name} on ${event_date}`);
+      
+      const insertResult = await pool.query(`
+        INSERT INTO run_of_show_backups (
+          event_id, event_name, event_date, event_location,
+          backup_name, backup_type, schedule_data, custom_columns_data,
+          event_data, schedule_items_count, custom_columns_count,
+          created_by, created_by_name, created_by_role
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING *
+      `, [
+        event_id, event_name, event_date, event_location,
+        backup_name, backup_type, JSON.stringify(schedule_data),
+        JSON.stringify(custom_columns_data), JSON.stringify(event_data),
+        schedule_items_count, custom_columns_count,
+        created_by, created_by_name, created_by_role
+      ]);
+
+      result = insertResult.rows[0];
+      console.log(`✅ Backup created successfully: ${result.backup_name}`);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error creating/updating backup:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get backups for specific event
+app.get('/api/backups/event/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    console.log(`🔄 Fetching backups for event: ${eventId}`);
+
+    const result = await pool.query(`
+      SELECT * FROM run_of_show_backups 
+      WHERE event_id = $1 
+      ORDER BY backup_timestamp DESC
+    `, [eventId]);
+
+    console.log(`✅ Found ${result.rows.length} backups for event: ${eventId}`);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('❌ Error fetching backups:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get backups with filters
+app.get('/api/backups', async (req, res) => {
+  try {
+    const { eventId, eventName, eventDate, backupType, sortBy, limit } = req.query;
+    console.log('🔄 Fetching backups with filters:', req.query);
+
+    let query = 'SELECT * FROM run_of_show_backups WHERE 1=1';
+    const params = [];
+    let paramCount = 0;
+
+    if (eventId) {
+      query += ` AND event_id = $${++paramCount}`;
+      params.push(eventId);
+    }
+    if (eventName) {
+      query += ` AND event_name ILIKE $${++paramCount}`;
+      params.push(`%${eventName}%`);
+    }
+    if (eventDate) {
+      query += ` AND event_date = $${++paramCount}`;
+      params.push(eventDate);
+    }
+    if (backupType) {
+      query += ` AND backup_type = $${++paramCount}`;
+      params.push(backupType);
+    }
+
+    // Apply sorting
+    switch (sortBy) {
+      case 'oldest':
+        query += ' ORDER BY backup_timestamp ASC';
+        break;
+      case 'event':
+        query += ' ORDER BY event_name ASC';
+        break;
+      case 'type':
+        query += ' ORDER BY backup_type ASC';
+        break;
+      case 'newest':
+      default:
+        query += ' ORDER BY backup_timestamp DESC';
+        break;
+    }
+
+    if (limit) {
+      query += ` LIMIT $${++paramCount}`;
+      params.push(parseInt(limit));
+    }
+
+    const result = await pool.query(query, params);
+    console.log(`✅ Found ${result.rows.length} backups with filters`);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('❌ Error fetching backups with filters:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Restore from backup
+app.get('/api/backups/:backupId/restore', async (req, res) => {
+  try {
+    const { backupId } = req.params;
+    console.log(`🔄 Restoring from backup: ${backupId}`);
+
+    const result = await pool.query(
+      'SELECT * FROM run_of_show_backups WHERE id = $1',
+      [backupId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Backup not found' });
+    }
+
+    const backup = result.rows[0];
+    console.log(`✅ Restored from backup: ${backup.backup_name}`);
+    
+    res.json({
+      schedule_data: backup.schedule_data,
+      custom_columns_data: backup.custom_columns_data,
+      event_data: backup.event_data,
+      backup_name: backup.backup_name,
+      backup_timestamp: backup.backup_timestamp
+    });
+  } catch (error) {
+    console.error('❌ Error restoring from backup:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete backup
+app.delete('/api/backups/:backupId', async (req, res) => {
+  try {
+    const { backupId } = req.params;
+    console.log(`🔄 Deleting backup: ${backupId}`);
+
+    const result = await pool.query(
+      'DELETE FROM run_of_show_backups WHERE id = $1 RETURNING backup_name',
+      [backupId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Backup not found' });
+    }
+
+    console.log(`✅ Backup deleted successfully: ${result.rows[0].backup_name}`);
+    res.json({ success: true, message: 'Backup deleted successfully' });
+  } catch (error) {
+    console.error('❌ Error deleting backup:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Auth is now handled via direct database connection
 
 

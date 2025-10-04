@@ -1,38 +1,53 @@
-import { supabase } from './supabase';
+import { DatabaseService } from './database';
+
+// API Base URL for direct fetch calls
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+  (import.meta.env.PROD 
+    ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
+    : 'http://localhost:3001');
 
 export interface BackupData {
-  id: string;
+  id: number;
   event_id: string;
+  event_name: string;
+  event_date: string;
+  event_location?: string;
   backup_name: string;
   backup_timestamp: string;
-  schedule_data: any;
-  custom_columns_data: any;
-  event_data: any;
   backup_type: 'auto' | 'manual';
+  schedule_data: any[];
+  custom_columns_data: any[];
+  event_data: any;
+  schedule_items_count: number;
+  custom_columns_count: number;
   created_by: string;
+  created_by_name?: string;
+  created_by_role?: string;
   created_at: string;
   updated_at: string;
 }
 
-export class BackupService {
+export class NeonBackupService {
   /**
    * Test if the backup table exists and is accessible
    */
   static async testBackupTable(): Promise<boolean> {
     try {
-      console.log('🔄 Testing backup table access...');
+      console.log('🔄 Testing Neon backup table access...');
       
-      const { data, error } = await supabase
-        .from('run_of_show_backups')
-        .select('id')
-        .limit(1);
+      const response = await fetch(`${API_BASE_URL}/api/backups/test`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
       
-      if (error) {
-        console.error('❌ Backup table test failed:', error);
+      if (!response.ok) {
+        console.error('❌ Backup table test failed:', response.statusText);
         return false;
       }
       
-      console.log('✅ Backup table is accessible');
+      console.log('✅ Neon backup table is accessible');
       return true;
     } catch (error) {
       console.error('❌ Backup table test error:', error);
@@ -48,6 +63,9 @@ export class BackupService {
    * @param eventData - The current event data
    * @param backupType - 'auto' or 'manual'
    * @param backupName - Custom name for the backup (optional)
+   * @param userId - User ID creating the backup
+   * @param userName - User name creating the backup
+   * @param userRole - User role creating the backup
    * @returns Promise with the created/updated backup data
    */
   static async createBackup(
@@ -56,16 +74,14 @@ export class BackupService {
     customColumnsData: any[],
     eventData: any,
     backupType: 'auto' | 'manual' = 'auto',
-    backupName?: string
+    backupName?: string,
+    userId?: string,
+    userName?: string,
+    userRole?: string
   ): Promise<BackupData> {
     try {
       console.log(`🔄 Creating/updating ${backupType} backup for event: ${eventId}`);
-      
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        throw new Error('User not authenticated');
-      }
+      console.log(`🔍 API_BASE_URL: ${API_BASE_URL}`);
       
       // Extract event details for easier filtering
       const eventName = eventData?.name || 'Unknown Event';
@@ -85,79 +101,40 @@ export class BackupService {
       
       const finalBackupName = backupName || `${backupType === 'auto' ? 'Auto Backup' : 'Manual Backup'} - ${timestamp}`;
       
-      // Check if a backup already exists for this event and date
-      const { data: existingBackup, error: checkError } = await supabase
-        .from('run_of_show_backups')
-        .select('*')
-        .eq('event_id', eventId)
-        .eq('event_date', eventDate)
-        .single();
+      const backupPayload = {
+        event_id: eventId,
+        event_name: eventName,
+        event_date: eventDate,
+        event_location: eventLocation,
+        backup_name: finalBackupName,
+        backup_type: backupType,
+        schedule_data: scheduleData,
+        custom_columns_data: customColumnsData,
+        event_data: eventData,
+        schedule_items_count: scheduleData?.length || 0,
+        custom_columns_count: customColumnsData?.length || 0,
+        created_by: userId || 'unknown',
+        created_by_name: userName || 'Unknown User',
+        created_by_role: userRole || 'VIEWER'
+      };
       
-      if (checkError && checkError.code !== 'PGRST116') {
-        throw checkError;
+      const fullUrl = `${API_BASE_URL}/api/backups`;
+      console.log(`🔍 Full URL: ${fullUrl}`);
+      const response = await fetch(fullUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(backupPayload),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
       
-      let result;
-      
-      if (existingBackup) {
-        // Update existing backup
-        console.log(`🔄 Updating existing backup for ${eventName} on ${eventDate}`);
-        
-        const { data, error } = await supabase
-          .from('run_of_show_backups')
-          .update({
-            backup_name: finalBackupName,
-            schedule_data: scheduleData,
-            custom_columns_data: customColumnsData,
-            event_data: eventData,
-            backup_type: backupType,
-            event_name: eventName,
-            event_location: eventLocation,
-            schedule_items_count: scheduleData?.length || 0,
-            custom_columns_count: customColumnsData?.length || 0,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existingBackup.id)
-          .select()
-          .single();
-        
-        if (error) {
-          throw error;
-        }
-        
-        result = data;
-        console.log(`✅ Backup updated successfully: ${data.backup_name}`);
-      } else {
-        // Create new backup
-        console.log(`🔄 Creating new backup for ${eventName} on ${eventDate}`);
-        
-        const { data, error } = await supabase
-          .from('run_of_show_backups')
-          .insert({
-            event_id: eventId,
-            backup_name: finalBackupName,
-            schedule_data: scheduleData,
-            custom_columns_data: customColumnsData,
-            event_data: eventData,
-            backup_type: backupType,
-            event_name: eventName,
-            event_date: eventDate,
-            event_location: eventLocation,
-            schedule_items_count: scheduleData?.length || 0,
-            custom_columns_count: customColumnsData?.length || 0,
-            created_by: user.id
-          })
-          .select()
-          .single();
-        
-        if (error) {
-          throw error;
-        }
-        
-        result = data;
-        console.log(`✅ Backup created successfully: ${data.backup_name}`);
-      }
-      
+      const result = await response.json();
+      console.log(`✅ Backup ${backupType === 'auto' ? 'created/updated' : 'created'} successfully: ${result.backup_name}`);
       return result;
       
     } catch (error) {
@@ -174,34 +151,25 @@ export class BackupService {
   static async getBackupsForEvent(eventId: string): Promise<BackupData[]> {
     try {
       console.log(`🔄 Fetching backups for event: ${eventId}`);
-      console.log(`🔄 Supabase client status:`, supabase ? 'Connected' : 'Not connected');
       
-      const { data, error } = await supabase
-        .from('run_of_show_backups')
-        .select('*')
-        .eq('event_id', eventId)
-        .order('backup_timestamp', { ascending: false });
+      const response = await fetch(`${API_BASE_URL}/api/backups/event/${eventId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
       
-      console.log(`🔄 Supabase query result:`, { data, error });
-      
-      if (error) {
-        console.error('❌ Supabase error details:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
       
+      const data = await response.json();
       console.log(`✅ Found ${data?.length || 0} backups for event: ${eventId}`);
-      console.log(`📊 Backup data:`, data);
       return data || [];
       
     } catch (error) {
       console.error('❌ Error fetching backups:', error);
-      console.error('❌ Error type:', typeof error);
-      console.error('❌ Error message:', error.message);
       throw new Error(`Failed to fetch backups: ${error.message}`);
     }
   }
@@ -222,52 +190,27 @@ export class BackupService {
     try {
       console.log('🔄 Fetching backups with filters:', filters);
       
-      let query = supabase
-        .from('run_of_show_backups')
-        .select('*');
-
-      // Apply filters
-      if (filters.eventId) {
-        query = query.eq('event_id', filters.eventId);
-      }
-      if (filters.eventName) {
-        query = query.ilike('event_name', `%${filters.eventName}%`);
-      }
-      if (filters.eventDate) {
-        query = query.eq('event_date', filters.eventDate);
-      }
-      if (filters.backupType) {
-        query = query.eq('backup_type', filters.backupType);
-      }
-
-      // Apply sorting
-      switch (filters.sortBy) {
-        case 'oldest':
-          query = query.order('backup_timestamp', { ascending: true });
-          break;
-        case 'event':
-          query = query.order('event_name', { ascending: true });
-          break;
-        case 'type':
-          query = query.order('backup_type', { ascending: true });
-          break;
-        case 'newest':
-        default:
-          query = query.order('backup_timestamp', { ascending: false });
-          break;
-      }
-
-      // Apply limit
-      if (filters.limit) {
-        query = query.limit(filters.limit);
-      }
-
-      const { data, error } = await query;
+      const queryParams = new URLSearchParams();
+      if (filters.eventId) queryParams.append('eventId', filters.eventId);
+      if (filters.eventName) queryParams.append('eventName', filters.eventName);
+      if (filters.eventDate) queryParams.append('eventDate', filters.eventDate);
+      if (filters.backupType) queryParams.append('backupType', filters.backupType);
+      if (filters.sortBy) queryParams.append('sortBy', filters.sortBy);
+      if (filters.limit) queryParams.append('limit', filters.limit.toString());
       
-      if (error) {
-        throw error;
+      const response = await fetch(`${API_BASE_URL}/api/backups?${queryParams.toString()}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
       
+      const data = await response.json();
       console.log(`✅ Found ${data?.length || 0} backups with filters`);
       return data || [];
       
@@ -292,15 +235,19 @@ export class BackupService {
     try {
       console.log(`🔄 Restoring from backup: ${backupId}`);
       
-      const { data, error } = await supabase
-        .from('run_of_show_backups')
-        .select('*')
-        .eq('id', backupId)
-        .single();
+      const response = await fetch(`${API_BASE_URL}/api/backups/${backupId}/restore`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
       
-      if (error) {
-        throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
+      
+      const data = await response.json();
       
       if (!data) {
         throw new Error('Backup not found');
@@ -330,13 +277,16 @@ export class BackupService {
     try {
       console.log(`🔄 Deleting backup: ${backupId}`);
       
-      const { error } = await supabase
-        .from('run_of_show_backups')
-        .delete()
-        .eq('id', backupId);
+      const response = await fetch(`${API_BASE_URL}/api/backups/${backupId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
       
-      if (error) {
-        throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
       
       console.log(`✅ Backup deleted successfully: ${backupId}`);

@@ -52,11 +52,11 @@ const EventListPage: React.FC = () => {
   const loadEventsFromSupabase = async () => {
     try {
       setIsLoading(true);
-      console.log('🔄 Loading events from Supabase...');
+      console.log('🔄 Loading events from Neon database...');
       
       // Always try Supabase first
       const calendarEvents = await DatabaseService.getCalendarEvents();
-      console.log('📊 Raw calendar events from Supabase:', calendarEvents);
+      console.log('📊 Raw calendar events from Neon:', calendarEvents);
       
       if (calendarEvents && calendarEvents.length > 0) {
         console.log('🔍 Processing calendar events:', calendarEvents.length);
@@ -92,10 +92,10 @@ const EventListPage: React.FC = () => {
         
         console.log('📊 All transformed events:', eventsFromSupabase);
         setEvents(eventsFromSupabase);
-        console.log('✅ Loaded events from Supabase:', eventsFromSupabase.length);
+        console.log('✅ Loaded events from Neon:', eventsFromSupabase.length);
         console.log('📋 Final events state:', eventsFromSupabase);
       } else {
-        console.log('ℹ️ No events found in Supabase, checking localStorage...');
+        console.log('ℹ️ No events found in Neon, checking localStorage...');
         
         // Only fallback to localStorage if Supabase returns empty
         const savedEvents = localStorage.getItem('events');
@@ -108,12 +108,12 @@ const EventListPage: React.FC = () => {
             console.error('Error loading events from localStorage:', error);
           }
         } else {
-          console.log('📭 No events found in either Supabase or localStorage');
+          console.log('📭 No events found in either Neon or localStorage');
           setEvents([]);
         }
       }
     } catch (error) {
-      console.error('❌ Error loading events from Supabase:', error);
+      console.error('❌ Error loading events from Neon:', error);
       // Fallback to localStorage only on error
       const savedEvents = localStorage.getItem('events');
       if (savedEvents) {
@@ -166,7 +166,7 @@ const EventListPage: React.FC = () => {
 
     // Save to Supabase automatically - both calendar event AND Run of Show data
     try {
-      console.log('💾 Saving new event to Supabase:', newEvent);
+      console.log('💾 Saving new event to Neon:', newEvent);
       
       // Save calendar event with the unique event ID
       const calendarEvent = {
@@ -180,7 +180,7 @@ const EventListPage: React.FC = () => {
       };
       
       const savedCalendarEvent = await DatabaseService.saveCalendarEvent(calendarEvent);
-      console.log('✅ Calendar event saved to Supabase:', savedCalendarEvent);
+      console.log('✅ Calendar event saved to Neon:', savedCalendarEvent);
 
       // Create initial Run of Show data with the same unique event ID
       const runOfShowData = await DatabaseService.saveRunOfShowData({
@@ -199,7 +199,7 @@ const EventListPage: React.FC = () => {
         userName: user?.user_metadata?.full_name || user?.email || 'Unknown User',
         userRole: 'EDITOR' // Events are typically created by editors
       });
-      console.log('✅ Run of Show data created in Supabase:', runOfShowData);
+      console.log('✅ Run of Show data created in Neon:', runOfShowData);
       
       // Reload events from Supabase to ensure we have the latest data
       setTimeout(() => {
@@ -208,7 +208,7 @@ const EventListPage: React.FC = () => {
       }, 1000);
       
     } catch (error) {
-      console.error('❌ Error auto-saving event to Supabase:', error);
+      console.error('❌ Error auto-saving event to Neon:', error);
       // Don't show error to user since the event was still added locally
     }
   };

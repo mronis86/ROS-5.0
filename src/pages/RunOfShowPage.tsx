@@ -4,7 +4,8 @@ import { Event } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
-import { BackupService, BackupData } from '../services/backupService';
+import { NeonBackupService, BackupData } from '../services/neon-backup-service';
+
 import { useAuth } from '../contexts/AuthContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
@@ -4940,19 +4941,19 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔄 Event details:', { id: event.id, name: event.name });
       
       // Test if backup table is accessible
-      const tableAccessible = await BackupService.testBackupTable();
-      if (!tableAccessible) {
-        throw new Error('Backup table is not accessible');
-      }
+      const tableAccessible = await NeonBackupService.testBackupTable();
+      // if (!tableAccessible) {
+      //   throw new Error('Backup table is not accessible');
+      // }
       
-      const backupsData = await BackupService.getBackupsForEvent(event.id);
+      const backupsData = await NeonBackupService.getBackupsForEvent(event.id);
       console.log('📊 Raw backup data received:', backupsData);
       
       setBackups(backupsData);
       
       // Load backup stats
       console.log('🔄 Loading backup stats...');
-      const stats = await BackupService.getBackupStats(event.id);
+      const stats = await NeonBackupService.getBackupStats(event.id);
       console.log('📊 Backup stats:', stats);
       setBackupStats(stats);
       
@@ -4994,19 +4995,22 @@ const RunOfShowPage: React.FC = () => {
       
       const backupName = `${event.name} • ${timestamp}`;
       
-      await BackupService.createBackup(
+      await NeonBackupService.createBackup(
         event.id,
         schedule,
         customColumns,
         event,
         'manual',
-        backupName
+        backupName,
+        user?.id,
+        user?.full_name || user?.email,
+        user?.role
       );
       
       console.log('✅ Manual backup created:', backupName);
       
       // Refresh backup stats
-      const stats = await BackupService.getBackupStats(event.id);
+      const stats = await NeonBackupService.getBackupStats(event.id);
       setBackupStats(stats);
       
       // Show success message
@@ -5029,7 +5033,7 @@ const RunOfShowPage: React.FC = () => {
     try {
       console.log('🔄 Restoring from backup:', selectedBackup.id);
       
-      const restoredData = await BackupService.restoreFromBackup(selectedBackup.id);
+      const restoredData = await NeonBackupService.restoreFromBackup(selectedBackup.id);
       
       // Update the schedule and custom columns
       setSchedule(restoredData.scheduleData);
@@ -5043,8 +5047,13 @@ const RunOfShowPage: React.FC = () => {
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
         schedule_items: restoredData.scheduleData,
-        custom_columns: restoredData.customColumnsData
-      } as any);
+        custom_columns: restoredData.customColumnsData,
+        event_data: restoredData.eventData
+      }, {
+        userId: user?.id || 'unknown',
+        userName: user?.full_name || user?.email || 'Unknown User',
+        userRole: user?.role || 'VIEWER'
+      });
       
       console.log('✅ Restored from backup:', restoredData.backupName);
       
@@ -5068,7 +5077,7 @@ const RunOfShowPage: React.FC = () => {
     try {
       console.log('🔄 Deleting backup:', backupId);
       
-      await BackupService.deleteBackup(backupId);
+      await NeonBackupService.deleteBackup(backupId);
       
       console.log('✅ Backup deleted successfully');
       alert('Backup deleted successfully');
@@ -5179,18 +5188,22 @@ const RunOfShowPage: React.FC = () => {
 
         console.log('🔄 Creating automatic backup...');
         
-        await BackupService.createBackup(
+        await NeonBackupService.createBackup(
           event.id,
           schedule,
           customColumns,
           event,
-          'auto'
+          'auto',
+          undefined,
+          user?.id,
+          user?.full_name || user?.email,
+          user?.role
         );
         
         console.log('✅ Automatic backup created');
         
         // Refresh backup stats
-        const stats = await BackupService.getBackupStats(event.id);
+        const stats = await NeonBackupService.getBackupStats(event.id);
         setBackupStats(stats);
         
       } catch (error) {
@@ -11327,10 +11340,10 @@ const RunOfShowPage: React.FC = () => {
               <div className="flex items-start">
                 <div className="text-blue-400 text-xl mr-3">ℹ️</div>
                 <div>
-                  <h4 className="text-blue-200 font-semibold mb-1">Manual Backup Only</h4>
+                  <h4 className="text-blue-200 font-semibold mb-1">Neon Database Backups</h4>
                   <p className="text-blue-100 text-sm">
-                    Automatic backups have been disabled to prevent interference with the main run of show. 
-                    Use the "💾 Create Backup" button in the main interface to create backups when needed.
+                    Create and manage backups of your run of show data stored in Neon database. 
+                    Use the "💾 Create Backup" button to create manual backups when needed.
                   </p>
                 </div>
               </div>
