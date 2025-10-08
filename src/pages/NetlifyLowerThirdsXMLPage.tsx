@@ -327,63 +327,63 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                   </div>
 
                   <div className="space-y-4">
-                    <div className="bg-yellow-900/30 border border-yellow-500/50 rounded p-4 mb-4">
-                      <h3 className="font-semibold text-yellow-300 mb-2">⚠️ Important Note:</h3>
+                    <div className="bg-green-900/30 border border-green-500/50 rounded p-4 mb-4">
+                      <h3 className="font-semibold text-green-300 mb-2">✅ Production Ready:</h3>
                       <p className="text-sm text-gray-300">
-                        This page fetches data from Railway API and displays it in your browser. 
-                        For VMIX integration, you'll need to use your <strong>local server</strong> endpoints 
-                        or wait for Railway CSV/XML endpoints to be deployed.
+                        Use these Railway API endpoints for VMIX integration. They work from anywhere on the web!
                       </p>
                     </div>
 
                     <div>
-                      <h3 className="font-semibold text-blue-300 mb-2">Railway Data API (JSON):</h3>
+                      <h3 className="font-semibold text-blue-300 mb-2">XML Data Source URL (Railway):</h3>
                       <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
                         <code className="text-green-400 break-all flex-1 text-sm">
-                          {RAILWAY_API_URL}/run-of-show-data/{eventId}
+                          {RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}
                         </code>
                         <button
-                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/run-of-show-data/${eventId}`)}
+                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.xml?eventId=${eventId}`)}
                           className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                         >
                           Copy
                         </button>
                       </div>
                       <p className="text-xs text-gray-500 mt-1">
-                        This page uses this endpoint to fetch data and generate XML/CSV in your browser
+                        ✅ Works from anywhere • Always online • Production ready
                       </p>
                     </div>
 
                     <div>
-                      <h3 className="font-semibold text-blue-300 mb-2">For VMIX - Use Local Server:</h3>
+                      <h3 className="font-semibold text-blue-300 mb-2">CSV Data Source URL (Railway):</h3>
                       <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
                         <code className="text-green-400 break-all flex-1 text-sm">
-                          http://localhost:3002/api/lower-thirds.xml?eventId={eventId}
+                          {RAILWAY_API_URL}/lower-thirds.csv?eventId={eventId}
                         </code>
                         <button
-                          onClick={() => copyToClipboard(`http://localhost:3002/api/lower-thirds.xml?eventId=${eventId}`)}
+                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.csv?eventId=${eventId}`)}
                           className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                         >
                           Copy
                         </button>
                       </div>
                       <p className="text-xs text-gray-500 mt-1">
-                        Requires local server running: <code>node server.js</code>
+                        ✅ Works from anywhere • Always online • Production ready
                       </p>
                     </div>
 
-                    <div>
-                      <h3 className="font-semibold text-blue-300 mb-2">CSV (Local Server):</h3>
-                      <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
-                        <code className="text-green-400 break-all flex-1 text-sm">
-                          http://localhost:3002/api/lower-thirds.csv?eventId={eventId}
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(`http://localhost:3002/api/lower-thirds.csv?eventId=${eventId}`)}
-                          className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                        >
-                          Copy
-                        </button>
+                    <div className="bg-gray-700/50 border border-gray-600 rounded p-4 mt-4">
+                      <h3 className="font-semibold text-gray-300 mb-2">Alternative: Local Development</h3>
+                      <div className="space-y-2 text-sm">
+                        <div>
+                          <p className="text-gray-400 mb-1">XML:</p>
+                          <code className="text-gray-500 text-xs">http://localhost:3002/api/lower-thirds.xml?eventId={eventId}</code>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 mb-1">CSV:</p>
+                          <code className="text-gray-500 text-xs">http://localhost:3002/api/lower-thirds.csv?eventId={eventId}</code>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">
+                          (Only works when local server is running)
+                        </p>
                       </div>
                     </div>
 

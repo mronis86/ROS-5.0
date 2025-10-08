@@ -108,6 +108,210 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   }
 });
 
+// Lower Thirds XML endpoint
+app.get('/api/lower-thirds.xml', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    
+    if (!eventId) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+
+    const runOfShowData = result.rows[0];
+
+    if (!runOfShowData || !runOfShowData.schedule_items) {
+      const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+      const xmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <lower_thirds>
+  </lower_thirds>
+</data>`;
+      res.set('Content-Type', 'application/xml');
+      return res.send(xmlHeader + xmlContent);
+    }
+
+    const scheduleItems = runOfShowData.schedule_items;
+    const lowerThirdsData = [];
+
+    scheduleItems.forEach((item) => {
+      const speakers = [];
+      
+      if (item.speakersText) {
+        try {
+          const speakersArray = typeof item.speakersText === 'string' 
+            ? JSON.parse(item.speakersText) 
+            : item.speakersText;
+          
+          if (Array.isArray(speakersArray)) {
+            speakersArray.forEach((speaker) => {
+              speakers.push({
+                title: speaker.fullName || speaker.name || '',
+                subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
+                photo: speaker.photoLink || ''
+              });
+            });
+          }
+        } catch (e) {
+          console.error('Error parsing speakers:', e);
+        }
+      }
+
+      lowerThirdsData.push({
+        id: String(item.id),
+        cue: item.customFields?.cue || '',
+        program: item.programType || '',
+        segmentName: item.segmentName || '',
+        speakers
+      });
+    });
+
+    const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+    const xmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <lower_thirds>
+    ${lowerThirdsData.map(item => {
+      const speakers = new Array(21).fill('');
+      if (item.speakers && item.speakers.length > 0) {
+        item.speakers.forEach((speaker, speakerIndex) => {
+          if (speakerIndex < 7) {
+            const baseIdx = speakerIndex * 3;
+            speakers[baseIdx] = speaker.title || '';
+            speakers[baseIdx + 1] = speaker.subtitle || '';
+            speakers[baseIdx + 2] = speaker.photo || '';
+          }
+        });
+      }
+      return `
+    <item>
+      <id>${item.id}</id>
+      <cue><![CDATA[${item.cue || ''}]]></cue>
+      <program><![CDATA[${item.program || ''}]]></program>
+      <segment_name><![CDATA[${item.segmentName || ''}]]></segment_name>
+      <speaker_1_name><![CDATA[${speakers[0]}]]></speaker_1_name>
+      <speaker_1_title_org><![CDATA[${speakers[1]}]]></speaker_1_title_org>
+      <speaker_1_photo><![CDATA[${speakers[2]}]]></speaker_1_photo>
+      <speaker_2_name><![CDATA[${speakers[3]}]]></speaker_2_name>
+      <speaker_2_title_org><![CDATA[${speakers[4]}]]></speaker_2_title_org>
+      <speaker_2_photo><![CDATA[${speakers[5]}]]></speaker_2_photo>
+      <speaker_3_name><![CDATA[${speakers[6]}]]></speaker_3_name>
+      <speaker_3_title_org><![CDATA[${speakers[7]}]]></speaker_3_title_org>
+      <speaker_3_photo><![CDATA[${speakers[8]}]]></speaker_3_photo>
+      <speaker_4_name><![CDATA[${speakers[9]}]]></speaker_4_name>
+      <speaker_4_title_org><![CDATA[${speakers[10]}]]></speaker_4_title_org>
+      <speaker_4_photo><![CDATA[${speakers[11]}]]></speaker_4_photo>
+      <speaker_5_name><![CDATA[${speakers[12]}]]></speaker_5_name>
+      <speaker_5_title_org><![CDATA[${speakers[13]}]]></speaker_5_title_org>
+      <speaker_5_photo><![CDATA[${speakers[14]}]]></speaker_5_photo>
+      <speaker_6_name><![CDATA[${speakers[15]}]]></speaker_6_name>
+      <speaker_6_title_org><![CDATA[${speakers[16]}]]></speaker_6_title_org>
+      <speaker_6_photo><![CDATA[${speakers[17]}]]></speaker_6_photo>
+      <speaker_7_name><![CDATA[${speakers[18]}]]></speaker_7_name>
+      <speaker_7_title_org><![CDATA[${speakers[19]}]]></speaker_7_title_org>
+      <speaker_7_photo><![CDATA[${speakers[20]}]]></speaker_7_photo>
+    </item>`;
+    }).join('')}
+  </lower_thirds>
+</data>`;
+
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+    res.send(xmlHeader + xmlContent);
+  } catch (error) {
+    console.error('Error in lower-thirds.xml:', error);
+    res.set('Content-Type', 'application/xml');
+    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Internal server error</error>');
+  }
+});
+
+// Lower Thirds CSV endpoint
+app.get('/api/lower-thirds.csv', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send('Error,Event ID is required');
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+
+    const runOfShowData = result.rows[0];
+
+    if (!runOfShowData || !runOfShowData.schedule_items) {
+      res.set('Content-Type', 'text/csv');
+      return res.send('Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n');
+    }
+
+    const scheduleItems = runOfShowData.schedule_items;
+    let csv = 'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
+
+    scheduleItems.forEach((item, index) => {
+      const speakers = new Array(21).fill('');
+      
+      if (item.speakersText) {
+        try {
+          const speakersArray = typeof item.speakersText === 'string' 
+            ? JSON.parse(item.speakersText) 
+            : item.speakersText;
+          
+          if (Array.isArray(speakersArray)) {
+            speakersArray.forEach((speaker, speakerIndex) => {
+              if (speakerIndex < 7) {
+                const baseIdx = speakerIndex * 3;
+                speakers[baseIdx] = speaker.fullName || speaker.name || '';
+                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                speakers[baseIdx + 2] = speaker.photoLink || '';
+              }
+            });
+          }
+        } catch (e) {
+          console.error('Error parsing speakers:', e);
+        }
+      }
+
+      const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+      const cue = item.customFields?.cue || '';
+      const program = item.programType || '';
+      const segmentName = item.segmentName || '';
+      
+      csv += `${index + 1},${escapeCsv(cue)},${escapeCsv(program)},${escapeCsv(segmentName)}`;
+      for (let i = 0; i < 21; i++) {
+        csv += `,${escapeCsv(speakers[i])}`;
+      }
+      csv += '\n';
+    });
+
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+    res.send(csv);
+  } catch (error) {
+    console.error('Error in lower-thirds.csv:', error);
+    res.set('Content-Type', 'text/csv');
+    res.status(500).send('Error,Internal server error');
+  }
+});
+
 app.post('/api/run-of-show-data', async (req, res) => {
   try {
     const {
