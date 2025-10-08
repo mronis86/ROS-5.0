@@ -1,0 +1,4 @@
+Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo
+1,"CUE 1","Opening","Welcome Segment","John Doe","CEO, Tech Corp","photo1.jpg","","","","","","","","","","","","","","","","","",""
+2,"CUE 2","Presentation","Main Topic","Jane Smith","CTO, Tech Corp","photo2.jpg","Bob Johnson","Director, Marketing","photo3.jpg","","","","","","","","","","","","","","",""
+3,"CUE 3","Q&A","Questions","","","","","","","","","","","","","","","","","","","","",""

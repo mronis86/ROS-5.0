@@ -334,41 +334,41 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                       </p>
                     </div>
 
-                    <div>
-                      <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX XML URL (Low Egress - RECOMMENDED):</h3>
-                      <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
-                        <code className="text-purple-400 break-all flex-1 text-sm">
-                          {window.location.origin}/vmix-lower-thirds-live.html?eventId={eventId}&format=xml
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(`${window.location.origin}/vmix-lower-thirds-live.html?eventId=${eventId}&format=xml`)}
-                          className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <p className="text-xs text-green-400 mt-1">
-                        ⭐ BEST OPTION: WebSocket updates • Netlify bandwidth • Low Railway egress
-                      </p>
-                    </div>
+          <div>
+            <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX XML URL (Low Egress - RECOMMENDED):</h3>
+            <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
+              <code className="text-purple-400 break-all flex-1 text-sm">
+                {window.location.origin}/vmix-data-endpoint.html?eventId={eventId}&format=xml
+              </code>
+              <button
+                onClick={() => copyToClipboard(`${window.location.origin}/vmix-data-endpoint.html?eventId=${eventId}&format=xml`)}
+                className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+              >
+                Copy
+              </button>
+            </div>
+            <p className="text-xs text-green-400 mt-1">
+              ⭐ BEST OPTION: Pure XML output • Netlify bandwidth • Low Railway egress
+            </p>
+          </div>
 
-                    <div>
-                      <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX CSV URL (Low Egress - RECOMMENDED):</h3>
-                      <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
-                        <code className="text-purple-400 break-all flex-1 text-sm">
-                          {window.location.origin}/vmix-lower-thirds-live.html?eventId={eventId}&format=csv
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(`${window.location.origin}/vmix-lower-thirds-live.html?eventId=${eventId}&format=csv`)}
-                          className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <p className="text-xs text-green-400 mt-1">
-                        ⭐ BEST OPTION: WebSocket updates • Netlify bandwidth • Low Railway egress
-                      </p>
-                    </div>
+          <div>
+            <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX CSV URL (Low Egress - RECOMMENDED):</h3>
+            <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
+              <code className="text-purple-400 break-all flex-1 text-sm">
+                {window.location.origin}/vmix-data-endpoint.html?eventId={eventId}&format=csv
+              </code>
+              <button
+                onClick={() => copyToClipboard(`${window.location.origin}/vmix-data-endpoint.html?eventId=${eventId}&format=csv`)}
+                className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+              >
+                Copy
+              </button>
+            </div>
+            <p className="text-xs text-green-400 mt-1">
+              ⭐ BEST OPTION: Pure CSV output • Netlify bandwidth • Low Railway egress
+            </p>
+          </div>
 
                     <div className="bg-yellow-900/30 border border-yellow-500/50 rounded p-4 mt-4">
                       <h3 className="font-semibold text-yellow-300 mb-2">⚠️ Alternative: Direct Railway API (Higher Egress)</h3>
