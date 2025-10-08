@@ -9,6 +9,7 @@ import RunOfShowPage from './pages/RunOfShowPage';
 import FullScreenTimerPage from './pages/FullScreenTimerPage';
 import ClockPage from './pages/ClockPage';
 import LowerThirdsXMLPage from './pages/LowerThirdsXMLPage';
+import NetlifyLowerThirdsXMLPage from './pages/NetlifyLowerThirdsXMLPage';
 import ScheduleXMLPage from './pages/ScheduleXMLPage';
 import CustomColumnsXMLPage from './pages/CustomColumnsXMLPage';
 import GraphicsLinksPage from './pages/GraphicsLinksPage';
@@ -44,6 +45,7 @@ function AppContent() {
       <Routes>
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
+        <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
         <Route path="/schedule-xml" element={<ScheduleXMLPage />} />
         <Route path="/custom-columns-xml" element={<CustomColumnsXMLPage />} />
       </Routes>
