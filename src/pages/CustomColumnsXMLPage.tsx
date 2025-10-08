@@ -430,10 +430,10 @@ const CustomColumnsXMLPage: React.FC = () => {
                   <h4 className="text-md font-semibold mb-2 text-blue-300">XML Data Source URL:</h4>
                   <div className="bg-gray-800 rounded p-3 flex items-center space-x-2">
                     <code className="text-green-400 flex-1 text-sm">
-                      {getApiUrl()}/custom-columns-xml?eventId={eventId || 'YOUR_EVENT_ID'}
+                      {getApiUrl()}/custom-columns.xml?eventId={eventId || 'YOUR_EVENT_ID'}
                     </code>
                     <button
-                      onClick={() => copyToClipboard(`${getApiUrl()}/custom-columns-xml?eventId=${eventId || 'YOUR_EVENT_ID'}`)}
+                      onClick={() => copyToClipboard(`${getApiUrl()}/custom-columns.xml?eventId=${eventId || 'YOUR_EVENT_ID'}`)}
                       className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                     >
                       Copy
@@ -445,10 +445,10 @@ const CustomColumnsXMLPage: React.FC = () => {
                   <h4 className="text-md font-semibold mb-2 text-blue-300">CSV Data Source URL:</h4>
                   <div className="bg-gray-800 rounded p-3 flex items-center space-x-2">
                     <code className="text-green-400 flex-1 text-sm">
-                      {getApiUrl()}/custom-columns-csv?eventId={eventId || 'YOUR_EVENT_ID'}
+                      {getApiUrl()}/custom-columns.csv?eventId={eventId || 'YOUR_EVENT_ID'}
                     </code>
                     <button
-                      onClick={() => copyToClipboard(`${getApiUrl()}/custom-columns-csv?eventId=${eventId || 'YOUR_EVENT_ID'}`)}
+                      onClick={() => copyToClipboard(`${getApiUrl()}/custom-columns.csv?eventId=${eventId || 'YOUR_EVENT_ID'}`)}
                       className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                     >
                       Copy

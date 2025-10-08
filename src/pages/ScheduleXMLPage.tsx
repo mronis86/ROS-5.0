@@ -419,10 +419,10 @@ const ScheduleXMLPage: React.FC = () => {
                       <h4 className="font-semibold text-blue-300 mb-2">1. XML Data Source URL:</h4>
                       <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
                         <code className="text-green-400 break-all flex-1">
-                          {getApiUrl()}/schedule-xml?eventId={eventId}
+                          {getApiUrl()}/schedule.xml?eventId={eventId}
                         </code>
                         <button
-                          onClick={() => copyToClipboard(`${getApiUrl()}/schedule-xml?eventId=${eventId}`)}
+                          onClick={() => copyToClipboard(`${getApiUrl()}/schedule.xml?eventId=${eventId}`)}
                           className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                         >
                           Copy
@@ -433,10 +433,10 @@ const ScheduleXMLPage: React.FC = () => {
                       <h4 className="font-semibold text-blue-300 mb-2">2. CSV Data Source URL:</h4>
                       <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
                         <code className="text-green-400 break-all flex-1">
-                          {getApiUrl()}/schedule-csv?eventId={eventId}
+                          {getApiUrl()}/schedule.csv?eventId={eventId}
                         </code>
                         <button
-                          onClick={() => copyToClipboard(`${getApiUrl()}/schedule-csv?eventId=${eventId}`)}
+                          onClick={() => copyToClipboard(`${getApiUrl()}/schedule.csv?eventId=${eventId}`)}
                           className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                         >
                           Copy
