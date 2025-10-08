@@ -328,14 +328,57 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
 
                   <div className="space-y-4">
                     <div className="bg-green-900/30 border border-green-500/50 rounded p-4 mb-4">
-                      <h3 className="font-semibold text-green-300 mb-2">✅ Production Ready:</h3>
+                      <h3 className="font-semibold text-green-300 mb-2">✅ Best for VMIX - Low Egress Static Pages:</h3>
                       <p className="text-sm text-gray-300">
-                        Use these Railway API endpoints for VMIX integration. They work from anywhere on the web!
+                        Use these static HTML pages for VMIX. They use WebSocket for updates (low egress) and are hosted on Netlify (free bandwidth)!
                       </p>
                     </div>
 
                     <div>
-                      <h3 className="font-semibold text-blue-300 mb-2">XML Data Source URL (Railway):</h3>
+                      <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX XML URL (Low Egress - RECOMMENDED):</h3>
+                      <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
+                        <code className="text-purple-400 break-all flex-1 text-sm">
+                          {window.location.origin}/vmix-lower-thirds-live.html?eventId={eventId}&format=xml
+                        </code>
+                        <button
+                          onClick={() => copyToClipboard(`${window.location.origin}/vmix-lower-thirds-live.html?eventId=${eventId}&format=xml`)}
+                          className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <p className="text-xs text-green-400 mt-1">
+                        ⭐ BEST OPTION: WebSocket updates • Netlify bandwidth • Low Railway egress
+                      </p>
+                    </div>
+
+                    <div>
+                      <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX CSV URL (Low Egress - RECOMMENDED):</h3>
+                      <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
+                        <code className="text-purple-400 break-all flex-1 text-sm">
+                          {window.location.origin}/vmix-lower-thirds-live.html?eventId={eventId}&format=csv
+                        </code>
+                        <button
+                          onClick={() => copyToClipboard(`${window.location.origin}/vmix-lower-thirds-live.html?eventId=${eventId}&format=csv`)}
+                          className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <p className="text-xs text-green-400 mt-1">
+                        ⭐ BEST OPTION: WebSocket updates • Netlify bandwidth • Low Railway egress
+                      </p>
+                    </div>
+
+                    <div className="bg-yellow-900/30 border border-yellow-500/50 rounded p-4 mt-4">
+                      <h3 className="font-semibold text-yellow-300 mb-2">⚠️ Alternative: Direct Railway API (Higher Egress)</h3>
+                      <p className="text-xs text-gray-400 mb-2">
+                        These URLs work but use more Railway bandwidth. Only use if the static pages don't work.
+                      </p>
+
+                      <div className="space-y-3 mt-3">
+                        <div>
+                          <h4 className="font-semibold text-blue-300 mb-2 text-sm">XML Data Source URL (Railway):</h4>
                       <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
                         <code className="text-green-400 break-all flex-1 text-sm">
                           {RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}
@@ -365,9 +408,11 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                           Copy
                         </button>
                       </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        ✅ Works from anywhere • Always online • Production ready
-                      </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Higher egress cost
+                          </p>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="bg-gray-700/50 border border-gray-600 rounded p-4 mt-4">
