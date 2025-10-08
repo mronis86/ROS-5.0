@@ -60,7 +60,7 @@ const LowerThirdsXMLPage: React.FC = () => {
       return `${window.location.origin}/.netlify/functions`;
     } else {
       // For local development, use the Node.js server
-      return 'http://localhost:3002';
+      return 'http://localhost:3002/api';
     }
   };
 

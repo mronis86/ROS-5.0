@@ -58,7 +58,7 @@ const getApiUrl = () => {
   if (isNetlify()) {
     return `${window.location.origin}/.netlify/functions`;
   } else {
-    return 'http://localhost:3002';
+    return 'http://localhost:3002/api';
   }
 };
 
