@@ -989,7 +989,16 @@ const GraphicsLinksPage: React.FC = () => {
                   }}
                   className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  📊 Open XML Feed Page
+                  📊 Open XML Feed Page (Local)
+                </button>
+                <button
+                  onClick={() => {
+                    const url = `/netlify-lower-thirds-xml?eventId=${event.id}`;
+                    window.open(url, '_blank');
+                  }}
+                  className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition-colors"
+                >
+                  🌐 Open XML Feed Page (Netlify/Railway)
                 </button>
               </div>
             </div>
