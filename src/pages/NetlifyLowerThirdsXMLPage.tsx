@@ -35,6 +35,86 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
     }
   };
 
+  const generateXML = (data: LowerThird[]): string => {
+    const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+    const xmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId || 'unknown'}</event_id>
+  <lower_thirds>
+    ${data.map(item => {
+      const speakers = new Array(21).fill('');
+      if (item.speakers && item.speakers.length > 0) {
+        item.speakers.forEach((speaker, speakerIndex) => {
+          if (speakerIndex < 7) {
+            const baseIdx = speakerIndex * 3;
+            speakers[baseIdx] = speaker.title || '';
+            speakers[baseIdx + 1] = speaker.subtitle || '';
+            speakers[baseIdx + 2] = speaker.photo || '';
+          }
+        });
+      }
+      return `
+    <item>
+      <id>${item.id}</id>
+      <cue><![CDATA[${item.cue || ''}]]></cue>
+      <program><![CDATA[${item.program || ''}]]></program>
+      <segment_name><![CDATA[${item.segmentName || ''}]]></segment_name>
+      <speaker_1_name><![CDATA[${speakers[0]}]]></speaker_1_name>
+      <speaker_1_title_org><![CDATA[${speakers[1]}]]></speaker_1_title_org>
+      <speaker_1_photo><![CDATA[${speakers[2]}]]></speaker_1_photo>
+      <speaker_2_name><![CDATA[${speakers[3]}]]></speaker_2_name>
+      <speaker_2_title_org><![CDATA[${speakers[4]}]]></speaker_2_title_org>
+      <speaker_2_photo><![CDATA[${speakers[5]}]]></speaker_2_photo>
+      <speaker_3_name><![CDATA[${speakers[6]}]]></speaker_3_name>
+      <speaker_3_title_org><![CDATA[${speakers[7]}]]></speaker_3_title_org>
+      <speaker_3_photo><![CDATA[${speakers[8]}]]></speaker_3_photo>
+      <speaker_4_name><![CDATA[${speakers[9]}]]></speaker_4_name>
+      <speaker_4_title_org><![CDATA[${speakers[10]}]]></speaker_4_title_org>
+      <speaker_4_photo><![CDATA[${speakers[11]}]]></speaker_4_photo>
+      <speaker_5_name><![CDATA[${speakers[12]}]]></speaker_5_name>
+      <speaker_5_title_org><![CDATA[${speakers[13]}]]></speaker_5_title_org>
+      <speaker_5_photo><![CDATA[${speakers[14]}]]></speaker_5_photo>
+      <speaker_6_name><![CDATA[${speakers[15]}]]></speaker_6_name>
+      <speaker_6_title_org><![CDATA[${speakers[16]}]]></speaker_6_title_org>
+      <speaker_6_photo><![CDATA[${speakers[17]}]]></speaker_6_photo>
+      <speaker_7_name><![CDATA[${speakers[18]}]]></speaker_7_name>
+      <speaker_7_title_org><![CDATA[${speakers[19]}]]></speaker_7_title_org>
+      <speaker_7_photo><![CDATA[${speakers[20]}]]></speaker_7_photo>
+    </item>`;
+    }).join('')}
+  </lower_thirds>
+</data>`;
+    return xmlHeader + xmlContent;
+  };
+
+  const generateCSV = (data: LowerThird[]): string => {
+    let csv = 'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
+    
+    data.forEach((item, index) => {
+      const speakers = new Array(21).fill('');
+      if (item.speakers && item.speakers.length > 0) {
+        item.speakers.forEach((speaker, speakerIndex) => {
+          if (speakerIndex < 7) {
+            const baseIdx = speakerIndex * 3;
+            speakers[baseIdx] = speaker.title || '';
+            speakers[baseIdx + 1] = speaker.subtitle || '';
+            speakers[baseIdx + 2] = speaker.photo || '';
+          }
+        });
+      }
+      
+      const escapeCsv = (str: string) => `"${str.replace(/"/g, '""')}"`;
+      csv += `${index + 1},${escapeCsv(item.cue || '')},${escapeCsv(item.program || '')},${escapeCsv(item.segmentName || '')}`;
+      for (let i = 0; i < 21; i++) {
+        csv += `,${escapeCsv(speakers[i])}`;
+      }
+      csv += '\n';
+    });
+    
+    return csv;
+  };
+
   const fetchData = async () => {
     if (!eventId) {
       setError('Event ID is required');
@@ -46,18 +126,60 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
       setIsLoading(true);
       setError(null);
 
-      // Fetch XML
-      const xmlResponse = await fetch(`${RAILWAY_API_URL}/lower-thirds.xml?eventId=${eventId}`);
-      if (!xmlResponse.ok) throw new Error('Failed to fetch XML data');
-      const xmlText = await xmlResponse.text();
-      setXmlData(xmlText);
+      // Fetch from Railway API
+      const response = await fetch(`${RAILWAY_API_URL}/run-of-show-data/${eventId}`);
+      if (!response.ok) throw new Error('Failed to fetch data from Railway');
+      
+      const runOfShowData = await response.json();
+      
+      if (!runOfShowData || !runOfShowData.schedule_items) {
+        throw new Error('No schedule items found');
+      }
 
-      // Fetch CSV
-      const csvResponse = await fetch(`${RAILWAY_API_URL}/lower-thirds.csv?eventId=${eventId}`);
-      if (!csvResponse.ok) throw new Error('Failed to fetch CSV data');
-      const csvText = await csvResponse.text();
-      setCsvData(csvText);
+      // Process schedule items to extract speaker information
+      const scheduleItems = runOfShowData.schedule_items;
+      const lowerThirdsData: LowerThird[] = [];
 
+      scheduleItems.forEach((item: any) => {
+        const speakers: Array<{ title: string; subtitle: string; photo: string }> = [];
+        
+        if (item.speakersText) {
+          try {
+            const speakersArray = typeof item.speakersText === 'string' 
+              ? JSON.parse(item.speakersText) 
+              : item.speakersText;
+            
+            if (Array.isArray(speakersArray)) {
+              speakersArray.forEach((speaker: any) => {
+                speakers.push({
+                  title: speaker.fullName || speaker.name || '',
+                  subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
+                  photo: speaker.photoLink || ''
+                });
+              });
+            }
+          } catch (e) {
+            console.error('Error parsing speakers:', e);
+          }
+        }
+
+        lowerThirdsData.push({
+          id: String(item.id),
+          cue: item.customFields?.cue || '',
+          program: item.programType || '',
+          segmentName: item.segmentName || '',
+          title: '',
+          subtitle: '',
+          is_active: false,
+          created_at: '',
+          updated_at: '',
+          speakers
+        });
+      });
+
+      // Generate XML and CSV
+      setXmlData(generateXML(lowerThirdsData));
+      setCsvData(generateCSV(lowerThirdsData));
       setLastUpdated(new Date());
       setIsLoading(false);
     } catch (err) {
@@ -205,29 +327,59 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                   </div>
 
                   <div className="space-y-4">
+                    <div className="bg-yellow-900/30 border border-yellow-500/50 rounded p-4 mb-4">
+                      <h3 className="font-semibold text-yellow-300 mb-2">⚠️ Important Note:</h3>
+                      <p className="text-sm text-gray-300">
+                        This page fetches data from Railway API and displays it in your browser. 
+                        For VMIX integration, you'll need to use your <strong>local server</strong> endpoints 
+                        or wait for Railway CSV/XML endpoints to be deployed.
+                      </p>
+                    </div>
+
                     <div>
-                      <h3 className="font-semibold text-blue-300 mb-2">XML Data Source URL:</h3>
+                      <h3 className="font-semibold text-blue-300 mb-2">Railway Data API (JSON):</h3>
                       <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
                         <code className="text-green-400 break-all flex-1 text-sm">
-                          {RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}
+                          {RAILWAY_API_URL}/run-of-show-data/{eventId}
                         </code>
                         <button
-                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.xml?eventId=${eventId}`)}
+                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/run-of-show-data/${eventId}`)}
                           className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                         >
                           Copy
                         </button>
                       </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        This page uses this endpoint to fetch data and generate XML/CSV in your browser
+                      </p>
                     </div>
 
                     <div>
-                      <h3 className="font-semibold text-blue-300 mb-2">CSV Data Source URL:</h3>
+                      <h3 className="font-semibold text-blue-300 mb-2">For VMIX - Use Local Server:</h3>
                       <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
                         <code className="text-green-400 break-all flex-1 text-sm">
-                          {RAILWAY_API_URL}/lower-thirds.csv?eventId={eventId}
+                          http://localhost:3002/api/lower-thirds.xml?eventId={eventId}
                         </code>
                         <button
-                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.csv?eventId=${eventId}`)}
+                          onClick={() => copyToClipboard(`http://localhost:3002/api/lower-thirds.xml?eventId=${eventId}`)}
+                          className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Requires local server running: <code>node server.js</code>
+                      </p>
+                    </div>
+
+                    <div>
+                      <h3 className="font-semibold text-blue-300 mb-2">CSV (Local Server):</h3>
+                      <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
+                        <code className="text-green-400 break-all flex-1 text-sm">
+                          http://localhost:3002/api/lower-thirds.csv?eventId={eventId}
+                        </code>
+                        <button
+                          onClick={() => copyToClipboard(`http://localhost:3002/api/lower-thirds.csv?eventId=${eventId}`)}
                           className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                         >
                           Copy
