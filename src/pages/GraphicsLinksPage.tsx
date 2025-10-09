@@ -529,19 +529,19 @@ const GraphicsLinksPage: React.FC = () => {
           {/* Python Desktop App */}
           <div className="bg-green-800 rounded-lg p-5 shadow-lg border border-green-600 hover:shadow-xl transition-shadow">
             <h3 className="text-lg font-bold text-white mb-2">🐍 Python Desktop App</h3>
-            <p className="text-green-200 text-xs mb-3">Standalone graphics generator with GUI interface</p>
+            <p className="text-green-200 text-xs mb-3">Standalone graphics generator with GUI server toggle</p>
             
             <div className="bg-green-900/30 rounded p-2 mb-3">
               <ul className="text-green-100 text-xs space-y-0.5">
+                <li>• GUI toggle: Railway or Local</li>
                 <li>• CSV files every 10 seconds</li>
-                <li>• Desktop GUI (no browser needed)</li>
                 <li>• WebSocket real-time updates</li>
               </ul>
             </div>
             
             <a
-              href="/LiveGraphicsGenerator-Python.zip"
-              download="LiveGraphicsGenerator-Python.zip"
+              href="/OptimizedGraphicsGenerator-Python.zip"
+              download="OptimizedGraphicsGenerator-Python.zip"
               className="block w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
             >
               📥 Download Python App
@@ -551,25 +551,25 @@ const GraphicsLinksPage: React.FC = () => {
 
           {/* Local Server Package */}
           <div className="bg-purple-800 rounded-lg p-5 shadow-lg border border-purple-600 hover:shadow-xl transition-shadow">
-            <h3 className="text-lg font-bold text-white mb-2">💻 Python Local Server</h3>
-            <p className="text-purple-200 text-xs mb-3">Complete server with React app and VMIX API</p>
+            <h3 className="text-lg font-bold text-white mb-2">💻 Node.js Local Server</h3>
+            <p className="text-purple-200 text-xs mb-3">Standalone API + WebSocket server for local use</p>
             
             <div className="bg-purple-900/30 rounded p-2 mb-3">
               <ul className="text-purple-100 text-xs space-y-0.5">
-                <li>• Full React app + API (port 3002)</li>
+                <li>• API + WebSocket (port 3002)</li>
                 <li>• All VMIX XML/CSV endpoints</li>
-                <li>• One-click start • Python only</li>
+                <li>• One-click start • Node.js only</li>
               </ul>
             </div>
             
             <a
-              href="/ROS-Local-Server-Python.zip"
-              download="ROS-Local-Server-Python.zip"
+              href="/ROS-Local-Server-NodeJS.zip"
+              download="ROS-Local-Server-NodeJS.zip"
               className="block w-full bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
             >
               📥 Download Local Server
             </a>
-            <p className="text-purple-300 text-xs text-center mt-2">~2 MB • Requires Python 3.8+</p>
+            <p className="text-purple-300 text-xs text-center mt-2">~50 KB • Requires Node.js 18+</p>
           </div>
         </div>
       </div>

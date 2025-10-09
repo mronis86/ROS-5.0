@@ -1,7 +1,7 @@
 // Server-Sent Events client for real-time updates
 const API_BASE_URL = import.meta.env.PROD 
   ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
-  : 'http://localhost:3001';
+  : 'http://localhost:3002';
 
 interface SSEEvent {
   type: string;

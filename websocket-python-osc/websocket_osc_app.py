@@ -7,13 +7,21 @@ import socket
 import struct
 from datetime import datetime, timedelta
 import requests
-import websocket
+import socketio
 import queue
 import os
 
-# API Configuration - matches your existing API server
+# API Configuration - Choose your server
+# Option 1: Railway (default) - for remote access
+# Option 2: Local Server - for local network use (change to 'http://localhost:3002')
+
 API_BASE_URL = os.getenv('API_BASE_URL', 'https://ros-50-production.up.railway.app')
+# API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:3002')  # Uncomment for local server
+
 WS_URL = API_BASE_URL.replace('https://', 'wss://').replace('http://', 'ws://')
+
+print(f"🌐 Using API: {API_BASE_URL}")
+print(f"🔌 WebSocket: {WS_URL}")
 
 # Using API server which connects to Neon database
 
@@ -74,20 +82,23 @@ def create_osc_message(address, args=None):
         args = []
     
     addr_bytes = address.encode('utf-8') + b'\x00'
-    addr_padded = addr_bytes + b'\x00' * (4 - len(addr_bytes) % 4) % 4
+    addr_padding = (4 - len(addr_bytes) % 4) % 4
+    addr_padded = addr_bytes + (b'\x00' * addr_padding)
     
     if not args:
         return addr_padded
     
     type_tag = ',' + ''.join(['s' if isinstance(arg, str) else 'i' if isinstance(arg, int) else 'f' for arg in args])
     type_bytes = type_tag.encode('utf-8') + b'\x00'
-    type_padded = type_bytes + b'\x00' * (4 - len(type_bytes) % 4) % 4
+    type_padding = (4 - len(type_bytes) % 4) % 4
+    type_padded = type_bytes + (b'\x00' * type_padding)
     
     arg_bytes = b''
     for arg in args:
         if isinstance(arg, str):
             s = arg.encode('utf-8') + b'\x00'
-            s_padded = s + b'\x00' * (4 - len(s) % 4) % 4
+            s_padding = (4 - len(s) % 4) % 4
+            s_padded = s + (b'\x00' * s_padding)
             arg_bytes += s_padded
         elif isinstance(arg, int):
             arg_bytes += struct.pack('>i', arg)
@@ -167,8 +178,8 @@ class WebSocketOSCApp:
         self.user = None
         self.authenticated = False
         
-        # WebSocket connection
-        self.websocket = None
+        # Socket.IO connection
+        self.sio = None
         self.ws_connected = False
         
         # Message processing
@@ -209,6 +220,45 @@ class WebSocketOSCApp:
         # Main container with much larger layout
         main_frame = ttk.Frame(parent)
         main_frame.pack(fill='both', expand=True, padx=10, pady=15)
+        
+        # Server Selection Section
+        server_frame = ttk.LabelFrame(main_frame, text="🌐 Server Selection", padding=15)
+        server_frame.pack(fill='x', pady=(0, 15))
+        
+        server_info_frame = ttk.Frame(server_frame)
+        server_info_frame.pack(fill='x')
+        
+        ttk.Label(server_info_frame, text="Choose your server:", font=('Arial', 11, 'bold')).pack(anchor='w', pady=(0, 10))
+        
+        # Radio buttons for server selection
+        self.server_mode = tk.StringVar(value='railway')  # Default to Railway
+        
+        railway_radio = ttk.Radiobutton(
+            server_info_frame, 
+            text="🚂 Railway (Remote Access)", 
+            variable=self.server_mode, 
+            value='railway',
+            command=self.switch_server
+        )
+        railway_radio.pack(anchor='w', pady=2)
+        
+        local_radio = ttk.Radiobutton(
+            server_info_frame, 
+            text="🏠 Local Server (http://localhost:3002)", 
+            variable=self.server_mode, 
+            value='local',
+            command=self.switch_server
+        )
+        local_radio.pack(anchor='w', pady=2)
+        
+        # Current server display
+        self.server_status_label = ttk.Label(
+            server_info_frame, 
+            text=f"Current: {self.api_base_url}", 
+            font=('Arial', 9), 
+            foreground='blue'
+        )
+        self.server_status_label.pack(anchor='w', pady=(10, 0))
         
         # Authentication status with better styling
         auth_frame = ttk.LabelFrame(main_frame, text="🔐 Authentication Status", padding=25)
@@ -475,65 +525,64 @@ WebSocket Features:
         self.log_text.delete(1.0, tk.END)
     
     def connect_websocket(self):
-        """Connect to WebSocket for real-time updates"""
+        """Connect to Socket.IO for real-time updates"""
         try:
-            self.websocket = websocket.WebSocketApp(
-                f"{self.ws_url}/socket.io/?EIO=4&transport=websocket",
-                on_open=self.on_ws_open,
-                on_message=self.on_ws_message,
-                on_error=self.on_ws_error,
-                on_close=self.on_ws_close
-            )
+            # Disconnect existing connection if any
+            if self.sio:
+                try:
+                    self.sio.disconnect()
+                except:
+                    pass
             
-            # Start WebSocket in separate thread
-            ws_thread = threading.Thread(target=self.websocket.run_forever, daemon=True)
-            ws_thread.start()
+            # Create new Socket.IO client
+            self.sio = socketio.Client()
             
-            self.log_message("WebSocket connection initiated", "info")
+            @self.sio.event
+            def connect():
+                self.ws_connected = True
+                self.ws_status_var.set("Connected")
+                self.log_message("Socket.IO connected", "success")
+                
+                # Join event room if we have an active event
+                if self.current_event_id:
+                    self.join_event_room(self.current_event_id)
+            
+            @self.sio.event
+            def disconnect():
+                self.ws_connected = False
+                self.ws_status_var.set("Disconnected")
+                self.log_message("Socket.IO disconnected", "warning")
+            
+            @self.sio.on('message')
+            def on_message(data):
+                self.on_ws_message(data)
+            
+            # Connect to server
+            self.sio.connect(self.api_base_url)
+            self.log_message("Socket.IO connection initiated", "info")
+            
         except Exception as e:
-            self.log_message(f"WebSocket connection failed: {e}", "error")
+            self.log_message(f"Socket.IO connection failed: {e}", "error")
             self.ws_status_var.set("Connection failed")
     
-    def on_ws_open(self, ws):
-        """WebSocket opened"""
-        self.ws_connected = True
-        self.ws_status_var.set("Connected")
-        self.log_message("WebSocket connected", "success")
-        
-        # Join event room if we have an active event
-        if self.current_event_id:
-            self.join_event_room(self.current_event_id)
-    
-    def on_ws_message(self, ws, message):
-        """Handle WebSocket messages"""
+    def on_ws_message(self, message):
+        """Handle Socket.IO messages"""
         try:
-            # Parse Socket.IO message
-            if message.startswith('42'):
-                # Extract JSON data
-                json_data = message[2:]
-                data = json.loads(json_data)
-                
-                if isinstance(data, list) and len(data) >= 2:
-                    event_type = data[0]
-                    event_data = data[1]
-                    
-                    self.handle_websocket_event(event_type, event_data)
+            if isinstance(message, str):
+                data = json.loads(message)
+            else:
+                data = message
+            
+            self.log_message(f"Socket.IO message: {data.get('type', 'unknown')}")
+            
+            # Handle different message types
+            if data.get('type') == 'runOfShowDataUpdated':
+                self.log_message("Run of show data updated - refresh to see changes")
+            elif data.get('type') == 'timerUpdate':
+                # Handle timer updates
+                pass
         except Exception as e:
-            self.log_message(f"WebSocket message error: {e}")
-    
-    def on_ws_error(self, ws, error):
-        """WebSocket error"""
-        self.log_message(f"WebSocket error: {error}", "error")
-        self.ws_status_var.set("Error")
-    
-    def on_ws_close(self, ws, close_status_code, close_msg):
-        """WebSocket closed"""
-        self.ws_connected = False
-        self.ws_status_var.set("Disconnected")
-        self.log_message("WebSocket disconnected", "warning")
-        
-        # Attempt reconnection after 5 seconds
-        self.root.after(5000, self.connect_websocket)
+            self.log_message(f"Socket.IO message error: {e}")
     
     def handle_websocket_event(self, event_type, event_data):
         """Handle different WebSocket event types"""
@@ -551,12 +600,11 @@ WebSocket Features:
             self.active_item_id = None
     
     def join_event_room(self, event_id):
-        """Join WebSocket room for specific event"""
-        if self.websocket and self.ws_connected:
+        """Join Socket.IO room for specific event"""
+        if self.sio and self.ws_connected:
             try:
-                # Send join room message
-                join_message = f'42["joinEventRoom","{event_id}"]'
-                self.websocket.send(join_message)
+                # Emit join room event
+                self.sio.emit('joinEventRoom', {'eventId': event_id})
                 self.log_message(f"Joined event room: {event_id}")
             except Exception as e:
                 self.log_message(f"Failed to join event room: {e}")
@@ -720,7 +768,7 @@ WebSocket Features:
             self.log_message(f"Loading event: {event_id}")
             
             # Use API endpoint instead of direct database
-            response = requests.get(f"{self.api_base_url}/api/run-of-show/{event_id}")
+            response = requests.get(f"{self.api_base_url}/api/run-of-show-data/{event_id}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -770,7 +818,7 @@ WebSocket Features:
         
         # Use API to load cue instead of direct database RPC
         try:
-            response = requests.post(f"{self.api_base_url}/api/cues/load", {
+            response = requests.post(f"{self.api_base_url}/api/cues/load", json={
                 'event_id': self.current_event_id,
                 'item_id': str(item['id']),
                 'user_id': 'python-osc-server'
@@ -797,7 +845,7 @@ WebSocket Features:
         self.log_message(f"Starting timer for item: {self.active_item_id}")
         
         try:
-            response = requests.post(f"{self.api_base_url}/api/timers/start", {
+            response = requests.post(f"{self.api_base_url}/api/timers/start", json={
                 'event_id': self.current_event_id,
                 'item_id': str(self.active_item_id),
                 'user_id': 'python-osc-server'
@@ -820,7 +868,7 @@ WebSocket Features:
         self.log_message(f"Stopping timer for item: {self.active_item_id}")
         
         try:
-            response = requests.post(f"{self.api_base_url}/api/timers/stop", {
+            response = requests.post(f"{self.api_base_url}/api/timers/stop", json={
                 'event_id': self.current_event_id,
                 'item_id': str(self.active_item_id)
             })
@@ -843,7 +891,7 @@ WebSocket Features:
         
         try:
             # Use API endpoint for reset instead of direct database operations
-            response = requests.post(f"{self.api_base_url}/api/timers/reset", {
+            response = requests.post(f"{self.api_base_url}/api/timers/reset", json={
                 'event_id': self.current_event_id
             })
             
@@ -1118,6 +1166,40 @@ WebSocket Features:
             self.log_message(f"Error checking authentication: {e}")
             self.auth_status_var.set("Authentication error")
     
+    def switch_server(self):
+        """Switch between Railway and Local Server"""
+        try:
+            mode = self.server_mode.get()
+            
+            if mode == 'railway':
+                self.api_base_url = 'https://ros-50-production.up.railway.app'
+                self.ws_url = 'wss://ros-50-production.up.railway.app'
+            else:  # local
+                self.api_base_url = 'http://localhost:3002'
+                self.ws_url = 'ws://localhost:3002'
+            
+            # Update status label
+            self.server_status_label.config(text=f"Current: {self.api_base_url}")
+            
+            # Disconnect and reconnect Socket.IO
+            if self.sio:
+                try:
+                    self.sio.disconnect()
+                except:
+                    pass
+            
+            self.ws_connected = False
+            self.connect_websocket()
+            
+            # Log the change
+            server_name = "Railway" if mode == 'railway' else "Local Server"
+            self.log_message(f"Switched to {server_name}: {self.api_base_url}", "success")
+            messagebox.showinfo("Server Changed", f"Now using {server_name}\n{self.api_base_url}")
+            
+        except Exception as e:
+            self.log_message(f"Error switching server: {e}", "error")
+            messagebox.showerror("Error", f"Failed to switch server: {e}")
+    
     def sign_in(self):
         """Sign in - simplified for API server without auth endpoints"""
         email = self.email_var.get()
@@ -1198,8 +1280,11 @@ WebSocket Features:
         self.processing_messages = False
         if self.osc_server:
             self.osc_server.stop()
-        if self.websocket:
-            self.websocket.close()
+        if self.sio:
+            try:
+                self.sio.disconnect()
+            except:
+                pass
         self.root.destroy()
 
 def main():

@@ -54,20 +54,23 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
             {/* Download Section */}
             <div className="bg-slate-700 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-white mb-3 text-center">📥 Download Python OSC App</h3>
+              
+              {/* WebSocket Version with Server Toggle */}
               <div className="text-center">
                 <a
-                  href="/OSC_GUI_App_Enhanced_Updated.zip"
-                  download="OSC_GUI_App_Enhanced_Updated.zip"
+                  href="/OSC_WebSocket_App.zip"
+                  download="OSC_WebSocket_App.zip"
                   className="block bg-green-600 hover:bg-green-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
-                  🐍 Python OSC GUI App (Latest Version)
+                  🌐 WebSocket OSC App (with Server Toggle)
                 </a>
                 <div className="text-xs text-green-400 mt-2">
-                  ✨ Multi-day events • Day selection • Enhanced GUI • Latest fixes
+                  ✨ GUI toggle • Railway or Local • WebSocket • Real-time updates
                 </div>
               </div>
+              
               <div className="text-xs text-slate-500 mt-3 text-center">
-                <strong>Instructions:</strong> Extract zip, run install.bat to install dependencies, then run_app.bat to start
+                <strong>Instructions:</strong> Extract zip, run install.bat to install dependencies, then run.bat to start
               </div>
             </div>
           </div>

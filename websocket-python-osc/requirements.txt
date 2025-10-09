@@ -3,7 +3,7 @@
 
 # Core dependencies
 requests>=2.31.0
-websocket-client>=1.6.0
+python-socketio>=5.9.0
 
 # GUI framework (built into Python)
 # tkinter is included with Python standard library

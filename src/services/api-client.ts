@@ -1,5 +1,13 @@
 // API Client for communicating with our Express API server
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+const getApiBaseUrl = () => {
+  // Check for forced local override from EventListPage toggle
+  if ((window as any).__FORCE_LOCAL_API__) {
+    return (window as any).__LOCAL_API_URL__ || 'http://localhost:3002';
+  }
+  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Smart caching system
 interface CacheEntry<T> {
@@ -56,7 +64,9 @@ class ApiClient {
       }
     }
 
-    const url = `${API_BASE_URL}${endpoint}`;
+    // Get the API base URL dynamically (respects toggle)
+    const apiBaseUrl = getApiBaseUrl();
+    const url = `${apiBaseUrl}${endpoint}`;
     
     const defaultOptions: RequestInit = {
       headers: {

@@ -4,7 +4,7 @@ import { apiClient } from './api-client';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
   (import.meta.env.PROD 
     ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
-    : 'http://localhost:3001');
+    : 'http://localhost:3002');
 
 export interface CalendarEvent {
   id?: string;
@@ -1216,7 +1216,7 @@ export class DatabaseService {
     try {
       console.log('🟣 Marking cue as completed via API:', { eventId, itemId, userId, userName, userRole });
       
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002'}/api/completed-cues`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1250,7 +1250,7 @@ export class DatabaseService {
     try {
       console.log('🟣 Unmarking cue as completed via API:', { eventId, itemId });
       
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002'}/api/completed-cues`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',

@@ -32,6 +32,12 @@ const EventListPage: React.FC = () => {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Server toggle state
+  const [forceLocal, setForceLocal] = useState(() => {
+    const saved = localStorage.getItem('forceLocalServer');
+    return saved === 'true';
+  });
 
 
   // Load events from Supabase and localStorage on component mount
@@ -53,6 +59,8 @@ const EventListPage: React.FC = () => {
     try {
       setIsLoading(true);
       console.log('🔄 Loading events from Neon database...');
+      console.log('🌐 API Base URL:', import.meta.env.VITE_API_BASE_URL || 'Not set (using default)');
+      console.log('🌐 Environment:', import.meta.env.PROD ? 'Production' : 'Development');
       
       // Always try Supabase first
       const calendarEvents = await DatabaseService.getCalendarEvents();
@@ -423,10 +431,59 @@ const EventListPage: React.FC = () => {
 
   const filteredEvents = getFilteredEvents();
 
+  // Determine which server to use based on toggle
+  const getApiBaseUrl = () => {
+    if (forceLocal) {
+      return 'http://localhost:3002';
+    }
+    return import.meta.env.VITE_API_BASE_URL || 
+      (import.meta.env.PROD ? 'https://ros-50-production.up.railway.app' : 'http://localhost:3002');
+  };
+  
+  const apiBaseUrl = getApiBaseUrl();
+  const isUsingLocal = apiBaseUrl.includes('localhost');
+  
+  // Save toggle state and override API URL
+  useEffect(() => {
+    localStorage.setItem('forceLocalServer', forceLocal.toString());
+    // Force override the API base URL in the services
+    if (forceLocal) {
+      (window as any).__FORCE_LOCAL_API__ = true;
+      (window as any).__LOCAL_API_URL__ = 'http://localhost:3002';
+    } else {
+      (window as any).__FORCE_LOCAL_API__ = false;
+    }
+  }, [forceLocal]);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 pt-16">
+      {/* Subtle Server Status Indicator */}
+      <div className="fixed top-16 left-0 right-0 z-40 bg-slate-800 border-b border-slate-700">
+        <div className="max-w-6xl mx-auto px-6 py-2 flex items-center justify-end gap-3">
+          <div className="flex items-center gap-2 text-xs">
+            <div className={`w-1.5 h-1.5 rounded-full ${isUsingLocal ? 'bg-green-400' : 'bg-blue-400'} animate-pulse`}></div>
+            <span className="text-slate-400">
+              {isUsingLocal ? '🏠 Local' : '☁️ Railway'}
+            </span>
+          </div>
+          
+          <button
+            onClick={() => {
+              setForceLocal(!forceLocal);
+              setTimeout(() => {
+                window.location.reload();
+              }, 100);
+            }}
+            className={`px-3 py-1 ${isUsingLocal ? 'bg-green-600 hover:bg-green-500' : 'bg-blue-600 hover:bg-blue-500'} text-white rounded text-xs font-medium transition-colors`}
+            title={`Currently using ${isUsingLocal ? 'Local' : 'Railway'} server. Click to switch.`}
+          >
+            Switch Server
+          </button>
+        </div>
+      </div>
+      
       {/* Header */}
-      <div className="text-center py-8">
+      <div className="text-center py-8 mt-10">
         <h1 className="text-4xl font-bold text-white mb-2">
           📅 Event List Calendar
         </h1>

@@ -4,7 +4,7 @@ import { DatabaseService } from './database';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
   (import.meta.env.PROD 
     ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
-    : 'http://localhost:3001');
+    : 'http://localhost:3002');
 
 export interface BackupData {
   id: number;

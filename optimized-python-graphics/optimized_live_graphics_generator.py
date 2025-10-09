@@ -21,7 +21,7 @@ class FixedGraphicsGenerator:
     def __init__(self, root):
         self.root = root
         self.root.title("Fixed Optimized Live Graphics Generator - Socket.IO + Neon")
-        self.root.geometry("1000x700")
+        self.root.geometry("1000x750")  # Compact height
         
         # API Configuration
         self.api_base_url = 'https://ros-50-production.up.railway.app'
@@ -38,83 +38,97 @@ class FixedGraphicsGenerator:
         self.setup_ui()
     
     def setup_ui(self):
-        # Main frame
-        main_frame = ttk.Frame(self.root, padding="20")
+        # Main frame with less padding
+        main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Title
-        title_label = ttk.Label(main_frame, text="Fixed Optimized Live Graphics Generator", 
-                               font=('Arial', 16, 'bold'))
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        # Title - more compact
+        title_label = ttk.Label(main_frame, text="Live Graphics Generator - CSV", 
+                               font=('Arial', 14, 'bold'))
+        title_label.grid(row=0, column=0, columnspan=2, pady=(0, 5))
         
-        subtitle_label = ttk.Label(main_frame, text="Socket.IO + API + Neon Database", 
-                                  font=('Arial', 10), foreground='blue')
-        subtitle_label.grid(row=1, column=0, columnspan=3, pady=(0, 20))
+        # Server Selection + Connection Status - COMBINED
+        top_frame = ttk.Frame(main_frame)
+        top_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
         
-        # Connection status
-        status_frame = ttk.LabelFrame(main_frame, text="Connection Status", padding="10")
-        status_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        # Server selection on left
+        server_frame = ttk.LabelFrame(top_frame, text="🌐 Server", padding="5")
+        server_frame.pack(side='left', fill='both', expand=True, padx=(0, 5))
+        
+        self.server_mode = tk.StringVar(value='railway')
+        ttk.Radiobutton(server_frame, text="🚂 Railway", variable=self.server_mode, 
+                       value='railway', command=self.switch_server).pack(anchor='w')
+        ttk.Radiobutton(server_frame, text="🏠 Local", variable=self.server_mode, 
+                       value='local', command=self.switch_server).pack(anchor='w')
+        
+        # Connection status on right
+        status_frame = ttk.LabelFrame(top_frame, text="Status", padding="5")
+        status_frame.pack(side='left', fill='both', expand=True)
         
         self.status_label = ttk.Label(status_frame, text="Disconnected", foreground='red')
-        self.status_label.grid(row=0, column=0, sticky=tk.W)
+        self.status_label.pack(anchor='w')
         
-        api_label = ttk.Label(status_frame, text=f"API: {self.api_base_url}", 
-                             font=('Arial', 8), foreground='gray')
-        api_label.grid(row=1, column=0, sticky=tk.W, pady=(5, 0))
+        self.api_label = ttk.Label(status_frame, text=f"API: {self.api_base_url}", 
+                             font=('Arial', 7), foreground='gray')
+        self.api_label.pack(anchor='w')
         
-        # Input fields
-        input_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
-        input_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        # Configuration - more compact
+        config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="5")
+        config_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
         
         # Event ID
-        ttk.Label(input_frame, text="Event ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(config_frame, text="Event ID:").grid(row=0, column=0, sticky=tk.W, padx=5)
         self.event_id = tk.StringVar()
-        event_entry = ttk.Entry(input_frame, textvariable=self.event_id, width=30)
-        event_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
+        ttk.Entry(config_frame, textvariable=self.event_id, width=40).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
         
         # Output folder
-        ttk.Label(input_frame, text="Output Folder:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(config_frame, text="Output:").grid(row=1, column=0, sticky=tk.W, padx=5)
+        folder_frame = ttk.Frame(config_frame)
+        folder_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5)
+        
         self.output_folder = tk.StringVar()
-        folder_frame = ttk.Frame(input_frame)
-        folder_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+        ttk.Entry(folder_frame, textvariable=self.output_folder, width=30).pack(side='left', fill='x', expand=True)
+        ttk.Button(folder_frame, text="Browse", command=self.browse_folder).pack(side='left', padx=(5, 0))
         
-        folder_entry = ttk.Entry(folder_frame, textvariable=self.output_folder, width=25)
-        folder_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        config_frame.columnconfigure(1, weight=1)
         
-        ttk.Button(folder_frame, text="Browse", command=self.browse_folder).grid(row=0, column=1, padx=(5, 0))
+        # Data type checkboxes - more compact
+        file_types_frame = ttk.LabelFrame(main_frame, text="CSV Files to Generate", padding="5")
+        file_types_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
         
-        # Configure grid weights for input frame
-        input_frame.columnconfigure(1, weight=1)
-        folder_frame.columnconfigure(0, weight=1)
+        self.gen_lower_thirds = tk.BooleanVar(value=True)
+        self.gen_schedule = tk.BooleanVar(value=True)
+        self.gen_custom = tk.BooleanVar(value=False)
         
-        # Control buttons
+        checkbox_container = ttk.Frame(file_types_frame)
+        checkbox_container.pack(fill='x')
+        
+        ttk.Checkbutton(checkbox_container, text="Lower Thirds", variable=self.gen_lower_thirds).pack(side='left', padx=10)
+        ttk.Checkbutton(checkbox_container, text="Schedule", variable=self.gen_schedule).pack(side='left', padx=10)
+        ttk.Checkbutton(checkbox_container, text="Custom Columns", variable=self.gen_custom).pack(side='left', padx=10)
+        
+        # Control buttons - more compact
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=4, column=0, columnspan=3, pady=20)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=5)
         
         self.connect_btn = ttk.Button(button_frame, text="Connect", command=self.toggle_connection)
-        self.connect_btn.grid(row=0, column=0, padx=5)
+        self.connect_btn.pack(side='left', padx=3)
         
-        self.generate_btn = ttk.Button(button_frame, text="Generate Files", 
+        self.generate_btn = ttk.Button(button_frame, text="Generate CSV Files", 
                                       command=self.generate_files, state='disabled')
-        self.generate_btn.grid(row=0, column=1, padx=5)
+        self.generate_btn.pack(side='left', padx=3)
         
         ttk.Button(button_frame, text="Refresh Data", 
-                   command=self.refresh_data).grid(row=0, column=2, padx=5)
+                   command=self.refresh_data).pack(side='left', padx=3)
         
         ttk.Button(button_frame, text="Open Folder", 
-                   command=self.open_folder).grid(row=0, column=3, padx=5)
+                   command=self.open_folder).pack(side='left', padx=3)
         
-        # Auto-regenerate checkbox
-        self.auto_regenerate = tk.BooleanVar(value=True)
-        auto_check = ttk.Checkbutton(button_frame, text="Auto-update files on data change", 
-                                   variable=self.auto_regenerate)
-        auto_check.grid(row=1, column=0, columnspan=4, pady=(10, 0))
+        # Live data display - compact
+        data_frame = ttk.LabelFrame(main_frame, text="Live Data Preview", padding="5")
+        data_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 5))
         
-        # Live data display
-        data_frame = ttk.LabelFrame(main_frame, text="Live Data", padding="10")
-        data_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
-        
-        self.data_text = tk.Text(data_frame, height=15, width=80)
+        self.data_text = tk.Text(data_frame, height=10, width=80)
         data_scrollbar = ttk.Scrollbar(data_frame, orient="vertical", command=self.data_text.yview)
         self.data_text.configure(yscrollcommand=data_scrollbar.set)
         
@@ -124,7 +138,7 @@ class FixedGraphicsGenerator:
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(2, weight=1)
+        main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(5, weight=1)
         data_frame.columnconfigure(0, weight=1)
         data_frame.rowconfigure(0, weight=1)
@@ -146,6 +160,37 @@ class FixedGraphicsGenerator:
         """Update status label"""
         self.status_label.config(text=text, foreground=color)
         self.root.update_idletasks()
+    
+    def switch_server(self):
+        """Switch between Railway and Local Server"""
+        try:
+            mode = self.server_mode.get()
+            
+            # Disconnect if currently connected
+            was_connected = self.is_connected
+            if was_connected:
+                self.disconnect()
+            
+            # Update API URL
+            if mode == 'railway':
+                self.api_base_url = 'https://ros-50-production.up.railway.app'
+            else:  # local
+                self.api_base_url = 'http://localhost:3002'
+            
+            # Update API label
+            self.api_label.config(text=f"API: {self.api_base_url}")
+            
+            # Log the change
+            server_name = "Railway" if mode == 'railway' else "Local Server"
+            self.log_message(f"Switched to {server_name}: {self.api_base_url}")
+            messagebox.showinfo("Server Changed", f"Now using {server_name}\n{self.api_base_url}\n\nClick 'Connect' to reconnect.")
+            
+            # Update connection status display
+            self.update_status("Disconnected - Server changed", 'orange')
+            
+        except Exception as e:
+            self.log_message(f"Error switching server: {e}")
+            messagebox.showerror("Error", f"Failed to switch server: {e}")
     
     def toggle_connection(self):
         if not self.is_connected:
@@ -351,7 +396,7 @@ class FixedGraphicsGenerator:
             self.log_message(f"ERROR: Display update error: {str(e)}")
     
     def generate_files(self):
-        """Generate graphics files"""
+        """Generate CSV files based on selected data types"""
         if not self.output_folder.get():
             messagebox.showerror("Error", "Please select an output folder")
             return
@@ -360,47 +405,71 @@ class FixedGraphicsGenerator:
             messagebox.showerror("Error", "No data available. Please refresh data first.")
             return
         
-        try:
-            self.log_message("Generating files...")
-            self.update_status("Generating files...", 'orange')
-            
-            # Generate schedule XML
-            self.generate_schedule_xml()
-            
-            # Generate schedule CSV
-            self.generate_schedule_csv()
-            
-            # Generate lower thirds XML
-            self.generate_lower_thirds_xml()
-            
-            # Generate lower thirds CSV
-            self.generate_lower_thirds_csv()
-            
-            # Generate custom columns XML
-            self.generate_custom_columns_xml()
-            
-            # Generate custom columns CSV
-            self.generate_custom_columns_csv()
-            
-            self.update_status("Files generated successfully", 'green')
-            self.log_message("SUCCESS: All graphics files generated")
-            
-        except Exception as e:
-            self.log_message(f"ERROR: Generation failed: {str(e)}")
-            self.update_status("Generation failed", 'red')
+        self.log_message("Generating selected CSV files...")
+        self.update_status("Generating files...", 'orange')
+        
+        success_count = 0
+        error_count = 0
+        
+        # Generate CSV files based on selected data types
+        if self.gen_schedule.get():
+            try:
+                self.generate_schedule_csv()
+                success_count += 1
+            except Exception as e:
+                self.log_message(f"ERROR: Schedule CSV failed: {str(e)}")
+                error_count += 1
+        
+        if self.gen_lower_thirds.get():
+            try:
+                self.generate_lower_thirds_csv()
+                success_count += 1
+            except Exception as e:
+                self.log_message(f"ERROR: Lower Thirds CSV failed: {str(e)}")
+                error_count += 1
+        
+        if self.gen_custom.get():
+            try:
+                self.generate_custom_columns_csv()
+                success_count += 1
+            except Exception as e:
+                self.log_message(f"ERROR: Custom Columns CSV failed: {str(e)}")
+                error_count += 1
+        
+        # Update status based on results
+        if error_count == 0 and success_count > 0:
+            self.update_status(f"CSV files generated successfully ({success_count} files)", 'green')
+            self.log_message(f"SUCCESS: Generated {success_count} CSV file(s)")
+        elif success_count > 0:
+            self.update_status(f"Partial success ({success_count} succeeded, {error_count} failed)", 'orange')
+            self.log_message(f"WARNING: {success_count} succeeded, {error_count} failed")
+        else:
+            self.update_status("No files generated", 'red')
+            self.log_message("ERROR: All file generations failed or no files selected")
     
     def auto_regenerate_files(self):
         """Auto-regenerate files when data changes (low egress)"""
         try:
-            self.log_message("Auto-regenerating files due to data change...")
+            self.log_message("Auto-regenerating selected CSV files due to data change...")
             
-            # Generate all files silently (no UI updates to avoid spam)
-            self.generate_schedule_xml()
-            self.generate_schedule_csv()
-            self.generate_lower_thirds_xml()
-            self.generate_lower_thirds_csv()
-            self.generate_custom_columns_xml()
-            self.generate_custom_columns_csv()
+            # Generate only selected CSV files silently (no UI updates to avoid spam)
+            if self.gen_schedule.get():
+                try:
+                    self.generate_schedule_csv()
+                except Exception as e:
+                    self.log_message(f"ERROR: Auto-regenerate Schedule CSV failed: {str(e)}")
+            
+            if self.gen_lower_thirds.get():
+                try:
+                    self.generate_lower_thirds_csv()
+                except Exception as e:
+                    self.log_message(f"ERROR: Auto-regenerate Lower Thirds CSV failed: {str(e)}")
+            
+            if self.gen_custom.get():
+                try:
+                    self.generate_custom_columns_csv()
+                except Exception as e:
+                    self.log_message(f"ERROR: Auto-regenerate Custom Columns CSV failed: {str(e)}")
             
             self.log_message("SUCCESS: Files auto-updated")
             
@@ -450,7 +519,15 @@ class FixedGraphicsGenerator:
             
             if 'schedule_items' in self.schedule_data:
                 for item in self.schedule_data['schedule_items']:
-                    speakers = ', '.join([s.get('name', '') for s in item.get('speakers', [])])
+                    # Parse speakers - might be JSON string or list
+                    speakers_data = item.get('speakers', [])
+                    if isinstance(speakers_data, str):
+                        try:
+                            speakers_data = json.loads(speakers_data) if speakers_data else []
+                        except:
+                            speakers_data = []
+                    
+                    speakers = ', '.join([s.get('name', '') if isinstance(s, dict) else str(s) for s in speakers_data])
                     writer.writerow([
                         item.get('id', ''),
                         item.get('segmentName', ''),
@@ -472,12 +549,22 @@ class FixedGraphicsGenerator:
         
         if 'schedule_items' in self.schedule_data:
             for item in self.schedule_data['schedule_items']:
-                if item.get('speakers'):
-                    for speaker in item.get('speakers', []):
-                        speaker_elem = ET.SubElement(root, "speaker")
-                        speaker_elem.set("name", speaker.get('name', ''))
-                        speaker_elem.set("title", speaker.get('title', ''))
-                        speaker_elem.set("segment", item.get('segmentName', ''))
+                speakers_data = item.get('speakers', [])
+                
+                # Parse speakers - might be JSON string or list
+                if isinstance(speakers_data, str):
+                    try:
+                        speakers_data = json.loads(speakers_data) if speakers_data else []
+                    except:
+                        speakers_data = []
+                
+                if speakers_data:
+                    for speaker in speakers_data:
+                        if isinstance(speaker, dict):
+                            speaker_elem = ET.SubElement(root, "speaker")
+                            speaker_elem.set("name", speaker.get('name', ''))
+                            speaker_elem.set("title", speaker.get('title', ''))
+                            speaker_elem.set("segment", item.get('segmentName', ''))
         
         tree = ET.ElementTree(root)
         tree.write(filename, encoding='utf-8', xml_declaration=True)
@@ -494,13 +581,23 @@ class FixedGraphicsGenerator:
             
             if 'schedule_items' in self.schedule_data:
                 for item in self.schedule_data['schedule_items']:
-                    if item.get('speakers'):
-                        for speaker in item.get('speakers', []):
-                            writer.writerow([
-                                speaker.get('name', ''),
-                                speaker.get('title', ''),
-                                item.get('segmentName', '')
-                            ])
+                    speakers_data = item.get('speakers', [])
+                    
+                    # Parse speakers - might be JSON string or list
+                    if isinstance(speakers_data, str):
+                        try:
+                            speakers_data = json.loads(speakers_data) if speakers_data else []
+                        except:
+                            speakers_data = []
+                    
+                    if speakers_data:
+                        for speaker in speakers_data:
+                            if isinstance(speaker, dict):
+                                writer.writerow([
+                                    speaker.get('name', ''),
+                                    speaker.get('title', ''),
+                                    item.get('segmentName', '')
+                                ])
         
         self.log_message(f"SUCCESS: Generated {filename}")
     

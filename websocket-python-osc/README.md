@@ -74,10 +74,28 @@ The OSC server runs on port **57130** by default. Supported commands:
 
 ## 🔧 Configuration
 
-### API Server
-The app connects to your API server at:
-- **Default:** `https://ros-50-production.up.railway.app`
-- **Change:** Set `API_BASE_URL` environment variable
+### API Server - Easy Server Switching with GUI Toggle! 🎉
+
+The app includes a **built-in GUI toggle** to switch between Railway and Local Server - no code editing required!
+
+#### How to Switch Servers:
+1. **Open the app** and go to the **Authentication tab**
+2. **Look for "🌐 Server Selection"** at the top
+3. **Choose your server:**
+   - **🚂 Railway (Remote Access)** - Default, works from anywhere
+   - **🏠 Local Server** - For local network use (http://localhost:3002)
+4. **Click your choice** - the app will automatically reconnect!
+
+#### Option 1: Railway (Default - Remote Access)
+- **URL:** `https://ros-50-production.up.railway.app`
+- **Use when:** Accessing from anywhere, multiple locations
+- **Benefits:** No setup needed, works globally
+
+#### Option 2: Local Server (Local Network)
+- **URL:** `http://localhost:3002`
+- **Use when:** Running on local network, avoiding egress costs
+- **Benefits:** Faster response, no internet required, free
+- **Requirements:** Local Node.js server must be running on port 3002
 
 ### OSC Server
 - **Port:** 57130 (default)
