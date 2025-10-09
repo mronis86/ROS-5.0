@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Force Railway rebuild - 2025-10-08
 // Auth is now handled via direct database connection
 
 const app = express();
