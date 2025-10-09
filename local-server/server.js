@@ -508,11 +508,11 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
 
 app.post('/api/cues/load', async (req, res) => {
   try {
-    const { event_id, item_id, user_id } = req.body;
+    const { event_id, item_id, user_id, duration_seconds, row_is, cue_is, timer_id } = req.body;
     
-    console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}`);
+    console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}, Cue: ${cue_is}`);
     
-    // Get the current run_of_show_data
+    // 1. Update schedule_items JSON to set is_active flag
     const dataResult = await pool.query(
       'SELECT * FROM run_of_show_data WHERE event_id = $1',
       [event_id]
@@ -531,13 +531,33 @@ app.post('/api/cues/load', async (req, res) => {
       is_active: item.id === parseInt(item_id)
     }));
     
-    // Update the database
     await pool.query(
       'UPDATE run_of_show_data SET schedule_items = $1, updated_at = NOW() WHERE event_id = $2',
       [JSON.stringify(updatedSchedule), event_id]
     );
     
-    console.log(`✅ OSC: Cue loaded successfully - Item ${item_id} set as active`);
+    // 2. Update/Insert into active_timers table (like Supabase RPC did)
+    await pool.query(`
+      INSERT INTO active_timers (
+        event_id, item_id, user_id, timer_state, is_active, is_running,
+        started_at, last_loaded_cue_id, cue_is, duration_seconds
+      ) VALUES ($1, $2, $3, 'loaded', true, false, NOW(), $2, $4, $5)
+      ON CONFLICT (event_id) 
+      DO UPDATE SET 
+        item_id = $2,
+        user_id = $3,
+        timer_state = 'loaded',
+        is_active = true,
+        is_running = false,
+        started_at = NOW(),
+        last_loaded_cue_id = $2,
+        cue_is = $4,
+        duration_seconds = $5,
+        elapsed_seconds = 0,
+        updated_at = NOW()
+    `, [event_id, parseInt(item_id), user_id || 'python-osc-server', cue_is || `CUE ${item_id}`, duration_seconds || 300]);
+    
+    console.log(`✅ OSC: Cue loaded - Item ${item_id} set as active in both schedule_items and active_timers`);
     
     res.json({ 
       success: true, 
@@ -554,7 +574,7 @@ app.post('/api/cues/load', async (req, res) => {
     
   } catch (error) {
     console.error('Error loading cue:', error);
-    res.status(500).json({ error: 'Failed to load cue' });
+    res.status(500).json({ error: 'Failed to load cue', details: error.message });
   }
 });
 
@@ -562,7 +582,21 @@ app.post('/api/timers/start', async (req, res) => {
   try {
     const { event_id, item_id, user_id } = req.body;
     
-    // Acknowledge timer start
+    console.log(`⏱️ OSC: Starting timer - Event: ${event_id}, Item: ${item_id}`);
+    
+    // Update active_timers table
+    await pool.query(`
+      UPDATE active_timers 
+      SET 
+        is_running = true,
+        timer_state = 'running',
+        started_at = NOW(),
+        updated_at = NOW()
+      WHERE event_id = $1 AND item_id = $2
+    `, [event_id, parseInt(item_id)]);
+    
+    console.log(`✅ OSC: Timer started for item ${item_id} in active_timers table`);
+    
     res.json({ 
       success: true, 
       message: 'Timer started',
@@ -572,14 +606,13 @@ app.post('/api/timers/start', async (req, res) => {
     
     // Emit Socket.IO event
     io.emit('message', JSON.stringify({
-      type: 'timerStarted',
-      eventId: event_id,
-      itemId: item_id
+      type: 'runOfShowDataUpdated',
+      eventId: event_id
     }));
     
   } catch (error) {
     console.error('Error starting timer:', error);
-    res.status(500).json({ error: 'Failed to start timer' });
+    res.status(500).json({ error: 'Failed to start timer', details: error.message });
   }
 });
 
@@ -587,7 +620,21 @@ app.post('/api/timers/stop', async (req, res) => {
   try {
     const { event_id, item_id } = req.body;
     
-    // Acknowledge timer stop
+    console.log(`⏹️ OSC: Stopping timer - Event: ${event_id}, Item: ${item_id}`);
+    
+    // Update active_timers table
+    await pool.query(`
+      UPDATE active_timers 
+      SET 
+        is_running = false,
+        is_active = false,
+        timer_state = 'stopped',
+        updated_at = NOW()
+      WHERE event_id = $1 AND item_id = $2
+    `, [event_id, parseInt(item_id)]);
+    
+    console.log(`✅ OSC: Timer stopped for item ${item_id} in active_timers table`);
+    
     res.json({ 
       success: true, 
       message: 'Timer stopped',
@@ -597,14 +644,13 @@ app.post('/api/timers/stop', async (req, res) => {
     
     // Emit Socket.IO event
     io.emit('message', JSON.stringify({
-      type: 'timerStopped',
-      eventId: event_id,
-      itemId: item_id
+      type: 'runOfShowDataUpdated',
+      eventId: event_id
     }));
     
   } catch (error) {
     console.error('Error stopping timer:', error);
-    res.status(500).json({ error: 'Failed to stop timer' });
+    res.status(500).json({ error: 'Failed to stop timer', details: error.message });
   }
 });
 
@@ -612,24 +658,44 @@ app.post('/api/timers/reset', async (req, res) => {
   try {
     const { event_id, item_id } = req.body;
     
-    // Acknowledge timer reset
+    console.log(`🔄 OSC: Resetting timer - Event: ${event_id}`);
+    
+    // Clear all timer tables (like old Supabase reset did)
+    // 1. Clear active_timers
+    await pool.query(`DELETE FROM active_timers WHERE event_id = $1`, [event_id]);
+    
+    // 2. Clear completed_cues (if table exists)
+    try {
+      await pool.query(`DELETE FROM completed_cues WHERE event_id = $1`, [event_id]);
+    } catch (e) {
+      console.log('completed_cues table may not exist:', e.message);
+    }
+    
+    // 3. Clear sub_cue_timers (if table exists)
+    try {
+      await pool.query(`DELETE FROM sub_cue_timers WHERE event_id = $1`, [event_id]);
+    } catch (e) {
+      console.log('sub_cue_timers table may not exist:', e.message);
+    }
+    
+    console.log(`✅ OSC: Timer reset complete - all timer tables cleared for event ${event_id}`);
+    
     res.json({ 
       success: true, 
-      message: 'Timer reset',
+      message: 'Timer reset - all timer tables cleared',
       event_id,
       item_id
     });
     
     // Emit Socket.IO event
     io.emit('message', JSON.stringify({
-      type: 'timerReset',
-      eventId: event_id,
-      itemId: item_id
+      type: 'runOfShowDataUpdated',
+      eventId: event_id
     }));
     
   } catch (error) {
     console.error('Error resetting timer:', error);
-    res.status(500).json({ error: 'Failed to reset timer' });
+    res.status(500).json({ error: 'Failed to reset timer', details: error.message });
   }
 });
 
