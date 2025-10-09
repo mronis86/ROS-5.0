@@ -39,6 +39,7 @@ const ScheduleXMLPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'preview' | 'instructions'>('preview');
+  const [refreshInterval, setRefreshInterval] = useState(10); // seconds
 
   const calculateStartTime = (scheduleItems: any[], currentItem: any, masterStartTime: string): string => {
     if (!masterStartTime) return '';
@@ -132,10 +133,10 @@ const ScheduleXMLPage: React.FC = () => {
       const items = data.schedule_items;
       const masterStartTime = data.settings?.masterStartTime || '';
 
-      // Filter for public items only (like Python script)
-      const publicItems = items.filter((item: any) => item.isPublic);
+      console.log('📊 Total schedule items:', items.length);
 
-      publicItems.forEach((item: any, index: number) => {
+      // Process all items (like Lower Thirds page does)
+      items.forEach((item: any, index: number) => {
         // Calculate start time like Python script
         const startTime = calculateStartTime(items, item, masterStartTime);
         
@@ -154,6 +155,8 @@ const ScheduleXMLPage: React.FC = () => {
         
         scheduleItemsData.push(baseEntry);
       });
+
+      console.log('📊 Processed schedule items:', scheduleItemsData.length);
 
       setScheduleItems(scheduleItemsData);
       setLastUpdated(new Date());
@@ -186,10 +189,8 @@ const ScheduleXMLPage: React.FC = () => {
           const items = data.schedule_items;
           const masterStartTime = data.settings?.masterStartTime || '';
 
-          // Filter for public items only
-          const publicItems = items.filter((item: any) => item.isPublic);
-
-          publicItems.forEach((item: any, index: number) => {
+          // Process all items (like Lower Thirds page does)
+          items.forEach((item: any, index: number) => {
             const startTime = calculateStartTime(items, item, masterStartTime);
             
             const baseEntry: ScheduleItem = {
@@ -229,6 +230,11 @@ const ScheduleXMLPage: React.FC = () => {
     };
   }, [eventId]);
 
+  // Handle manual refresh
+  const handleRefresh = () => {
+    fetchScheduleData();
+  };
+
   const generateXML = (data: ScheduleItem[]): string => {
     const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
     const xmlContent = `
@@ -250,16 +256,18 @@ const ScheduleXMLPage: React.FC = () => {
   };
 
   const generateCSV = (data: ScheduleItem[]): string => {
-    // Generate CSV header - just Segment Name and Start Time like Python script
-    let csv = 'Segment Name,Start Time\n';
+    // Generate CSV header - Row, Segment Name, and Start Time
+    let csv = 'Row,Segment Name,Start Time\n';
     
     // Process each schedule item (one row per item)
-    data.forEach((item) => {
+    data.forEach((item, index) => {
+      const rowNumber = index + 1;
       const segmentName = item.segmentName || '';
       const startTime = item.startTime || '';
       
       // Create CSV row
       const csvRow = [
+        rowNumber,
         `"${segmentName.replace(/"/g, '""')}"`,
         `"${startTime.replace(/"/g, '""')}"`
       ].join(',');
@@ -317,63 +325,102 @@ const ScheduleXMLPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-6xl mx-auto">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold mb-2">Schedule XML Feed</h1>
-            <p className="text-gray-400">
-              Live schedule data for VMIX integration
-              {eventId && (
-                <span className="ml-2 text-blue-400">
-                  (Event: {eventId.slice(0, 8)}...)
+    <div className="min-h-screen bg-gray-900 text-white p-6">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">Schedule XML Feed</h1>
+          <p className="text-gray-400">
+            Live XML data feed for VMIX integration with WebSocket updates
+          </p>
+          {eventId && (
+            <p className="text-sm text-blue-400 mt-2">
+              Event ID: {eventId}
+            </p>
+          )}
+        </div>
+
+        {/* Controls */}
+        <div className="bg-gray-800 rounded-lg p-6 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <label className="block text-sm font-medium">
+                Refresh Interval (seconds)
+              </label>
+              <select
+                value={refreshInterval}
+                onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
+              >
+                <option value={5}>5 seconds</option>
+                <option value={10}>10 seconds</option>
+                <option value={30}>30 seconds</option>
+                <option value={60}>1 minute</option>
+              </select>
+              <button
+                onClick={handleRefresh}
+                disabled={isLoading}
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+              >
+                {isLoading ? 'Loading...' : 'Refresh Now'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={downloadXML}
+                className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-medium"
+              >
+                Download XML
+              </button>
+              <button
+                onClick={copyXML}
+                className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded font-medium"
+              >
+                Copy XML
+              </button>
+              <button
+                onClick={downloadCSV}
+                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-medium"
+              >
+                Download CSV
+              </button>
+              <button
+                onClick={copyCSV}
+                className="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded font-medium"
+              >
+                Copy CSV
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Status */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className={`w-3 h-3 rounded-full ${isLoading ? 'bg-yellow-500' : error ? 'bg-red-500' : 'bg-green-500'}`}></div>
+              <span className="font-medium">
+                {isLoading ? 'Loading...' : error ? 'Error' : 'Connected'}
+              </span>
+              {lastUpdated && (
+                <span className="text-sm text-gray-400">
+                  Last updated: {lastUpdated.toLocaleTimeString()}
                 </span>
               )}
-            </p>
-            {lastUpdated && (
-              <p className="text-sm text-gray-500 mt-1">
-                Last updated: {lastUpdated.toLocaleTimeString()}
-              </p>
-            )}
+            </div>
+            <div className="text-sm text-gray-400">
+              Auto-refresh: {refreshInterval}s
+            </div>
           </div>
-
           {error && (
-            <div className="mb-6 p-4 bg-red-900/20 border border-red-500/30 rounded-lg">
-              <p className="text-red-400">
-                {error}
-              </p>
+            <div className="mt-2 text-red-400 text-sm">
+              {error}
             </div>
           )}
+        </div>
 
-          {/* Action Buttons */}
-          <div className="mb-8 flex flex-wrap gap-4">
-            <button
-              onClick={downloadXML}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
-            >
-              📄 Download XML
-            </button>
-            <button
-              onClick={copyXML}
-              className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors"
-            >
-              📋 Copy XML
-            </button>
-            <button
-              onClick={downloadCSV}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors"
-            >
-              📊 Download CSV
-            </button>
-            <button
-              onClick={copyCSV}
-              className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors"
-            >
-              📋 Copy CSV
-            </button>
-          </div>
-
-          {/* Tab Navigation */}
+        {/* Tab Navigation */}
           <div className="bg-gray-800 rounded-lg">
             <div className="flex border-b border-gray-600">
               <button
@@ -444,37 +491,7 @@ const ScheduleXMLPage: React.FC = () => {
                       </div>
                     </div>
                     <div>
-                      <h4 className="font-semibold text-blue-300 mb-2">3. Alternative: Direct Links (Netlify Only):</h4>
-                      <div className="space-y-2">
-                        <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
-                          <code className="text-green-400 break-all flex-1">
-                            {window.location.origin}/.netlify/functions/schedule-xml?eventId={eventId}
-                          </code>
-                          <button
-                            onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/schedule-xml?eventId=${eventId}`)}
-                            className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                          >
-                            Copy
-                          </button>
-                        </div>
-                        <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
-                          <code className="text-green-400 break-all flex-1">
-                            {window.location.origin}/.netlify/functions/schedule-csv?eventId={eventId}
-                          </code>
-                          <button
-                            onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/schedule-csv?eventId=${eventId}`)}
-                            className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                          >
-                            Copy
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-xs text-gray-400 mt-2">
-                        💡 <strong>Tip:</strong> These direct Netlify Function URLs work immediately without any server setup!
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-blue-300 mb-2">4. VMIX Setup:</h4>
+                      <h4 className="font-semibold text-blue-300 mb-2">3. VMIX Setup:</h4>
                       <ul className="list-disc list-inside space-y-1 text-gray-300">
                         <li>Open VMIX and go to Data Sources</li>
                         <li>Add a new Data Source</li>
@@ -506,7 +523,6 @@ const ScheduleXMLPage: React.FC = () => {
               )}
             </div>
           </div>
-        </div>
       </div>
     </div>
   );

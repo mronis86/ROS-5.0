@@ -85,6 +85,7 @@ const CustomColumnsXMLPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'preview' | 'instructions'>('preview');
+  const [refreshInterval, setRefreshInterval] = useState(10); // seconds
 
   const fetchCustomColumns = async () => {
     try {
@@ -110,16 +111,16 @@ const CustomColumnsXMLPage: React.FC = () => {
       const customColumns = data.custom_columns || [];
       const customColumnsData: CustomColumnEntry[] = [];
 
-      // Filter for public items only (like Python script)
-      const publicItems = scheduleItems.filter(item => item.isPublic);
+      console.log('📊 Total custom column items:', scheduleItems.length);
 
-      // Get custom column names (like Python script)
+      // Process all items (like Lower Thirds page does)
+      // Get custom column names
       const customColumnNames = customColumns
         .filter(col => col.name)
         .map(col => col.name);
 
-      publicItems.forEach((item, index) => {
-        // Create a base entry for each public item (like Python script)
+      scheduleItems.forEach((item, index) => {
+        // Create a base entry for each item
         const baseEntry: CustomColumnEntry = {
           id: `${item.id}-custom`,
           row: index + 1, // Row number
@@ -130,6 +131,8 @@ const CustomColumnsXMLPage: React.FC = () => {
         
         customColumnsData.push(baseEntry);
       });
+
+      console.log('📊 Processed custom column items:', customColumnsData.length);
 
       setCustomColumns(customColumnsData);
       setLastUpdated(new Date());
@@ -162,15 +165,13 @@ const CustomColumnsXMLPage: React.FC = () => {
           const customColumns = data.custom_columns || [];
           const customColumnsData: CustomColumnEntry[] = [];
 
-          // Filter for public items only
-          const publicItems = scheduleItems.filter(item => item.isPublic);
-
+          // Process all items (like Lower Thirds page does)
           // Get custom column names
           const customColumnNames = customColumns
             .filter(col => col.name)
             .map(col => col.name);
 
-          publicItems.forEach((item, index) => {
+          scheduleItems.forEach((item, index) => {
             const baseEntry: CustomColumnEntry = {
               id: `${item.id}-custom`,
               row: index + 1,
@@ -202,6 +203,11 @@ const CustomColumnsXMLPage: React.FC = () => {
       socketClient.disconnect(eventId);
     };
   }, [eventId]);
+
+  // Handle manual refresh
+  const handleRefresh = () => {
+    fetchCustomColumns();
+  };
 
   const generateXML = (data: CustomColumnEntry[]): string => {
     const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
@@ -334,26 +340,102 @@ const CustomColumnsXMLPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold mb-4">Custom Columns XML Feed</h1>
-            <p className="text-gray-300 text-lg">
-              Live XML and CSV data for VMIX integration with custom fields
+    <div className="min-h-screen bg-gray-900 text-white p-6">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">Custom Columns XML Feed</h1>
+          <p className="text-gray-400">
+            Live XML data feed for VMIX integration with WebSocket updates
+          </p>
+          {eventId && (
+            <p className="text-sm text-blue-400 mt-2">
+              Event ID: {eventId}
             </p>
-            {eventId && (
-              <p className="text-blue-400 mt-2">Event ID: {eventId}</p>
-            )}
-            {lastUpdated && (
-              <p className="text-gray-400 text-sm mt-2">
-                Last updated: {lastUpdated.toLocaleString()}
-              </p>
-            )}
+          )}
+        </div>
+
+        {/* Controls */}
+        <div className="bg-gray-800 rounded-lg p-6 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <label className="block text-sm font-medium">
+                Refresh Interval (seconds)
+              </label>
+              <select
+                value={refreshInterval}
+                onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
+              >
+                <option value={5}>5 seconds</option>
+                <option value={10}>10 seconds</option>
+                <option value={30}>30 seconds</option>
+                <option value={60}>1 minute</option>
+              </select>
+              <button
+                onClick={handleRefresh}
+                disabled={isLoading}
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+              >
+                {isLoading ? 'Loading...' : 'Refresh Now'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={downloadXML}
+                className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-medium"
+              >
+                Download XML
+              </button>
+              <button
+                onClick={copyXML}
+                className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded font-medium"
+              >
+                Copy XML
+              </button>
+              <button
+                onClick={downloadCSV}
+                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-medium"
+              >
+                Download CSV
+              </button>
+              <button
+                onClick={copyCSV}
+                className="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded font-medium"
+              >
+                Copy CSV
+              </button>
+            </div>
           </div>
+        </div>
 
+        {/* Status */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className={`w-3 h-3 rounded-full ${isLoading ? 'bg-yellow-500' : error ? 'bg-red-500' : 'bg-green-500'}`}></div>
+              <span className="font-medium">
+                {isLoading ? 'Loading...' : error ? 'Error' : 'Connected'}
+              </span>
+              {lastUpdated && (
+                <span className="text-sm text-gray-400">
+                  Last updated: {lastUpdated.toLocaleString()}
+                </span>
+              )}
+            </div>
+            <div className="text-sm text-gray-400">
+              Auto-refresh: {refreshInterval}s
+            </div>
+          </div>
+          {error && (
+            <div className="mt-2 text-red-400 text-sm">
+              {error}
+            </div>
+          )}
+        </div>
 
-          <div className="flex space-x-4 mb-6">
+        <div className="flex space-x-4 mb-6">
             <button
               className={`px-6 py-3 rounded-lg font-semibold transition-colors ${
                 activeTab === 'preview'
@@ -374,9 +456,9 @@ const CustomColumnsXMLPage: React.FC = () => {
             >
               🔧 VMIX Instructions
             </button>
-          </div>
+        </div>
 
-          {activeTab === 'preview' && (
+        {activeTab === 'preview' && (
             <div className="bg-gray-800 rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">XML Preview</h2>
               <div className="bg-gray-900 rounded p-4 overflow-auto max-h-96">
@@ -419,9 +501,9 @@ const CustomColumnsXMLPage: React.FC = () => {
                 </div>
               </div>
             </div>
-          )}
+        )}
 
-          {activeTab === 'instructions' && (
+        {activeTab === 'instructions' && (
             <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-6">
               <h3 className="text-lg font-bold mb-4 text-blue-400">VMIX Integration Instructions</h3>
               
@@ -456,36 +538,6 @@ const CustomColumnsXMLPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <h4 className="text-md font-semibold mb-2 text-blue-300">Alternative: Direct Links (Netlify Only):</h4>
-                  <div className="space-y-2">
-                    <div className="bg-gray-800 rounded p-3 flex items-center space-x-2">
-                      <code className="text-green-400 flex-1 text-sm">
-                        {window.location.origin}/.netlify/functions/custom-columns-xml?eventId={eventId || 'YOUR_EVENT_ID'}
-                      </code>
-                      <button
-                        onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/custom-columns-xml?eventId=${eventId || 'YOUR_EVENT_ID'}`)}
-                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    <div className="bg-gray-800 rounded p-3 flex items-center space-x-2">
-                      <code className="text-green-400 flex-1 text-sm">
-                        {window.location.origin}/.netlify/functions/custom-columns-csv?eventId={eventId || 'YOUR_EVENT_ID'}
-                      </code>
-                      <button
-                        onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/custom-columns-csv?eventId=${eventId || 'YOUR_EVENT_ID'}`)}
-                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-2">
-                    💡 <strong>Tip:</strong> These direct Netlify Function URLs work immediately without any server setup!
-                  </p>
-                </div>
 
                 <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-4">
                   <h4 className="text-md font-semibold mb-2 text-yellow-300">Environment:</h4>
@@ -507,8 +559,7 @@ const CustomColumnsXMLPage: React.FC = () => {
                 </div>
               </div>
             </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

@@ -10,6 +10,9 @@ import FullScreenTimerPage from './pages/FullScreenTimerPage';
 import ClockPage from './pages/ClockPage';
 import LowerThirdsXMLPage from './pages/LowerThirdsXMLPage';
 import NetlifyLowerThirdsXMLPage from './pages/NetlifyLowerThirdsXMLPage';
+import NetlifyScheduleXMLPage from './pages/NetlifyScheduleXMLPage';
+import NetlifyCustomColumnsXMLPage from './pages/NetlifyCustomColumnsXMLPage';
+import GoogleSheetsVMIXPage from './pages/GoogleSheetsVMIXPage';
 import ScheduleXMLPage from './pages/ScheduleXMLPage';
 import CustomColumnsXMLPage from './pages/CustomColumnsXMLPage';
 import GraphicsLinksPage from './pages/GraphicsLinksPage';
@@ -23,11 +26,14 @@ function AppContent() {
   const isClock = location.pathname === '/clock';
   const isGreenRoom = location.pathname === '/green-room';
   const isPhotoView = location.pathname === '/photo-view';
+  const isGoogleSheets = location.pathname === '/google-sheets-vmix';
+  const isLocalXML = location.pathname === '/lower-thirds-xml' || location.pathname === '/schedule-xml' || location.pathname === '/custom-columns-xml';
+  const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
 
   return (
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isGreenRoom && !isPhotoView && <AppHeader />}
+      {!isFullScreenTimer && !isGreenRoom && !isPhotoView && !isGoogleSheets && !isLocalXML && !isNetlifyXML && <AppHeader />}
       
       <AuthGuard>
         <Routes>
@@ -47,7 +53,10 @@ function AppContent() {
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
         <Route path="/schedule-xml" element={<ScheduleXMLPage />} />
+        <Route path="/netlify-schedule-xml" element={<NetlifyScheduleXMLPage />} />
         <Route path="/custom-columns-xml" element={<CustomColumnsXMLPage />} />
+        <Route path="/netlify-custom-columns-xml" element={<NetlifyCustomColumnsXMLPage />} />
+        <Route path="/google-sheets-vmix" element={<GoogleSheetsVMIXPage />} />
       </Routes>
     </div>
   );

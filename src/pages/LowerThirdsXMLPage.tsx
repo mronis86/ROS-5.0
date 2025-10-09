@@ -576,37 +576,7 @@ const LowerThirdsXMLPage: React.FC = () => {
                     </div>
                   </div>
                   <div>
-                    <h4 className="font-semibold text-blue-300 mb-2">3. Alternative: Direct Links (Netlify Only):</h4>
-                    <div className="space-y-2">
-                      <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
-                        <code className="text-green-400 break-all flex-1">
-                          {window.location.origin}/.netlify/functions/lower-thirds-xml?eventId={eventId}
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/lower-thirds-xml?eventId=${eventId}`)}
-                          className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
-                        <code className="text-green-400 break-all flex-1">
-                          {window.location.origin}/.netlify/functions/lower-thirds-csv?eventId={eventId}
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/lower-thirds-csv?eventId=${eventId}`)}
-                          className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-2">
-                      💡 <strong>Tip:</strong> These direct Netlify Function URLs work immediately without any server setup!
-                    </p>
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-blue-300 mb-2">4. VMIX Setup:</h4>
+                    <h4 className="font-semibold text-blue-300 mb-2">3. VMIX Setup:</h4>
                     <ul className="list-disc list-inside space-y-1 text-gray-300">
                       <li>Open VMIX and go to Data Sources</li>
                       <li>Add a new Data Source</li>

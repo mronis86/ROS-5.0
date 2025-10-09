@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schedule Live Data - VMIX</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #000;
+            color: #0f0;
+            margin: 0;
+            padding: 20px;
+            font-size: 12px;
+        }
+        .status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 10px;
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid #0f0;
+            border-radius: 4px;
+        }
+        .connected { color: #0f0; }
+        .disconnected { color: #f00; }
+        .data-container {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .info {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: rgba(0, 100, 255, 0.1);
+            border: 1px solid #0af;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="status">
+        <div>Status: <span id="connectionStatus" class="disconnected">Disconnected</span></div>
+        <div>Last Update: <span id="lastUpdate">Never</span></div>
+        <div>Data Size: <span id="dataSize">0</span> chars</div>
+    </div>
+
+    <div class="info">
+        <strong>VMIX Schedule Live Data</strong><br>
+        Format: <span id="format">XML</span> | 
+        Event ID: <span id="eventId">Loading...</span><br>
+        Updates: Real-time via WebSocket (Low Egress)<br>
+        <small>This page connects to Railway WebSocket and generates data in your browser.</small>
+    </div>
+
+    <div class="data-container" id="dataOutput">Loading...</div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const eventId = urlParams.get('eventId');
+        const format = urlParams.get('format') || 'xml';
+
+        document.getElementById('eventId').textContent = eventId || 'Not specified';
+        document.getElementById('format').textContent = format.toUpperCase();
+
+        if (!eventId) {
+            document.getElementById('dataOutput').textContent = 'ERROR: Event ID is required. Add ?eventId=YOUR_EVENT_ID to the URL';
+            document.getElementById('connectionStatus').textContent = 'Error';
+            throw new Error('Event ID required');
+        }
+
+        const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
+        let socket = null;
+        let currentData = null;
+
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+            statusEl.className = connected ? 'connected' : 'disconnected';
+        }
+
+        function calculateStartTime(scheduleItems, currentItem, masterStartTime) {
+            if (!masterStartTime || !scheduleItems || !currentItem) return '';
+            
+            try {
+                const [hours, minutes] = masterStartTime.split(':').map(Number);
+                let totalSeconds = hours * 3600 + minutes * 60;
+                
+                const currentIndex = scheduleItems.findIndex(item => item.id === currentItem.id);
+                if (currentIndex === -1) return masterStartTime;
+                
+                for (let i = 0; i < currentIndex; i++) {
+                    const item = scheduleItems[i];
+                    const duration = item.duration_seconds || 
+                                   ((item.durationHours || 0) * 3600 + 
+                                    (item.durationMinutes || 0) * 60 + 
+                                    (item.durationSeconds || 0));
+                    totalSeconds += duration;
+                }
+                
+                const resultHours = Math.floor(totalSeconds / 3600);
+                const resultMinutes = Math.floor((totalSeconds % 3600) / 60);
+                
+                return `${String(resultHours).padStart(2, '0')}:${String(resultMinutes).padStart(2, '0')}`;
+            } catch (error) {
+                console.error('Error calculating start time:', error);
+                return '';
+            }
+        }
+
+        function generateXML(data) {
+            if (!data || !data.schedule_items) {
+                return `<?xml version="1.0" encoding="UTF-8"?>
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <schedule>
+  </schedule>
+</data>`;
+            }
+
+            const scheduleItems = data.schedule_items;
+            const masterStartTime = data.settings?.masterStartTime || '09:00';
+
+            const items = scheduleItems.map(item => {
+                const startTime = calculateStartTime(scheduleItems, item, masterStartTime);
+                return `
+    <item>
+      <id>${item.id}</id>
+      <row>${scheduleItems.indexOf(item) + 1}</row>
+      <segment_name><![CDATA[${item.segmentName || ''}]]></segment_name>
+      <start_time><![CDATA[${startTime}]]></start_time>
+    </item>`;
+            }).join('');
+
+            return `<?xml version="1.0" encoding="UTF-8"?>
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <schedule>
+    ${items}
+  </schedule>
+</data>`;
+        }
+
+        function generateCSV(data) {
+            if (!data || !data.schedule_items) {
+                return 'Row,Segment Name,Start Time\n';
+            }
+
+            const scheduleItems = data.schedule_items;
+            const masterStartTime = data.settings?.masterStartTime || '09:00';
+            let csv = 'Row,Segment Name,Start Time\n';
+
+            scheduleItems.forEach((item, index) => {
+                const startTime = calculateStartTime(scheduleItems, item, masterStartTime);
+                const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+                csv += `${index + 1},${escapeCsv(item.segmentName || '')},${escapeCsv(startTime)}\n`;
+            });
+
+            return csv;
+        }
+
+        function updateDisplay(data) {
+            currentData = data;
+            const output = format === 'csv' ? generateCSV(data) : generateXML(data);
+            document.getElementById('dataOutput').textContent = output;
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            document.getElementById('dataSize').textContent = output.length;
+        }
+
+        async function loadInitialData() {
+            try {
+                const response = await fetch(`${RAILWAY_URL}/api/run-of-show-data/${eventId}`);
+                if (!response.ok) throw new Error('Failed to fetch initial data');
+                const data = await response.json();
+                updateDisplay(data);
+            } catch (error) {
+                console.error('Error loading initial data:', error);
+                document.getElementById('dataOutput').textContent = 'ERROR: Failed to load initial data. Check console for details.';
+            }
+        }
+
+        function connectWebSocket() {
+            console.log('Connecting to Railway WebSocket...');
+            
+            socket = io(RAILWAY_URL, {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 10
+            });
+
+            socket.on('connect', () => {
+                console.log('✅ Connected to Railway WebSocket');
+                updateStatus(true);
+                socket.emit('join-event', eventId);
+            });
+
+            socket.on('disconnect', () => {
+                console.log('❌ Disconnected from Railway WebSocket');
+                updateStatus(false);
+            });
+
+            socket.on('run-of-show-data-updated', (data) => {
+                console.log('📡 Received data update via WebSocket');
+                if (data && data.event_id === eventId) {
+                    updateDisplay(data);
+                }
+            });
+
+            socket.on('initial-sync', async () => {
+                await loadInitialData();
+            });
+        }
+
+        loadInitialData();
+        connectWebSocket();
+
+        setInterval(() => {
+            if (!socket || !socket.connected) {
+                connectWebSocket();
+            }
+        }, 5000);
+    </script>
+</body>
+</html>

@@ -168,11 +168,6 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
           cue: item.customFields?.cue || '',
           program: item.programType || '',
           segmentName: item.segmentName || '',
-          title: '',
-          subtitle: '',
-          is_active: false,
-          created_at: '',
-          updated_at: '',
           speakers
         });
       });
@@ -213,7 +208,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-2">📺 Lower Thirds - Netlify Edition</h1>
+          <h1 className="text-3xl font-bold mb-2">📺 Lower Thirds - Railway Edition</h1>
           <p className="text-gray-400">
             Event ID: <span className="text-blue-400">{eventId}</span>
           </p>
@@ -327,87 +322,89 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                   </div>
 
                   <div className="space-y-4">
-                    <div className="bg-green-900/30 border border-green-500/50 rounded p-4 mb-4">
-                      <h3 className="font-semibold text-green-300 mb-2">✅ Best for VMIX - Low Egress Static Pages:</h3>
-                      <p className="text-sm text-gray-300">
-                        Use these static HTML pages for VMIX. They use WebSocket for updates (low egress) and are hosted on Netlify (free bandwidth)!
+                    <div className="bg-orange-900/30 border border-orange-500/50 rounded p-4">
+                      <h3 className="font-semibold text-orange-300 mb-2">🚧 Netlify Functions (IN DEVELOPMENT)</h3>
+                      <p className="text-xs text-gray-400 mb-3">
+                        These Netlify Function URLs are still being developed and may not work correctly yet.
                       </p>
+
+                      <div className="space-y-3">
+                        <div>
+                          <h4 className="font-semibold text-purple-300 mb-2 text-sm">🎬 VMIX XML URL (Netlify Function):</h4>
+                          <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
+                            <code className="text-purple-400 break-all flex-1 text-sm">
+                              {window.location.origin}/.netlify/functions/vmix-lower-thirds-xml?eventId={eventId}
+                            </code>
+                            <button
+                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-lower-thirds-xml?eventId={eventId}`)}
+                              className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-xs text-orange-400 mt-1">
+                            🚧 IN DEVELOPMENT: May not work correctly yet
+                          </p>
+                        </div>
+
+                        <div>
+                          <h4 className="font-semibold text-purple-300 mb-2 text-sm">🎬 VMIX CSV URL (Netlify Function):</h4>
+                          <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
+                            <code className="text-purple-400 break-all flex-1 text-sm">
+                              {window.location.origin}/.netlify/functions/vmix-lower-thirds-csv?eventId={eventId}
+                            </code>
+                            <button
+                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-lower-thirds-csv?eventId={eventId}`)}
+                              className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-xs text-orange-400 mt-1">
+                            🚧 IN DEVELOPMENT: May not work correctly yet
+                          </p>
+                        </div>
+                      </div>
                     </div>
 
-          <div>
-            <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX XML URL (Low Egress - RECOMMENDED):</h3>
-            <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
-              <code className="text-purple-400 break-all flex-1 text-sm">
-                {window.location.origin}/vmix-data-endpoint.html?eventId={eventId}&format=xml
-              </code>
-              <button
-                onClick={() => copyToClipboard(`${window.location.origin}/vmix-data-endpoint.html?eventId=${eventId}&format=xml`)}
-                className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
-              >
-                Copy
-              </button>
-            </div>
-            <p className="text-xs text-green-400 mt-1">
-              ⭐ BEST OPTION: Pure XML output • Netlify bandwidth • Low Railway egress
-            </p>
-          </div>
-
-          <div>
-            <h3 className="font-semibold text-purple-300 mb-2">🎬 VMIX CSV URL (Low Egress - RECOMMENDED):</h3>
-            <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
-              <code className="text-purple-400 break-all flex-1 text-sm">
-                {window.location.origin}/vmix-data-endpoint.html?eventId={eventId}&format=csv
-              </code>
-              <button
-                onClick={() => copyToClipboard(`${window.location.origin}/vmix-data-endpoint.html?eventId=${eventId}&format=csv`)}
-                className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
-              >
-                Copy
-              </button>
-            </div>
-            <p className="text-xs text-green-400 mt-1">
-              ⭐ BEST OPTION: Pure CSV output • Netlify bandwidth • Low Railway egress
-            </p>
-          </div>
-
-                    <div className="bg-yellow-900/30 border border-yellow-500/50 rounded p-4 mt-4">
-                      <h3 className="font-semibold text-yellow-300 mb-2">⚠️ Alternative: Direct Railway API (Higher Egress)</h3>
+                    <div className="bg-green-900/30 border border-green-500/50 rounded p-4">
+                      <h3 className="font-semibold text-green-300 mb-2">✅ Direct Railway API (WORKING NOW)</h3>
                       <p className="text-xs text-gray-400 mb-2">
-                        These URLs work but use more Railway bandwidth. Only use if the static pages don't work.
+                        These URLs work reliably! Use them while Netlify Functions are in development.
                       </p>
 
                       <div className="space-y-3 mt-3">
                         <div>
                           <h4 className="font-semibold text-blue-300 mb-2 text-sm">XML Data Source URL (Railway):</h4>
-                      <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
-                        <code className="text-green-400 break-all flex-1 text-sm">
-                          {RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.xml?eventId=${eventId}`)}
-                          className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        ✅ Works from anywhere • Always online • Production ready
-                      </p>
-                    </div>
+                          <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
+                            <code className="text-green-400 break-all flex-1 text-sm">
+                              {RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}
+                            </code>
+                            <button
+                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}`)}
+                              className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            ✅ Works from anywhere • Always online • Production ready
+                          </p>
+                        </div>
 
-                    <div>
-                      <h3 className="font-semibold text-blue-300 mb-2">CSV Data Source URL (Railway):</h3>
-                      <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
-                        <code className="text-green-400 break-all flex-1 text-sm">
-                          {RAILWAY_API_URL}/lower-thirds.csv?eventId={eventId}
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.csv?eventId=${eventId}`)}
-                          className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
+                        <div>
+                          <h4 className="font-semibold text-blue-300 mb-2 text-sm">CSV Data Source URL (Railway):</h4>
+                          <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
+                            <code className="text-green-400 break-all flex-1 text-sm">
+                              {RAILWAY_API_URL}/lower-thirds.csv?eventId={eventId}
+                            </code>
+                            <button
+                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.csv?eventId={eventId}`)}
+                              className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                            >
+                              Copy
+                            </button>
+                          </div>
                           <p className="text-xs text-gray-500 mt-1">
                             Higher egress cost
                           </p>
@@ -415,7 +412,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="bg-gray-700/50 border border-gray-600 rounded p-4 mt-4">
+                    <div className="bg-gray-700/50 border border-gray-600 rounded p-4">
                       <h3 className="font-semibold text-gray-300 mb-2">Alternative: Local Development</h3>
                       <div className="space-y-2 text-sm">
                         <div>
@@ -432,21 +429,21 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="bg-blue-900/30 border border-blue-500/50 rounded p-4 mt-6">
+                    <div className="bg-blue-900/30 border border-blue-500/50 rounded p-4">
                       <h3 className="font-semibold text-blue-300 mb-2">📝 How to use in VMIX:</h3>
                       <ol className="list-decimal list-inside space-y-2 text-sm text-gray-300">
                         <li>Open VMIX and go to <strong>Settings → Data Sources</strong></li>
                         <li>Click <strong>Add</strong> to create a new data source</li>
                         <li>Choose <strong>XML</strong> or <strong>CSV</strong> as the type</li>
-                        <li>Paste one of the URLs above</li>
+                        <li>Paste one of the Railway API URLs above (yellow section)</li>
                         <li>Set refresh interval to <strong>10 seconds</strong></li>
                         <li>Click <strong>OK</strong> to save</li>
                         <li>Use the data fields in your VMIX titles/overlays</li>
                       </ol>
                     </div>
 
-                    <div className="bg-green-900/30 border border-green-500/50 rounded p-4">
-                      <h3 className="font-semibold text-green-300 mb-2">✅ Benefits of Railway API:</h3>
+                    <div className="bg-blue-900/30 border border-blue-500/50 rounded p-4">
+                      <h3 className="font-semibold text-blue-300 mb-2">ℹ️ Why Railway API?</h3>
                       <ul className="list-disc list-inside space-y-1 text-sm text-gray-300">
                         <li>Always running (not serverless)</li>
                         <li>Reliable and fast</li>

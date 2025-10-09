@@ -1,0 +1,17 @@
+{
+  "name": "ros-local-server",
+  "version": "1.0.0",
+  "description": "Run of Show - Local Server with React App and API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3",
+    "dotenv": "^16.3.1",
+    "socket.io": "^4.6.1"
+  },
+  "author": "",
+  "license": "ISC"
+}
+

@@ -185,320 +185,7 @@ const GraphicsLinksPage: React.FC = () => {
     return obj;
   };
 
-  const generateScheduleJSON = async () => {
-    console.log('=== GRAPHICS LINKS JSON GENERATION ===');
-    
-    // Load fresh schedule data when generating JSON
-    let currentSchedule = schedule;
-    try {
-      if (event?.id) {
-        const data = await DatabaseService.getRunOfShowData(event.id);
-        if (data?.schedule_items) {
-          currentSchedule = data.schedule_items;
-          console.log('✅ Loaded fresh schedule data for JSON generation');
-        }
-      }
-    } catch (error) {
-      console.log('⚠️ Using cached schedule data:', error);
-    }
-    
-    console.log('Using schedule data:', currentSchedule);
-    
-    // Get master start time - try localStorage first (no egress)
-    let masterStartTime = '';
-    
-    // Try localStorage first (fastest, no egress)
-    const keys = Object.keys(localStorage);
-    const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
-    
-    if (masterTimeKeys.length > 0) {
-      const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
-      const savedMasterTime = localStorage.getItem(latestMasterKey);
-      if (savedMasterTime) {
-        masterStartTime = savedMasterTime;
-        console.log('Master start time from localStorage:', masterStartTime);
-      }
-    }
-    
-    // Only fallback to API if localStorage fails
-    if (!masterStartTime && event?.id) {
-      try {
-        const data = await DatabaseService.getRunOfShowData(event.id);
-        if (data?.settings?.masterStartTime) {
-          masterStartTime = data.settings.masterStartTime;
-          console.log('Master start time from API:', masterStartTime);
-        }
-      } catch (error) {
-        console.log('Error getting master start time from API:', error);
-      }
-    }
-    
-    // Calculate start time function (same as RunOfShowPage)
-    const calculateStartTime = (index: number) => {
-      const currentItem = currentSchedule[index];
-      if (!currentItem) return '';
-      
-      // If this item is indented, return empty string (no start time)
-      if (currentItem.isIndented) {
-        return '';
-      }
-      
-      // If no start time is set, return blank
-      if (!masterStartTime) return '';
-      
-      // Calculate total seconds from the beginning up to this item
-      let totalSeconds = 0;
-      for (let i = 0; i < index; i++) {
-        const item = currentSchedule[i];
-        // Only count non-indented items
-        if (!item.isIndented) {
-          totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
-        }
-      }
-      
-      const [hours, minutes] = masterStartTime.split(':').map(Number);
-      const startSeconds = hours * 3600 + minutes * 60;
-      const totalStartSeconds = startSeconds + totalSeconds;
-      
-      const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
-      const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
-      
-      // Convert to 12-hour format
-      const date = new Date();
-      date.setHours(finalHours, finalMinutes, 0, 0);
-      return date.toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit',
-        hour12: true 
-      });
-    };
-    
-    console.log('=== FINAL DATA SUMMARY ===');
-    console.log('Schedule data:', currentSchedule);
-    console.log('Master start time:', masterStartTime);
-    console.log('=== END FINAL DATA SUMMARY ===');
-    
-    // Filter for public items and create clean data
-    const publicItems = currentSchedule
-      .filter(item => item.isPublic === true)
-      .map(item => {
-        const itemIndex = currentSchedule.findIndex(s => s.id === item.id);
-        const calculatedStartTime = calculateStartTime(itemIndex);
-        
-        return {
-          segmentName: item.segmentName || 'Untitled Segment',
-          startTime: calculatedStartTime || 'No Start Time'
-        };
-      });
-    
-    console.log('Public items found:', publicItems);
-    
-    const jsonData = {
-      event: event?.name || 'Current Event',
-      generated: new Date().toISOString(),
-      schedule: publicItems
-    };
 
-    // Sanitize the JSON data for VMIX compatibility
-    const sanitizedData = sanitizeJSONForVMIX(jsonData);
-    const jsonString = JSON.stringify(sanitizedData, null, 2);
-
-    // Create actual JSON file
-    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    // Open in new tab - JSON file will display in browser
-    window.open(url, '_blank');
-  };
-
-  const generateLowerThirdsJSON = async () => {
-    console.log('=== GENERATING LOWER THIRDS JSON ===');
-    console.log('Event ID from URL:', eventId);
-    console.log('Event object:', event);
-    
-    // Load fresh schedule data when generating JSON
-    let currentSchedule = schedule;
-    try {
-      if (event?.id) {
-        const data = await DatabaseService.getRunOfShowData(event.id);
-        if (data?.schedule_items) {
-          currentSchedule = data.schedule_items;
-          console.log('✅ Loaded fresh schedule data for Lower Thirds JSON');
-        }
-      }
-    } catch (error) {
-      console.log('⚠️ Using cached schedule data for Lower Thirds:', error);
-    }
-    
-    console.log('Using schedule data:', currentSchedule);
-    console.log('Schedule length:', currentSchedule.length);
-    console.log('First few items:', currentSchedule.slice(0, 3));
-    
-    // Debug: Check for speakers data in schedule
-    const itemsWithSpeakers = currentSchedule.filter(item => item.speakersText && item.speakersText.trim());
-    console.log('Items with speakers data:', itemsWithSpeakers.length);
-    console.log('Items with speakers:', itemsWithSpeakers.map(item => ({
-      segmentName: item.segmentName,
-      speakersText: item.speakersText,
-      speakersLength: item.speakersText?.length || 0
-    })));
-    
-    // Check if we have the right event data
-    if (currentSchedule.length === 0) {
-      console.log('⚠️ NO SCHEDULE DATA FOUND!');
-      console.log('Available localStorage keys:', Object.keys(localStorage));
-      console.log('Looking for keys with event ID:', eventId);
-    }
-    
-    // Get master start time from localStorage
-    let masterStartTime = '';
-    const keys = Object.keys(localStorage);
-    const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
-    
-    if (masterTimeKeys.length > 0) {
-      const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
-      const savedMasterTime = localStorage.getItem(latestMasterKey);
-      if (savedMasterTime) {
-        masterStartTime = savedMasterTime;
-      }
-    }
-    
-    // Calculate start time function (same as RunOfShowPage)
-    const calculateStartTime = (index: number) => {
-      if (!masterStartTime) return '';
-      
-      let totalMinutes = 0;
-      for (let i = 0; i < index; i++) {
-        const item = currentSchedule[i];
-        totalMinutes += (item.durationHours * 60) + item.durationMinutes;
-      }
-      
-      const [hours, minutes] = masterStartTime.split(':').map(Number);
-      const startDate = new Date();
-      startDate.setHours(hours, minutes + totalMinutes, 0, 0);
-      
-      return startDate.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
-    };
-    
-    // Create horizontal table structure - one row per CUE/segment with all speakers
-    const cueRows: any[] = [];
-    
-    currentSchedule.forEach((item, itemIndex) => {
-      console.log('Processing item:', item.segmentName, 'Speakers:', item.speakersText);
-      console.log('Item details:', {
-        id: item.id,
-        segmentName: item.segmentName,
-        speakersText: item.speakersText,
-        speakersTextLength: item.speakersText?.length || 0,
-        speakersTextType: typeof item.speakersText
-      });
-      
-      // Initialize row with basic segment info and empty speaker slots
-      const cueRow = {
-        row: itemIndex + 1,
-        cue: item.customFields.cue || '',
-        program: item.programType || '',
-        segmentName: item.segmentName || '',
-        // Speaker 1 fields
-        speaker1Name: '',
-        speaker1TitleOrg: '',
-        speaker1Photo: '',
-        // Speaker 2 fields
-        speaker2Name: '',
-        speaker2TitleOrg: '',
-        speaker2Photo: '',
-        // Speaker 3 fields
-        speaker3Name: '',
-        speaker3TitleOrg: '',
-        speaker3Photo: '',
-        // Speaker 4 fields
-        speaker4Name: '',
-        speaker4TitleOrg: '',
-        speaker4Photo: '',
-        // Speaker 5 fields
-        speaker5Name: '',
-        speaker5TitleOrg: '',
-        speaker5Photo: '',
-        // Speaker 6 fields
-        speaker6Name: '',
-        speaker6TitleOrg: '',
-        speaker6Photo: '',
-        // Speaker 7 fields
-        speaker7Name: '',
-        speaker7TitleOrg: '',
-        speaker7Photo: ''
-      };
-      
-      if (item.speakersText && item.speakersText.trim()) {
-        try {
-          // Parse the speakers array from JSON string
-          const speakersArray = JSON.parse(item.speakersText);
-          console.log('Parsed speakers array:', speakersArray);
-          console.log('Speakers array length:', speakersArray?.length || 0);
-          
-          // Sort speakers by their slot number
-          const sortedSpeakers = speakersArray.sort((a, b) => a.slot - b.slot);
-          console.log('Sorted speakers by slot:', sortedSpeakers);
-          
-          // Fill in speaker data for each slot
-          sortedSpeakers.forEach((speaker) => {
-            const speakerSlot = speaker.slot;
-            
-            if (speakerSlot >= 1 && speakerSlot <= 7) {
-              const speakerName = speaker.fullName || '';
-              const speakerTitleOrg = speaker.title && speaker.org 
-                ? `${speaker.title}\n${speaker.org}`
-                : speaker.title || speaker.org || '';
-              const speakerPhoto = speaker.photoLink || '';
-              
-              // Set the appropriate speaker slot fields
-              cueRow[`speaker${speakerSlot}Name`] = speakerName;
-              cueRow[`speaker${speakerSlot}TitleOrg`] = speakerTitleOrg;
-              cueRow[`speaker${speakerSlot}Photo`] = speakerPhoto;
-              
-              console.log(`Set speaker ${speakerSlot} (${speakerName}) in row ${itemIndex + 1}`);
-            } else {
-              console.log(`Speaker slot ${speakerSlot} (${speaker.fullName}) is outside range 1-7, skipping`);
-            }
-          });
-        } catch (error) {
-          console.log('Error parsing speakers JSON:', error);
-          console.log('Raw speakers data:', item.speakersText);
-        }
-      } else {
-        console.log('No speakers found in row:', item.segmentName);
-      }
-      
-      cueRows.push(cueRow);
-    });
-    
-    console.log('CUE rows with all speakers:', cueRows);
-    
-    const jsonData = {
-      event: event?.name || 'Current Event',
-      generated: new Date().toISOString(),
-      lowerThirds: {
-        cueRows: cueRows,
-        totalRows: cueRows.length,
-        totalSpeakers: cueRows.reduce((total, row) => {
-          return total + [1,2,3,4,5,6,7].filter(slot => row[`speaker${slot}Name`].trim()).length;
-        }, 0)
-      }
-    };
-
-    // Sanitize the JSON data for VMIX compatibility
-    const sanitizedData = sanitizeJSONForVMIX(jsonData);
-    const jsonString = JSON.stringify(sanitizedData, null, 2);
-    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    window.open(url, '_blank');
-    console.log('=== END GENERATING LOWER THIRDS JSON ===');
-  };
 
   const generateLiveLowerThirdsURL = () => {
     // Generate a URL that VMIX can poll for real-time updates
@@ -795,75 +482,100 @@ const GraphicsLinksPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Event ID Section */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <div className="bg-blue-900 rounded-xl p-6 shadow-2xl border border-blue-700">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-white">📋 Event ID for Desktop App</h2>
-              <p className="text-blue-200 text-sm mt-1">Copy this Event ID to use in the Python desktop application</p>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="bg-slate-700 px-4 py-2 rounded-lg">
-                <code className="text-green-400 font-mono text-lg">{eventId || event?.id || 'No Event ID'}</code>
+      {/* Downloads Section */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="mb-6">
+          <h2 className="text-3xl font-bold text-white mb-2">📥 Downloads & Tools</h2>
+          <p className="text-gray-400">Desktop applications and local server packages for offline use</p>
+        </div>
+
+        {/* Event ID Card */}
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-4 shadow-lg border border-blue-400 mb-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 flex-1">
+              <h3 className="text-lg font-bold text-white whitespace-nowrap">📋 Event ID:</h3>
+              <div className="bg-gray-900 px-4 py-2 rounded border border-blue-400 flex-1">
+                <code className="text-green-400 font-mono text-sm font-bold">{eventId || event?.id || 'No Event ID'}</code>
               </div>
-              <button
-                onClick={() => {
-                  const id = eventId || event?.id;
-                  if (id) {
-                    navigator.clipboard.writeText(id).then(() => {
-                      alert('Event ID copied to clipboard!');
-                    }).catch(() => {
-                      // Fallback for older browsers
-                      const textArea = document.createElement('textarea');
-                      textArea.value = id;
-                      document.body.appendChild(textArea);
-                      textArea.select();
-                      document.execCommand('copy');
-                      document.body.removeChild(textArea);
-                      alert('Event ID copied to clipboard!');
-                    });
-                  } else {
-                    alert('No Event ID available');
-                  }
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-              >
-                📋 Copy Event ID
-              </button>
             </div>
+            <button
+              onClick={() => {
+                const id = eventId || event?.id;
+                if (id) {
+                  navigator.clipboard.writeText(id).then(() => {
+                    alert('Event ID copied to clipboard!');
+                  }).catch(() => {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = id;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    alert('Event ID copied to clipboard!');
+                  });
+                } else {
+                  alert('No Event ID available');
+                }
+              }}
+              className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors font-semibold whitespace-nowrap text-sm"
+            >
+              📋 Copy
+            </button>
           </div>
         </div>
-      </div>
 
-      {/* Python Desktop App Section */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <div className="bg-green-900 rounded-xl p-6 shadow-2xl border border-green-700">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-white">🐍 Python Desktop App</h2>
-              <p className="text-green-200 text-sm mt-1">Download the Python application for generating live graphics files</p>
+        {/* Download Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Python Desktop App */}
+          <div className="bg-green-800 rounded-lg p-5 shadow-lg border border-green-600 hover:shadow-xl transition-shadow">
+            <h3 className="text-lg font-bold text-white mb-2">🐍 Python Desktop App</h3>
+            <p className="text-green-200 text-xs mb-3">Standalone graphics generator with GUI interface</p>
+            
+            <div className="bg-green-900/30 rounded p-2 mb-3">
+              <ul className="text-green-100 text-xs space-y-0.5">
+                <li>• CSV files every 10 seconds</li>
+                <li>• Desktop GUI (no browser needed)</li>
+                <li>• WebSocket real-time updates</li>
+              </ul>
             </div>
-            <div className="flex items-center space-x-4">
-              <a
-                href="/LiveGraphicsGenerator-Python.zip"
-                download="LiveGraphicsGenerator-Python.zip"
-                className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg transition-colors font-semibold"
-              >
-                📥 Download Python App
-              </a>
-            </div>
+            
+            <a
+              href="/LiveGraphicsGenerator-Python.zip"
+              download="LiveGraphicsGenerator-Python.zip"
+              className="block w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
+            >
+              📥 Download Python App
+            </a>
+            <p className="text-green-300 text-xs text-center mt-2">~2 MB • Requires Python 3.8+</p>
           </div>
-          <div className="mt-4 text-green-200 text-sm">
-            <p>• Generates CSV files every 10 seconds</p>
-            <p>• No browser required - runs as desktop application</p>
-            <p>• Easy setup with GUI interface</p>
+
+          {/* Local Server Package */}
+          <div className="bg-purple-800 rounded-lg p-5 shadow-lg border border-purple-600 hover:shadow-xl transition-shadow">
+            <h3 className="text-lg font-bold text-white mb-2">💻 Python Local Server</h3>
+            <p className="text-purple-200 text-xs mb-3">Complete server with React app and VMIX API</p>
+            
+            <div className="bg-purple-900/30 rounded p-2 mb-3">
+              <ul className="text-purple-100 text-xs space-y-0.5">
+                <li>• Full React app + API (port 3002)</li>
+                <li>• All VMIX XML/CSV endpoints</li>
+                <li>• One-click start • Python only</li>
+              </ul>
+            </div>
+            
+            <a
+              href="/ROS-Local-Server-Python.zip"
+              download="ROS-Local-Server-Python.zip"
+              className="block w-full bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
+            >
+              📥 Download Local Server
+            </a>
+            <p className="text-purple-300 text-xs text-center mt-2">~2 MB • Requires Python 3.8+</p>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-slate-800 rounded-xl p-8 shadow-2xl">
           <div className="flex items-center justify-between mb-6">
             <div>
@@ -958,29 +670,13 @@ const GraphicsLinksPage: React.FC = () => {
               <h3 className="text-xl font-semibold text-white mb-4 text-center">Lower Thirds</h3>
               <div className="space-y-3 mt-auto">
                 <button
-                  onClick={async () => {
-                    try {
-                      await generateLowerThirdsJSON();
-                    } catch (error) {
-                      console.error('Error generating lower thirds JSON:', error);
-                      alert('Error generating lower thirds JSON');
-                    }
+                  onClick={() => {
+                    const url = `/netlify-lower-thirds-xml?eventId=${event.id}`;
+                    window.open(url, '_blank');
                   }}
-                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
+                  className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  📄 Generate Static JSON
-                </button>
-                <button
-                  onClick={generateLiveLowerThirdsURL}
-                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  🔄 Generate Live JSON URL
-                </button>
-                <button
-                  onClick={generateLiveLowerThirdsCSVURL}
-                  className="w-full px-4 py-3 bg-yellow-600 hover:bg-yellow-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  🔄 Generate Live CSV URL
+                  🌐 XML/CSV Feed Page (Railway) ✅
                 </button>
                 <button
                   onClick={() => {
@@ -989,16 +685,16 @@ const GraphicsLinksPage: React.FC = () => {
                   }}
                   className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  📊 Open XML Feed Page (Local)
+                  📊 XML/CSV Feed Page (Local)
                 </button>
                 <button
                   onClick={() => {
-                    const url = `/netlify-lower-thirds-xml?eventId=${event.id}`;
+                    const url = `/google-sheets-vmix?eventId=${event.id}`;
                     window.open(url, '_blank');
                   }}
-                  className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition-colors"
+                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  🌐 Open XML Feed Page (Netlify/Railway)
+                  📊 Google Sheets VMIX Integration
                 </button>
               </div>
             </div>
@@ -1008,29 +704,13 @@ const GraphicsLinksPage: React.FC = () => {
               <h3 className="text-xl font-semibold text-white mb-4 text-center">Schedule</h3>
               <div className="space-y-3 mt-auto">
                 <button
-                  onClick={async () => {
-                    try {
-                      await generateScheduleJSON();
-                    } catch (error) {
-                      console.error('Error generating schedule JSON:', error);
-                      alert('Error generating schedule JSON');
-                    }
+                  onClick={() => {
+                    const url = `/netlify-schedule-xml?eventId=${event.id}`;
+                    window.open(url, '_blank');
                   }}
-                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
+                  className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  📄 Generate Static JSON
-                </button>
-                <button
-                  onClick={generateLiveScheduleURL}
-                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  🔄 Generate Live JSON URL
-                </button>
-                <button
-                  onClick={generateLiveScheduleCSVURL}
-                  className="w-full px-4 py-3 bg-yellow-600 hover:bg-yellow-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  🔄 Generate Live CSV URL
+                  🌐 XML/CSV Feed Page (Railway) ✅
                 </button>
                 <button
                   onClick={() => {
@@ -1039,7 +719,16 @@ const GraphicsLinksPage: React.FC = () => {
                   }}
                   className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  📅 Open Schedule XML Feed
+                  📊 XML/CSV Feed Page (Local)
+                </button>
+                <button
+                  onClick={() => {
+                    const url = `/google-sheets-vmix?eventId=${event.id}`;
+                    window.open(url, '_blank');
+                  }}
+                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors"
+                >
+                  📊 Google Sheets VMIX Integration
                 </button>
               </div>
             </div>
@@ -1049,29 +738,13 @@ const GraphicsLinksPage: React.FC = () => {
               <h3 className="text-xl font-semibold text-white mb-4 text-center">Custom Graphics</h3>
               <div className="space-y-3 mt-auto">
                 <button
-                  onClick={async () => {
-                    try {
-                      await generateCustomGraphicsJSON();
-                    } catch (error) {
-                      console.error('Error generating custom graphics JSON:', error);
-                      alert('Error generating custom graphics JSON');
-                    }
+                  onClick={() => {
+                    const url = `/netlify-custom-columns-xml?eventId=${event.id}`;
+                    window.open(url, '_blank');
                   }}
-                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
+                  className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  📄 Generate Static JSON
-                </button>
-                <button
-                  onClick={generateLiveCustomGraphicsURL}
-                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  🔄 Generate Live JSON URL
-                </button>
-                <button
-                  onClick={generateLiveCustomGraphicsCSVURL}
-                  className="w-full px-4 py-3 bg-yellow-600 hover:bg-yellow-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  🔄 Generate Live CSV URL
+                  🌐 XML/CSV Feed Page (Railway) ✅
                 </button>
                 <button
                   onClick={() => {
@@ -1080,7 +753,16 @@ const GraphicsLinksPage: React.FC = () => {
                   }}
                   className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors"
                 >
-                  📊 Open Custom Columns XML Feed
+                  📊 XML/CSV Feed Page (Local)
+                </button>
+                <button
+                  onClick={() => {
+                    const url = `/google-sheets-vmix?eventId=${event.id}`;
+                    window.open(url, '_blank');
+                  }}
+                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors"
+                >
+                  📊 Google Sheets VMIX Integration
                 </button>
               </div>
             </div>
