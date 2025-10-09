@@ -7,8 +7,9 @@ const { Server } = require('socket.io');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Force Railway rebuild - 2025-10-08
+// Force Railway rebuild - 2025-10-08 - Build #2
 // Auth is now handled via direct database connection
+// Neon database with PostgreSQL pg library
 
 const app = express();
 const server = createServer(app);
