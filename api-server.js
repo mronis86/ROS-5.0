@@ -1059,7 +1059,111 @@ function broadcastToAll(eventId, updateType, data) {
   console.log(`📡 Socket.IO broadcast sent to event:${eventId} - ${updateType}`);
 }
 
+// ========================================
+// OSC Control Endpoints
+// ========================================
+
+app.post('/api/cues/load', async (req, res) => {
+  try {
+    const { event_id, item_id, user_id } = req.body;
+    
+    // Acknowledge the cue load
+    res.json({ 
+      success: true, 
+      message: 'Cue loaded',
+      event_id,
+      item_id
+    });
+    
+    // Broadcast via Socket.IO
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'cueLoaded',
+      eventId: event_id,
+      itemId: item_id
+    });
+    
+  } catch (error) {
+    console.error('Error loading cue:', error);
+    res.status(500).json({ error: 'Failed to load cue' });
+  }
+});
+
+app.post('/api/timers/start', async (req, res) => {
+  try {
+    const { event_id, item_id, user_id } = req.body;
+    
+    res.json({ 
+      success: true, 
+      message: 'Timer started',
+      event_id,
+      item_id
+    });
+    
+    // Broadcast via Socket.IO
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'timerStarted',
+      eventId: event_id,
+      itemId: item_id
+    });
+    
+  } catch (error) {
+    console.error('Error starting timer:', error);
+    res.status(500).json({ error: 'Failed to start timer' });
+  }
+});
+
+app.post('/api/timers/stop', async (req, res) => {
+  try {
+    const { event_id, item_id } = req.body;
+    
+    res.json({ 
+      success: true, 
+      message: 'Timer stopped',
+      event_id,
+      item_id
+    });
+    
+    // Broadcast via Socket.IO
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'timerStopped',
+      eventId: event_id,
+      itemId: item_id
+    });
+    
+  } catch (error) {
+    console.error('Error stopping timer:', error);
+    res.status(500).json({ error: 'Failed to stop timer' });
+  }
+});
+
+app.post('/api/timers/reset', async (req, res) => {
+  try {
+    const { event_id, item_id } = req.body;
+    
+    res.json({ 
+      success: true, 
+      message: 'Timer reset',
+      event_id,
+      item_id
+    });
+    
+    // Broadcast via Socket.IO
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'timerReset',
+      eventId: event_id,
+      itemId: item_id
+    });
+    
+  } catch (error) {
+    console.error('Error resetting timer:', error);
+    res.status(500).json({ error: 'Failed to reset timer' });
+  }
+});
+
+// ========================================
 // Socket.IO connection handling
+// ========================================
+
 io.on('connection', (socket) => {
   console.log(`🔌 Socket.IO client connected: ${socket.id}`);
   
