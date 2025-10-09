@@ -510,20 +510,46 @@ app.post('/api/cues/load', async (req, res) => {
   try {
     const { event_id, item_id, user_id } = req.body;
     
-    // For now, just acknowledge the cue load
-    // The actual timer state is managed by the React app
+    console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}`);
+    
+    // Get the current run_of_show_data
+    const dataResult = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [event_id]
+    );
+    
+    if (dataResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    
+    const runOfShowData = dataResult.rows[0];
+    const scheduleItems = runOfShowData.schedule_items || [];
+    
+    // Update all items to set is_active = false except the loaded one
+    const updatedSchedule = scheduleItems.map(item => ({
+      ...item,
+      is_active: item.id === parseInt(item_id)
+    }));
+    
+    // Update the database
+    await pool.query(
+      'UPDATE run_of_show_data SET schedule_items = $1, updated_at = NOW() WHERE event_id = $2',
+      [JSON.stringify(updatedSchedule), event_id]
+    );
+    
+    console.log(`✅ OSC: Cue loaded successfully - Item ${item_id} set as active`);
+    
     res.json({ 
       success: true, 
-      message: 'Cue loaded',
+      message: 'Cue loaded and database updated',
       event_id,
       item_id
     });
     
     // Emit Socket.IO event for real-time updates
     io.emit('message', JSON.stringify({
-      type: 'cueLoaded',
-      eventId: event_id,
-      itemId: item_id
+      type: 'runOfShowDataUpdated',
+      eventId: event_id
     }));
     
   } catch (error) {

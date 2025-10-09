@@ -1067,10 +1067,38 @@ app.post('/api/cues/load', async (req, res) => {
   try {
     const { event_id, item_id, user_id } = req.body;
     
-    // Acknowledge the cue load
+    console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}`);
+    
+    // Get the current run_of_show_data
+    const dataResult = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [event_id]
+    );
+    
+    if (dataResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    
+    const runOfShowData = dataResult.rows[0];
+    const scheduleItems = runOfShowData.schedule_items || [];
+    
+    // Update all items to set is_active = false
+    const updatedSchedule = scheduleItems.map(item => ({
+      ...item,
+      is_active: item.id === parseInt(item_id)
+    }));
+    
+    // Update the database
+    await pool.query(
+      'UPDATE run_of_show_data SET schedule_items = $1, updated_at = NOW() WHERE event_id = $2',
+      [JSON.stringify(updatedSchedule), event_id]
+    );
+    
+    console.log(`✅ OSC: Cue loaded successfully - Item ${item_id} set as active`);
+    
     res.json({ 
       success: true, 
-      message: 'Cue loaded',
+      message: 'Cue loaded and database updated',
       event_id,
       item_id
     });
@@ -1081,6 +1109,12 @@ app.post('/api/cues/load', async (req, res) => {
       eventId: event_id,
       itemId: item_id
     });
+    
+    // Also broadcast runOfShowDataUpdated so React app refreshes
+    io.emit('message', JSON.stringify({
+      type: 'runOfShowDataUpdated',
+      eventId: event_id
+    }));
     
   } catch (error) {
     console.error('Error loading cue:', error);
