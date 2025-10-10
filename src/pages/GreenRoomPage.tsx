@@ -704,9 +704,15 @@ const GreenRoomPage: React.FC = () => {
   // Calculate expected finish time from active timer
   const getExpectedFinishTime = () => {
     if (!activeItemId || !timerProgress[activeItemId]) return 'No Timer';
-    if (timerState !== 'running') return 'Timer Stopped';
     
     const progress = timerProgress[activeItemId];
+    
+    // For loaded timers, show "Ready to Start"
+    if (timerState === 'loaded') return 'Ready to Start';
+    
+    // For running timers, calculate finish time
+    if (timerState !== 'running') return 'Timer Stopped';
+    
     if (!progress.startedAt) return 'Not Started';
     
     const finishTime = new Date(progress.startedAt.getTime() + progress.total * 1000);
@@ -843,18 +849,13 @@ const GreenRoomPage: React.FC = () => {
             {event?.name || 'Current Event'}
           </div>
           
-          {/* Timer - Green when LOADED, Red when RUNNING */}
-          <div className={`rounded-lg p-4 text-center flex-shrink-0 ${
-            isOvertime() ? 'bg-red-800' : 
-            timerState === 'running' ? 'bg-red-600' : 
-            timerState === 'loaded' ? 'bg-green-600' : 
-            'bg-gray-600'
-          }`}>
+          {/* Timer */}
+          <div className={`rounded-lg p-4 text-center flex-shrink-0 ${isOvertime() ? 'bg-red-800' : 'bg-red-600'}`}>
           <div className="text-white text-xl font-semibold mb-2">
             {isOvertime() ? 'OVER TIME' : 
              timerState === 'running' ? 'RUNNING' : 
              timerState === 'loaded' ? 'LOADED' : 
-             'NO CUE'}
+             'Stage Timer'}
           </div>
           <div className={`text-5xl font-bold mb-2 ${isOvertime() ? 'text-red-200' : 'text-white'}`}>
             {getRemainingTime()}
