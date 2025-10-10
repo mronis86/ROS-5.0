@@ -290,14 +290,15 @@ const EventListPage: React.FC = () => {
           name: updatedEvent.name,
           date: updatedEvent.date,
           schedule_data: {
-            location: updatedEvent.location,
+            ...matchingCalendarEvent.schedule_data, // Preserve existing schedule_data FIRST
+            location: updatedEvent.location,         // Then override with new values
             numberOfDays: updatedEvent.numberOfDays,
-            eventId: updatedEvent.id,
-            ...matchingCalendarEvent.schedule_data // Preserve existing schedule_data
+            eventId: updatedEvent.id
           }
         };
         
         console.log('📝 Updating calendar event via API:', updatedCalendarEvent);
+        console.log('📝 Schedule data being sent:', updatedCalendarEvent.schedule_data);
         await apiClient.updateCalendarEvent(matchingCalendarEvent.id, updatedCalendarEvent);
         console.log('✅ Calendar event updated via API');
       } else {
