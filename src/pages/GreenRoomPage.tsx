@@ -243,8 +243,8 @@ const GreenRoomPage: React.FC = () => {
     
     const callbacks = {
       onTimerUpdated: (data: any) => {
-        console.log('📡 Green Room: Timer updated via WebSocket');
-        // Update timer state directly from WebSocket data
+        console.log('📡 Green Room: Timer updated via WebSocket', data);
+        // Update timer state directly from WebSocket data (like PhotoViewPage)
         if (data && data.item_id) {
           setTimerProgress(prev => ({
             ...prev,
@@ -254,6 +254,19 @@ const GreenRoomPage: React.FC = () => {
               startedAt: data.started_at ? new Date(data.started_at) : null
             }
           }));
+          
+          // Update timer state based on timer_state from active_timers table (like PhotoViewPage)
+          if (data.timer_state === 'running') {
+            setTimerState('running');
+            setActiveItemId(parseInt(data.item_id));
+            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
+            console.log('✅ Green Room: Timer RUNNING - activeItemId set to:', data.item_id);
+          } else if (data.timer_state === 'loaded') {
+            setTimerState('loaded');
+            setActiveItemId(parseInt(data.item_id));
+            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
+            console.log('✅ Green Room: Timer LOADED - activeItemId set to:', data.item_id);
+          }
         }
       },
       onTimerStopped: (data: any) => {
