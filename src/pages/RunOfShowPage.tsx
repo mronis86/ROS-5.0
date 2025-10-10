@@ -1708,9 +1708,9 @@ const RunOfShowPage: React.FC = () => {
           console.warn('⚠️ Failed to check for recent timer actions:', error);
         }
         
-        // Only clear if there was no recent LOAD_CUE action
-        if (shouldClearState) {
-          console.log('ℹ️ No recent LOAD_CUE actions, clearing local timer state - activeItemId was:', activeItemId);
+        // Only clear if there was no recent LOAD_CUE action AND no active loaded item
+        if (shouldClearState && !activeItemId) {
+          console.log('ℹ️ No recent LOAD_CUE actions and no active item, clearing local timer state');
           setActiveItemId(null);
           setLoadedItems({});
           setTimerProgress({});
@@ -1722,6 +1722,8 @@ const RunOfShowPage: React.FC = () => {
             }
           });
           setActiveTimers({});
+        } else if (shouldClearState && activeItemId) {
+          console.log('ℹ️ No recent LOAD_CUE actions but active item exists, keeping loaded state - activeItemId:', activeItemId);
         } else {
           console.log('ℹ️ Recent LOAD_CUE action found, keeping local state - activeItemId:', activeItemId);
         }
@@ -4675,10 +4677,48 @@ const RunOfShowPage: React.FC = () => {
             activeTimer: data
           }));
           
-          // Update activeItemId to trigger Follow feature scroll
-          if (data.item_id && data.is_active) {
-            setActiveItemId(data.item_id);
-            console.log('✅ RunOfShow: activeItemId updated for Follow:', data.item_id);
+          // Update timer progress for smooth UI updates
+          if (data.item_id) {
+            setTimerProgress(prev => ({
+              ...prev,
+              [data.item_id]: {
+                elapsed: data.elapsed_seconds || 0,
+                total: data.duration_seconds || 300,
+                startedAt: data.started_at ? new Date(data.started_at) : null
+              }
+            }));
+            
+            // Update button states based on timer_state (like PhotoViewPage and GreenRoomPage)
+            if (data.timer_state === 'running') {
+              setActiveTimers(prev => ({ ...prev, [data.item_id]: true }));
+              setActiveItemId(data.item_id);
+              setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
+              console.log('✅ RunOfShow: Timer RUNNING - button states updated:', data.item_id);
+            } else if (data.timer_state === 'loaded') {
+              setActiveTimers(prev => {
+                const newTimers = { ...prev };
+                delete newTimers[data.item_id]; // Remove from running timers
+                return newTimers;
+              });
+              setActiveItemId(data.item_id);
+              setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
+              console.log('✅ RunOfShow: Timer LOADED - button states updated:', data.item_id);
+            } else if (data.timer_state === 'stopped') {
+              setActiveTimers(prev => {
+                const newTimers = { ...prev };
+                delete newTimers[data.item_id];
+                return newTimers;
+              });
+              setLoadedItems(prev => {
+                const newLoaded = { ...prev };
+                delete newLoaded[data.item_id];
+                return newLoaded;
+              });
+              if (activeItemId === data.item_id) {
+                setActiveItemId(null);
+              }
+              console.log('✅ RunOfShow: Timer STOPPED - button states updated:', data.item_id);
+            }
           }
           
           console.log('✅ RunOfShow: Timer updated via WebSocket:', data);
