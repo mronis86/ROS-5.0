@@ -53,6 +53,13 @@ class ApiClient {
     });
   }
 
+  // Public method to clear all cache
+  async clearCache(): Promise<void> {
+    console.log('🗑️ Clearing all API cache...');
+    this.cache.clear();
+    console.log('✅ Cache cleared');
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}, cacheKey?: string, cacheTTL?: number): Promise<T> {
     // Check cache first (only for GET requests)
     if (options.method === 'GET' || !options.method) {

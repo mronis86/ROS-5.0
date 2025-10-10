@@ -223,7 +223,10 @@ const EventListPage: React.FC = () => {
   };
 
   const editEvent = async () => {
+    console.log('🔧 EDIT EVENT CALLED!', { editingEvent, editFormData });
+    
     if (!editingEvent || !editFormData.name || !editFormData.date || !editFormData.location) {
+      console.error('❌ Validation failed:', { editingEvent, editFormData });
       alert('Please fill in all fields');
       return;
     }
@@ -237,6 +240,17 @@ const EventListPage: React.FC = () => {
       updated_at: new Date().toISOString()
     };
 
+    console.log('📝 About to update event:', {
+      original: editingEvent,
+      updated: updatedEvent,
+      changes: {
+        name: editingEvent.name !== updatedEvent.name,
+        date: editingEvent.date !== updatedEvent.date,
+        location: editingEvent.location !== updatedEvent.location,
+        numberOfDays: editingEvent.numberOfDays !== updatedEvent.numberOfDays
+      }
+    });
+
     // Close modal first
     setEditingEvent(null);
     setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1 });
@@ -245,10 +259,15 @@ const EventListPage: React.FC = () => {
     setEvents(prev => prev.map(event => 
       event.id === editingEvent.id ? updatedEvent : event
     ));
+    console.log('✅ Local UI updated');
 
     // Update via API (works with both local and Railway)
     try {
-      console.log('💾 Updating event via API:', updatedEvent);
+      console.log('💾 Starting API update for event:', updatedEvent);
+      
+      // Clear cache first to ensure we get fresh data
+      await apiClient.clearCache();
+      console.log('🗑️ Cache cleared');
       
       // Get all calendar events to find the matching one
       const calendarEvents: any = await apiClient.getCalendarEvents();

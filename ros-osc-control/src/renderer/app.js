@@ -417,41 +417,61 @@ async function syncTimerStatus() {
     
     console.log('📊 Timer status data received:', data);
     
-    if (data && data.activeTimer) {
-      const timer = data.activeTimer;
-      console.log('⏱️ Active timer found:', timer);
+    // API returns an array, get the first (most recent) timer record
+    const timerRecord = Array.isArray(data) ? data[0] : data;
+    
+    if (timerRecord && timerRecord.is_active) {
+      console.log('⏱️ Active timer found:', timerRecord);
+      
+      const itemId = parseInt(timerRecord.item_id);
+      const isRunning = timerRecord.is_running;
+      const timerState = timerRecord.timer_state || 'unknown';
       
       // Find the item in the filtered schedule for the current day
       const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
-      const item = filteredSchedule.find(s => s.id === timer.item_id);
+      const item = filteredSchedule.find(s => s.id === itemId);
       
       if (item) {
-        activeItemId = timer.item_id;
+        activeItemId = itemId;
         
-        if (timer.is_running) {
-          activeTimers[timer.item_id] = true;
+        if (isRunning && timerRecord.started_at) {
+          // Timer is RUNNING
+          activeTimers[itemId] = true;
           
           // Calculate elapsed time
-          const startedAt = new Date(timer.started_at);
+          const startedAt = new Date(timerRecord.started_at);
           const now = new Date();
           const elapsedSeconds = Math.floor((now - startedAt) / 1000);
           
-          timerProgress[timer.item_id] = {
+          timerProgress[itemId] = {
             elapsed: elapsedSeconds,
-            total: timer.duration_seconds,
-            startedAt: timer.started_at
+            total: timerRecord.duration_seconds || 0,
+            startedAt: timerRecord.started_at
           };
           
-          console.log('▶️ Timer is RUNNING:', { elapsedSeconds, total: timer.duration_seconds });
-        } else {
-          activeTimers[timer.item_id] = false;
-          timerProgress[timer.item_id] = {
+          console.log('▶️ Timer is RUNNING:', { elapsedSeconds, total: timerRecord.duration_seconds });
+        } else if (timerState === 'loaded' || (timerRecord.is_active && !isRunning)) {
+          // Timer is LOADED but not running
+          activeTimers[itemId] = false;
+          timerProgress[itemId] = {
             elapsed: 0,
-            total: timer.duration_seconds,
+            total: timerRecord.duration_seconds || 0,
             startedAt: null
           };
           
-          console.log('⏸️ Timer is LOADED:', { total: timer.duration_seconds });
+          console.log('⏸️ Timer is LOADED:', { 
+            itemId, 
+            total: timerRecord.duration_seconds, 
+            timerState,
+            is_active: timerRecord.is_active,
+            is_running: isRunning
+          });
+        } else {
+          // Timer is stopped or unknown state
+          console.log('⏹️ Timer is STOPPED or UNKNOWN:', { timerState, is_active: timerRecord.is_active, is_running: isRunning });
+          activeItemId = null;
+          activeTimers = {};
+          timerProgress = {};
         }
         
         // Update display
@@ -460,14 +480,14 @@ async function syncTimerStatus() {
         
         console.log('✅ Timer status synced successfully');
       } else {
-        console.warn('⚠️ Timer item not found in current day schedule:', timer.item_id);
+        console.warn('⚠️ Timer item not found in current day schedule:', itemId);
         // Still update the activeItemId but mark as not found in current day
-        activeItemId = timer.item_id;
+        activeItemId = itemId;
         updateCurrentCueDisplay();
         renderSchedule();
       }
     } else {
-      console.log('📭 No active timer found');
+      console.log('📭 No active timer found (is_active is false or no record)');
       activeItemId = null;
       activeTimers = {};
       timerProgress = {};
