@@ -51,6 +51,10 @@ const GreenRoomPage: React.FC = () => {
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
+  
+  // Track last loaded cue to keep it visible when timer stops
+  const [lastLoadedCueId, setLastLoadedCueId] = useState<number | null>(null);
+  
   const [masterStartTime, setMasterStartTime] = useState<string>('09:00');
   const [dayStartTimes, setDayStartTimes] = useState<{[key: number]: string}>({});
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
@@ -195,6 +199,7 @@ const GreenRoomPage: React.FC = () => {
         
         setActiveItemId(parseInt(activeTimer.item_id));
         setTimerState(activeTimer.timer_state); // 'loaded' or 'running'
+        setLastLoadedCueId(parseInt(activeTimer.item_id)); // Track last loaded cue
         
         // Mark this item as loaded
         setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
@@ -259,12 +264,14 @@ const GreenRoomPage: React.FC = () => {
           if (data.timer_state === 'running') {
             setTimerState('running');
             setActiveItemId(parseInt(data.item_id));
+            setLastLoadedCueId(parseInt(data.item_id)); // Track last loaded cue
             // Clear all loaded items and set only the current active one
             setLoadedItems({ [parseInt(data.item_id)]: true });
             console.log('✅ Green Room: Timer RUNNING - activeItemId set to:', data.item_id);
           } else if (data.timer_state === 'loaded') {
             setTimerState('loaded');
             setActiveItemId(parseInt(data.item_id));
+            setLastLoadedCueId(parseInt(data.item_id)); // Track last loaded cue
             // Clear all loaded items and set only the current active one
             setLoadedItems({ [parseInt(data.item_id)]: true });
             console.log('✅ Green Room: Timer LOADED - activeItemId set to:', data.item_id);
@@ -273,10 +280,18 @@ const GreenRoomPage: React.FC = () => {
       },
       onTimerStopped: (data: any) => {
         console.log('📡 Green Room: Timer stopped via WebSocket');
-        // Clear timer state when stopped
+        // Clear timer state when stopped, but keep last loaded cue visible
         if (data && data.item_id) {
-          setActiveItemId(null);
-          setLoadedItems({}); // Clear all loaded items
+          setTimerState(null);
+          // Keep the last loaded cue visible instead of clearing activeItemId
+          if (lastLoadedCueId) {
+            setActiveItemId(lastLoadedCueId);
+            setLoadedItems({ [lastLoadedCueId]: true });
+            console.log('📜 Green Room: Keeping last loaded cue visible:', lastLoadedCueId);
+          } else {
+            setActiveItemId(null);
+            setLoadedItems({});
+          }
           setTimerProgress(prev => {
             const newProgress = { ...prev };
             delete newProgress[data.item_id];
@@ -286,9 +301,16 @@ const GreenRoomPage: React.FC = () => {
       },
       onTimersStopped: (data: any) => {
         console.log('📡 Green Room: All timers stopped via WebSocket');
-        // Clear all timer states
-        setActiveItemId(null);
-        setLoadedItems({}); // Clear all loaded items
+        // Clear timer state but keep last loaded cue visible
+        setTimerState(null);
+        if (lastLoadedCueId) {
+          setActiveItemId(lastLoadedCueId);
+          setLoadedItems({ [lastLoadedCueId]: true });
+          console.log('📜 Green Room: Keeping last loaded cue visible after all timers stopped:', lastLoadedCueId);
+        } else {
+          setActiveItemId(null);
+          setLoadedItems({});
+        }
         setTimerProgress({});
       },
       onTimerStarted: (data: any) => {
@@ -305,6 +327,7 @@ const GreenRoomPage: React.FC = () => {
           if (data.timer_state === 'running' || data.timer_state === 'loaded') {
             setActiveItemId(parseInt(data.item_id));
             setTimerState(data.timer_state);
+            setLastLoadedCueId(parseInt(data.item_id)); // Track last loaded cue
             // Clear all loaded items and set only the current active one
             setLoadedItems({ [data.item_id]: true });
             console.log('🔄 Green Room: Updated active item and timer state:', {
@@ -313,11 +336,17 @@ const GreenRoomPage: React.FC = () => {
               activeItemId: data.item_id
             });
           } else {
-            // Timer is stopped - clear all states
-            setActiveItemId(null);
+            // Timer is stopped - keep last loaded cue visible
             setTimerState(null);
-            setLoadedItems({});
-            console.log('🔄 Green Room: Cleared all timer states');
+            if (lastLoadedCueId) {
+              setActiveItemId(lastLoadedCueId);
+              setLoadedItems({ [lastLoadedCueId]: true });
+              console.log('📜 Green Room: Keeping last loaded cue visible after timer stopped:', lastLoadedCueId);
+            } else {
+              setActiveItemId(null);
+              setLoadedItems({});
+            }
+            console.log('🔄 Green Room: Timer stopped, keeping last loaded cue visible');
           }
         }
       },
@@ -328,6 +357,7 @@ const GreenRoomPage: React.FC = () => {
         setTimerState(null);
         setLoadedItems({});
         setTimerProgress({});
+        setLastLoadedCueId(null); // Clear last loaded cue on reset
         console.log('✅ Green Room: All states cleared via reset');
       },
       onScheduleUpdated: (data: any) => {
