@@ -9509,30 +9509,51 @@ const RunOfShowPage: React.FC = () => {
                               alert('Only EDITORs can change public status. Please change your role to EDITOR.');
                               return;
                             }
+                            
+                            // Pause syncing when checkbox is clicked (like other fields)
+                            handleUserEditing();
+                            
                             const oldValue = item.isPublic;
+                            const newValue = e.target.checked;
+                            
                             setSchedule(prev => prev.map(scheduleItem => 
                               scheduleItem.id === item.id 
-                                ? { ...scheduleItem, isPublic: e.target.checked }
+                                ? { ...scheduleItem, isPublic: newValue }
                                 : scheduleItem
                             ));
                             
                             // Log the change
-                            logChange('FIELD_UPDATE', `Updated Public status for "${item.segmentName}" from ${oldValue} to ${e.target.checked}`, {
+                            logChange('FIELD_UPDATE', `Updated Public status for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
                               changeType: 'FIELD_CHANGE',
                               itemId: item.id,
                               itemName: item.segmentName,
                               fieldName: 'isPublic',
                               oldValue: oldValue,
-                              newValue: e.target.checked,
+                              newValue: newValue,
                               details: {
                                 fieldType: 'checkbox',
                                 booleanChange: true
                               }
                             });
                             
-                            // Save to database immediately (like other checkbox fields)
-                            await backupScheduleData();
-                            console.log('✅ Public status saved to database');
+                            // Save to database immediately with user info (prevents WebSocket overwrite)
+                            console.log('💾 Saving public status change:', { itemId: item.id, isPublic: newValue });
+                            await DatabaseService.saveRunOfShowData({
+                              event_id: event.id,
+                              event_name: event.name,
+                              event_date: event.date,
+                              schedule_items: schedule.map(s => s.id === item.id ? { ...s, isPublic: newValue } : s),
+                              custom_columns: customColumns,
+                              settings: {}
+                            }, {
+                              userId: user.id,
+                              userName: user.full_name || user.email || 'Unknown User',
+                              userRole: currentUserRole || 'VIEWER'
+                            });
+                            console.log('✅ Public status saved to database with user info');
+                            
+                            // Resume syncing after 3 seconds
+                            handleModalClosed();
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
                             currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
