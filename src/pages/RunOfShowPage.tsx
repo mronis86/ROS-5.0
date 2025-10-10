@@ -4698,21 +4698,27 @@ const RunOfShowPage: React.FC = () => {
             
             if (data.timer_state === 'running') {
               console.log('🔔🔔🔔 WEBSOCKET: Setting timer to RUNNING');
-              setActiveTimers(prev => ({ ...prev, [data.item_id]: true }));
-              setActiveItemId(data.item_id);
-              setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
-              console.log('✅ RunOfShow: Timer RUNNING - button states updated:', data.item_id);
+              console.log('🔔🔔🔔 WEBSOCKET: item_id TYPE:', typeof data.item_id);
+              const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id) : data.item_id;
+              console.log('🔔🔔🔔 WEBSOCKET: Converted to numeric:', numericItemId, 'TYPE:', typeof numericItemId);
+              setActiveTimers(prev => ({ ...prev, [numericItemId]: true }));
+              setActiveItemId(numericItemId);
+              setLoadedItems(prev => ({ ...prev, [numericItemId]: true }));
+              console.log('✅ RunOfShow: Timer RUNNING - button states updated:', numericItemId);
             } else if (data.timer_state === 'loaded') {
               console.log('🔔🔔🔔 WEBSOCKET: Setting timer to LOADED');
               console.log('🔔🔔🔔 WEBSOCKET: Setting activeItemId to:', data.item_id);
+              console.log('🔔🔔🔔 WEBSOCKET: item_id TYPE:', typeof data.item_id);
+              const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id) : data.item_id;
+              console.log('🔔🔔🔔 WEBSOCKET: Converted to numeric:', numericItemId, 'TYPE:', typeof numericItemId);
               setActiveTimers(prev => {
                 const newTimers = { ...prev };
-                delete newTimers[data.item_id]; // Remove from running timers
+                delete newTimers[numericItemId]; // Remove from running timers
                 return newTimers;
               });
-              setActiveItemId(data.item_id);
-              setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
-              console.log('✅ RunOfShow: Timer LOADED - button states updated:', data.item_id);
+              setActiveItemId(numericItemId);
+              setLoadedItems(prev => ({ ...prev, [numericItemId]: true }));
+              console.log('✅ RunOfShow: Timer LOADED - button states updated:', numericItemId);
             } else if (data.timer_state === 'stopped') {
               console.log('🔔🔔🔔 WEBSOCKET: Setting timer to STOPPED');
               console.log('🔔🔔🔔 WEBSOCKET: Clearing activeItemId');
