@@ -53,24 +53,38 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
 
             {/* Download Section */}
             <div className="bg-slate-700 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-white mb-3 text-center">📥 Download Python OSC App</h3>
+              <h3 className="text-sm font-semibold text-white mb-3 text-center">📥 Download OSC Apps</h3>
               
-              {/* WebSocket Version with Server Toggle */}
+              {/* Electron OSC App */}
+              <div className="text-center mb-4">
+                <a
+                  href="/electron-osc-app.zip"
+                  download="electron-osc-app.zip"
+                  className="block bg-blue-600 hover:bg-blue-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  🖥️ Electron OSC App (Desktop)
+                </a>
+                <div className="text-xs text-blue-400 mt-2">
+                  ⚡ Desktop app • Event list • Run of Show • OSC Log
+                </div>
+              </div>
+              
+              {/* Python WebSocket Version */}
               <div className="text-center">
                 <a
                   href="/OSC_WebSocket_App.zip"
                   download="OSC_WebSocket_App.zip"
                   className="block bg-green-600 hover:bg-green-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
-                  🌐 WebSocket OSC App (with Server Toggle)
+                  🐍 Python OSC App (GUI)
                 </a>
                 <div className="text-xs text-green-400 mt-2">
-                  ✨ GUI toggle • Railway or Local • WebSocket • Real-time updates
+                  ✨ GUI toggle • Railway or Local • WebSocket
                 </div>
               </div>
               
               <div className="text-xs text-slate-500 mt-3 text-center">
-                <strong>Instructions:</strong> Extract zip, run install.bat to install dependencies, then run.bat to start
+                <strong>Instructions:</strong> Extract zip, run install.bat (or install-dependencies.bat) to install, then start the app
               </div>
             </div>
           </div>
