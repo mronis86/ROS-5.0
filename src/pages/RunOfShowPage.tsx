@@ -2339,18 +2339,29 @@ const RunOfShowPage: React.FC = () => {
   
   // Show toast when a timer starts and auto-close after 20 seconds
   useEffect(() => {
+    console.log('🍞 Toast useEffect triggered:', {
+      activeTimersCount: Object.keys(activeTimers).length,
+      activeTimers,
+      timeToastEnabled,
+      scheduleLength: schedule.length
+    });
+    
     if (Object.keys(activeTimers).length === 0) {
+      console.log('🍞 Toast: No active timers, hiding toast');
       setShowTimeToast(false);
       return;
     }
     
     // Only show toast if it's enabled
     if (!timeToastEnabled) {
+      console.log('🍞 Toast: Toast disabled by user');
       return;
     }
     
     const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
+    console.log('🍞 Toast: Active timer ID:', activeTimerId);
     const activeItem = schedule.find(item => item.id === activeTimerId);
+    console.log('🍞 Toast: Found active item:', activeItem ? activeItem.segmentName : 'NOT FOUND');
     
     if (activeItem) {
       try {
@@ -2377,20 +2388,25 @@ const RunOfShowPage: React.FC = () => {
           
           // Show toast for all timers when enabled
           if (differenceMinutes < -1) {
+            console.log('🍞 Toast: Setting status to EARLY, difference:', differenceMinutes);
             setTimeStatus('early');
             setShowTimeToast(true);
           } else if (differenceMinutes > 1) {
+            console.log('🍞 Toast: Setting status to LATE, difference:', differenceMinutes);
             setTimeStatus('late');
             setShowTimeToast(true);
           } else {
+            console.log('🍞 Toast: Setting status to ON-TIME, difference:', differenceMinutes);
             setTimeStatus('on-time');
             setShowTimeToast(true); // Show even if on-time when timer starts
           }
           
+          console.log('🍞 Toast: Should be visible now - showTimeToast set to true');
+          
           // No auto-close when toast is enabled - let user control it
         }
       } catch (error) {
-        console.error('Error calculating time status:', error);
+        console.error('🍞 Toast: Error calculating time status:', error);
         setShowTimeToast(false);
       }
     }
