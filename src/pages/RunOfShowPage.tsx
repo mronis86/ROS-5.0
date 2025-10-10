@@ -3792,7 +3792,9 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔄 Numeric item ID:', numericItemId);
       
       // OPTIMISTIC UI UPDATE - Show loaded state immediately
-      console.log('⚡ Optimistic UI update - showing loaded state immediately');
+      console.log('⚡⚡⚡ OPTIMISTIC UI UPDATE - showing loaded state immediately');
+      console.log('⚡⚡⚡ Setting activeItemId to:', itemId);
+      console.log('⚡⚡⚡ Setting loadedItems to include:', itemId);
       setTimerProgress(prev => ({
         ...prev,
         [itemId]: {
@@ -3803,6 +3805,7 @@ const RunOfShowPage: React.FC = () => {
       }));
       setActiveItemId(itemId);
       setLoadedItems(prev => ({ ...prev, [itemId]: true }));
+      console.log('⚡⚡⚡ OPTIMISTIC UI UPDATE COMPLETE');
       
       // Calculate row number and cue display for database
       const currentIndex = schedule.findIndex(scheduleItem => scheduleItem.id === itemId);
@@ -4689,12 +4692,19 @@ const RunOfShowPage: React.FC = () => {
             }));
             
             // Update button states based on timer_state (like PhotoViewPage and GreenRoomPage)
+            console.log('🔔🔔🔔 WebSocket timer_state received:', data.timer_state);
+            console.log('🔔🔔🔔 WebSocket item_id received:', data.item_id);
+            console.log('🔔🔔🔔 Full WebSocket data:', data);
+            
             if (data.timer_state === 'running') {
+              console.log('🔔🔔🔔 WEBSOCKET: Setting timer to RUNNING');
               setActiveTimers(prev => ({ ...prev, [data.item_id]: true }));
               setActiveItemId(data.item_id);
               setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
               console.log('✅ RunOfShow: Timer RUNNING - button states updated:', data.item_id);
             } else if (data.timer_state === 'loaded') {
+              console.log('🔔🔔🔔 WEBSOCKET: Setting timer to LOADED');
+              console.log('🔔🔔🔔 WEBSOCKET: Setting activeItemId to:', data.item_id);
               setActiveTimers(prev => {
                 const newTimers = { ...prev };
                 delete newTimers[data.item_id]; // Remove from running timers
@@ -4704,6 +4714,8 @@ const RunOfShowPage: React.FC = () => {
               setLoadedItems(prev => ({ ...prev, [data.item_id]: true }));
               console.log('✅ RunOfShow: Timer LOADED - button states updated:', data.item_id);
             } else if (data.timer_state === 'stopped') {
+              console.log('🔔🔔🔔 WEBSOCKET: Setting timer to STOPPED');
+              console.log('🔔🔔🔔 WEBSOCKET: Clearing activeItemId');
               setActiveTimers(prev => {
                 const newTimers = { ...prev };
                 delete newTimers[data.item_id];
@@ -4718,6 +4730,8 @@ const RunOfShowPage: React.FC = () => {
                 setActiveItemId(null);
               }
               console.log('✅ RunOfShow: Timer STOPPED - button states updated:', data.item_id);
+            } else {
+              console.log('🔔🔔🔔 WEBSOCKET: Unknown timer_state:', data.timer_state);
             }
           }
           
