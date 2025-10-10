@@ -738,10 +738,16 @@ const GreenRoomPage: React.FC = () => {
   const getRemainingTime = () => {
     if (!activeItemId || !timerProgress[activeItemId]) return '00:00';
     
+    const progress = timerProgress[activeItemId];
+    
+    // If timer is loaded but not running, show full duration
+    if (timerState === 'loaded') {
+      return formatTime(progress.total);
+    }
+    
     // If timer is not running, show 00:00
     if (timerState !== 'running') return '00:00';
 
-    const progress = timerProgress[activeItemId];
     const remaining = progress.total - progress.elapsed; // Allow negative values
     
     return formatTime(remaining);
@@ -837,16 +843,26 @@ const GreenRoomPage: React.FC = () => {
             {event?.name || 'Current Event'}
           </div>
           
-          {/* Timer */}
-          <div className={`rounded-lg p-4 text-center flex-shrink-0 ${isOvertime() ? 'bg-red-800' : 'bg-red-600'}`}>
+          {/* Timer - Green when LOADED, Red when RUNNING */}
+          <div className={`rounded-lg p-4 text-center flex-shrink-0 ${
+            isOvertime() ? 'bg-red-800' : 
+            timerState === 'running' ? 'bg-red-600' : 
+            timerState === 'loaded' ? 'bg-green-600' : 
+            'bg-gray-600'
+          }`}>
           <div className="text-white text-xl font-semibold mb-2">
-            {isOvertime() ? 'OVER TIME' : 'Stage Timer'}
+            {isOvertime() ? 'OVER TIME' : 
+             timerState === 'running' ? 'RUNNING' : 
+             timerState === 'loaded' ? 'LOADED' : 
+             'NO CUE'}
           </div>
           <div className={`text-5xl font-bold mb-2 ${isOvertime() ? 'text-red-200' : 'text-white'}`}>
             {getRemainingTime()}
           </div>
           <div className="text-white text-base">
-            Expected Finish: {getExpectedFinishTime()}
+            {timerState === 'running' ? `Expected Finish: ${getExpectedFinishTime()}` : 
+             timerState === 'loaded' ? 'Ready to Start' : 
+             'Waiting for Cue'}
           </div>
         </div>
       </div>
