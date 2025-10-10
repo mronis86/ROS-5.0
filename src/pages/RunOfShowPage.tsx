@@ -2184,8 +2184,12 @@ const RunOfShowPage: React.FC = () => {
         schedule_items: schedule,
         custom_columns: customColumns,
         settings: {}
+      }, {
+        userId: user.id,
+        userName: user.full_name || user.email || 'Unknown User',
+        userRole: currentUserRole || 'VIEWER'
       });
-      console.log('✅ Schedule data backed up');
+      console.log('✅ Schedule data backed up with user info');
     } catch (error) {
       console.error('❌ Error backing up schedule data:', error);
     }
