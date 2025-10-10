@@ -701,22 +701,43 @@ const RunOfShowPage: React.FC = () => {
     localStorage.setItem(`followEnabled_${event?.id}`, isFollowEnabled.toString());
   }, [isFollowEnabled, event?.id]);
   
-  // Restore scroll position when activeItemId changes and follow is enabled
+  // Scroll to active item when activeItemId changes and follow is enabled
   useEffect(() => {
     if (isFollowEnabled && activeItemId) {
-      const savedScrollPosition = localStorage.getItem(`scrollPosition_${event?.id}`);
-      if (savedScrollPosition) {
-        const scrollPosition = parseInt(savedScrollPosition);
-        // Small delay to ensure DOM is updated
-        setTimeout(() => {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        // Find the active row element
+        const activeRow = document.querySelector(`[data-item-id="${activeItemId}"]`);
+        if (activeRow) {
+          // Calculate the row's position relative to the document
+          const rowRect = activeRow.getBoundingClientRect();
+          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+          const rowTop = rowRect.top + scrollTop;
+          
+          // Find the column headers to calculate offset
+          const columnHeaders = document.querySelector('#main-scroll-container .h-24');
+          let headerHeight = 100; // Default fallback
+          
+          if (columnHeaders) {
+            const headerRect = columnHeaders.getBoundingClientRect();
+            headerHeight = headerRect.height + 20; // Add small gap
+          }
+          
+          // Calculate scroll position to keep row visible below headers
+          const extraOffset = 230; // Position the row nicely on screen
+          const targetScrollPosition = rowTop - headerHeight - extraOffset;
+          
+          // Scroll to the calculated position
           window.scrollTo({
-            top: scrollPosition,
+            top: Math.max(0, targetScrollPosition), // Don't scroll above the top
             behavior: 'smooth'
           });
-        }, 100);
-      }
+          
+          console.log('📜 Follow: Scrolled to active item:', activeItemId, 'position:', targetScrollPosition);
+        }
+      }, 150); // Slightly longer delay to ensure DOM is fully updated
     }
-  }, [activeItemId, isFollowEnabled, event?.id]);
+  }, [activeItemId, isFollowEnabled]);
   
   // Track stopped items for inactive styling
   const [stoppedItems, setStoppedItems] = useState<Set<number>>(new Set());
@@ -2405,8 +2426,7 @@ const RunOfShowPage: React.FC = () => {
         behavior: 'smooth'
       });
       
-      // Store the scroll position in localStorage for consistency
-      localStorage.setItem(`scrollPosition_${event?.id}`, targetScrollPosition.toString());
+      // Note: Follow feature now handles its own scrolling via useEffect
     }
   };
   
