@@ -245,13 +245,23 @@ const EventListPage: React.FC = () => {
       event.id === editingEvent.id ? updatedEvent : event
     ));
 
-    // Update in Supabase automatically - both calendar event AND Run of Show data
+    // Update in Neon automatically - both calendar event AND Run of Show data
     try {
+      console.log('💾 Updating event in Neon:', updatedEvent);
+      
       // Update calendar event
       const calendarEvents = await DatabaseService.getCalendarEvents();
       const matchingCalendarEvent = calendarEvents.find(calEvent => 
-        calEvent.schedule_data?.eventId === editingEvent.id || calEvent.name === editingEvent.name
+        calEvent.schedule_data?.eventId === editingEvent.id || 
+        calEvent.id === editingEvent.id ||
+        calEvent.name === editingEvent.name
       );
+      
+      console.log('🔍 Looking for calendar event to update:', {
+        editingEventId: editingEvent.id,
+        editingEventName: editingEvent.name,
+        matchingCalendarEvent: matchingCalendarEvent
+      });
       
       if (matchingCalendarEvent?.id) {
         const updatedCalendarEvent = {
@@ -260,27 +270,43 @@ const EventListPage: React.FC = () => {
           schedule_data: {
             location: updatedEvent.location,
             numberOfDays: updatedEvent.numberOfDays,
-            eventId: updatedEvent.id
+            eventId: updatedEvent.id,
+            ...matchingCalendarEvent.schedule_data // Preserve existing schedule_data
           }
         };
         
+        console.log('📝 Updating calendar event with data:', updatedCalendarEvent);
         await DatabaseService.updateCalendarEvent(matchingCalendarEvent.id, updatedCalendarEvent);
-        console.log('Calendar event updated in Supabase');
+        console.log('✅ Calendar event updated in Neon');
+      } else {
+        console.warn('⚠️ No matching calendar event found for update');
       }
 
       // Update Run of Show data
+      console.log('📝 Updating run of show data for event:', editingEvent.id);
       await DatabaseService.updateRunOfShowData(editingEvent.id, {
         event_name: updatedEvent.name,
         event_date: updatedEvent.date,
         settings: {
           eventName: updatedEvent.name,
+          eventDate: updatedEvent.date,
+          location: updatedEvent.location,
+          numberOfDays: updatedEvent.numberOfDays,
           lastSaved: new Date().toISOString()
         }
       });
-      console.log('Run of Show data updated in Supabase');
+      console.log('✅ Run of Show data updated in Neon');
+      
+      // Reload events from Neon to ensure we have the latest data
+      setTimeout(() => {
+        console.log('🔄 Reloading events after update...');
+        loadEventsFromSupabase();
+      }, 1000);
+      
     } catch (error) {
-      console.error('Error auto-updating event in Supabase:', error);
-      // Don't show error to user since the event was still updated locally
+      console.error('❌ Error updating event in Neon:', error);
+      console.error('❌ Error details:', error);
+      alert('Error updating event in database. Please try again.');
     }
   };
 

@@ -91,6 +91,58 @@ app.post('/api/calendar-events', async (req, res) => {
   }
 });
 
+// Update calendar event
+app.put('/api/calendar-events/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, date, schedule_data } = req.body;
+    
+    console.log('📝 Updating calendar event:', { id, name, date, schedule_data });
+    
+    const result = await pool.query(
+      `UPDATE calendar_events 
+       SET name = $1, date = $2, schedule_data = $3, updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [name, date, JSON.stringify(schedule_data), id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Calendar event not found' });
+    }
+    
+    console.log('✅ Calendar event updated successfully:', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('❌ Error updating calendar event:', error);
+    res.status(500).json({ error: 'Failed to update calendar event' });
+  }
+});
+
+// Delete calendar event
+app.delete('/api/calendar-events/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log('🗑️ Deleting calendar event:', id);
+    
+    const result = await pool.query(
+      `DELETE FROM calendar_events WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Calendar event not found' });
+    }
+    
+    console.log('✅ Calendar event deleted successfully');
+    res.json({ message: 'Calendar event deleted successfully' });
+  } catch (error) {
+    console.error('❌ Error deleting calendar event:', error);
+    res.status(500).json({ error: 'Failed to delete calendar event' });
+  }
+});
+
 // Run of Show Data endpoints
 app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   try {
@@ -1069,65 +1121,61 @@ app.post('/api/cues/load', async (req, res) => {
     
     console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}, Cue: ${cue_is}`);
     
-    // 1. Update schedule_items JSON to set is_active flag
-    const dataResult = await pool.query(
-      'SELECT * FROM run_of_show_data WHERE event_id = $1',
-      [event_id]
-    );
-    
-    if (dataResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Event not found' });
-    }
-    
-    const runOfShowData = dataResult.rows[0];
-    const scheduleItems = runOfShowData.schedule_items || [];
-    
-    // Update all items to set is_active = false except the loaded one
-    const updatedSchedule = scheduleItems.map(item => ({
-      ...item,
-      is_active: item.id === parseInt(item_id)
-    }));
-    
-    await pool.query(
-      'UPDATE run_of_show_data SET schedule_items = $1, updated_at = NOW() WHERE event_id = $2',
-      [JSON.stringify(updatedSchedule), event_id]
-    );
-    
-    // 2. Update/Insert into active_timers table (like Supabase RPC did)
+    // ONLY write to active_timers table (like Supabase RPC did)
+    // Match the EXACT same fields as React app's /api/active-timers endpoint
+    // Use far future date for started_at to indicate "not started yet" (NOT NULL constraint)
     await pool.query(`
       INSERT INTO active_timers (
-        event_id, item_id, user_id, timer_state, is_active, is_running,
-        started_at, last_loaded_cue_id, cue_is, duration_seconds
-      ) VALUES ($1, $2, $3, 'loaded', true, false, NOW(), $2, $4, $5)
+        event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running,
+        started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, 'loaded', true, false, '2099-12-31T23:59:59.999Z', $2, $6, $7, 0, NOW(), NOW())
       ON CONFLICT (event_id) 
       DO UPDATE SET 
         item_id = $2,
         user_id = $3,
+        user_name = $4,
+        user_role = $5,
         timer_state = 'loaded',
         is_active = true,
         is_running = false,
-        started_at = NOW(),
+        started_at = '2099-12-31T23:59:59.999Z',
         last_loaded_cue_id = $2,
-        cue_is = $4,
-        duration_seconds = $5,
+        cue_is = $6,
+        duration_seconds = $7,
         elapsed_seconds = 0,
         updated_at = NOW()
-    `, [event_id, parseInt(item_id), user_id || 'python-osc-server', cue_is || `CUE ${item_id}`, duration_seconds || 300]);
+    `, [
+      event_id, 
+      parseInt(item_id), 
+      user_id || 'python-osc-server',
+      'OSC User',
+      'OPERATOR',
+      cue_is || `CUE ${item_id}`, 
+      duration_seconds || 300
+    ]);
     
-    console.log(`✅ OSC: Cue loaded - Item ${item_id} set as active in both schedule_items and active_timers`);
+    console.log(`✅ OSC: Cue loaded - Item ${item_id} written to active_timers table`);
+    
+    // Fetch the complete timer record to send via Socket.IO
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    const timerData = timerResult.rows[0];
     
     res.json({ 
       success: true, 
-      message: 'Cue loaded and database updated',
+      message: 'Cue loaded in active_timers',
       event_id,
       item_id
     });
     
-    // Broadcast via Socket.IO
-    io.emit('message', JSON.stringify({
-      type: 'runOfShowDataUpdated',
-      eventId: event_id
-    }));
+    // Broadcast via Socket.IO to event room with FULL timer data (match /api/active-timers)
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'timerUpdated',  // Match Browser A's event type
+      data: timerData
+    });
+    console.log(`📡 Socket.IO: timerUpdated broadcast to event:${event_id}`, timerData);
     
   } catch (error) {
     console.error('Error loading cue:', error);
@@ -1141,7 +1189,7 @@ app.post('/api/timers/start', async (req, res) => {
     
     console.log(`⏱️ OSC: Starting timer - Event: ${event_id}, Item: ${item_id}`);
     
-    // Update active_timers table
+    // ONLY update active_timers table (like Supabase RPC did)
     await pool.query(`
       UPDATE active_timers 
       SET 
@@ -1154,6 +1202,13 @@ app.post('/api/timers/start', async (req, res) => {
     
     console.log(`✅ OSC: Timer started for item ${item_id} in active_timers table`);
     
+    // Fetch the complete timer record to send via Socket.IO
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    const timerData = timerResult.rows[0];
+    
     res.json({ 
       success: true, 
       message: 'Timer started',
@@ -1161,11 +1216,12 @@ app.post('/api/timers/start', async (req, res) => {
       item_id
     });
     
-    // Broadcast via Socket.IO
-    io.emit('message', JSON.stringify({
-      type: 'runOfShowDataUpdated',
-      eventId: event_id
-    }));
+    // Broadcast via Socket.IO to event room with FULL timer data (match /api/active-timers)
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'timerUpdated',  // Match Browser A's event type
+      data: timerData
+    });
+    console.log(`📡 Socket.IO: timerUpdated broadcast to event:${event_id}`);
     
   } catch (error) {
     console.error('Error starting timer:', error);
@@ -1179,7 +1235,7 @@ app.post('/api/timers/stop', async (req, res) => {
     
     console.log(`⏹️ OSC: Stopping timer - Event: ${event_id}, Item: ${item_id}`);
     
-    // Update active_timers table
+    // ONLY update active_timers table (like Supabase RPC did)
     await pool.query(`
       UPDATE active_timers 
       SET 
@@ -1192,6 +1248,13 @@ app.post('/api/timers/stop', async (req, res) => {
     
     console.log(`✅ OSC: Timer stopped for item ${item_id} in active_timers table`);
     
+    // Fetch the complete timer record to send via Socket.IO
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    const timerData = timerResult.rows[0];
+    
     res.json({ 
       success: true, 
       message: 'Timer stopped',
@@ -1199,11 +1262,12 @@ app.post('/api/timers/stop', async (req, res) => {
       item_id
     });
     
-    // Broadcast via Socket.IO
-    io.emit('message', JSON.stringify({
-      type: 'runOfShowDataUpdated',
-      eventId: event_id
-    }));
+    // Broadcast via Socket.IO to event room with FULL timer data (match /api/active-timers)
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'timerStopped',  // Match Browser A's event type for stop
+      data: timerData
+    });
+    console.log(`📡 Socket.IO: timerStopped broadcast to event:${event_id}`);
     
   } catch (error) {
     console.error('Error stopping timer:', error);
@@ -1218,6 +1282,8 @@ app.post('/api/timers/reset', async (req, res) => {
     console.log(`🔄 OSC: Resetting timer - Event: ${event_id}`);
     
     // Clear all timer tables (like old Supabase reset did)
+    // DO NOT touch run_of_show_data table
+    
     // 1. Clear active_timers
     await pool.query(`DELETE FROM active_timers WHERE event_id = $1`, [event_id]);
     
@@ -1244,11 +1310,12 @@ app.post('/api/timers/reset', async (req, res) => {
       item_id
     });
     
-    // Broadcast via Socket.IO
-    io.emit('message', JSON.stringify({
-      type: 'runOfShowDataUpdated',
-      eventId: event_id
-    }));
+    // Broadcast via Socket.IO to event room
+    io.to(`event:${event_id}`).emit('update', {
+      type: 'resetAllStates',
+      data: { event_id }
+    });
+    console.log(`📡 Socket.IO: resetAllStates broadcast to event:${event_id}`);
     
   } catch (error) {
     console.error('Error resetting timer:', error);
