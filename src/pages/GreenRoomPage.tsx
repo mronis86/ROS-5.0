@@ -809,16 +809,18 @@ const GreenRoomPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="w-full h-screen flex items-center justify-center relative" style={{ aspectRatio: '9/16' }}>
+      <div className="w-full h-screen flex items-center justify-center relative">
         {/* Video Background */}
         <video
           autoPlay
           loop
           muted
           playsInline
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full"
           style={{
-            objectFit: 'cover'
+            objectFit: 'cover',
+            width: '100%',
+            height: '100%'
           }}
         >
           <source src="/pointed_crop_loop.webm" type="video/webm" />
@@ -831,16 +833,18 @@ const GreenRoomPage: React.FC = () => {
 
   if (error) {
     return (
-      <div className="w-full h-screen flex items-center justify-center relative" style={{ aspectRatio: '9/16' }}>
+      <div className="w-full h-screen flex items-center justify-center relative">
         {/* Video Background */}
         <video
           autoPlay
           loop
           muted
           playsInline
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full"
           style={{
-            objectFit: 'cover'
+            objectFit: 'cover',
+            width: '100%',
+            height: '100%'
           }}
         >
           <source src="/pointed_crop_loop.webm" type="video/webm" />
@@ -852,16 +856,18 @@ const GreenRoomPage: React.FC = () => {
   }
 
   return (
-    <div className="w-full h-screen text-white overflow-hidden relative" style={{ aspectRatio: '9/16' }}>
+    <div className="w-full h-screen text-white overflow-hidden relative">
       {/* Video Background */}
       <video
         autoPlay
         loop
         muted
         playsInline
-        className="absolute inset-0 w-full h-full object-cover"
+        className="absolute inset-0 w-full h-full"
         style={{
-          objectFit: 'cover'
+          objectFit: 'cover',
+          width: '100%',
+          height: '100%'
         }}
       >
         <source src="/pointed_crop_loop.webm" type="video/webm" />
