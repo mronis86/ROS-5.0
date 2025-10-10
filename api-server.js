@@ -1648,14 +1648,16 @@ app.delete('/api/backups/:backupId', async (req, res) => {
 // Auth is now handled via direct database connection
 
 
-// Start server
-server.listen(PORT, () => {
+// Start server on all network interfaces (allows local network access)
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 API Server running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  console.log(`🌐 Network access: http://<your-ip>:${PORT}/health`);
   console.log(`🔗 Database: ${process.env.NEON_DATABASE_URL ? 'Connected to Neon' : 'Not configured'}`);
   console.log(`📡 SSE endpoint: http://localhost:${PORT}/api/events/:eventId/stream`);
   console.log(`🔌 Socket.IO endpoint: ws://localhost:${PORT}`);
   console.log(`🔐 Auth: Using direct database connection`);
+  console.log(`💡 Tip: Use 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find your IP address`);
 });
 
 // Graceful shutdown
