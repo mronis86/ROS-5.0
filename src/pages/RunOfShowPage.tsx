@@ -9500,7 +9500,7 @@ const RunOfShowPage: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={item.isPublic || false}
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                               alert('Only EDITORs can change public status. Please change your role to EDITOR.');
                               return;
@@ -9525,6 +9525,10 @@ const RunOfShowPage: React.FC = () => {
                                 booleanChange: true
                               }
                             });
+                            
+                            // Save to database immediately (like other checkbox fields)
+                            await backupScheduleData();
+                            console.log('✅ Public status saved to database');
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
                             currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'

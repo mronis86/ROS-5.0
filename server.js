@@ -54,20 +54,19 @@ const server = http.createServer(async (req, res) => {
         try {
             console.log('🔄 API: Fetching run of show data for event:', eventId);
             
-            const { data, error } = await supabase
-                .from('run_of_show_data')
-                .select('*')
-                .eq('event_id', eventId)
-                .single();
+            const data = await fetchRunOfShowData(eventId);
             
-            if (error) {
-                console.error('❌ Supabase error:', error);
+            if (!data) {
+                console.error('❌ Data not found for event:', eventId);
                 res.writeHead(404, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'Data not found' }));
                 return;
             }
             
-            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.writeHead(200, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            });
             res.end(JSON.stringify(data));
             
         } catch (error) {
@@ -832,7 +831,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 const PORT = 3002;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
+    console.log(`🌐 Network access: http://<your-ip>:${PORT}`);
     console.log(`📱 Open your browser and navigate to http://localhost:${PORT}`);
+    console.log(`💡 Tip: Use 'get-network-ip.bat' to find your IP address`);
 });
