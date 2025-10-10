@@ -321,6 +321,16 @@ const GreenRoomPage: React.FC = () => {
         setTimerProgress({});
         console.log('✅ Green Room: All states cleared via reset');
       },
+      onScheduleUpdated: (data: any) => {
+        console.log('📡 Green Room: Schedule updated via WebSocket - reloading public items');
+        // Reload schedule when public checkboxes change
+        loadSchedule();
+      },
+      onRunOfShowDataUpdated: (data: any) => {
+        console.log('📡 Green Room: Run of show data updated via WebSocket - reloading');
+        // Reload schedule to get updated public items
+        loadSchedule();
+      },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 Green Room WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
       },

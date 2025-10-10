@@ -64,6 +64,9 @@ class SocketClient {
         case 'runOfShowDataUpdated':
           this.callbacks.onRunOfShowDataUpdated?.(message.data);
           break;
+        case 'scheduleUpdated':
+          this.callbacks.onScheduleUpdated?.(message.data);
+          break;
         case 'completedCuesUpdated':
           this.callbacks.onCompletedCuesUpdated?.(message.data);
           break;
