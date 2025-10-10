@@ -1135,6 +1135,10 @@ function connectToSocketIO(eventId) {
       handleTimerUpdate(data.data);
     } else if (data.type === 'timerStopped') {
       handleTimerStopped(data.data);
+    } else if (data.type === 'scheduleUpdated' || data.type === 'runOfShowDataUpdated') {
+      handleScheduleUpdate(data.data);
+    } else if (data.type === 'resetAllStates') {
+      handleResetAllStates(data.data);
     }
   });
 }
@@ -1208,6 +1212,50 @@ function handleTimerStopped(timerData) {
   // Update display
   updateCurrentCueDisplay();
   renderSchedule();
+}
+
+// Handle schedule update from Socket.IO (real-time schedule changes)
+async function handleScheduleUpdate(data) {
+  console.log('📋 Schedule updated via Socket.IO:', data);
+  
+  if (!currentEvent || data.event_id !== currentEvent.id) {
+    console.log('⚠️ Schedule update for different event, ignoring');
+    return;
+  }
+  
+  console.log('✅ Schedule update for current event, reloading...');
+  
+  // Reload the schedule for the current day
+  await loadEventSchedule(currentEvent.id, selectedDay);
+  
+  // Show notification
+  addOSCLogEntry('Schedule updated - reloaded from server', 'info');
+  showToast('Schedule updated');
+}
+
+// Handle reset all states from Socket.IO
+function handleResetAllStates(data) {
+  console.log('🔄 Reset all states via Socket.IO:', data);
+  
+  if (!currentEvent || data.event_id !== currentEvent.id) {
+    console.log('⚠️ Reset for different event, ignoring');
+    return;
+  }
+  
+  console.log('✅ Resetting all local states...');
+  
+  // Clear all local state
+  activeItemId = null;
+  activeTimers = {};
+  timerProgress = {};
+  
+  // Update display
+  updateCurrentCueDisplay();
+  renderSchedule();
+  
+  // Show notification
+  addOSCLogEntry('All states reset via Socket.IO', 'info');
+  showToast('All states reset');
 }
 
 // Initialize on load
