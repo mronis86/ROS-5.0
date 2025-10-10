@@ -716,21 +716,25 @@ const GreenRoomPage: React.FC = () => {
       originalSchedule: schedule.map(item => ({ id: item.id, name: item.segmentName, isPublic: item.isPublic }))
     });
     
-    // Create a modified schedule where items above current are marked as not public
-    const modifiedSchedule = schedule.map((item, index) => {
-      // If we have a current item and this item is before the current one, make it not public
-      if (currentIndex >= 0 && index < currentIndex) {
-        return { ...item, isPublic: false };
-      }
-      // Otherwise, keep the original isPublic value
-      return item;
-    });
+    // If we have an active item, show only from that item onwards
+    if (currentIndex >= 0) {
+      const visibleItems = schedule.slice(currentIndex).map(item => ({
+        ...item,
+        isPublic: true // Force all items from current onwards to be visible
+      }));
+      
+      console.log('🔄 Showing items from current onwards:', {
+        currentIndex,
+        visibleItems: visibleItems.map(item => ({ id: item.id, name: item.segmentName }))
+      });
+      
+      return visibleItems;
+    }
     
-    // Filter to only show items that are now "public" (including the current item and after)
-    const visibleItems = modifiedSchedule.filter(item => item.isPublic === true);
+    // If no active item, show all public items (fallback behavior)
+    const visibleItems = schedule.filter(item => item.isPublic === true);
     
-    console.log('🔄 Modified schedule:', {
-      modifiedSchedule: modifiedSchedule.map(item => ({ id: item.id, name: item.segmentName, isPublic: item.isPublic })),
+    console.log('🔄 No active item, showing all public items:', {
       visibleItems: visibleItems.map(item => ({ id: item.id, name: item.segmentName }))
     });
     
