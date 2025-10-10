@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Graphics Live XML</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1e293b;
+            color: #e2e8f0;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .status.loading {
+            background-color: #3b82f6;
+            color: white;
+        }
+        .status.success {
+            background-color: #10b981;
+            color: white;
+        }
+        .status.error {
+            background-color: #ef4444;
+            color: white;
+        }
+        #xml-output {
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Custom Graphics Live XML</h1>
+            <p>Live XML data for custom graphics - updates every 10 seconds</p>
+        </div>
+        
+        <div id="status" class="status loading">
+            Loading custom graphics data...
+        </div>
+        
+        <div id="xml-output"></div>
+    </div>
+
+    <script>
+        // Sanitize XML content
+        function sanitizeXMLContent(text) {
+            if (typeof text !== 'string') {
+                text = String(text || '');
+            }
+            return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&apos;')
+                .replace(/\n/g, ' ')
+                .replace(/\r/g, ' ')
+                .replace(/[\x00-\x1F\x7F]/g, ' ');
+        }
+
+        // Generate custom graphics JSON
+        function generateCustomGraphicsJSON(schedule, masterStartTime, customColumns) {
+            // Calculate start time function
+            const calculateStartTime = (index) => {
+                if (!masterStartTime) return '';
+                
+                let totalMinutes = 0;
+                for (let i = 0; i < index; i++) {
+                    const item = schedule[i];
+                    totalMinutes += (item.durationHours * 60) + item.durationMinutes;
+                }
+                
+                const [hours, minutes] = masterStartTime.split(':').map(Number);
+                const startDate = new Date();
+                startDate.setHours(hours, minutes + totalMinutes, 0, 0);
+                
+                return startDate.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+            };
+
+            // Generate custom graphics from schedule items with all custom columns
+            console.log('🔍 All schedule items:', schedule);
+            console.log('🔍 Processing all items (no public filter)');
+            
+            const customGraphics = schedule
+                .map(item => {
+                    // Create base object with only cue
+                    const baseItem = {
+                        cue: item.customFields?.cue || 'CUE##'
+                    };
+                    
+                    // Add only custom column values that have data
+                    const customFields = {};
+                    console.log('🔍 Processing item:', item.segmentName, 'Custom columns:', customColumns.length);
+                    customColumns.forEach(column => {
+                        const value = item.customFields[column.name];
+                        console.log('🔍 Column:', column.name, 'Value:', value);
+                        if (value && value.trim() !== '') {
+                            customFields[column.name] = value;
+                            console.log('🔍 Added custom field:', column.name, '=', value);
+                        }
+                    });
+                    console.log('🔍 Final custom fields for item:', customFields);
+                    
+                    // Combine base fields with custom fields
+                    return { ...baseItem, ...customFields };
+                });
+
+            const jsonData = {
+                event: 'Current Event',
+                generated: new Date().toISOString(),
+                customGraphics: customGraphics.length > 0 ? customGraphics : [
+                    {
+                        cue: 'N/A'
+                    }
+                ]
+            };
+
+            return jsonData;
+        }
+
+        // Generate XML from JSON data
+        function generateXML(jsonData) {
+            let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+            xml += '<customGraphicsData>\n';
+            xml += `  <event>${sanitizeXMLContent(jsonData.event)}</event>\n`;
+            xml += `  <generated>${sanitizeXMLContent(jsonData.generated)}</generated>\n`;
+            xml += '  <customGraphics>\n';
+            
+            jsonData.customGraphics.forEach((item, index) => {
+                xml += `    <item index="${index}">\n`;
+                Object.entries(item).forEach(([key, value]) => {
+                    const sanitizedKey = sanitizeXMLContent(key);
+                    const sanitizedValue = sanitizeXMLContent(value);
+                    xml += `      <${sanitizedKey}>${sanitizedValue}</${sanitizedKey}>\n`;
+                });
+                xml += '    </item>\n';
+            });
+            
+            xml += '  </customGraphics>\n';
+            xml += '</customGraphicsData>';
+            
+            return xml;
+        }
+
+        // Load data from Supabase
+        async function loadData() {
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                const eventId = urlParams.get('eventId');
+                
+                if (!eventId) {
+                    throw new Error('No event ID provided');
+                }
+
+                const response = await fetch(`https://huqijhevmtgardkyeowa.supabase.co/rest/v1/run_of_show_data?event_id=eq.${eventId}&select=*`, {
+                    headers: {
+                        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1cWlqaGV2bXRnYXJka3llb3dhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNDgyNTQsImV4cCI6MjA3MjgyNDI1NH0.1G81Zif1YWQwISEGJw4XMzY89Rlvh6Jda1-j-roPZBk',
+                        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1cWlqaGV2bXRnYXJka3llb3dhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNDgyNTQsImV4cCI6MjA3MjgyNDI1NH0.1G81Zif1YWQwISEGJw4XMzY89Rlvh6Jda1-j-roPZBk'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                if (!data || data.length === 0) {
+                    document.getElementById('status').className = 'status error';
+                    document.getElementById('status').textContent = 'No data found for this event';
+                    document.getElementById('xml-output').textContent = '<?xml version="1.0" encoding="UTF-8"?>\n<customGraphicsData>\n  <error>No data found</error>\n</customGraphicsData>';
+                    return;
+                }
+
+                const runOfShowData = data[0];
+                const schedule = runOfShowData.schedule_items;
+                const masterStartTime = runOfShowData.settings?.masterStartTime || '';
+                const customColumns = runOfShowData.custom_columns || [];
+                
+                console.log('🔍 Live Custom Graphics XML - Custom columns:', customColumns);
+                console.log('🔍 Live Custom Graphics XML - Custom columns length:', customColumns.length);
+                console.log('🔍 Live Custom Graphics XML - Schedule items:', schedule.length);
+                console.log('🔍 Live Custom Graphics XML - First schedule item:', schedule[0]);
+                console.log('🔍 Live Custom Graphics XML - First item customFields:', schedule[0]?.customFields);
+
+                // Generate and display XML
+                const jsonData = generateCustomGraphicsJSON(schedule, masterStartTime, customColumns);
+                const xmlData = generateXML(jsonData);
+                document.getElementById('xml-output').textContent = xmlData;
+                document.getElementById('status').className = 'status success';
+                document.getElementById('status').textContent = `Custom Graphics XML loaded successfully - ${jsonData.customGraphics.length} items`;
+
+            } catch (error) {
+                console.error('❌ Error fetching live custom graphics data:', error);
+                document.getElementById('status').className = 'status error';
+                document.getElementById('status').textContent = 'Error loading data: ' + error.message;
+                document.getElementById('xml-output').textContent = '<?xml version="1.0" encoding="UTF-8"?>\n<customGraphicsData>\n  <error>Error loading data: ' + error.message + '</error>\n</customGraphicsData>';
+            }
+        }
+
+        // Load data immediately and then every 10 seconds
+        loadData();
+        setInterval(loadData, 10000);
+    </script>
+</body>
+</html>

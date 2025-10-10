@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Graphics Live CSV</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #000;
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+        }
+        #csv-output {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <div id="csv-output">Loading...</div>
+
+    <script>
+        // Get event ID from URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const eventId = urlParams.get('eventId');
+
+        // Sanitize JSON for VMIX compatibility
+        function sanitizeJSONForVMIX(obj) {
+            if (typeof obj === 'string') {
+                // Replace & with \u0026 for VMIX compatibility
+                return obj.replace(/&/g, '\\u0026')
+                         .replace(/\n/g, ' ')
+                         .replace(/\r/g, ' ')
+                         .replace(/[\x00-\x1F\x7F]/g, '');
+            } else if (Array.isArray(obj)) {
+                return obj.map(item => sanitizeJSONForVMIX(item));
+            } else if (obj && typeof obj === 'object') {
+                const sanitized = {};
+                for (const key in obj) {
+                    if (obj.hasOwnProperty(key)) {
+                        sanitized[key] = sanitizeJSONForVMIX(obj[key]);
+                    }
+                }
+                return sanitized;
+            }
+            return obj;
+        }
+
+        // Generate custom graphics JSON
+        function generateCustomGraphicsJSON(schedule, masterStartTime, customColumns) {
+            // Calculate start time function
+            const calculateStartTime = (index) => {
+                if (!masterStartTime) return '';
+                
+                let totalMinutes = 0;
+                for (let i = 0; i < index; i++) {
+                    const item = schedule[i];
+                    totalMinutes += (item.durationHours * 60) + item.durationMinutes;
+                }
+                
+                const [hours, minutes] = masterStartTime.split(':').map(Number);
+                const startDate = new Date();
+                startDate.setHours(hours, minutes + totalMinutes, 0, 0);
+                
+                return startDate.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+            };
+
+            // Generate custom graphics from schedule items with all custom columns
+            console.log('🔍 All schedule items:', schedule);
+            console.log('🔍 Processing all items (no public filter)');
+            
+            const customGraphics = schedule
+                .map(item => {
+                    // Create base object with only cue
+                    const baseItem = {
+                        cue: item.customFields?.cue || 'CUE##'
+                    };
+                    
+                    // Add only custom column values that have data
+                    const customFields = {};
+                    console.log('🔍 Processing item:', item.segmentName, 'Custom columns:', customColumns.length);
+                    customColumns.forEach(column => {
+                        const value = item.customFields[column.name];
+                        console.log('🔍 Column:', column.name, 'Value:', value);
+                        if (value && value.trim() !== '') {
+                            customFields[column.name] = value;
+                            console.log('🔍 Added custom field:', column.name, '=', value);
+                        }
+                    });
+                    console.log('🔍 Final custom fields for item:', customFields);
+                    
+                    // Combine base fields with custom fields
+                    return { ...baseItem, ...customFields };
+                });
+
+            const jsonData = {
+                event: 'Current Event',
+                generated: new Date().toISOString(),
+                customGraphics: customGraphics.length > 0 ? customGraphics : [
+                    {
+                        cue: 'N/A'
+                    }
+                ]
+            };
+
+            return jsonData;
+        }
+
+        // Generate CSV from JSON data
+        function generateCSV(jsonData) {
+            if (!jsonData.customGraphics || jsonData.customGraphics.length === 0) {
+                return 'No data available';
+            }
+
+            const items = jsonData.customGraphics;
+            const headers = Object.keys(items[0]);
+            const csvRows = [headers.join(',')];
+
+            items.forEach(item => {
+                const row = headers.map(header => {
+                    const value = item[header] || '';
+                    // Escape quotes and wrap in quotes if contains comma, quote, or newline
+                    const escaped = value.toString().replace(/"/g, '""');
+                    return /[",\n\r]/.test(escaped) ? `"${escaped}"` : escaped;
+                });
+                csvRows.push(row.join(','));
+            });
+
+            return csvRows.join('\n');
+        }
+
+        // Load data and display CSV
+        async function loadData() {
+            try {
+                if (!eventId) {
+                    throw new Error('No event ID provided');
+                }
+
+                const response = await fetch(`https://huqijhevmtgardkyeowa.supabase.co/rest/v1/run_of_show_data?event_id=eq.${eventId}&select=*`, {
+                    headers: {
+                        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1cWlqaGV2bXRnYXJka3llb3dhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNDgyNTQsImV4cCI6MjA3MjgyNDI1NH0.1G81Zif1YWQwISEGJw4XMzY89Rlvh6Jda1-j-roPZBk',
+                        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1cWlqaGV2bXRnYXJka3llb3dhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNDgyNTQsImV4cCI6MjA3MjgyNDI1NH0.1G81Zif1YWQwISEGJw4XMzY89Rlvh6Jda1-j-roPZBk'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                if (!data || data.length === 0) {
+                    document.getElementById('csv-output').textContent = 'No data found for this event';
+                    return;
+                }
+
+                const runOfShowData = data[0];
+                const schedule = runOfShowData.schedule_items;
+                const masterStartTime = runOfShowData.settings?.masterStartTime || '';
+                const customColumns = runOfShowData.custom_columns || [];
+                
+                console.log('🔍 Live Custom Graphics CSV - Custom columns:', customColumns);
+                console.log('🔍 Live Custom Graphics CSV - Custom columns length:', customColumns.length);
+                console.log('🔍 Live Custom Graphics CSV - Schedule items:', schedule.length);
+                console.log('🔍 Live Custom Graphics CSV - First schedule item:', schedule[0]);
+                console.log('🔍 Live Custom Graphics CSV - First item customFields:', schedule[0]?.customFields);
+
+                // Generate and display CSV
+                const jsonData = generateCustomGraphicsJSON(schedule, masterStartTime, customColumns);
+                const csvData = generateCSV(jsonData);
+                document.getElementById('csv-output').textContent = csvData;
+
+            } catch (error) {
+                console.error('❌ Error fetching live custom graphics data:', error);
+                document.getElementById('csv-output').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        // Auto-refresh every 10 seconds
+        setInterval(loadData, 10000);
+
+        // Load data on page load
+        loadData();
+    </script>
+</body>
+</html>

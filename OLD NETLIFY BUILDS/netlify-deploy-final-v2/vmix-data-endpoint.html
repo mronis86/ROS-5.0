@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VMIX Data Endpoint</title>
+</head>
+<body>
+    <script>
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const eventId = urlParams.get('eventId');
+        const format = urlParams.get('format') || 'xml';
+        
+        if (!eventId) {
+            document.write('ERROR: Event ID required');
+            throw new Error('Event ID required');
+        }
+
+        // Railway API URL
+        const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
+        
+        async function fetchAndDisplayData() {
+            try {
+                // Fetch data from Railway
+                const response = await fetch(`${RAILWAY_URL}/api/run-of-show-data/${eventId}`);
+                if (!response.ok) throw new Error('Failed to fetch data');
+                const data = await response.json();
+                
+                if (!data || !data.schedule_items) {
+                    throw new Error('No schedule items found');
+                }
+                
+                // Generate XML or CSV
+                if (format === 'csv') {
+                    document.write(generateCSV(data));
+                } else {
+                    document.write(generateXML(data));
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                if (format === 'csv') {
+                    document.write('Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo\n');
+                } else {
+                    document.write('<?xml version="1.0" encoding="UTF-8"?><data><lower_thirds></lower_thirds></data>');
+                }
+            }
+        }
+        
+        function generateXML(data) {
+            const scheduleItems = data.schedule_items;
+            const lowerThirdsData = [];
+            
+            scheduleItems.forEach(item => {
+                const speakers = [];
+                
+                if (item.speakersText) {
+                    try {
+                        const speakersArray = typeof item.speakersText === 'string' 
+                            ? JSON.parse(item.speakersText) 
+                            : item.speakersText;
+                        
+                        if (Array.isArray(speakersArray)) {
+                            speakersArray.forEach(speaker => {
+                                speakers.push({
+                                    title: speaker.fullName || speaker.name || '',
+                                    subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
+                                    photo: speaker.photoLink || ''
+                                });
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Error parsing speakers:', e);
+                    }
+                }
+                
+                lowerThirdsData.push({
+                    id: String(item.id),
+                    cue: item.customFields?.cue || '',
+                    program: item.programType || '',
+                    segmentName: item.segmentName || '',
+                    speakers
+                });
+            });
+            
+            const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+            const items = lowerThirdsData.map(item => {
+                const speakers = new Array(21).fill('');
+                if (item.speakers && item.speakers.length > 0) {
+                    item.speakers.forEach((speaker, speakerIndex) => {
+                        if (speakerIndex < 7) {
+                            const baseIdx = speakerIndex * 3;
+                            speakers[baseIdx] = speaker.title || '';
+                            speakers[baseIdx + 1] = speaker.subtitle || '';
+                            speakers[baseIdx + 2] = speaker.photo || '';
+                        }
+                    });
+                }
+                return `
+    <item>
+      <id>${item.id}</id>
+      <cue><![CDATA[${item.cue || ''}]]></cue>
+      <program><![CDATA[${item.program || ''}]]></program>
+      <segment_name><![CDATA[${item.segmentName || ''}]]></segment_name>
+      <speaker_1_name><![CDATA[${speakers[0]}]]></speaker_1_name>
+      <speaker_1_title_org><![CDATA[${speakers[1]}]]></speaker_1_title_org>
+      <speaker_1_photo><![CDATA[${speakers[2]}]]></speaker_1_photo>
+      <speaker_2_name><![CDATA[${speakers[3]}]]></speaker_2_name>
+      <speaker_2_title_org><![CDATA[${speakers[4]}]]></speaker_2_title_org>
+      <speaker_2_photo><![CDATA[${speakers[5]}]]></speaker_2_photo>
+      <speaker_3_name><![CDATA[${speakers[6]}]]></speaker_3_name>
+      <speaker_3_title_org><![CDATA[${speakers[7]}]]></speaker_3_title_org>
+      <speaker_3_photo><![CDATA[${speakers[8]}]]></speaker_3_photo>
+      <speaker_4_name><![CDATA[${speakers[9]}]]></speaker_4_name>
+      <speaker_4_title_org><![CDATA[${speakers[10]}]]></speaker_4_title_org>
+      <speaker_4_photo><![CDATA[${speakers[11]}]]></speaker_4_photo>
+      <speaker_5_name><![CDATA[${speakers[12]}]]></speaker_5_name>
+      <speaker_5_title_org><![CDATA[${speakers[13]}]]></speaker_5_title_org>
+      <speaker_5_photo><![CDATA[${speakers[14]}]]></speaker_5_photo>
+      <speaker_6_name><![CDATA[${speakers[15]}]]></speaker_6_name>
+      <speaker_6_title_org><![CDATA[${speakers[16]}]]></speaker_6_title_org>
+      <speaker_6_photo><![CDATA[${speakers[17]}]]></speaker_6_photo>
+      <speaker_7_name><![CDATA[${speakers[18]}]]></speaker_7_name>
+      <speaker_7_title_org><![CDATA[${speakers[19]}]]></speaker_7_title_org>
+      <speaker_7_photo><![CDATA[${speakers[20]}]]></speaker_7_photo>
+    </item>`;
+            }).join('');
+            
+            return xmlHeader + `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <lower_thirds>
+    ${items}
+  </lower_thirds>
+</data>`;
+        }
+        
+        function generateCSV(data) {
+            const scheduleItems = data.schedule_items;
+            let csv = 'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
+            
+            scheduleItems.forEach((item, index) => {
+                const speakers = new Array(21).fill('');
+                
+                if (item.speakersText) {
+                    try {
+                        const speakersArray = typeof item.speakersText === 'string' 
+                            ? JSON.parse(item.speakersText) 
+                            : item.speakersText;
+                        
+                        if (Array.isArray(speakersArray)) {
+                            speakersArray.forEach((speaker, speakerIndex) => {
+                                if (speakerIndex < 7) {
+                                    const baseIdx = speakerIndex * 3;
+                                    speakers[baseIdx] = speaker.fullName || speaker.name || '';
+                                    speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                                    speakers[baseIdx + 2] = speaker.photoLink || '';
+                                }
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Error parsing speakers:', e);
+                    }
+                }
+                
+                const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+                const cue = item.customFields?.cue || '';
+                const program = item.programType || '';
+                const segmentName = item.segmentName || '';
+                
+                csv += `${index + 1},${escapeCsv(cue)},${escapeCsv(program)},${escapeCsv(segmentName)}`;
+                for (let i = 0; i < 21; i++) {
+                    csv += `,${escapeCsv(speakers[i])}`;
+                }
+                csv += '\n';
+            });
+            
+            return csv;
+        }
+        
+        // Execute on page load
+        fetchAndDisplayData();
+    </script>
+</body>
+</html>

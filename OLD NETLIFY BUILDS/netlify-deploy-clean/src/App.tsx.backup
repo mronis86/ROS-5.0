@@ -1,0 +1,978 @@
+import React, { useState, useEffect } from 'react';
+import './App.css';
+
+interface ScheduleItem {
+  id: number;
+  programType: string;
+  shotType: string;
+  segmentName: string;
+  durationHours: number;
+  durationMinutes: number;
+  durationSeconds: number;
+  notes: string;
+  assets: string;
+  speakers: string;
+  hasPPT: boolean;
+  hasQA: boolean;
+  customFields: Record<string, string>;
+}
+
+interface CustomColumn {
+  name: string;
+  id: string;
+}
+
+function App() {
+  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
+  const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
+  const [eventName, setEventName] = useState('');
+  const [masterStartTime, setMasterStartTime] = useState('14:00');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
+  const [activeTimers, setActiveTimers] = useState<Record<number, NodeJS.Timeout>>({});
+  const [completedCues, setCompletedCues] = useState<Record<number, boolean>>({});
+  const [activeRowMenu, setActiveRowMenu] = useState<number | null>(null);
+  const [activeItemMenu, setActiveItemMenu] = useState<number | null>(null);
+  const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  const [timerProgress, setTimerProgress] = useState<Record<number, { elapsed: number; total: number }>>({});
+  const [modalForm, setModalForm] = useState({
+    cue: '',
+    programType: 'PreShow/End',
+    shotType: '',
+    segmentName: '',
+    durationHours: 0,
+    durationMinutes: 0,
+    durationSeconds: 0,
+    notes: '',
+    assets: '',
+    speakers: '',
+    hasPPT: false,
+    hasQA: false
+  });
+
+  const programTypes = [
+    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Sub Cue',
+    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
+  ];
+
+  const shotTypes = [
+    'Podium', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot'
+  ];
+
+  // Helper function to format time
+  const formatTime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Get active item
+  const getActiveItem = () => {
+    return activeItemId ? schedule.find(item => item.id === activeItemId) : null;
+  };
+
+  // Get remaining time for active item
+  const getRemainingTime = () => {
+    if (!activeItemId || !timerProgress[activeItemId]) return 0;
+    const progress = timerProgress[activeItemId];
+    return Math.max(0, progress.total - progress.elapsed);
+  };
+
+  // Get progress percentage for active item
+  const getProgressPercentage = () => {
+    if (!activeItemId || !timerProgress[activeItemId]) return 0;
+    const progress = timerProgress[activeItemId];
+    return progress.total > 0 ? (progress.elapsed / progress.total) * 100 : 0;
+  };
+
+  // Load data from localStorage on component mount
+  useEffect(() => {
+    const savedSchedule = localStorage.getItem('runOfShowSchedule');
+    const savedCustomColumns = localStorage.getItem('customColumns');
+    const savedEventName = localStorage.getItem('eventName');
+    const savedMasterTime = localStorage.getItem('masterStartTime');
+
+    if (savedSchedule) setSchedule(JSON.parse(savedSchedule));
+    if (savedCustomColumns) setCustomColumns(JSON.parse(savedCustomColumns));
+    if (savedEventName) setEventName(savedEventName);
+    if (savedMasterTime) setMasterStartTime(savedMasterTime);
+  }, []);
+
+  // Close menus when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setActiveItemMenu(null);
+      setActiveRowMenu(null);
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  // Save data to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('runOfShowSchedule', JSON.stringify(schedule));
+  }, [schedule]);
+
+  useEffect(() => {
+    localStorage.setItem('customColumns', JSON.stringify(customColumns));
+  }, [customColumns]);
+
+  useEffect(() => {
+    localStorage.setItem('eventName', eventName);
+  }, [eventName]);
+
+  useEffect(() => {
+    localStorage.setItem('masterStartTime', masterStartTime);
+  }, [masterStartTime]);
+
+  // Close row menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      // Don't close if clicking on menu button or menu itself
+      if (activeRowMenu !== null && 
+          !target.closest('.menu-button') && 
+          !target.closest('.menu-dropdown')) {
+        setActiveRowMenu(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [activeRowMenu]);
+
+  const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string }) => {
+    const item: ScheduleItem = {
+      ...newItem,
+      id: Date.now(),
+      customFields: {
+        cue: newItem.cue || ''
+      }
+    };
+    setSchedule(prev => [...prev, item]);
+    setShowAddModal(false);
+    // Reset form
+    setModalForm({
+      cue: '',
+      programType: 'PreShow/End',
+      shotType: '',
+      segmentName: '',
+      notes: ''
+    });
+  };
+
+  const addCustomColumn = (name: string) => {
+    const newColumn: CustomColumn = { name, id: Date.now().toString() };
+    setCustomColumns(prev => [...prev, newColumn]);
+    
+    // Add the field to existing schedule items
+    setSchedule(prev => prev.map(item => ({
+      ...item,
+      customFields: { ...item.customFields, [name]: '' }
+    })));
+    
+    setShowCustomColumnModal(false);
+  };
+
+  const removeCustomColumn = (columnId: string) => {
+    const column = customColumns.find(col => col.id === columnId);
+    if (!column) return;
+
+    setCustomColumns(prev => prev.filter(col => col.id !== columnId));
+    
+    // Remove the field from existing schedule items
+    setSchedule(prev => prev.map(item => {
+      const { [column.name]: removed, ...rest } = item.customFields;
+      return { ...item, customFields: rest };
+    }));
+  };
+
+  const toggleTimer = (itemId: number) => {
+    if (activeTimers[itemId]) {
+      // Stop timer and mark as completed
+      clearInterval(activeTimers[itemId]);
+      setActiveTimers(prev => {
+        const newTimers = { ...prev };
+        delete newTimers[itemId];
+        return newTimers;
+      });
+      setCompletedCues(prev => ({ ...prev, [itemId]: true }));
+      setActiveItemId(null);
+      setTimerProgress(prev => {
+        const newProgress = { ...prev };
+        delete newProgress[itemId];
+        return newProgress;
+      });
+    } else {
+      // Stop any other active timer first
+      if (activeItemId && activeTimers[activeItemId]) {
+        clearInterval(activeTimers[activeItemId]);
+        setActiveTimers(prev => {
+          const newTimers = { ...prev };
+          delete newTimers[activeItemId];
+          return newTimers;
+        });
+      }
+
+      // Start new timer
+      const item = schedule.find(s => s.id === itemId);
+      if (item) {
+        const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
+        
+        setTimerProgress(prev => ({ ...prev, [itemId]: { elapsed: 0, total: totalSeconds } }));
+        setActiveItemId(itemId);
+        
+        const timer = setInterval(() => {
+          setTimerProgress(prev => {
+            const current = prev[itemId];
+            if (current && current.elapsed < current.total) {
+              return { ...prev, [itemId]: { ...current, elapsed: current.elapsed + 1 } };
+            } else {
+              // Timer completed
+              setCompletedCues(prev => ({ ...prev, [itemId]: true }));
+              setActiveItemId(null);
+              return prev;
+            }
+          });
+        }, 1000);
+        
+        setActiveTimers(prev => ({ ...prev, [itemId]: timer }));
+        setCompletedCues(prev => ({ ...prev, [itemId]: false }));
+      }
+    }
+  };
+
+  const deleteScheduleItem = (itemId: number) => {
+    if (window.confirm('Delete this schedule item?')) {
+      setSchedule(prev => prev.filter(item => item.id !== itemId));
+      setActiveRowMenu(null); // Close menu after deletion
+    }
+  };
+
+  const duplicateScheduleItem = (itemId: number) => {
+    const itemToDuplicate = schedule.find(item => item.id === itemId);
+    if (itemToDuplicate) {
+      const newItem = {
+        ...itemToDuplicate,
+        id: Date.now(),
+        segmentName: `${itemToDuplicate.segmentName} (Copy)`
+      };
+      setSchedule(prev => [...prev, newItem]);
+      setActiveItemMenu(null);
+    }
+  };
+
+  const moveScheduleItem = (itemId: number, direction: 'up' | 'down') => {
+    const currentIndex = schedule.findIndex(item => item.id === itemId);
+    if (currentIndex === -1) return;
+
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (newIndex < 0 || newIndex >= schedule.length) return;
+
+    setSchedule(prev => {
+      const newSchedule = [...prev];
+      [newSchedule[currentIndex], newSchedule[newIndex]] = [newSchedule[newIndex], newSchedule[currentIndex]];
+      return newSchedule;
+    });
+    setActiveItemMenu(null);
+  };
+
+
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
+      {/* Header */}
+      <div className="text-center py-8">
+        <h1 className="text-4xl font-bold text-white mb-2">
+          🎬 Run of Show Schedule
+        </h1>
+        <p className="text-xl text-slate-400 mb-8">
+          Professional Event Scheduling & Management
+        </p>
+        
+                 {/* Event Controls - Top Left with margin */}
+         <div className="flex justify-between items-start mb-6">
+           <div className="flex flex-col gap-4 ml-8">
+             <div className="flex flex-col gap-2">
+               <label className="text-white font-semibold text-left">Event Name:</label>
+               <input
+                 type="text"
+                 value={eventName}
+                 onChange={(e) => setEventName(e.target.value)}
+                 placeholder="Enter Event Name"
+                 className="px-4 py-2 bg-slate-700 border-2 border-slate-600 rounded-lg text-white focus:border-blue-500 focus:outline-none w-64"
+               />
+             </div>
+             <div className="flex flex-col gap-2">
+               <label className="text-white font-semibold text-left">Master Start Time:</label>
+               <input
+                 type="time"
+                 value={masterStartTime}
+                 onChange={(e) => setMasterStartTime(e.target.value)}
+                 className="px-4 py-2 bg-slate-700 border-2 border-slate-600 rounded-lg text-white focus:border-blue-500 focus:outline-none w-48"
+               />
+             </div>
+           </div>
+           
+           {/* Countdown Timer - Top Right */}
+           <div className="flex flex-col items-end gap-3 mr-8">
+             <div className="text-center">
+               <div className="text-2xl font-bold text-white mb-2">
+                 {activeItemId ? '⏱️ LIVE' : '⏸️ PAUSED'}
+               </div>
+               <div className="text-lg text-slate-300">
+                 {activeItemId ? getActiveItem()?.segmentName || 'CUE in Progress' : 'No Active CUE'}
+               </div>
+             </div>
+             
+             {/* Progress Bar */}
+             <div className="w-64 h-3 bg-slate-700 rounded-full overflow-hidden border border-slate-600">
+               <div 
+                 className="h-full bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-1000"
+                 style={{ 
+                   width: `${getProgressPercentage()}%` 
+                 }}
+               />
+             </div>
+             
+             {/* Timer Display */}
+             <div className="text-3xl font-mono text-white bg-slate-800 px-4 py-2 rounded-lg border border-slate-600">
+               {formatTime(getRemainingTime())}
+             </div>
+           </div>
+         </div>
+
+        {/* Action Buttons */}
+        <div className="flex justify-center gap-4">
+          <button
+            onClick={() => {
+              setShowAddModal(true);
+              // Reset form to defaults
+              setModalForm({
+                cue: '',
+                programType: 'PreShow/End',
+                shotType: '',
+                segmentName: '',
+                notes: ''
+              });
+            }}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+          >
+            + Add Schedule Item
+          </button>
+          <button
+            onClick={() => setShowCustomColumnModal(true)}
+            className="px-6 py-3 bg-slate-600 hover:bg-slate-700 text-white font-semibold rounded-lg transition-colors"
+          >
+            + Add Custom Column
+          </button>
+        </div>
+      </div>
+
+      {/* Schedule Container */}
+      <div className="max-w-[95%] mx-auto px-6">
+        <div className="bg-slate-800 rounded-xl p-6 shadow-2xl">
+          <h2 className="text-2xl font-bold text-white mb-6">Schedule</h2>
+          
+          {/* Schedule Layout */}
+          <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
+            {/* Menu Column - Separate from row number */}
+            <div className="w-12 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
+              {/* Header */}
+              <div className="h-28 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+                <span className="text-white font-bold text-xs">⋮</span>
+              </div>
+              
+              {/* Menu Dots for each row */}
+              {schedule.length === 0 ? (
+                <div className="h-28 flex items-center justify-center text-slate-500">
+                  -
+                </div>
+              ) : (
+                schedule.map((item, index) => (
+                  <div 
+                    key={item.id}
+                    className={`h-28 border-b-2 border-slate-600 flex items-center justify-center ${
+                      index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
+                    }`}
+                  >
+                    <div className="relative">
+                      <button
+                        onClick={() => setActiveRowMenu(activeRowMenu === item.id ? null : item.id)}
+                        className="menu-button w-6 h-6 rounded-full bg-slate-600 hover:bg-slate-500 text-white flex items-center justify-center text-xs"
+                      >
+                        ⋮
+                      </button>
+                      
+                      {/* Row Settings Menu */}
+                      {activeRowMenu === item.id && (
+                        <div className="menu-dropdown absolute right-full top-0 mr-2 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl min-w-32">
+                          <button
+                            onClick={() => moveScheduleItem(item.id, 'up')}
+                            disabled={index === 0}
+                            className="w-full px-3 py-2 text-left text-sm text-white hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed border-b border-slate-600"
+                          >
+                            ⬆️ Move Up
+                          </button>
+                          <button
+                            onClick={() => moveScheduleItem(item.id, 'down')}
+                            disabled={index === schedule.length - 1}
+                            className="w-full px-3 py-2 text-left text-sm text-white hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed border-b border-slate-600"
+                          >
+                            ⬇️ Move Down
+                          </button>
+                          <button
+                            onClick={() => duplicateScheduleItem(item.id)}
+                            className="w-full px-3 py-2 text-left text-sm text-white hover:bg-slate-700 border-b border-slate-600"
+                          >
+                            📋 Duplicate
+                          </button>
+                          <button
+                            onClick={() => deleteScheduleItem(item.id)}
+                            className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-red-900 hover:text-red-200"
+                          >
+                            🗑️ Remove
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            {/* Left Fixed Section - Row Number & CUE */}
+             <div className="w-40 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
+                             {/* Header */}
+               <div className="h-28 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+                 <span className="text-white font-bold text-lg">#/CUE</span>
+               </div>
+              
+              {/* Row Numbers and CUEs */}
+              {schedule.length === 0 ? (
+                <div className="h-28 flex items-center justify-center text-slate-500">
+                  No items
+                </div>
+              ) : (
+                schedule.map((item, index) => (
+                                       <div 
+                       key={item.id}
+                       className={`h-28 border-b-2 border-slate-600 flex items-center justify-center gap-3 ${
+                         index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
+                       }`}
+                     >
+                                               <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-white">
+                            {index + 1}
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          value={item.customFields.cue || `CUE-${String(item.id).padStart(3, '0')}`}
+                          className={`w-24 text-center text-sm px-2 py-1 border rounded ${
+                            completedCues[item.id]
+                              ? 'bg-green-700 border-green-500 text-green-100'
+                              : 'bg-slate-700 border-slate-600 text-white'
+                          }`}
+                          readOnly
+                        />
+                     </div>
+                ))
+              )}
+            </div>
+
+                                      {/* Center Scrollable Section - Main Schedule Data */}
+             <div className="flex-1 overflow-x-auto">
+               <div className="min-w-max">
+                 {/* Header Row */}
+                 <div className="h-28 bg-slate-700 border-b-3 border-slate-600 flex">
+                   <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">Program Type</span>
+                   </div>
+                   <div className="w-56 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">Duration</span>
+                   </div>
+                   <div className="w-80 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">Segment Name</span>
+                   </div>
+                   <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">Shot Type</span>
+                   </div>
+                   <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">PPT/Q&A</span>
+                   </div>
+                   <div className="w-56 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">Notes</span>
+                   </div>
+                   <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">Assets</span>
+                   </div>
+                   <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                     <span className="text-white font-bold">Participants</span>
+                   </div>
+                   {customColumns.map(column => (
+                     <div key={column.id} className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center relative flex-shrink-0">
+                       <span className="text-white font-bold">{column.name}</span>
+                       <button
+                         onClick={() => removeCustomColumn(column.id)}
+                         className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs hover:bg-red-600"
+                       >
+                         ×
+                       </button>
+                     </div>
+                   ))}
+                 </div>
+
+                                 {/* Schedule Rows */}
+                 {schedule.length === 0 ? (
+                                    <div className="h-28 flex items-center justify-center text-slate-500 text-xl">
+                   No schedule items yet. Click "Add Schedule Item" to start!
+                 </div>
+                 ) : (
+                   schedule.map((item, index) => (
+                                           <div 
+                        key={item.id}
+                        className={`h-28 border-b-2 border-slate-600 flex ${
+                          index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
+                        }`}
+                      >
+                       <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <select className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm">
+                           {programTypes.map(type => (
+                             <option key={type} value={type}>{type}</option>
+                           ))}
+                         </select>
+                       </div>
+                       <div className="w-56 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <div className="flex items-center gap-2">
+                           <input 
+                             type="number" 
+                             min="0" 
+                             max="23" 
+                             value={item.durationHours}
+                             onChange={(e) => {
+                               const newValue = parseInt(e.target.value) || 0;
+                               setSchedule(prev => prev.map(scheduleItem => 
+                                 scheduleItem.id === item.id 
+                                   ? { ...scheduleItem, durationHours: newValue }
+                                   : scheduleItem
+                               ));
+                             }}
+                             className="w-14 px-2 py-2 bg-slate-700 border border-slate-600 rounded text-white text-center text-lg font-mono font-bold" 
+                           />
+                           <span className="text-slate-400 text-xl font-bold">:</span>
+                           <input 
+                             type="number" 
+                             min="0" 
+                             max="59" 
+                             value={item.durationMinutes}
+                             onChange={(e) => {
+                               const newValue = parseInt(e.target.value) || 0;
+                               setSchedule(prev => prev.map(scheduleItem => 
+                                 scheduleItem.id === item.id 
+                                   ? { ...scheduleItem, durationMinutes: newValue }
+                                   : scheduleItem
+                               ));
+                             }}
+                             className="w-14 px-2 py-2 bg-slate-700 border border-slate-600 rounded text-white text-center text-lg font-mono font-bold" 
+                           />
+                           <span className="text-slate-400 text-xl font-bold">:</span>
+                           <input 
+                             type="number" 
+                             min="0" 
+                             max="59" 
+                             value={item.durationSeconds}
+                             onChange={(e) => {
+                               const newValue = parseInt(e.target.value) || 0;
+                               setSchedule(prev => prev.map(scheduleItem => 
+                                 scheduleItem.id === item.id 
+                                   ? { ...scheduleItem, durationSeconds: newValue }
+                                   : scheduleItem
+                               ));
+                             }}
+                             className="w-14 px-2 py-2 bg-slate-700 border border-slate-600 rounded text-white text-center text-lg font-mono font-bold" 
+                           />
+                         </div>
+                       </div>
+                       <div className="w-80 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <input
+                           type="text"
+                           value={item.segmentName}
+                           onChange={(e) => {
+                             setSchedule(prev => prev.map(scheduleItem => 
+                               scheduleItem.id === item.id 
+                                 ? { ...scheduleItem, segmentName: e.target.value }
+                                 : scheduleItem
+                             ));
+                           }}
+                           placeholder="Segment name"
+                           className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                         />
+                       </div>
+                       <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <select className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm">
+                           <option value="">Select shot type</option>
+                           {shotTypes.map(type => (
+                             <option key={type} value={type}>{type}</option>
+                           ))}
+                         </select>
+                       </div>
+                       <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <div className="flex gap-4">
+                           <label className="flex items-center gap-2 text-sm">
+                             <input type="checkbox" className="w-4 h-4" />
+                             PPT
+                           </label>
+                           <label className="flex items-center gap-2 text-sm">
+                             <input type="checkbox" className="w-4 h-4" />
+                             Q&A
+                           </label>
+                         </div>
+                       </div>
+                       <div className="w-56 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <textarea
+                           placeholder="Notes"
+                           className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm resize-none"
+                           rows={2}
+                         />
+                       </div>
+                       <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <input
+                           type="text"
+                           placeholder="Graphics, videos, etc."
+                           className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                         />
+                       </div>
+                       <div className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                         <input
+                           type="text"
+                           placeholder="Speaker names"
+                           className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                         />
+                       </div>
+                       {customColumns.map(column => (
+                         <div key={column.id} className="w-48 px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0">
+                           <input
+                             type="text"
+                             placeholder={column.name}
+                             className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                           />
+                         </div>
+                       ))}
+                     </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+                         {/* Right Fixed Section - Timer */}
+             <div className="w-36 flex-shrink-0 bg-slate-900 border-l-2 border-slate-600">
+                             {/* Header */}
+               <div className="h-28 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+                 <span className="text-white font-bold text-lg">Timer</span>
+               </div>
+              
+              {/* Timer Controls */}
+              {schedule.length === 0 ? (
+                <div className="h-28 flex items-center justify-center text-slate-500">
+                  No items
+                </div>
+              ) : (
+                schedule.map((item, index) => (
+                                     <div 
+                     key={item.id}
+                     className={`h-28 border-b-2 border-slate-600 flex flex-col items-center justify-center gap-2 ${
+                       index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
+                     }`}
+                   >
+                                         <div className={`text-sm px-2 py-1 rounded font-mono ${
+                       completedCues[item.id] 
+                         ? 'bg-green-600 text-green-100' 
+                         : 'bg-slate-600 text-slate-300'
+                     }`}>
+                       {completedCues[item.id] ? '✅ DONE' : `ID-${String(index + 1).padStart(3, '0')}`}
+                     </div>
+                     <button
+                       onClick={() => toggleTimer(item.id)}
+                       className={`w-8 h-8 rounded-full text-white text-base ${
+                         completedCues[item.id] 
+                           ? 'bg-green-600 cursor-not-allowed' 
+                           : activeTimers[item.id] 
+                             ? 'bg-red-500' 
+                             : 'bg-green-500'
+                       }`}
+                       disabled={completedCues[item.id]}
+                     >
+                       {completedCues[item.id] ? '✅' : activeTimers[item.id] ? '⏸️' : '▶️'}
+                     </button>
+                     <div className="w-20 h-2 bg-slate-700 rounded-full overflow-hidden">
+                       <div 
+                         className={`h-full transition-all duration-1000 ${
+                           completedCues[item.id] 
+                             ? 'bg-green-500' 
+                             : activeTimers[item.id] 
+                               ? 'bg-blue-500' 
+                               : 'bg-transparent'
+                         }`}
+                         style={{ 
+                           width: `${completedCues[item.id] ? '100%' : timerProgress[item.id] ? (timerProgress[item.id].elapsed / timerProgress[item.id].total) * 100 : '0%'}` 
+                         }}
+                       />
+                     </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+      {/* Add Item Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-xl p-6 max-w-2xl w-full mx-4">
+            <h2 className="text-2xl font-bold text-white mb-6">Add New Schedule Item</h2>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-white font-semibold mb-2">CUE</label>
+                  <input
+                    type="text"
+                    value={modalForm.cue}
+                    onChange={(e) => setModalForm(prev => ({ ...prev, cue: e.target.value }))}
+                    placeholder="Enter CUE (e.g., CUE-001)"
+                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-white font-semibold mb-2">Program Type</label>
+                  <select 
+                    value={modalForm.programType}
+                    onChange={(e) => setModalForm(prev => ({ ...prev, programType: e.target.value }))}
+                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                  >
+                    <option value="">Select program type</option>
+                    {programTypes.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-white font-semibold mb-2">Segment Name</label>
+                <input
+                  type="text"
+                  value={modalForm.segmentName}
+                  onChange={(e) => setModalForm(prev => ({ ...prev, segmentName: e.target.value }))}
+                  placeholder="Enter segment name"
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-white font-semibold mb-2">Duration</label>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      min="0" 
+                      max="23" 
+                      value={modalForm.durationHours}
+                      onChange={(e) => setModalForm(prev => ({ ...prev, durationHours: parseInt(e.target.value) || 0 }))}
+                      className="w-14 px-2 py-2 bg-slate-700 border border-slate-600 rounded text-white text-center text-lg font-mono font-bold" 
+                    />
+                    <span className="text-slate-400 text-xl font-bold">:</span>
+                    <input 
+                      type="number" 
+                      min="0" 
+                      max="59" 
+                      value={modalForm.durationMinutes}
+                      onChange={(e) => setModalForm(prev => ({ ...prev, durationMinutes: parseInt(e.target.value) || 0 }))}
+                      className="w-14 px-2 py-2 bg-slate-700 border border-slate-600 rounded text-white text-center text-lg font-mono font-bold" 
+                    />
+                    <span className="text-slate-400 text-xl font-bold">:</span>
+                    <input 
+                      type="number" 
+                      min="0" 
+                      max="59" 
+                      value={modalForm.durationSeconds}
+                      onChange={(e) => setModalForm(prev => ({ ...prev, durationSeconds: parseInt(e.target.value) || 0 }))}
+                      className="w-14 px-2 py-2 bg-slate-700 border border-slate-600 rounded text-white text-center text-lg font-mono font-bold" 
+                    />
+                  </div>
+                  <p className="text-sm text-slate-400 mt-1">Enter duration in hours, minutes, and seconds</p>
+                </div>
+                <div>
+                  <label className="block text-white font-semibold mb-2">Shot Type</label>
+                  <select 
+                    value={modalForm.shotType}
+                    onChange={(e) => setModalForm(prev => ({ ...prev, shotType: e.target.value }))}
+                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                  >
+                    <option value="">Select shot type</option>
+                    {shotTypes.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-white font-semibold mb-2">Assets</label>
+                <input
+                  type="text"
+                  value={modalForm.assets}
+                  onChange={(e) => setModalForm(prev => ({ ...prev, assets: e.target.value }))}
+                  placeholder="Enter assets"
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-white font-semibold mb-2">Speakers</label>
+                <input
+                  type="text"
+                  value={modalForm.speakers}
+                  onChange={(e) => setModalForm(prev => ({ ...prev, speakers: e.target.value }))}
+                  placeholder="Enter speakers"
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                />
+              </div>
+              <div className="flex gap-6">
+                <label className="flex items-center text-white">
+                  <input
+                    type="checkbox"
+                    checked={modalForm.hasPPT}
+                    onChange={(e) => setModalForm(prev => ({ ...prev, hasPPT: e.target.checked }))}
+                    className="mr-2"
+                  />
+                  Has PPT
+                </label>
+                <label className="flex items-center text-white">
+                  <input
+                    type="checkbox"
+                    checked={modalForm.hasQA}
+                    onChange={(e) => setModalForm(prev => ({ ...prev, hasQA: e.target.checked }))}
+                    className="mr-2"
+                  />
+                  Has Q&A
+                </label>
+              </div>
+              <div>
+                <label className="block text-white font-semibold mb-2">Notes</label>
+                <textarea
+                  value={modalForm.notes}
+                  onChange={(e) => setModalForm(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Enter notes"
+                  rows={3}
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-4 mt-6">
+              <button
+                onClick={() => {
+                  setShowAddModal(false);
+                  setModalForm({
+                    cue: '',
+                    programType: 'PreShow/End',
+                    shotType: '',
+                    segmentName: '',
+                    durationHours: 0,
+                    durationMinutes: 0,
+                    durationSeconds: 0,
+
+                    notes: '',
+                    assets: '',
+                    speakers: '',
+                    hasPPT: false,
+                    hasQA: false
+                  });
+                }}
+                className="px-6 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  addScheduleItem({
+                    cue: modalForm.cue,
+                    programType: modalForm.programType,
+                    shotType: modalForm.shotType,
+                    segmentName: modalForm.segmentName,
+                    durationHours: modalForm.durationHours,
+                    durationMinutes: modalForm.durationMinutes,
+                    durationSeconds: modalForm.durationSeconds,
+                    notes: modalForm.notes,
+                    assets: modalForm.assets,
+                    speakers: modalForm.speakers,
+                    hasPPT: modalForm.hasPPT,
+                    hasQA: modalForm.hasQA,
+                    customFields: {}
+                  });
+                  setShowAddModal(false);
+                  setModalForm({
+                    cue: '',
+                    programType: 'PreShow/End',
+                    shotType: '',
+                    segmentName: '',
+                    durationHours: 0,
+                    durationMinutes: 0,
+                    durationSeconds: 0,
+
+                    notes: '',
+                    assets: '',
+                    speakers: '',
+                    hasPPT: false,
+                    hasQA: false
+                  });
+                }}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+              >
+                Add Item
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Column Modal */}
+      {showCustomColumnModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-xl p-6 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold text-white mb-6">Add Custom Column</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-white font-semibold mb-2">Column Name</label>
+                <input
+                  type="text"
+                  placeholder="Enter column name"
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+                  id="customColumnName"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-4 mt-6">
+              <button
+                onClick={() => setShowCustomColumnModal(false)}
+                className="px-6 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const input = document.getElementById('customColumnName') as HTMLInputElement;
+                  if (input && input.value.trim()) {
+                    addCustomColumn(input.value.trim());
+                  }
+                }}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+              >
+                Add Column
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;

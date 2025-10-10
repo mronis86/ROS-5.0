@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Netlify Functions Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1e293b;
+            color: white;
+        }
+        .test-section {
+            background: #334155;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        .result {
+            background: #1f2937;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .error {
+            background: #7f1d1d;
+            color: #fecaca;
+        }
+        .success {
+            background: #14532d;
+            color: #bbf7d0;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #4b5563;
+            border-radius: 4px;
+            background: #374151;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Netlify Functions Test</h1>
+    <p>Use this page to test if your Netlify functions are working correctly.</p>
+
+    <div class="test-section">
+        <h2>📝 Event ID Input</h2>
+        <input type="text" id="eventId" placeholder="Enter your Event ID" style="width: 400px;">
+        <p><small>Get your Event ID by running: <code>node check-event-ids.js</code> locally</small></p>
+    </div>
+
+    <div class="test-section">
+        <h2>🔗 Function Tests</h2>
+        <p>Click these buttons to test each Netlify function:</p>
+        
+        <div>
+            <button onclick="testFunction('lower-thirds-xml')">Test Lower Thirds XML</button>
+            <button onclick="testFunction('lower-thirds-csv')">Test Lower Thirds CSV</button>
+            <button onclick="testFunction('schedule-xml')">Test Schedule XML</button>
+            <button onclick="testFunction('schedule-csv')">Test Schedule CSV</button>
+        </div>
+        
+        <div>
+            <button onclick="testFunction('custom-columns-xml')">Test Custom Columns XML</button>
+            <button onclick="testFunction('custom-columns-csv')">Test Custom Columns CSV</button>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>📊 Results</h2>
+        <div id="results"></div>
+    </div>
+
+    <script>
+        function testFunction(functionName) {
+            const eventId = document.getElementById('eventId').value.trim();
+            const resultsDiv = document.getElementById('results');
+            
+            if (!eventId) {
+                resultsDiv.innerHTML = '<div class="result error">❌ Please enter an Event ID first</div>';
+                return;
+            }
+            
+            const url = `/.netlify/functions/${functionName}?eventId=${eventId}`;
+            
+            // Clear previous results
+            resultsDiv.innerHTML = '<div class="result">🔄 Testing...</div>';
+            
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.text();
+                })
+                .then(data => {
+                    // Check if it looks like XML or CSV
+                    const isXML = data.trim().startsWith('<?xml');
+                    const isCSV = data.includes(',') && data.includes('\n');
+                    
+                    let preview = data.substring(0, 500);
+                    if (data.length > 500) {
+                        preview += '\n... (truncated)';
+                    }
+                    
+                    const contentType = isXML ? 'XML' : isCSV ? 'CSV' : 'Text';
+                    
+                    resultsDiv.innerHTML = `
+                        <div class="result success">
+                            ✅ <strong>${functionName}</strong> - Success!<br>
+                            📄 Content Type: ${contentType}<br>
+                            📏 Data Length: ${data.length} characters<br>
+                            🔗 URL: <a href="${url}" target="_blank" style="color: #60a5fa;">${url}</a><br><br>
+                            <strong>Preview:</strong><br>
+                            ${preview}
+                        </div>
+                    `;
+                })
+                .catch(error => {
+                    resultsDiv.innerHTML = `
+                        <div class="result error">
+                            ❌ <strong>${functionName}</strong> - Error!<br>
+                            🚨 ${error.message}<br>
+                            🔗 URL: <a href="${url}" target="_blank" style="color: #f87171;">${url}</a><br><br>
+                            <strong>Possible Issues:</strong><br>
+                            • Environment variables not set in Netlify dashboard<br>
+                            • Event ID not found in database<br>
+                            • Database connection issues<br>
+                            • Function not deployed correctly
+                        </div>
+                    `;
+                });
+        }
+        
+        // Auto-fill with a common event ID if available
+        window.onload = function() {
+            // Try to get event ID from localStorage if available
+            const keys = Object.keys(localStorage);
+            const eventKeys = keys.filter(key => key.includes('event') || key.includes('Event'));
+            if (eventKeys.length > 0) {
+                // Look for event ID in localStorage
+                for (const key of eventKeys) {
+                    const value = localStorage.getItem(key);
+                    if (value && value.length > 10 && value.includes('-')) {
+                        document.getElementById('eventId').value = value;
+                        break;
+                    }
+                }
+            }
+        };
+    </script>
+</body>
+</html>

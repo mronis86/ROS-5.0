@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Netlify Functions Debug</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1e293b;
+            color: white;
+        }
+        .debug-section {
+            background: #334155;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .error { background: #7f1d1d; color: #fecaca; }
+        .success { background: #14532d; color: #bbf7d0; }
+        .warning { background: #78350f; color: #fed7aa; }
+        .info { background: #1e40af; color: #dbeafe; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #2563eb; }
+        .result {
+            background: #1f2937;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Netlify Functions Debug</h1>
+    
+    <div class="debug-section info">
+        <h2>📍 Current Environment</h2>
+        <div id="environment"></div>
+    </div>
+
+    <div class="debug-section">
+        <h2>🧪 Test Netlify Functions</h2>
+        <p>Enter your Event ID and test the functions:</p>
+        <input type="text" id="eventId" placeholder="Event ID" style="width: 400px; padding: 8px;">
+        <br><br>
+        <button onclick="testAllFunctions()">Test All Functions</button>
+        <button onclick="checkEnvironment()">Check Environment</button>
+    </div>
+
+    <div class="debug-section">
+        <h2>📊 Results</h2>
+        <div id="results"></div>
+    </div>
+
+    <script>
+        function checkEnvironment() {
+            const resultsDiv = document.getElementById('results');
+            const environmentDiv = document.getElementById('environment');
+            
+            const hostname = window.location.hostname;
+            const origin = window.location.origin;
+            const pathname = window.location.pathname;
+            
+            let environment = 'Unknown';
+            let isLocal = false;
+            let isNetlify = false;
+            
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                environment = 'Local Development';
+                isLocal = true;
+            } else if (hostname.includes('netlify.app') || hostname.includes('netlify.com')) {
+                environment = 'Netlify Production';
+                isNetlify = true;
+            } else {
+                environment = `Custom Domain: ${hostname}`;
+            }
+            
+            environmentDiv.innerHTML = `
+                <strong>Environment:</strong> ${environment}<br>
+                <strong>Hostname:</strong> ${hostname}<br>
+                <strong>Origin:</strong> ${origin}<br>
+                <strong>Pathname:</strong> ${pathname}<br>
+                <strong>Is Local:</strong> ${isLocal}<br>
+                <strong>Is Netlify:</strong> ${isNetlify}
+            `;
+            
+            let message = `Environment Check Results:\n\n`;
+            message += `Environment: ${environment}\n`;
+            message += `Hostname: ${hostname}\n`;
+            message += `Origin: ${origin}\n\n`;
+            
+            if (isLocal) {
+                message += `⚠️ WARNING: You're testing locally!\n`;
+                message += `Netlify functions only work on Netlify deployment.\n`;
+                message += `For local testing, use: http://localhost:3002/api/lower-thirds-csv?eventId=YOUR_EVENT_ID\n\n`;
+            } else if (isNetlify) {
+                message += `✅ Good: You're on Netlify!\n`;
+                message += `Netlify functions should work here.\n\n`;
+            } else {
+                message += `❓ Unknown environment. Functions may not work.\n\n`;
+            }
+            
+            resultsDiv.innerHTML = `<div class="result ${isLocal ? 'warning' : isNetlify ? 'success' : 'error'}">${message}</div>`;
+        }
+        
+        function testAllFunctions() {
+            const eventId = document.getElementById('eventId').value.trim();
+            const resultsDiv = document.getElementById('results');
+            
+            if (!eventId) {
+                resultsDiv.innerHTML = '<div class="result error">❌ Please enter an Event ID first</div>';
+                return;
+            }
+            
+            const functions = [
+                'lower-thirds-xml',
+                'lower-thirds-csv',
+                'schedule-xml',
+                'schedule-csv',
+                'custom-columns-xml',
+                'custom-columns-csv'
+            ];
+            
+            resultsDiv.innerHTML = '<div class="result">🔄 Testing functions...</div>';
+            
+            let completed = 0;
+            let results = [];
+            
+            functions.forEach(funcName => {
+                const url = `/.netlify/functions/${funcName}?eventId=${eventId}`;
+                
+                fetch(url)
+                    .then(response => {
+                        const result = {
+                            function: funcName,
+                            url: url,
+                            status: response.status,
+                            statusText: response.statusText,
+                            success: response.ok
+                        };
+                        
+                        if (response.ok) {
+                            return response.text().then(data => {
+                                result.dataLength = data.length;
+                                result.dataPreview = data.substring(0, 100);
+                                return result;
+                            });
+                        } else {
+                            return result;
+                        }
+                    })
+                    .then(result => {
+                        results.push(result);
+                        completed++;
+                        
+                        if (completed === functions.length) {
+                            displayResults(results);
+                        }
+                    })
+                    .catch(error => {
+                        results.push({
+                            function: funcName,
+                            url: url,
+                            error: error.message,
+                            success: false
+                        });
+                        completed++;
+                        
+                        if (completed === functions.length) {
+                            displayResults(results);
+                        }
+                    });
+            });
+        }
+        
+        function displayResults(results) {
+            const resultsDiv = document.getElementById('results');
+            let html = '<div class="result">';
+            
+            results.forEach(result => {
+                const statusClass = result.success ? 'success' : 'error';
+                html += `<div class="${statusClass}" style="margin: 10px 0; padding: 10px; border-radius: 4px;">`;
+                html += `<strong>${result.function}</strong><br>`;
+                html += `URL: <a href="${result.url}" target="_blank" style="color: inherit;">${result.url}</a><br>`;
+                
+                if (result.success) {
+                    html += `✅ Status: ${result.status} ${result.statusText}<br>`;
+                    html += `📏 Data Length: ${result.dataLength} characters<br>`;
+                    html += `📄 Preview: ${result.dataPreview}...<br>`;
+                } else {
+                    html += `❌ Status: ${result.status || 'ERROR'}<br>`;
+                    if (result.error) {
+                        html += `🚨 Error: ${result.error}<br>`;
+                    }
+                    html += `🔧 Possible Issues:<br>`;
+                    html += `• Environment variables not set<br>`;
+                    html += `• Event ID not found<br>`;
+                    html += `• Function not deployed<br>`;
+                }
+                html += '</div>';
+            });
+            
+            html += '</div>';
+            resultsDiv.innerHTML = html;
+        }
+        
+        // Auto-fill event ID and check environment on load
+        window.onload = function() {
+            checkEnvironment();
+            
+            // Try to get event ID from localStorage
+            const keys = Object.keys(localStorage);
+            const eventKeys = keys.filter(key => key.includes('event') || key.includes('Event'));
+            if (eventKeys.length > 0) {
+                for (const key of eventKeys) {
+                    const value = localStorage.getItem(key);
+                    if (value && value.length > 10) {
+                        // Check if it's a JSON array (multiple events)
+                        if (value.startsWith('[') && value.includes('"id"')) {
+                            try {
+                                const events = JSON.parse(value);
+                                if (Array.isArray(events) && events.length > 0 && events[0].id) {
+                                    document.getElementById('eventId').value = events[0].id;
+                                    break;
+                                }
+                            } catch (e) {
+                                // Not valid JSON, skip
+                            }
+                        } 
+                        // Check if it's a single event ID (UUID format)
+                        else if (value.includes('-') && value.length === 36) {
+                            document.getElementById('eventId').value = value;
+                            break;
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+</body>
+</html>
