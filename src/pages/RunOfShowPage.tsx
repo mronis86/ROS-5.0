@@ -2184,12 +2184,8 @@ const RunOfShowPage: React.FC = () => {
         schedule_items: schedule,
         custom_columns: customColumns,
         settings: {}
-      }, {
-        userId: user.id,
-        userName: user.full_name || user.email || 'Unknown User',
-        userRole: currentUserRole || 'VIEWER'
       });
-      console.log('✅ Schedule data backed up with user info');
+      console.log('✅ Schedule data backed up');
     } catch (error) {
       console.error('❌ Error backing up schedule data:', error);
     }
@@ -2762,7 +2758,7 @@ const RunOfShowPage: React.FC = () => {
     
     schedule.forEach(item => {
       // Only count non-indented items (main items, not sub-items) for the selected day
-      if (!item.isIndented && (item.day || 1) === selectedDay) {
+      if (!indentedCues[item.id] && (item.day || 1) === selectedDay) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     });
@@ -6527,7 +6523,7 @@ const RunOfShowPage: React.FC = () => {
     if (!currentItem) return '';
     
     // If this item is indented, return empty string (no start time)
-    if (currentItem.isIndented) {
+    if (indentedCues[currentItem.id]) {
       return '';
     }
     
@@ -6543,7 +6539,7 @@ const RunOfShowPage: React.FC = () => {
     for (let i = 0; i < index; i++) {
       const item = schedule[i];
       // Only count items from the same day and non-indented items
-      if ((item.day || 1) === itemDay && !item.isIndented) {
+      if ((item.day || 1) === itemDay && !indentedCues[item.id]) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     }
@@ -9504,56 +9500,31 @@ const RunOfShowPage: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={item.isPublic || false}
-                          onChange={async (e) => {
+                          onChange={(e) => {
                             if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                               alert('Only EDITORs can change public status. Please change your role to EDITOR.');
                               return;
                             }
-                            
-                            // Pause syncing when checkbox is clicked (like other fields)
-                            handleUserEditing();
-                            
                             const oldValue = item.isPublic;
-                            const newValue = e.target.checked;
-                            
                             setSchedule(prev => prev.map(scheduleItem => 
                               scheduleItem.id === item.id 
-                                ? { ...scheduleItem, isPublic: newValue }
+                                ? { ...scheduleItem, isPublic: e.target.checked }
                                 : scheduleItem
                             ));
                             
                             // Log the change
-                            logChange('FIELD_UPDATE', `Updated Public status for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
+                            logChange('FIELD_UPDATE', `Updated Public status for "${item.segmentName}" from ${oldValue} to ${e.target.checked}`, {
                               changeType: 'FIELD_CHANGE',
                               itemId: item.id,
                               itemName: item.segmentName,
                               fieldName: 'isPublic',
                               oldValue: oldValue,
-                              newValue: newValue,
+                              newValue: e.target.checked,
                               details: {
                                 fieldType: 'checkbox',
                                 booleanChange: true
                               }
                             });
-                            
-                            // Save to database immediately with user info (prevents WebSocket overwrite)
-                            console.log('💾 Saving public status change:', { itemId: item.id, isPublic: newValue });
-                            await DatabaseService.saveRunOfShowData({
-                              event_id: event.id,
-                              event_name: event.name,
-                              event_date: event.date,
-                              schedule_items: schedule.map(s => s.id === item.id ? { ...s, isPublic: newValue } : s),
-                              custom_columns: customColumns,
-                              settings: {}
-                            }, {
-                              userId: user.id,
-                              userName: user.full_name || user.email || 'Unknown User',
-                              userRole: currentUserRole || 'VIEWER'
-                            });
-                            console.log('✅ Public status saved to database with user info');
-                            
-                            // Resume syncing after 3 seconds
-                            handleModalClosed();
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
                             currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
