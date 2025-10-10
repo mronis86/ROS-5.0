@@ -759,24 +759,6 @@ const RunOfShowPage: React.FC = () => {
   // Track last loaded CUE for visual indication
   const [lastLoadedCueId, setLastLoadedCueId] = useState<number | null>(null);
   
-  // Track button clicks to prevent rapid clicking
-  const [buttonClickTime, setButtonClickTime] = useState<Record<number, number>>({});
-  
-  // Helper function to prevent rapid button clicks
-  const canClickButton = (itemId: number, type: 'load' | 'timer' = 'timer') => {
-    const now = Date.now();
-    const lastClickTime = buttonClickTime[itemId];
-    const debounceTime = 500; // 500ms debounce
-    
-    if (lastClickTime && (now - lastClickTime) < debounceTime) {
-      console.log(`⚠️ Button click debounced for item ${itemId}, type: ${type}`);
-      return false;
-    }
-    
-    setButtonClickTime(prev => ({ ...prev, [itemId]: now }));
-    return true;
-  };
-  
   // Track if we're currently syncing sub-cue timer to prevent flickering
   const [isSyncingSubCue, setIsSyncingSubCue] = useState(false);
   
@@ -5694,12 +5676,6 @@ const RunOfShowPage: React.FC = () => {
 
   const toggleTimer = async (itemId: number) => {
     if (!user || !event?.id) return;
-    
-    // Prevent multiple rapid clicks
-    if (activeTimers[itemId] && Object.keys(activeTimers).length > 1) {
-      console.log('⚠️ ToggleTimer: Multiple timers active, ignoring click');
-      return;
-    }
 
     if (activeTimers[itemId]) {
       // Stop timer and mark as completed
@@ -9689,17 +9665,6 @@ const RunOfShowPage: React.FC = () => {
                                   return;
                                 }
                                 
-                                // Prevent rapid clicks on the same item
-                                if (activeItemId === item.id) {
-                                  console.log('🔥🔥🔥 Item already loaded, ignoring click');
-                                  return;
-                                }
-                                
-                                // Prevent rapid clicking
-                                if (!canClickButton(item.id, 'load')) {
-                                  return;
-                                }
-                                
                                 console.log('🔥🔥🔥 Calling loadCue function...');
                                 try {
                                   await loadCue(item.id);
@@ -9726,25 +9691,7 @@ const RunOfShowPage: React.FC = () => {
                                   alert('Only OPERATORs can start/stop timers. Please change your role to OPERATOR.');
                                   return;
                                 }
-                                
-                                // Prevent rapid clicks
-                                if (activeTimers[item.id] && Object.keys(activeTimers).length > 1) {
-                                  console.log('⚠️ START/STOP: Multiple timers active, ignoring click');
-                                  return;
-                                }
-                                
-                                // Prevent rapid clicking
-                                if (!canClickButton(item.id, 'timer')) {
-                                  return;
-                                }
-                                
-                                console.log('🔥 START/STOP button clicked for item:', item.id);
-                                try {
-                                  await toggleTimer(item.id);
-                                  console.log('🔥 toggleTimer completed successfully');
-                                } catch (error) {
-                                  console.error('🔥 toggleTimer failed:', error);
-                                }
+                                await toggleTimer(item.id);
                               }}
                               disabled={activeItemId !== item.id || (activeTimers[item.id] ? false : Object.keys(activeTimers).length > 0) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
