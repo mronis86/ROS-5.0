@@ -5460,10 +5460,15 @@ const RunOfShowPage: React.FC = () => {
 
   useEffect(() => {
     if (event?.id) {
+      console.log('⏰ Master start time useEffect triggered:', {
+        masterStartTime,
+        isUserEditing,
+        eventId: event.id
+      });
       localStorage.setItem(`masterStartTime_${event.id}`, masterStartTime);
       // Auto-save to API when master start time changes (only if user-initiated)
       if (isUserEditing) {
-        console.log('💾 User-initiated master start time change detected - auto-saving');
+        console.log('💾 User-initiated master start time change detected - auto-saving to API');
         saveToAPI();
       } else {
         console.log('📥 Master start time change from API/sync - skipping auto-save');
@@ -5473,10 +5478,15 @@ const RunOfShowPage: React.FC = () => {
 
   useEffect(() => {
     if (event?.id) {
+      console.log('⏰ Day start times useEffect triggered:', {
+        dayStartTimes,
+        isUserEditing,
+        eventId: event.id
+      });
       localStorage.setItem(`dayStartTimes_${event.id}`, JSON.stringify(dayStartTimes));
       // Auto-save to API when day start times change (only if user-initiated)
       if (isUserEditing) {
-        console.log('💾 User-initiated day start times change detected - auto-saving');
+        console.log('💾 User-initiated day start times change detected - auto-saving to API');
         saveToAPI();
       } else {
         console.log('📥 Day start times change from API/sync - skipping auto-save');
@@ -7592,6 +7602,7 @@ const RunOfShowPage: React.FC = () => {
                   type="time"
                   value={(event?.numberOfDays && event.numberOfDays > 1) ? (dayStartTimes[selectedDay] || '') : masterStartTime}
                   onChange={(e) => {
+                    console.log('⏰ Start time changed:', e.target.value);
                     // Detect user editing
                     handleUserEditing();
                     
@@ -7601,12 +7612,14 @@ const RunOfShowPage: React.FC = () => {
                     }
                     if (event?.numberOfDays && event.numberOfDays > 1) {
                       // Update day-specific start time
+                      console.log('⏰ Updating day start time for day', selectedDay, 'to', e.target.value);
                       setDayStartTimes(prev => ({
                         ...prev,
                         [selectedDay]: e.target.value
                       }));
                     } else {
                       // Update master start time for single day events
+                      console.log('⏰ Updating master start time to', e.target.value);
                       setMasterStartTime(e.target.value);
                     }
                   }}
