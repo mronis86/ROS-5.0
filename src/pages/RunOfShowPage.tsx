@@ -4654,6 +4654,13 @@ const RunOfShowPage: React.FC = () => {
             ...prev,
             activeTimer: data
           }));
+          
+          // Update activeItemId to trigger Follow feature scroll
+          if (data.item_id && data.is_active) {
+            setActiveItemId(data.item_id);
+            console.log('✅ RunOfShow: activeItemId updated for Follow:', data.item_id);
+          }
+          
           console.log('✅ RunOfShow: Timer updated via WebSocket:', data);
         } else {
           console.log('⚠️ RunOfShow: Timer update ignored - event ID mismatch or no data');
