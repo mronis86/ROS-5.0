@@ -217,7 +217,7 @@ const GreenRoomPage: React.FC = () => {
         console.log('🔄 No active timer found');
         setActiveItemId(null);
         setTimerState(null);
-        setLoadedItems({});
+        setLoadedItems({}); // Clear all loaded items
         setTimerProgress({});
         
         // Drift detection removed - WebSocket-only approach
@@ -259,12 +259,14 @@ const GreenRoomPage: React.FC = () => {
           if (data.timer_state === 'running') {
             setTimerState('running');
             setActiveItemId(parseInt(data.item_id));
-            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
+            // Clear all loaded items and set only the current active one
+            setLoadedItems({ [parseInt(data.item_id)]: true });
             console.log('✅ Green Room: Timer RUNNING - activeItemId set to:', data.item_id);
           } else if (data.timer_state === 'loaded') {
             setTimerState('loaded');
             setActiveItemId(parseInt(data.item_id));
-            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
+            // Clear all loaded items and set only the current active one
+            setLoadedItems({ [parseInt(data.item_id)]: true });
             console.log('✅ Green Room: Timer LOADED - activeItemId set to:', data.item_id);
           }
         }
@@ -274,6 +276,7 @@ const GreenRoomPage: React.FC = () => {
         // Clear timer state when stopped
         if (data && data.item_id) {
           setActiveItemId(null);
+          setLoadedItems({}); // Clear all loaded items
           setTimerProgress(prev => {
             const newProgress = { ...prev };
             delete newProgress[data.item_id];
@@ -285,6 +288,7 @@ const GreenRoomPage: React.FC = () => {
         console.log('📡 Green Room: All timers stopped via WebSocket');
         // Clear all timer states
         setActiveItemId(null);
+        setLoadedItems({}); // Clear all loaded items
         setTimerProgress({});
       },
       onTimerStarted: (data: any) => {
@@ -301,27 +305,19 @@ const GreenRoomPage: React.FC = () => {
           if (data.timer_state === 'running' || data.timer_state === 'loaded') {
             setActiveItemId(parseInt(data.item_id));
             setTimerState(data.timer_state);
-            setLoadedItems(prev => ({
-              ...prev,
-              [data.item_id]: true
-            }));
+            // Clear all loaded items and set only the current active one
+            setLoadedItems({ [data.item_id]: true });
             console.log('🔄 Green Room: Updated active item and timer state:', {
               itemId: data.item_id,
               timerState: data.timer_state,
               activeItemId: data.item_id
             });
           } else {
-            // Timer is stopped
-            setLoadedItems(prev => {
-              const newLoaded = { ...prev };
-              delete newLoaded[data.item_id];
-              return newLoaded;
-            });
-            if (String(activeItemId) === String(data.item_id)) {
-              setActiveItemId(null);
-              setTimerState(null);
-            }
-            console.log('🔄 Green Room: Cleared timer state for item:', data.item_id);
+            // Timer is stopped - clear all states
+            setActiveItemId(null);
+            setTimerState(null);
+            setLoadedItems({});
+            console.log('🔄 Green Room: Cleared all timer states');
           }
         }
       },
@@ -335,14 +331,24 @@ const GreenRoomPage: React.FC = () => {
         console.log('✅ Green Room: All states cleared via reset');
       },
       onScheduleUpdated: (data: any) => {
-        console.log('📡 Green Room: Schedule updated via WebSocket - reloading public items');
-        // Reload schedule when public checkboxes change
-        loadSchedule();
+        console.log('📡 Green Room: Schedule updated via WebSocket - checking if reload needed');
+        // Only reload if the update affects public items visibility
+        if (data && (data.publicItemsChanged || data.isPublicChanged)) {
+          console.log('📡 Green Room: Public items changed, reloading schedule');
+          loadSchedule();
+        } else {
+          console.log('📡 Green Room: Schedule update does not affect public items, skipping reload');
+        }
       },
       onRunOfShowDataUpdated: (data: any) => {
-        console.log('📡 Green Room: Run of show data updated via WebSocket - reloading');
-        // Reload schedule to get updated public items
-        loadSchedule();
+        console.log('📡 Green Room: Run of show data updated via WebSocket - checking if reload needed');
+        // Only reload if the update affects public items visibility
+        if (data && (data.publicItemsChanged || data.isPublicChanged)) {
+          console.log('📡 Green Room: Public items changed, reloading schedule');
+          loadSchedule();
+        } else {
+          console.log('📡 Green Room: Schedule update does not affect public items, skipping reload');
+        }
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 Green Room WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
@@ -852,18 +858,13 @@ const GreenRoomPage: React.FC = () => {
           {/* Timer */}
           <div className={`rounded-lg p-4 text-center flex-shrink-0 ${isOvertime() ? 'bg-red-800' : 'bg-red-600'}`}>
           <div className="text-white text-xl font-semibold mb-2">
-            {isOvertime() ? 'OVER TIME' : 
-             timerState === 'running' ? 'RUNNING' : 
-             timerState === 'loaded' ? 'LOADED' : 
-             'Stage Timer'}
+            {isOvertime() ? 'OVER TIME' : 'Stage Timer'}
           </div>
           <div className={`text-5xl font-bold mb-2 ${isOvertime() ? 'text-red-200' : 'text-white'}`}>
             {getRemainingTime()}
           </div>
           <div className="text-white text-base">
-            {timerState === 'running' ? `Expected Finish: ${getExpectedFinishTime()}` : 
-             timerState === 'loaded' ? 'Ready to Start' : 
-             'Waiting for Cue'}
+            Expected Finish: {getExpectedFinishTime()}
           </div>
         </div>
       </div>
