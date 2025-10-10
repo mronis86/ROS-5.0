@@ -204,7 +204,17 @@ async function loadEvents() {
     // Render event cards with proper event listeners
     eventList.innerHTML = events.map((event, index) => {
       console.log(`Event ${index}:`, event);
-      const numberOfDays = event.numberOfDays || 1;
+      
+      // Extract numberOfDays from schedule_data (it's stored as JSON)
+      let numberOfDays = 1;
+      if (event.schedule_data) {
+        const scheduleData = typeof event.schedule_data === 'string' 
+          ? JSON.parse(event.schedule_data) 
+          : event.schedule_data;
+        numberOfDays = scheduleData.numberOfDays || 1;
+      }
+      
+      console.log(`  → Number of days: ${numberOfDays}`);
       const dayIndicator = numberOfDays > 1 ? `<div class="event-days">📅 ${numberOfDays} Days</div>` : '';
       
       return `
@@ -224,7 +234,17 @@ async function loadEvents() {
         const event = window.eventsData[eventIndex];
         console.log('🖱️ Event card clicked:', { eventIndex, event });
         if (event) {
-          selectEvent(event.id, event.name, event.date, event.numberOfDays || 1);
+          // Extract numberOfDays from schedule_data
+          let numberOfDays = 1;
+          if (event.schedule_data) {
+            const scheduleData = typeof event.schedule_data === 'string' 
+              ? JSON.parse(event.schedule_data) 
+              : event.schedule_data;
+            numberOfDays = scheduleData.numberOfDays || 1;
+          }
+          
+          console.log(`  → Selecting event with ${numberOfDays} days`);
+          selectEvent(event.id, event.name, event.date, numberOfDays);
         } else {
           console.error('❌ Event not found at index:', eventIndex);
         }
