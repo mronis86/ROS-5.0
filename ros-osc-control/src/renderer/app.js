@@ -787,14 +787,34 @@ async function listCues() {
 
 // Reset timer via OSC command
 async function resetTimer() {
-  console.log('🔄 Resetting timer via OSC');
+  console.log('🔄 Resetting all timers via OSC');
+  
+  if (!currentEvent) {
+    console.warn('⚠️ No event loaded');
+    return;
+  }
   
   try {
-    const response = await axios.post(`${config.apiUrl}/api/timers/reset`);
-    console.log('✅ Timer reset successful');
-    showToast('Timer reset via OSC');
+    // Call API to reset - clears active_timers, completed_cues, sub_cue_timers tables
+    await axios.post(`${config.apiUrl}/api/timers/reset`, {
+      event_id: currentEvent.id
+    });
+    
+    // Clear local state
+    activeItemId = null;
+    activeTimers = {};
+    timerProgress = {};
+    
+    // Update display
+    updateCurrentCueDisplay();
+    renderSchedule();
+    
+    console.log('✅ Timer reset successful - all timer tables cleared');
+    addOSCLogEntry('All timers reset (active_timers, completed_cues, sub_cue_timers cleared)', 'success');
+    showToast('All timers reset via OSC');
   } catch (error) {
     console.error('❌ Error resetting timer:', error);
+    addOSCLogEntry('Error resetting timers', 'error');
     showToast('Error resetting timer');
   }
 }
