@@ -2403,7 +2403,13 @@ const RunOfShowPage: React.FC = () => {
           
           console.log('🍞 Toast: Should be visible now - showTimeToast set to true');
           
-          // No auto-close when toast is enabled - let user control it
+          // Auto-close toast after 10 seconds
+          const toastTimeout = setTimeout(() => {
+            console.log('🍞 Toast: Auto-closing after 10 seconds');
+            setShowTimeToast(false);
+          }, 10000);
+          
+          return () => clearTimeout(toastTimeout);
         }
       } catch (error) {
         console.error('🍞 Toast: Error calculating time status:', error);
@@ -11374,9 +11380,9 @@ const RunOfShowPage: React.FC = () => {
                   {timeDifference >= 60 ? `${Math.floor(timeDifference / 60)}h ${timeDifference % 60}m` : `${timeDifference}m`}
                 </span>
                 {timeStatus === 'early' 
-                  ? ` before ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || 'CUE').replace(/CUE(\d+)/, 'CUE $1') : 'CUE'} start`
+                  ? ` before CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
                   : timeStatus === 'late'
-                  ? ` after ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || 'CUE').replace(/CUE(\d+)/, 'CUE $1') : 'CUE'} start`
+                  ? ` after CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
                   : ' - Timing is on track'
                 }
               </div>
