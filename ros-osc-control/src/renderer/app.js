@@ -799,35 +799,104 @@ async function resetTimer() {
   }
 }
 
-// Start sub-timer via OSC command
+// Start sub-timer via OSC command (sub-cue timer)
 async function startSubTimer(cueNumber) {
-  console.log('🟠 Starting sub-timer via OSC for cue:', cueNumber);
+  console.log('🟠 Starting sub-cue timer for cue:', cueNumber);
+  
+  if (!currentEvent || !schedule || schedule.length === 0) {
+    console.warn('⚠️ No event or schedule loaded');
+    return;
+  }
+  
+  // Filter schedule by selected day
+  const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
+  
+  // Find the item by cue number
+  const item = filteredSchedule.find(s => 
+    (s.customFields?.cue && s.customFields.cue.toString() === cueNumber) ||
+    (s.timerId && s.timerId.toString() === cueNumber)
+  );
+  
+  if (!item) {
+    console.warn('⚠️ Cue not found:', cueNumber);
+    addOSCLogEntry(`Sub-cue not found: ${cueNumber}`, 'error');
+    return;
+  }
   
   try {
-    const response = await axios.post(`${config.apiUrl}/api/subtimers/start`, {
-      cueNumber: cueNumber
+    // Calculate total seconds
+    const totalSeconds = (item.durationHours || 0) * 3600 + 
+                        (item.durationMinutes || 0) * 60 + 
+                        (item.durationSeconds || 0);
+    
+    const rowNumber = schedule.findIndex(s => s.id === item.id) + 1;
+    const cueDisplay = item.customFields?.cue || item.timerId || `CUE ${item.id}`;
+    const timerId = item.timerId || `SUB${item.id}`;
+    
+    // Call API to start sub-cue timer (updates sub_cue_timers table)
+    await axios.post(`${config.apiUrl}/api/sub-cue-timers`, {
+      event_id: currentEvent.id,
+      item_id: item.id,
+      user_id: 'osc-electron-app',
+      user_name: 'OSC Control',
+      user_role: 'OPERATOR',
+      duration_seconds: totalSeconds,
+      row_number: rowNumber,
+      cue_display: cueDisplay,
+      timer_id: timerId,
+      is_active: true,
+      is_running: true,
+      started_at: new Date().toISOString()
     });
-    console.log('✅ Sub-timer started successfully');
-    showToast(`Sub-timer started for cue ${cueNumber}`);
+    
+    console.log('✅ Sub-cue timer started in database:', item.id);
+    addOSCLogEntry(`Sub-cue timer started: ${cueNumber}`, 'success');
+    showToast(`Sub-cue ${cueNumber} started`);
+    
   } catch (error) {
-    console.error('❌ Error starting sub-timer:', error);
-    showToast('Error starting sub-timer');
+    console.error('❌ Error starting sub-cue timer:', error);
+    addOSCLogEntry(`Error starting sub-cue: ${cueNumber}`, 'error');
+    showToast('Error starting sub-cue timer');
   }
 }
 
-// Stop sub-timer via OSC command
+// Stop sub-timer via OSC command (sub-cue timer)
 async function stopSubTimer(cueNumber) {
-  console.log('🟠 Stopping sub-timer via OSC for cue:', cueNumber);
+  console.log('🟠 Stopping sub-cue timer for cue:', cueNumber);
+  
+  if (!currentEvent) {
+    console.warn('⚠️ No event loaded');
+    return;
+  }
   
   try {
-    const response = await axios.post(`${config.apiUrl}/api/subtimers/stop`, {
-      cueNumber: cueNumber
+    // Find the item by cue number (optional - can stop all sub-cue timers)
+    let itemId = null;
+    if (cueNumber && schedule && schedule.length > 0) {
+      const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
+      const item = filteredSchedule.find(s => 
+        (s.customFields?.cue && s.customFields.cue.toString() === cueNumber) ||
+        (s.timerId && s.timerId.toString() === cueNumber)
+      );
+      if (item) {
+        itemId = item.id;
+      }
+    }
+    
+    // Call API to stop sub-cue timer (updates sub_cue_timers table: is_active=false, is_running=false)
+    await axios.put(`${config.apiUrl}/api/sub-cue-timers/stop`, {
+      event_id: currentEvent.id,
+      item_id: itemId
     });
-    console.log('✅ Sub-timer stopped successfully');
-    showToast(`Sub-timer stopped for cue ${cueNumber}`);
+    
+    console.log('✅ Sub-cue timer stopped in database');
+    addOSCLogEntry(`Sub-cue timer stopped${cueNumber ? `: ${cueNumber}` : ''}`, 'success');
+    showToast('Sub-cue timer stopped');
+    
   } catch (error) {
-    console.error('❌ Error stopping sub-timer:', error);
-    showToast('Error stopping sub-timer');
+    console.error('❌ Error stopping sub-cue timer:', error);
+    addOSCLogEntry('Error stopping sub-cue timer', 'error');
+    showToast('Error stopping sub-cue timer');
   }
 }
 
