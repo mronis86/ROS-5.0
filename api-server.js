@@ -1193,6 +1193,7 @@ app.post('/api/timers/start', async (req, res) => {
     await pool.query(`
       UPDATE active_timers 
       SET 
+        is_active = true,
         is_running = true,
         timer_state = 'running',
         started_at = NOW(),
