@@ -2,9 +2,9 @@
 const getApiBaseUrl = () => {
   // Check for forced local override from EventListPage toggle
   if ((window as any).__FORCE_LOCAL_API__) {
-    return (window as any).__LOCAL_API_URL__ || 'http://localhost:3002';
+    return (window as any).__LOCAL_API_URL__ || 'http://localhost:3001';  // FIXED: Match api-server.js
   }
-  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002';
+  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';  // FIXED: Match api-server.js
 };
 
 const API_BASE_URL = getApiBaseUrl();

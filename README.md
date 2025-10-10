@@ -1,89 +1,71 @@
-# OSC GUI Application
+# ROS 5.0 - Run of Show Timer System
 
-A Python GUI application that functions as an OSC server, capable of authenticating with Supabase, listing events, and processing OSC commands to update Supabase tables.
+A comprehensive run of show timer system with OSC control, real-time synchronization, and multi-device support.
 
-## Features
+## 🚀 Quick Start
 
-- **OSC Server**: Listens for OSC commands on port 57130
-- **Supabase Integration**: Authenticates users and manages event data
-- **Event Management**: View and select events with filtering and search
-- **Schedule Management**: Load and manage event schedules with auto-refresh
-- **Timer Controls**: Process OSC commands for cue loading and timer management
-- **Real-time Updates**: Auto-refresh functionality for schedule changes
-
-## 🚀 Optimized Python Live Graphics Generator
-
-A modern Python desktop application for generating live graphics files for VMIX:
-
-- **✅ WebSocket + API + Neon Database** - Real-time updates
-- **✅ 90%+ Egress Reduction** - Minimal data usage
-- **✅ Multiple Output Formats** - XML/CSV for VMIX
-- **✅ Cross-Platform** - Works on Windows, Mac, Linux
-
-**Quick Start:**
+### Start the Electron OSC Control App
 ```bash
-# Run from main directory
-start_optimized_graphics.bat
+# Navigate to the Electron app
+cd ros-osc-control
 
-# Or navigate to folder
-cd optimized-python-graphics
-run_optimized_graphics.bat
+# Install dependencies and start
+npm install
+npm start
 ```
 
-**Location:** `optimized-python-graphics/` folder
+### Start the Web Application
+```bash
+# Install dependencies
+npm install
 
-## Installation
+# Start the development server
+npm start
+```
 
-1. **Install Python 3.8+** (if not already installed)
+### Start Local API Server
+```bash
+# Start the local API server (for local development)
+node api-server.js
+```
 
-2. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## 📚 Documentation
 
-3. **Run the Application**:
-   ```bash
-   python "fixed_osc_gui_app (8).py"
-   ```
+All project documentation has been organized in the **[docs/](./docs/)** folder:
 
-## Usage
+- **[📖 Documentation Index](./docs/README.md)** - Complete documentation overview
+- **[🎬 Project Overview](./docs/PROJECT-README.md)** - Main project documentation
+- **[⚡ OSC System](./docs/ROS-OSC-COMPLETE.md)** - Complete OSC system guide
+- **[🖥️ Electron App](./docs/ROS-OSC-ELECTRON-SUMMARY.md)** - Electron OSC control app
 
-### Authentication
-- Use the "Authentication" tab to sign in with your Supabase credentials
-- Or use "Load Events (No Auth)" for basic functionality without authentication
+## 🎯 Key Features
 
-### Events
-- Switch to the "Events" tab to view available events
-- Use filters to find specific events (recent, today, this week, this month, past)
-- Search by event name or location
-- Select an event to view its schedule
+- **Real-time OSC Control** - Control timers via OSC commands
+- **Multi-device Sync** - Browser and Electron apps sync in real-time
+- **Railway Integration** - Cloud-hosted backend with Neon database
+- **Day Management** - Multi-day event support with day filtering
+- **Socket.IO Updates** - Real-time updates across all connected devices
 
-### OSC Commands
-The application listens for OSC commands on port 57130:
+## 🎵 OSC Commands
 
-- `/cue/<cueNumber>/load` - Load a specific cue
-- `/timer/start` - Start the main timer
-- `/timer/stop` - Stop the main timer
-- `/timer/reset` - Reset all timers and highlighting
-- `/subtimer/cue/<cueNumber>/start` - Start a sub-cue timer
-- `/subtimer/cue/<cueNumber>/stop` - Stop a sub-cue timer
+- `/cue/1/load` - Load cue 1
+- `/timer/start` - Start timer
+- `/timer/stop` - Stop timer
+- `/set-day 2` - Switch to Day 2 (multi-day events)
+- `/list-cues` - List available cues
 
-### Auto-Refresh
-- Enable "Auto-refresh schedule (30s)" to automatically check for schedule changes
-- The app will notify you when new items are added to the schedule
+## 🏗️ Project Structure
 
-## Requirements
+```
+ROS-5.0/
+├── docs/                    # All documentation
+├── ros-osc-control/         # Electron OSC control app
+├── websocket-python-osc/    # Python OSC GUI
+├── src/                     # React web application
+├── api-server.js           # Local API server
+└── server.js               # Main web server
+```
 
-- Python 3.8 or higher
-- Internet connection for Supabase integration
-- Port 57130 available for OSC communication
+## 📖 More Information
 
-## Troubleshooting
-
-- **Authentication Issues**: Make sure you're signed in through the Authentication tab
-- **OSC Connection Issues**: Ensure port 57130 is not blocked by firewall
-- **Schedule Not Loading**: Check your internet connection and Supabase credentials
-
-## Support
-
-For issues or questions, check the Log tab for detailed error messages and debugging information.
+See the **[docs/](./docs/)** folder for complete setup instructions, troubleshooting guides, and detailed documentation.

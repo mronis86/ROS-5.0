@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS } from '../types/Event';
 import { DatabaseService } from '../services/database';
+import { apiClient } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 
@@ -240,18 +241,20 @@ const EventListPage: React.FC = () => {
     setEditingEvent(null);
     setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1 });
     
-    // Update local list immediately
+    // Update local list immediately for instant feedback
     setEvents(prev => prev.map(event => 
       event.id === editingEvent.id ? updatedEvent : event
     ));
 
-    // Update in Neon automatically - both calendar event AND Run of Show data
+    // Update via API (works with both local and Railway)
     try {
-      console.log('💾 Updating event in Neon:', updatedEvent);
+      console.log('💾 Updating event via API:', updatedEvent);
       
-      // Update calendar event
-      const calendarEvents = await DatabaseService.getCalendarEvents();
-      const matchingCalendarEvent = calendarEvents.find(calEvent => 
+      // Get all calendar events to find the matching one
+      const calendarEvents: any = await apiClient.getCalendarEvents();
+      console.log('📊 Fetched calendar events:', calendarEvents.length);
+      
+      const matchingCalendarEvent = calendarEvents.find((calEvent: any) => 
         calEvent.schedule_data?.eventId === editingEvent.id || 
         calEvent.id === editingEvent.id ||
         calEvent.name === editingEvent.name
@@ -275,38 +278,62 @@ const EventListPage: React.FC = () => {
           }
         };
         
-        console.log('📝 Updating calendar event with data:', updatedCalendarEvent);
-        await DatabaseService.updateCalendarEvent(matchingCalendarEvent.id, updatedCalendarEvent);
-        console.log('✅ Calendar event updated in Neon');
+        console.log('📝 Updating calendar event via API:', updatedCalendarEvent);
+        await apiClient.updateCalendarEvent(matchingCalendarEvent.id, updatedCalendarEvent);
+        console.log('✅ Calendar event updated via API');
       } else {
         console.warn('⚠️ No matching calendar event found for update');
       }
 
-      // Update Run of Show data
+      // Update Run of Show data via API
       console.log('📝 Updating run of show data for event:', editingEvent.id);
-      await DatabaseService.updateRunOfShowData(editingEvent.id, {
-        event_name: updatedEvent.name,
-        event_date: updatedEvent.date,
-        settings: {
-          eventName: updatedEvent.name,
-          eventDate: updatedEvent.date,
-          location: updatedEvent.location,
-          numberOfDays: updatedEvent.numberOfDays,
-          lastSaved: new Date().toISOString()
-        }
-      });
-      console.log('✅ Run of Show data updated in Neon');
       
-      // Reload events from Neon to ensure we have the latest data
+      // First, get the existing run of show data to preserve schedule items
+      try {
+        const existingData: any = await apiClient.getRunOfShowData(editingEvent.id);
+        
+        if (existingData) {
+          // Update with preserved schedule items and updated settings
+          await apiClient.saveRunOfShowData({
+            event_id: editingEvent.id,
+            event_name: updatedEvent.name,
+            event_date: updatedEvent.date,
+            schedule_items: existingData.schedule_items || [],
+            custom_columns: existingData.custom_columns || [],
+            settings: {
+              ...existingData.settings,
+              eventName: updatedEvent.name,
+              eventDate: updatedEvent.date,
+              location: updatedEvent.location,
+              numberOfDays: updatedEvent.numberOfDays,
+              lastSaved: new Date().toISOString()
+            },
+            last_modified_by: user?.id,
+            last_modified_by_name: (user as any)?.user_metadata?.full_name || user?.email || 'Unknown User',
+            last_modified_by_role: (user as any)?.user_metadata?.role || 'Unknown'
+          });
+          console.log('✅ Run of Show data updated via API');
+        } else {
+          console.log('ℹ️ No existing run of show data for this event, skipping update');
+        }
+      } catch (rosError) {
+        console.warn('⚠️ Could not update run of show data:', rosError);
+        // Don't fail the whole update if run of show data update fails
+      }
+      
+      // Reload events to ensure we have the latest data
       setTimeout(() => {
         console.log('🔄 Reloading events after update...');
         loadEventsFromSupabase();
       }, 1000);
       
     } catch (error) {
-      console.error('❌ Error updating event in Neon:', error);
+      console.error('❌ Error updating event via API:', error);
       console.error('❌ Error details:', error);
       alert('Error updating event in database. Please try again.');
+      
+      // Revert local changes on error
+      loadEventsFromSupabase();
     }
   };
 

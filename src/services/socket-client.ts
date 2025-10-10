@@ -4,7 +4,7 @@ import { io, Socket } from 'socket.io-client';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
   (import.meta.env.PROD 
     ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
-    : 'http://localhost:3002');
+    : 'http://localhost:3001');  // FIXED: Match api-server.js port!
 
 interface SocketCallbacks {
   onRunOfShowDataUpdated?: (data: any) => void;
