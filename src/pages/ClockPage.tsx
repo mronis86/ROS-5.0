@@ -15,17 +15,12 @@ const ClockPage: React.FC = () => {
   // Get timer data from location state or use defaults
   const timerData = location.state || {};
   
-  const [isRunning, setIsRunning] = useState(timerData.isRunning || false);
-  const [elapsedTime, setElapsedTime] = useState(timerData.elapsedTime || 0);
-  const [totalDuration, setTotalDuration] = useState(timerData.totalDuration || 0);
+  // Clock component handles its own timer state via WebSocket
+  // ClockPage only manages messages to avoid state conflicts
   const [message, setMessage] = useState('');
   const [messageEnabled, setMessageEnabled] = useState(false);
   const [supabaseMessage, setSupabaseMessage] = useState(null);
-  const [itemId, setItemId] = useState(timerData.itemId || null);
   const [eventId, setEventId] = useState(eventIdFromUrl || timerData.eventId || null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [mainTimer, setMainTimer] = useState(timerData.mainTimer || null);
-  const [secondaryTimer, setSecondaryTimer] = useState(timerData.secondaryTimer || null);
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -34,18 +29,8 @@ const ClockPage: React.FC = () => {
         case 'Escape':
           window.close();
           break;
-        case ' ':
-          e.preventDefault();
-          setIsRunning(!isRunning);
-          break;
-        case 'r':
-        case 'R':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            setElapsedTime(0);
-            setIsRunning(false);
-          }
-          break;
+        // Timer controls are managed by RunOfShowPage via WebSocket
+        // Clock is a display-only component
         case '+':
         case '=':
           if (e.ctrlKey || e.metaKey) {
@@ -64,7 +49,7 @@ const ClockPage: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isRunning]);
+  }, []);
 
   // Handle window close
   const handleClose = async () => {
@@ -85,7 +70,8 @@ const ClockPage: React.FC = () => {
     window.close();
   };
 
-  // WebSocket-based real-time updates for timer messages AND timer state
+  // WebSocket-based real-time updates for timer messages ONLY
+  // Timer state is now handled exclusively by Clock component to prevent flickering
   useEffect(() => {
     if (!eventId) return;
 
@@ -99,39 +85,10 @@ const ClockPage: React.FC = () => {
       }
     };
 
-    const loadActiveTimer = async () => {
-      try {
-        const activeTimer = await DatabaseService.getActiveTimer(eventId);
-        console.log('⏱️ Clock: Loaded active timer from API:', activeTimer);
-        
-        if (activeTimer && activeTimer.is_active) {
-          const numericItemId = typeof activeTimer.item_id === 'string' ? parseInt(activeTimer.item_id) : activeTimer.item_id;
-          setItemId(numericItemId);
-          setTotalDuration(activeTimer.duration_seconds || 0);
-          
-          if (activeTimer.is_running && activeTimer.started_at) {
-            setIsRunning(true);
-            // Calculate elapsed time from started_at
-            const startedAt = new Date(activeTimer.started_at);
-            const now = new Date();
-            const elapsed = Math.floor((now - startedAt) / 1000);
-            setElapsedTime(elapsed);
-            console.log('⏱️ Clock: Timer is RUNNING, elapsed:', elapsed);
-          } else {
-            setIsRunning(false);
-            setElapsedTime(0);
-            console.log('⏱️ Clock: Timer is LOADED but not running');
-          }
-        }
-      } catch (error) {
-        console.error('❌ Clock: Error loading active timer:', error);
-      }
-    };
-
     loadMessage(); // Load initial data
-    loadActiveTimer(); // Load timer state
 
-    // Set up WebSocket connection for real-time updates
+    // Set up WebSocket connection for timer messages only
+    // Clock component handles its own timer WebSocket connection
     const callbacks = {
       onTimerMessageUpdated: (data: any) => {
         console.log('📨 WebSocket: Timer message updated:', data);
@@ -139,45 +96,11 @@ const ClockPage: React.FC = () => {
           setSupabaseMessage(data);
         }
       },
-      onTimerUpdated: (data: any) => {
-        console.log('⏱️ Clock: Timer updated via WebSocket:', data);
-        if (data && data.event_id === eventId) {
-          const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id) : data.item_id;
-          setItemId(numericItemId);
-          setTotalDuration(data.duration_seconds || 0);
-          
-          if (data.timer_state === 'running' && data.started_at) {
-            setIsRunning(true);
-            setElapsedTime(data.elapsed_seconds || 0);
-            console.log('⏱️ Clock: Timer RUNNING via WebSocket, elapsed:', data.elapsed_seconds);
-          } else if (data.timer_state === 'loaded') {
-            setIsRunning(false);
-            setElapsedTime(0);
-            console.log('⏱️ Clock: Timer LOADED via WebSocket');
-          }
-        }
-      },
-      onTimerStopped: (data: any) => {
-        console.log('⏱️ Clock: Timer stopped via WebSocket');
-        if (data && data.event_id === eventId) {
-          setIsRunning(false);
-          setElapsedTime(0);
-        }
-      },
-      onTimersStopped: (data: any) => {
-        console.log('⏱️ Clock: All timers stopped via WebSocket');
-        if (data && data.event_id === eventId) {
-          setIsRunning(false);
-          setElapsedTime(0);
-          setItemId(null);
-        }
-      },
       onConnectionChange: (connected: boolean) => {
-        console.log('📨 Clock: WebSocket connection status:', connected);
+        console.log('📨 ClockPage: WebSocket connection status:', connected);
         if (connected) {
-          // Reload data when reconnected
+          // Reload message when reconnected
           loadMessage();
-          loadActiveTimer();
         }
       }
     };
@@ -185,7 +108,7 @@ const ClockPage: React.FC = () => {
     socketClient.connect(eventId, callbacks);
 
     return () => {
-      console.log('📨 Cleaning up Clock WebSocket connection');
+      console.log('📨 Cleaning up ClockPage WebSocket connection');
       socketClient.disconnect(eventId);
     };
   }, [eventId]);
@@ -217,22 +140,17 @@ const ClockPage: React.FC = () => {
   }, []);
   */
 
-  // Clock page always runs in Supabase-only mode
-  // No need to fetch data - Clock component will handle everything via Supabase
+  // Clock page always runs in WebSocket-only mode
+  // Clock component handles all timer state via its own WebSocket connection
+  // ClockPage only passes message data to avoid state conflicts
 
   return (
     <Clock
-      isRunning={isRunning}
-      elapsedTime={elapsedTime}
-      totalDuration={totalDuration}
       onClose={handleClose}
       message={message}
       messageEnabled={messageEnabled}
-      itemId={itemId}
       eventId={eventId}
       supabaseMessage={supabaseMessage}
-      mainTimer={mainTimer}
-      secondaryTimer={secondaryTimer}
     />
   );
 };
