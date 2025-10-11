@@ -3599,7 +3599,9 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
     
-    const item = schedule.find(s => s.id === activeItemId);
+    // Convert activeItemId to number if it's a string to match schedule item IDs
+    const numericActiveItemId = typeof activeItemId === 'string' ? parseInt(activeItemId) : activeItemId;
+    const item = schedule.find(s => s.id === numericActiveItemId);
     if (!item) {
       console.log('❌ Cannot find active item in schedule');
       console.log('❌ Active item ID type:', typeof activeItemId, activeItemId);
@@ -3616,7 +3618,7 @@ const RunOfShowPage: React.FC = () => {
     const newSecs = newDurationSeconds % 60;
     
     setSchedule(prev => prev.map(scheduleItem => 
-      scheduleItem.id === activeItemId 
+      scheduleItem.id === numericActiveItemId 
         ? { 
             ...scheduleItem, 
             durationHours: newHours,
@@ -3627,20 +3629,20 @@ const RunOfShowPage: React.FC = () => {
     ));
     
     // Update the timer progress if it exists
-    if (timerProgress[activeItemId]) {
-      console.log('🔄 Updating timer duration for item:', activeItemId, 'new duration:', newDurationSeconds);
+    if (timerProgress[numericActiveItemId]) {
+      console.log('🔄 Updating timer duration for item:', numericActiveItemId, 'new duration:', newDurationSeconds);
       
       // Always update the timer progress total duration
       setTimerProgress(prev => ({
         ...prev,
-        [activeItemId]: {
-          ...prev[activeItemId],
+        [numericActiveItemId]: {
+          ...prev[numericActiveItemId],
           total: newDurationSeconds
         }
       }));
       
       // Update timer in API if it's currently running
-      if (activeTimers[activeItemId]) {
+      if (activeTimers[numericActiveItemId]) {
         console.log('✅ Timer duration updated locally for running timer');
         
         // Update the server with the new duration so Browser B gets the update
