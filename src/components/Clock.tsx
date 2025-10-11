@@ -72,14 +72,28 @@ const Clock: React.FC<ClockProps> = ({
 
   // Real-time countdown timer for running timers
   useEffect(() => {
+    console.log('🔍 [CLOCK DEBUG] Timer progress effect triggered', {
+      isRunning: hybridTimerData?.activeTimer?.is_running,
+      isActive: hybridTimerData?.activeTimer?.is_active,
+      startedAt: hybridTimerData?.activeTimer?.started_at,
+      duration: hybridTimerData?.activeTimer?.duration_seconds
+    });
+    
     if (supabaseOnly && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active) {
       const activeTimer = hybridTimerData.activeTimer;
       const startedAt = new Date(activeTimer.started_at);
       const total = activeTimer.duration_seconds || 0;
       
+      console.log('🔍 [CLOCK DEBUG] Setting up local countdown timer', {
+        startedAt: startedAt.toISOString(),
+        total
+      });
+      
       const updateCountdown = () => {
         const now = new Date();
         const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+        
+        console.log('🔍 [CLOCK DEBUG] Local countdown update', { elapsed, total });
         
         setTimerProgress({
           elapsed: elapsed,
@@ -93,20 +107,29 @@ const Clock: React.FC<ClockProps> = ({
       // Set up interval for real-time updates
       const interval = setInterval(updateCountdown, 1000);
       
-      return () => clearInterval(interval);
+      return () => {
+        console.log('🔍 [CLOCK DEBUG] Cleaning up countdown interval');
+        clearInterval(interval);
+      };
     } else if (supabaseOnly && hybridTimerData?.activeTimer && !hybridTimerData?.activeTimer?.is_running) {
       // Timer is loaded but not running - show 0 elapsed
       const activeTimer = hybridTimerData.activeTimer;
-        setTimerProgress({
-          elapsed: 0,
-          total: activeTimer.duration_seconds || 0
-        });
+      console.log('🔍 [CLOCK DEBUG] Timer loaded but not running', {
+        duration: activeTimer.duration_seconds
+      });
+      
+      setTimerProgress({
+        elapsed: 0,
+        total: activeTimer.duration_seconds || 0
+      });
     } else if (supabaseOnly && !hybridTimerData?.activeTimer) {
       // No active timer - clear display
-    setTimerProgress({
+      console.log('🔍 [CLOCK DEBUG] No active timer - clearing display');
+      
+      setTimerProgress({
         elapsed: 0,
         total: 0
-    });
+      });
     }
   }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, supabaseOnly]);
 
@@ -119,19 +142,8 @@ const Clock: React.FC<ClockProps> = ({
     return () => clearInterval(timeInterval);
   }, []);
 
-  // Update timer progress every second when timer is running
-  useEffect(() => {
-    if (!isRunning) return;
-
-    const timerInterval = setInterval(() => {
-      setTimerProgress(prev => ({
-        ...prev,
-        elapsed: prev.elapsed + 1
-      }));
-    }, 1000);
-
-    return () => clearInterval(timerInterval);
-  }, [isRunning]);
+  // REMOVED: This was for props-based mode, but Clock always uses WebSocket mode
+  // Timer progress is handled by the effect above (lines 74-134)
 
   // Listen for full screen changes
   useEffect(() => {
@@ -288,33 +300,51 @@ const Clock: React.FC<ClockProps> = ({
     // Set up WebSocket connection for real-time timer updates
     const callbacks = {
       onTimerUpdated: (data: any) => {
-        console.log('🔄 Clock: WebSocket timer update received:', data);
-        console.log('🔄 Clock: Event ID check:', { received: data?.event_id, expected: eventId, match: data?.event_id === eventId });
+        console.log('🔍 [CLOCK DEBUG] ===== WebSocket onTimerUpdated =====');
+        console.log('🔍 [CLOCK DEBUG] Received data:', data);
+        console.log('🔍 [CLOCK DEBUG] Event ID check:', { received: data?.event_id, expected: eventId, match: data?.event_id === eventId });
+        console.log('🔍 [CLOCK DEBUG] Timer state:', data?.timer_state);
+        console.log('🔍 [CLOCK DEBUG] Is running:', data?.is_running);
+        console.log('🔍 [CLOCK DEBUG] Started at:', data?.started_at);
+        console.log('🔍 [CLOCK DEBUG] Duration:', data?.duration_seconds);
+        
         if (data && data.event_id === eventId) {
           // Update timer data directly from WebSocket
-          setHybridTimerData(prev => ({
-            ...prev,
-            activeTimer: data
-          }));
-          console.log('✅ Clock: Timer updated via WebSocket:', data);
+          console.log('🔍 [CLOCK DEBUG] Updating hybridTimerData with WebSocket data');
+          setHybridTimerData(prev => {
+            console.log('🔍 [CLOCK DEBUG] Previous hybridTimerData:', prev);
+            const newData = {
+              ...prev,
+              activeTimer: data
+            };
+            console.log('🔍 [CLOCK DEBUG] New hybridTimerData:', newData);
+            return newData;
+          });
+          console.log('✅ Clock: Timer updated via WebSocket');
         } else {
           console.log('⚠️ Clock: Timer update ignored - event ID mismatch or no data');
         }
       },
       onActiveTimersUpdated: (data: any) => {
-        console.log('🔄 Clock: WebSocket active timers update received:', data);
+        console.log('🔍 [CLOCK DEBUG] ===== WebSocket onActiveTimersUpdated =====');
+        console.log('🔍 [CLOCK DEBUG] Raw data received:', data);
         
         // Handle array format (from server broadcast)
         let timerData = data;
         if (Array.isArray(data) && data.length > 0) {
           timerData = data[0]; // Take first timer from array
-          console.log('🔄 Clock: Processing first timer from array:', timerData);
+          console.log('🔍 [CLOCK DEBUG] Extracted first timer from array:', timerData);
         }
         
-        console.log('🔄 Clock: Event ID check:', { received: timerData?.event_id, expected: eventId, match: timerData?.event_id === eventId });
+        console.log('🔍 [CLOCK DEBUG] Event ID check:', { received: timerData?.event_id, expected: eventId, match: timerData?.event_id === eventId });
+        console.log('🔍 [CLOCK DEBUG] Timer state:', timerData?.timer_state);
+        console.log('🔍 [CLOCK DEBUG] Is active:', timerData?.is_active);
+        console.log('🔍 [CLOCK DEBUG] Is running:', timerData?.is_running);
+        
         if (timerData && timerData.event_id === eventId) {
           // Check if timer is stopped
           if (timerData.timer_state === 'stopped' || !timerData.is_active) {
+            console.log('🔍 [CLOCK DEBUG] Timer is stopped - clearing timer data');
             // Clear timer data when stopped
             setHybridTimerData(prev => ({
               ...prev,
@@ -322,12 +352,13 @@ const Clock: React.FC<ClockProps> = ({
             }));
             console.log('✅ Clock: Timer stopped via WebSocket - cleared timer data');
           } else {
+            console.log('🔍 [CLOCK DEBUG] Timer is active - updating hybridTimerData');
             // Update timer data directly from WebSocket
             setHybridTimerData(prev => ({
               ...prev,
               activeTimer: timerData
             }));
-            console.log('✅ Clock: Active timer updated via WebSocket:', timerData);
+            console.log('✅ Clock: Active timer updated via WebSocket');
           }
         } else {
           console.log('⚠️ Clock: Active timers update ignored - event ID mismatch or no data');
@@ -448,46 +479,8 @@ const Clock: React.FC<ClockProps> = ({
     return () => clearInterval(interval);
   }, [supabaseOnly, hybridTimerData?.secondaryTimer]);
 
-  // Clock always uses WebSocket data, no props mode needed
-
-  // Always run local timer for smooth updates in WebSocket-only mode
-  useEffect(() => {
-    if (!supabaseOnly || !hybridTimerData?.activeTimer) return;
-
-    const activeTimer = hybridTimerData.activeTimer;
-    const itemId = activeTimer.item_id;
-    
-    if (activeTimer.is_running && activeTimer.is_active && activeTimer.started_at) {
-      const startedAt = new Date(activeTimer.started_at);
-      const duration = activeTimer.duration_seconds;
-      
-      console.log(`🔄 Starting continuous local timer for ${itemId} with duration ${duration}s, start time: ${startedAt.toISOString()}`);
-      
-      const continuousTimer = setInterval(() => {
-        const now = new Date();
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-        
-        // Always update timer progress for smooth counting
-        setTimerProgress(prev => ({
-          ...prev,
-          elapsed: elapsed,
-          total: duration
-        }));
-        
-        // WebSocket provides real-time updates, no drift detection needed
-        
-        // Debug logging for first few seconds
-        if (elapsed <= 10) {
-          console.log(`🕐 Timer ${itemId}: Continuous elapsed=${elapsed}s, Start=${startedAt.toISOString()}, Now=${now.toISOString()}`);
-        }
-      }, 1000);
-
-      return () => {
-        console.log(`🔄 Stopping continuous local timer for ${itemId}`);
-        clearInterval(continuousTimer);
-      };
-    }
-  }, [supabaseOnly, lastActiveStartTime]); // Removed hybridTimerData?.activeTimer to prevent constant restarts
+  // REMOVED: Duplicate timer effect that was causing flickering
+  // The timer progress effect above (lines 74-134) handles all timer updates
 
   // WebSocket provides real-time updates, no drift detection cleanup needed
 
