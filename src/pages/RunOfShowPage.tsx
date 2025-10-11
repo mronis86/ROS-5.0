@@ -3617,7 +3617,8 @@ const RunOfShowPage: React.FC = () => {
     const newMinutes = Math.floor((newDurationSeconds % 3600) / 60);
     const newSecs = newDurationSeconds % 60;
     
-    setSchedule(prev => prev.map(scheduleItem => 
+    // Update schedule with new duration
+    const updatedSchedule = schedule.map(scheduleItem => 
       scheduleItem.id === numericActiveItemId 
         ? { 
             ...scheduleItem, 
@@ -3626,7 +3627,9 @@ const RunOfShowPage: React.FC = () => {
             durationSeconds: newSecs
           }
         : scheduleItem
-    ));
+    );
+    
+    setSchedule(updatedSchedule);
     
     // Update the timer progress if it exists
     if (timerProgress[numericActiveItemId]) {
@@ -3646,20 +3649,35 @@ const RunOfShowPage: React.FC = () => {
         console.log('✅ Timer duration updated locally for running timer');
         
         // Update the server with the new duration so Browser B gets the update
-        const updateSuccess = await DatabaseService.updateTimerDuration(event.id, activeItemId, newDurationSeconds);
+        const updateSuccess = await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
         if (updateSuccess) {
           console.log('✅ Timer duration updated on server - Browser B will see the change');
         } else {
           console.warn('⚠️ Failed to update timer duration on server');
         }
-        
-        // Backup schedule data before broadcasting
-        await backupScheduleData();
-        
-        console.log('✅ Time adjustment completed locally and on server');
       } else {
         console.log('✅ Timer duration updated locally for loaded timer');
       }
+    }
+    
+    // ALWAYS save the updated schedule to the database (with the new duration)
+    console.log('💾 Saving updated schedule to database with new duration...');
+    try {
+      await DatabaseService.saveRunOfShowData({
+        event_id: event.id,
+        event_name: event.name,
+        event_date: event.date,
+        schedule_items: updatedSchedule,
+        custom_columns: customColumns,
+        settings: {}
+      }, {
+        userId: user.id,
+        userName: user.full_name || user.email || 'Unknown User',
+        userRole: currentUserRole || 'VIEWER'
+      });
+      console.log('✅ Schedule saved to database with updated duration');
+    } catch (error) {
+      console.error('❌ Failed to save schedule:', error);
     }
   };
 

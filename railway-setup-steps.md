@@ -45,3 +45,4 @@ VITE_API_BASE_URL=https://your-railway-url.railway.app
 - ⏳ Need to add NEON_DATABASE_URL environment variable
 - ⏳ Need to update local API URL
 
+

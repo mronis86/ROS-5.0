@@ -83,3 +83,4 @@ FROM information_schema.columns
 WHERE table_name = 'active_timers' 
 ORDER BY ordinal_position;
 
+
