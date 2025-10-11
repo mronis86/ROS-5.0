@@ -1,2 +1,0 @@
-This file forces Netlify to rebuild with environment variables.
-Timestamp: 2025-10-08 (Updated)
