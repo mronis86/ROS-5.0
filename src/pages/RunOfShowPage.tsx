@@ -3581,10 +3581,23 @@ const RunOfShowPage: React.FC = () => {
 
   // Adjust timer duration and update start times
   const adjustTimerDuration = async (seconds: number) => {
-    if (!activeItemId || !user || !event?.id) return;
+    console.log('⏱️⏱️⏱️ ADJUST TIMER CLICKED:', seconds, 'seconds');
+    console.log('⏱️⏱️⏱️ activeItemId:', activeItemId);
+    console.log('⏱️⏱️⏱️ user:', user);
+    console.log('⏱️⏱️⏱️ event:', event);
+    
+    if (!activeItemId || !user || !event?.id) {
+      console.log('❌ Cannot adjust timer - missing data:', { activeItemId, user: !!user, eventId: event?.id });
+      return;
+    }
     
     const item = schedule.find(s => s.id === activeItemId);
-    if (!item) return;
+    if (!item) {
+      console.log('❌ Cannot find active item in schedule');
+      return;
+    }
+    
+    console.log('⏱️⏱️⏱️ Found item:', item.segmentName);
     
     // Update the item's duration
     const newDurationSeconds = Math.max(0, (item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds) + seconds);
