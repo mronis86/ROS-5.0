@@ -3585,15 +3585,25 @@ const RunOfShowPage: React.FC = () => {
     console.log('⏱️⏱️⏱️ activeItemId:', activeItemId);
     console.log('⏱️⏱️⏱️ user:', user);
     console.log('⏱️⏱️⏱️ event:', event);
+    console.log('⏱️⏱️⏱️ schedule length:', schedule.length);
+    console.log('⏱️⏱️⏱️ schedule items:', schedule.map(s => ({ id: s.id, name: s.segmentName })));
     
     if (!activeItemId || !user || !event?.id) {
       console.log('❌ Cannot adjust timer - missing data:', { activeItemId, user: !!user, eventId: event?.id });
       return;
     }
     
+    if (schedule.length === 0) {
+      console.log('❌ Schedule is empty - waiting for data to load');
+      alert('Schedule is still loading. Please wait a moment and try again.');
+      return;
+    }
+    
     const item = schedule.find(s => s.id === activeItemId);
     if (!item) {
       console.log('❌ Cannot find active item in schedule');
+      console.log('❌ Active item ID type:', typeof activeItemId, activeItemId);
+      console.log('❌ Schedule item IDs:', schedule.map(s => ({ id: s.id, type: typeof s.id })));
       return;
     }
     
