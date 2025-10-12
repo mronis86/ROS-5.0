@@ -44,6 +44,11 @@ const ScriptsFollowPage: React.FC = () => {
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editText, setEditText] = useState<string>('');
   const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(false);
+  const [currentScriptId, setCurrentScriptId] = useState<string | null>(null);
+  const [currentScriptName, setCurrentScriptName] = useState<string>('');
+  const [savedScripts, setSavedScripts] = useState<any[]>([]);
+  const [showScriptManager, setShowScriptManager] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   
   const scriptRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -431,6 +436,132 @@ const ScriptsFollowPage: React.FC = () => {
     }
   };
 
+  // Load list of saved scripts
+  const loadSavedScripts = async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts`);
+      const data = await response.json();
+      setSavedScripts(data);
+    } catch (error) {
+      console.error('Error loading saved scripts:', error);
+    }
+  };
+
+  // Save current script to database
+  const saveScriptToDatabase = async () => {
+    if (!scriptText.trim()) {
+      alert('No script to save!');
+      return;
+    }
+
+    const scriptName = prompt('Enter a name for this script:', currentScriptName || 'Untitled Script');
+    if (!scriptName) return;
+
+    setIsSaving(true);
+    try {
+      const url = currentScriptId 
+        ? `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${currentScriptId}`
+        : `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts`;
+      
+      const method = currentScriptId ? 'PUT' : 'POST';
+      
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script_name: scriptName,
+          script_text: scriptText,
+          created_by: userName
+        })
+      });
+
+      const savedScript = await response.json();
+      setCurrentScriptId(savedScript.id);
+      setCurrentScriptName(savedScript.script_name);
+      
+      // Save comments
+      if (currentScriptId) {
+        // Delete existing comments and re-add (simple approach)
+        // In production, you'd want a more sophisticated sync
+        for (const comment of comments) {
+          await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              script_id: savedScript.id,
+              line_number: comment.lineNumber,
+              comment_text: comment.text,
+              author: comment.author
+            })
+          });
+        }
+      }
+
+      alert(`Script "${scriptName}" saved successfully!`);
+      loadSavedScripts();
+    } catch (error) {
+      console.error('Error saving script:', error);
+      alert('Failed to save script');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Load a script from database
+  const loadScriptFromDatabase = async (scriptId: string) => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${scriptId}`);
+      const data = await response.json();
+      
+      setScriptText(data.script.script_text);
+      setCurrentScriptId(data.script.id);
+      setCurrentScriptName(data.script.script_name);
+      
+      // Load comments
+      const loadedComments = data.comments.map((c: any) => ({
+        id: c.id,
+        lineNumber: c.line_number,
+        text: c.comment_text,
+        author: c.author,
+        timestamp: new Date(c.created_at)
+      }));
+      setComments(loadedComments);
+      
+      setShowScriptManager(false);
+      alert(`Script "${data.script.script_name}" loaded!`);
+    } catch (error) {
+      console.error('Error loading script:', error);
+      alert('Failed to load script');
+    }
+  };
+
+  // Delete a script from database
+  const deleteScriptFromDatabase = async (scriptId: string, scriptName: string) => {
+    if (!confirm(`Delete script "${scriptName}"? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${scriptId}`, {
+        method: 'DELETE'
+      });
+      
+      alert(`Script "${scriptName}" deleted!`);
+      loadSavedScripts();
+      
+      // Clear current script if it was deleted
+      if (currentScriptId === scriptId) {
+        setCurrentScriptId(null);
+        setCurrentScriptName('');
+        setScriptText('');
+        setComments([]);
+      }
+    } catch (error) {
+      console.error('Error deleting script:', error);
+      alert('Failed to delete script');
+    }
+  };
+
   // Split script into lines
   const scriptLines = scriptText.split('\n');
 
@@ -447,6 +578,11 @@ const ScriptsFollowPage: React.FC = () => {
               ← Back
             </button>
             <h1 className="text-2xl font-bold">Scripts Follow</h1>
+            {currentScriptName && (
+              <span className="px-3 py-1 bg-green-600 rounded text-sm font-medium">
+                📄 {currentScriptName}
+              </span>
+            )}
             {eventName && <span className="text-slate-400">- {eventName}</span>}
           </div>
 
@@ -471,7 +607,7 @@ const ScriptsFollowPage: React.FC = () => {
               disabled={isImporting}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
             >
-              {isImporting ? 'Importing...' : '📄 Import Script'}
+              {isImporting ? 'Importing...' : '📄 Import'}
             </button>
             <input
               ref={fileInputRef}
@@ -480,6 +616,26 @@ const ScriptsFollowPage: React.FC = () => {
               onChange={handleFileImport}
               className="hidden"
             />
+
+            {/* Save Script Button */}
+            <button
+              onClick={saveScriptToDatabase}
+              disabled={isSaving || !scriptText}
+              className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-slate-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
+            >
+              {isSaving ? 'Saving...' : '💾 Save'}
+            </button>
+
+            {/* Load Script Button */}
+            <button
+              onClick={() => {
+                loadSavedScripts();
+                setShowScriptManager(true);
+              }}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded text-sm font-medium transition-colors"
+            >
+              📂 Load
+            </button>
 
             {/* User Name Input */}
             <input
@@ -877,6 +1033,66 @@ const ScriptsFollowPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Script Manager Modal */}
+      {showScriptManager && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-slate-700">
+              <h2 className="text-2xl font-bold">📂 Saved Scripts</h2>
+              <button
+                onClick={() => setShowScriptManager(false)}
+                className="text-slate-400 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6">
+              {savedScripts.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  <p className="text-lg mb-2">No saved scripts yet</p>
+                  <p className="text-sm">Import a script and click Save to get started</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {savedScripts.map((script) => (
+                    <div
+                      key={script.id}
+                      className="bg-slate-700 rounded-lg p-4 hover:bg-slate-650 transition-colors"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-bold text-lg mb-1">{script.script_name}</h3>
+                          <div className="text-sm text-slate-400">
+                            <p>Created: {new Date(script.created_at).toLocaleDateString()}</p>
+                            {script.created_by && <p>By: {script.created_by}</p>}
+                          </div>
+                        </div>
+                        
+                        <div className="flex gap-2 ml-4">
+                          <button
+                            onClick={() => loadScriptFromDatabase(script.id)}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors"
+                          >
+                            Load
+                          </button>
+                          <button
+                            onClick={() => deleteScriptFromDatabase(script.id, script.script_name)}
+                            className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-sm font-medium transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
