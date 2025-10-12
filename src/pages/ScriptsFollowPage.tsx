@@ -8,7 +8,7 @@ interface Comment {
   lineNumber: number;
   text: string;
   author: string;
-  timestamp: Date;
+  timestamp: Date | string; // Can be Date locally or string from WebSocket
 }
 
 interface ScriptData {
@@ -47,7 +47,7 @@ const ScriptsFollowPage: React.FC = () => {
   
   const scriptRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const scrollThrottleRef = useRef<NodeJS.Timeout | null>(null);
+  const lastScrollBroadcastRef = useRef<number>(0);
 
   // Load script data on mount
   useEffect(() => {
@@ -108,75 +108,154 @@ const ScriptsFollowPage: React.FC = () => {
   useEffect(() => {
     if (!eventId) return;
 
-    console.log('🔌 Setting up WebSocket for Scripts Follow');
+    console.log('🔌 Setting up WebSocket for Scripts Follow, role:', userRole);
 
-    // Connect to Socket.IO and join the event room
-    socketClient.connect(eventId, {
-      onConnectionChange: (connected: boolean) => {
-        console.log('🔌 Scripts Follow WebSocket status:', connected);
-        setIsWebSocketConnected(connected);
-      }
-    });
+    // Connect to Socket.IO and join the event room (no callbacks to avoid conflicts)
+    socketClient.connect(eventId, {});
+
+    const socket = socketClient.getSocket();
+    if (!socket) {
+      console.error('❌ Socket not available');
+      return;
+    }
+
+    // Listen for connection status directly on the socket
+    const handleConnect = () => {
+      console.log('🔌 Scripts Follow WebSocket connected');
+      setIsWebSocketConnected(true);
+    };
+
+    const handleDisconnect = () => {
+      console.log('🔌 Scripts Follow WebSocket disconnected');
+      setIsWebSocketConnected(false);
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+
+    // Set initial connection status
+    setIsWebSocketConnected(socket.connected);
+
+    // Remove any existing listener first
+    socket.off('scriptScrollSync');
 
     // Listen for scroll sync events (Viewers only)
     if (userRole === 'VIEWER') {
-      const socket = socketClient.getSocket();
-      if (socket) {
-        console.log('👁️ Viewer: Listening for scroll sync events');
+      console.log('👁️ Viewer: Setting up scroll sync listener');
+      
+      const handleScrollSync = (data: { scrollPosition: number; lineNumber: number; fontSize: number; timestamp: number }) => {
+        console.log('📜 Received scroll sync:', data);
+        setScrollerPosition(data.scrollPosition);
         
-        socket.on('scriptScrollSync', (data: { scrollPosition: number; lineNumber: number; fontSize: number; timestamp: number }) => {
-          console.log('📜 Received scroll sync:', data);
-          setScrollerPosition(data.scrollPosition);
-          
-          // Sync font size first if it's different
-          if (data.fontSize && data.fontSize !== fontSize) {
-            console.log(`📏 Syncing font size from ${fontSize}px to ${data.fontSize}px`);
-            setFontSize(data.fontSize);
-          }
-          
-          // Auto-scroll viewer to scroller's position
-          if (scriptRef.current) {
-            // Wait for font size to apply if it changed
+        // Sync font size first if it's different
+        if (data.fontSize && data.fontSize !== fontSize) {
+          console.log(`📏 Syncing font size from ${fontSize}px to ${data.fontSize}px`);
+          setFontSize(data.fontSize);
+        }
+        
+        // Auto-scroll viewer to scroller's position with smooth animation
+        if (scriptRef.current) {
+          // Wait for font size to apply if it changed
+          setTimeout(() => {
+            if (!scriptRef.current) return;
+            
+            // Use instant scrolling for real-time sync (smooth causes lag)
+            scriptRef.current.scrollTop = data.scrollPosition;
+            
+            // Update visible line range for viewer with accurate calculation
             setTimeout(() => {
               if (!scriptRef.current) return;
               
-              scriptRef.current.scrollTop = data.scrollPosition;
+              const containerHeight = scriptRef.current.clientHeight;
+              const lineElements = scriptRef.current.querySelectorAll('[data-line-number]');
               
-              // Update visible line range for viewer with accurate calculation
-              setTimeout(() => {
-                if (!scriptRef.current) return;
+              if (lineElements.length > 0) {
+                let totalHeight = 0;
+                const sampleSize = Math.min(5, lineElements.length);
                 
-                const containerHeight = scriptRef.current.clientHeight;
-                const lineElements = scriptRef.current.querySelectorAll('[data-line-number]');
-                
-                if (lineElements.length > 0) {
-                  let totalHeight = 0;
-                  const sampleSize = Math.min(5, lineElements.length);
-                  
-                  for (let i = 0; i < sampleSize; i++) {
-                    totalHeight += (lineElements[i] as HTMLElement).offsetHeight;
-                  }
-                  
-                  const avgLineHeight = totalHeight / sampleSize;
-                  const startLine = Math.max(0, Math.floor(data.scrollPosition / avgLineHeight));
-                  const visibleLines = Math.ceil(containerHeight / avgLineHeight);
-                  const endLine = startLine + visibleLines;
-                  
-                  setCurrentVisibleLine(startLine);
-                  setVisibleLineRange({ start: startLine, end: endLine });
+                for (let i = 0; i < sampleSize; i++) {
+                  totalHeight += (lineElements[i] as HTMLElement).offsetHeight;
                 }
-              }, 50);
-            }, data.fontSize !== fontSize ? 100 : 0); // Extra delay if font changed
-          }
-        });
-      }
+                
+                const avgLineHeight = totalHeight / sampleSize;
+                const startLine = Math.max(0, Math.floor(data.scrollPosition / avgLineHeight));
+                const visibleLines = Math.ceil(containerHeight / avgLineHeight);
+                const endLine = startLine + visibleLines;
+                
+                setCurrentVisibleLine(startLine);
+                setVisibleLineRange({ start: startLine, end: endLine });
+              }
+            }, 50);
+          }, data.fontSize !== fontSize ? 100 : 0); // Extra delay if font changed
+        }
+      };
+
+      socket.on('scriptScrollSync', handleScrollSync);
+      console.log('✅ Viewer: Scroll sync listener attached');
+    } else {
+      console.log('🎬 Scroller: No listener needed (broadcasting mode)');
     }
+
+    // Listen for comment sync events (All users)
+    const handleCommentSync = (data: { action: 'add' | 'edit' | 'delete'; comment?: any; commentId?: string }) => {
+      console.log('💬 Received comment sync:', data.action, data.commentId || data.comment?.id);
+      
+      switch (data.action) {
+        case 'add':
+          if (data.comment) {
+            // Convert timestamp string back to Date if needed
+            const comment: Comment = {
+              ...data.comment,
+              timestamp: typeof data.comment.timestamp === 'string' 
+                ? new Date(data.comment.timestamp) 
+                : data.comment.timestamp
+            };
+            
+            setComments(prev => {
+              // Avoid duplicates
+              if (prev.some(c => c.id === comment.id)) {
+                console.log('💬 Comment already exists, skipping:', comment.id);
+                return prev;
+              }
+              console.log('💬 Adding comment:', comment.id);
+              return [...prev, comment];
+            });
+          }
+          break;
+        case 'edit':
+          if (data.comment) {
+            const comment: Comment = {
+              ...data.comment,
+              timestamp: typeof data.comment.timestamp === 'string' 
+                ? new Date(data.comment.timestamp) 
+                : data.comment.timestamp
+            };
+            
+            setComments(prev => prev.map(c => 
+              c.id === comment.id ? comment : c
+            ));
+          }
+          break;
+        case 'delete':
+          if (data.commentId) {
+            setComments(prev => prev.filter(c => c.id !== data.commentId));
+          }
+          break;
+      }
+    };
+
+    socket.on('scriptCommentSync', handleCommentSync);
+    console.log('✅ Comment sync listener attached');
 
     return () => {
       console.log('🔌 Cleaning up Scripts Follow WebSocket');
       const socket = socketClient.getSocket();
       if (socket) {
         socket.off('scriptScrollSync');
+        socket.off('scriptCommentSync');
+        socket.off('connect', handleConnect);
+        socket.off('disconnect', handleDisconnect);
+        console.log('✅ Removed Scripts Follow socket listeners');
       }
     };
   }, [eventId, userRole]);
@@ -221,17 +300,18 @@ const ScriptsFollowPage: React.FC = () => {
     if (userRole === 'SCROLLER') {
       setScrollerPosition(position);
 
-      // Broadcast scroll position via WebSocket (throttled to avoid spam)
+      // Broadcast scroll position via WebSocket (throttled but immediate)
       if (eventId) {
-        if (scrollThrottleRef.current) {
-          clearTimeout(scrollThrottleRef.current);
-        }
+        const now = Date.now();
+        const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
         
-        scrollThrottleRef.current = setTimeout(() => {
+        // Broadcast immediately if 50ms has passed (20 updates per second max)
+        if (timeSinceLastBroadcast >= 50) {
           const startLine = Math.max(0, Math.floor(position / (fontSize * 2)));
           socketClient.emitScriptScroll(position, startLine, fontSize);
+          lastScrollBroadcastRef.current = now;
           console.log('📜 Broadcasting scroll position:', position, 'line:', startLine, 'fontSize:', fontSize);
-        }, 100); // Throttle to max 10 updates per second
+        }
       }
     }
   };
@@ -277,8 +357,8 @@ const ScriptsFollowPage: React.FC = () => {
 
     // Broadcast comment via WebSocket
     if (eventId) {
-      // TODO: Implement socket broadcast for comments
-      console.log('💬 Broadcasting comment:', comment);
+      console.log('💬 Broadcasting new comment');
+      socketClient.emitScriptComment('add', comment);
     }
 
     // Save to database
@@ -316,9 +396,19 @@ const ScriptsFollowPage: React.FC = () => {
   // Save edited comment
   const saveEditComment = (commentId: string) => {
     if (editText.trim()) {
-      setComments(comments.map(c => 
-        c.id === commentId ? { ...c, text: editText.trim() } : c
-      ));
+      const updatedComment = comments.find(c => c.id === commentId);
+      if (updatedComment) {
+        const newComment = { ...updatedComment, text: editText.trim() };
+        setComments(comments.map(c => 
+          c.id === commentId ? newComment : c
+        ));
+        
+        // Broadcast edit via WebSocket
+        if (eventId) {
+          console.log('💬 Broadcasting comment edit');
+          socketClient.emitScriptComment('edit', newComment, commentId);
+        }
+      }
     }
     setEditingCommentId(null);
     setEditText('');
@@ -333,6 +423,12 @@ const ScriptsFollowPage: React.FC = () => {
   // Delete comment
   const deleteComment = (commentId: string) => {
     setComments(comments.filter(c => c.id !== commentId));
+    
+    // Broadcast delete via WebSocket
+    if (eventId) {
+      console.log('💬 Broadcasting comment delete');
+      socketClient.emitScriptComment('delete', undefined, commentId);
+    }
   };
 
   // Split script into lines

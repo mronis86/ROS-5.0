@@ -1375,6 +1375,20 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle comment updates (add, edit, delete)
+  socket.on('scriptCommentUpdate', (data) => {
+    const { eventId, action, comment, commentId } = data;
+    console.log(`💬 Script comment ${action} for event:${eventId}`, commentId);
+    
+    // Broadcast to all clients in the event room (including sender for confirmation)
+    io.to(`event:${eventId}`).emit('scriptCommentSync', {
+      action, // 'add', 'edit', 'delete'
+      comment,
+      commentId,
+      timestamp: Date.now()
+    });
+  });
+
   // Handle sync request event
   socket.on('requestSync', async (data) => {
     console.log(`🔄 Sync request received for event: ${data.eventId}`);

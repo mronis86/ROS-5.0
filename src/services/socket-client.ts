@@ -31,7 +31,15 @@ class SocketClient {
 
   connect(eventId: string, callbacks: SocketCallbacks) {
     if (this.socket && this.eventId === eventId) {
-      console.log('Socket.IO already connected for this event.');
+      console.log('Socket.IO already connected for this event. Merging callbacks.');
+      // Merge new callbacks with existing ones, but don't overwrite existing callbacks
+      // This allows multiple pages to share the same socket without conflicts
+      this.callbacks = { 
+        ...this.callbacks, 
+        ...Object.fromEntries(
+          Object.entries(callbacks).filter(([key]) => !this.callbacks[key as keyof SocketCallbacks])
+        )
+      };
       return;
     }
 
@@ -178,6 +186,24 @@ class SocketClient {
         scrollPosition,
         lineNumber,
         fontSize
+      });
+    }
+  }
+
+  // Emit comment updates for Scripts Follow page
+  emitScriptComment(action: 'add' | 'edit' | 'delete', comment?: any, commentId?: string) {
+    if (this.socket && this.eventId) {
+      console.log('📡 Emitting scriptCommentUpdate:', action, commentId || comment?.id);
+      this.socket.emit('scriptCommentUpdate', {
+        eventId: this.eventId,
+        action,
+        comment,
+        commentId
+      });
+    } else {
+      console.error('❌ Cannot emit comment: socket or eventId missing', {
+        hasSocket: !!this.socket,
+        hasEventId: !!this.eventId
       });
     }
   }
