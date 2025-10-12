@@ -2801,6 +2801,37 @@ const RunOfShowPage: React.FC = () => {
     return temp.textContent || temp.innerText || '';
   };
 
+  // Insert list function using modern methods
+  const insertList = (listType: 'ul' | 'ol') => {
+    const editor = document.getElementById('notes-editor');
+    if (!editor) return;
+    
+    editor.focus();
+    
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    
+    const range = selection.getRangeAt(0);
+    const selectedText = range.toString();
+    
+    // Create list element
+    const list = document.createElement(listType);
+    const listItem = document.createElement('li');
+    listItem.textContent = selectedText || 'List item';
+    list.appendChild(listItem);
+    
+    // Insert the list
+    range.deleteContents();
+    range.insertNode(list);
+    
+    // Position cursor after the list item
+    const newRange = document.createRange();
+    newRange.setStartAfter(listItem);
+    newRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(newRange);
+  };
+
   // Enhanced formatting function that works with contentEditable
   const applyFormatting = (format: string, value?: string) => {
     const editor = document.getElementById('notes-editor');
@@ -2837,10 +2868,10 @@ const RunOfShowPage: React.FC = () => {
           }
           break;
         case 'bullet':
-          document.execCommand('insertUnorderedList', false);
+          insertList('ul');
           break;
         case 'list':
-          document.execCommand('insertOrderedList', false);
+          insertList('ol');
           break;
         case 'left':
           document.execCommand('justifyLeft', false);
@@ -9501,7 +9532,7 @@ const RunOfShowPage: React.FC = () => {
                         >
                           {item.notes ? (
                             <div 
-                              className="text-left w-full"
+                              className="text-left w-full notes-display"
                               style={{
                                 lineHeight: '1.4',
                                 overflow: 'visible'
@@ -10107,7 +10138,7 @@ const RunOfShowPage: React.FC = () => {
               >
                 {modalForm.notes ? (
                   <div 
-                    className="text-sm" 
+                    className="text-sm notes-display" 
                     style={{
                       lineHeight: '1.4',
                       overflow: 'visible'

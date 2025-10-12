@@ -47,6 +47,12 @@ const ScriptsFollowPage: React.FC = () => {
   const [userRole, setUserRole] = useState<UserRole>('VIEWER');
   const [scrollerPosition, setScrollerPosition] = useState<number>(0);
   const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [isEditingScript, setIsEditingScript] = useState<boolean>(false);
+  const [editScriptText, setEditScriptText] = useState<string>('');
+  const [previewComments, setPreviewComments] = useState<Comment[]>([]);
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const originalScriptTextRef = useRef<string>('');
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [newComment, setNewComment] = useState<string>('');
   const [userName, setUserName] = useState<string>('User');
@@ -451,6 +457,189 @@ const ScriptsFollowPage: React.FC = () => {
     }
   };
 
+  // Start editing script
+  const startEditScript = () => {
+    setEditScriptText(scriptText);
+    originalScriptTextRef.current = scriptText;
+    setPreviewComments(comments);
+    setIsEditingScript(true);
+  };
+
+  // Adjust comment line numbers based on script edits
+  const adjustCommentLineNumbers = (oldText: string, newText: string, commentsToAdjust: Comment[] = comments): Comment[] => {
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
+    
+    // If no changes, return comments as-is
+    if (oldText === newText) return commentsToAdjust;
+    
+    // Create a mapping of old line numbers to new line numbers
+    const lineMapping: Map<number, number> = new Map();
+    
+    // Simple algorithm: track content changes
+    // For each old line, find where it ended up in the new text
+    for (let oldIdx = 0; oldIdx < oldLines.length; oldIdx++) {
+      const oldLine = oldLines[oldIdx].trim();
+      if (!oldLine) continue; // Skip empty lines
+      
+      // Find this line in the new text
+      for (let newIdx = 0; newIdx < newLines.length; newIdx++) {
+        if (newLines[newIdx].trim() === oldLine && !lineMapping.has(oldIdx)) {
+          lineMapping.set(oldIdx, newIdx);
+          break;
+        }
+      }
+    }
+    
+    // Update comment line numbers based on the mapping
+    const updatedComments = commentsToAdjust.map(comment => {
+      const oldLineNumber = comment.lineNumber;
+      
+      // If we have a direct mapping, use it
+      if (lineMapping.has(oldLineNumber)) {
+        return {
+          ...comment,
+          lineNumber: lineMapping.get(oldLineNumber)!
+        };
+      }
+      
+      // If no direct mapping, try to estimate based on nearby lines
+      // Find the closest mapped line before this comment
+      let closestBefore = -1;
+      let closestBeforeNew = -1;
+      for (let i = oldLineNumber - 1; i >= 0; i--) {
+        if (lineMapping.has(i)) {
+          closestBefore = i;
+          closestBeforeNew = lineMapping.get(i)!;
+          break;
+        }
+      }
+      
+      // Find the closest mapped line after this comment
+      let closestAfter = oldLines.length;
+      let closestAfterNew = newLines.length;
+      for (let i = oldLineNumber + 1; i < oldLines.length; i++) {
+        if (lineMapping.has(i)) {
+          closestAfter = i;
+          closestAfterNew = lineMapping.get(i)!;
+          break;
+        }
+      }
+      
+      // Calculate the offset
+      if (closestBefore >= 0 && closestAfter < oldLines.length) {
+        // Comment is between two known lines
+        const oldOffset = oldLineNumber - closestBefore;
+        const newLineNumber = closestBeforeNew + oldOffset;
+        return {
+          ...comment,
+          lineNumber: Math.min(newLineNumber, newLines.length - 1)
+        };
+      } else if (closestBefore >= 0) {
+        // Only have a line before
+        const oldOffset = oldLineNumber - closestBefore;
+        const newLineNumber = closestBeforeNew + oldOffset;
+        return {
+          ...comment,
+          lineNumber: Math.min(newLineNumber, newLines.length - 1)
+        };
+      } else if (closestAfter < oldLines.length) {
+        // Only have a line after
+        const oldOffset = closestAfter - oldLineNumber;
+        const newLineNumber = Math.max(0, closestAfterNew - oldOffset);
+        return {
+          ...comment,
+          lineNumber: newLineNumber
+        };
+      }
+      
+      // Keep original if we can't determine
+      return comment;
+    });
+    
+    console.log('📍 Adjusted comment line numbers:', {
+      oldCount: commentsToAdjust.length,
+      newCount: updatedComments.length,
+      changes: updatedComments.filter((c, i) => c.lineNumber !== commentsToAdjust[i].lineNumber).length
+    });
+    
+    return updatedComments;
+  };
+
+  // Save script edits
+  const saveScriptEdit = async () => {
+    // Adjust comment line numbers based on changes
+    const adjustedComments = adjustCommentLineNumbers(scriptText, editScriptText);
+    setComments(adjustedComments);
+    
+    setScriptText(editScriptText);
+    setIsEditingScript(false);
+    
+    // Save to database if we have a current script
+    if (currentScriptId) {
+      try {
+        // Update the script in database
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${currentScriptId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            script_text: editScriptText,
+            script_name: currentScriptName 
+          })
+        });
+        
+        if (response.ok) {
+          console.log('✅ Script updated in database');
+          
+          // Update comment line numbers in database
+          for (const comment of adjustedComments) {
+            const originalComment = comments.find(c => c.id === comment.id);
+            if (originalComment && originalComment.lineNumber !== comment.lineNumber) {
+              await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments/${comment.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  line_number: comment.lineNumber,
+                  comment_text: comment.text,
+                  comment_type: comment.type
+                })
+              });
+            }
+          }
+          
+          console.log('✅ Comment line numbers updated in database');
+        } else {
+          throw new Error('Failed to update script');
+        }
+      } catch (error) {
+        console.error('❌ Error saving script:', error);
+        alert('Failed to save script changes');
+      }
+    }
+  };
+
+  // Cancel script editing
+  const cancelScriptEdit = () => {
+    setEditScriptText('');
+    setIsEditingScript(false);
+  };
+
+  // Handle edit text change with real-time comment adjustment preview
+  const handleEditTextChange = (newText: string) => {
+    setEditScriptText(newText);
+    
+    // Update preview comments in real-time
+    const adjustedComments = adjustCommentLineNumbers(originalScriptTextRef.current, newText);
+    setPreviewComments(adjustedComments);
+  };
+
+  // Sync scroll between textarea and line numbers
+  const handleEditScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    if (lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = e.currentTarget.scrollTop;
+    }
+  };
+
   // Load list of saved scripts
   const loadSavedScripts = async () => {
     try {
@@ -745,20 +934,20 @@ const ScriptsFollowPage: React.FC = () => {
               </div>
               
               {/* Comment Type Selector */}
-              <div className="mb-3">
-                <label className="text-sm text-slate-300 mb-2 block">Comment Type:</label>
-                <div className="grid grid-cols-3 gap-2">
+              <div className="mb-4">
+                <label className="text-base font-bold text-white mb-3 block">🎯 Comment Type:</label>
+                <div className="grid grid-cols-2 gap-3">
                   {(Object.keys(COMMENT_TYPES) as CommentType[]).map((type) => (
                     <button
                       key={type}
                       onClick={() => setCommentType(type)}
-                      className={`px-3 py-2 rounded text-sm font-medium transition-all ${
+                      className={`px-4 py-3 rounded-lg text-base font-bold transition-all duration-200 shadow-lg ${
                         commentType === type
-                          ? `${COMMENT_TYPES[type].bgColor} text-white ring-2 ring-white`
-                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                          ? `${COMMENT_TYPES[type].bgColor} text-white ring-2 ring-yellow-400 transform scale-105`
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:scale-102'
                       }`}
                     >
-                      {COMMENT_TYPES[type].icon} {COMMENT_TYPES[type].label}
+                      <span className="text-lg">{COMMENT_TYPES[type].icon}</span> {COMMENT_TYPES[type].label}
                     </button>
                   ))}
                 </div>
@@ -867,18 +1056,22 @@ const ScriptsFollowPage: React.FC = () => {
                           : 'bg-slate-800 border-l-4 border-gray-500 opacity-75 hover:bg-slate-700'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {/* Comment Type Badge */}
-                        <span className={`text-xs px-2 py-1 rounded font-bold ${COMMENT_TYPES[comment.type || 'GENERAL'].bgColor} text-white`}>
-                          {COMMENT_TYPES[comment.type || 'GENERAL'].icon} {COMMENT_TYPES[comment.type || 'GENERAL'].label}
+                        {/* Comment Type Badge - Larger and more squared */}
+                        <span className={`text-sm px-3 py-2 rounded-md font-bold shadow-md ${COMMENT_TYPES[comment.type || 'GENERAL'].bgColor} text-white flex items-center gap-1`}>
+                          <span className="text-base">{COMMENT_TYPES[comment.type || 'GENERAL'].icon}</span>
+                          <span>{COMMENT_TYPES[comment.type || 'GENERAL'].label}</span>
                         </span>
                         
-                        <span className="text-xs font-bold text-blue-400">
-                          Line {comment.lineNumber + 1}
-                        </span>
+                        <div className="bg-slate-600 px-3 py-2 rounded-md">
+                          <span className="text-sm font-bold text-blue-300">
+                            📍 Line {comment.lineNumber + 1}
+                          </span>
+                        </div>
+                        
                         {positionLabel && (
-                          <span className={`text-xs ${positionColor} text-white px-2 py-0.5 rounded font-bold`}>
+                          <span className={`text-sm ${positionColor} text-white px-3 py-2 rounded-md font-bold shadow-sm`}>
                             {positionLabel}
                           </span>
                         )}
@@ -938,9 +1131,10 @@ const ScriptsFollowPage: React.FC = () => {
                         </div>
                       </div>
                     ) : (
-                      <div>
-                        <p className="text-sm text-white mb-1">{comment.text}</p>
-                        <span className="text-xs text-slate-400">- {comment.author}</span>
+                      <div className="space-y-3">
+                        <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-600">
+                          <p className="text-sm text-white leading-relaxed">{comment.text}</p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -989,6 +1183,17 @@ const ScriptsFollowPage: React.FC = () => {
                 )}
               </div>
               
+              {/* Edit Script Button - Only for Scrollers */}
+              {userRole === 'SCROLLER' && (
+                <button
+                  onClick={isEditingScript ? saveScriptEdit : startEditScript}
+                  className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm transition-colors"
+                  title={isEditingScript ? 'Save script changes' : 'Edit script text'}
+                >
+                  {isEditingScript ? '💾 Save' : '✏️ Edit'}
+                </button>
+              )}
+              
               {userRole === 'VIEWER' && (
                 <div className="flex items-center gap-2 px-3 py-1 bg-blue-600 rounded text-sm">
                   <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
@@ -1009,6 +1214,64 @@ const ScriptsFollowPage: React.FC = () => {
                 scrollBehavior: userRole === 'VIEWER' ? 'smooth' : 'auto'
               }}
             >
+              {isEditingScript ? (
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-600">
+                    <div>
+                      <h3 className="text-lg font-bold text-white">✏️ Edit Script</h3>
+                      <p className="text-sm text-slate-400 mt-1">
+                        💬 Lines with yellow markers have comments • Comments stay on their line numbers
+                      </p>
+                    </div>
+                    <button
+                      onClick={cancelScriptEdit}
+                      className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded text-sm transition-colors"
+                    >
+                      ✕ Cancel
+                    </button>
+                  </div>
+                  <div className="flex flex-1 gap-2 overflow-hidden">
+                    {/* Line numbers with comment indicators */}
+                    <div 
+                      ref={lineNumbersRef}
+                      className="bg-slate-900/50 rounded-lg p-4 overflow-y-auto border border-slate-700 scrollbar-hide" 
+                      style={{ minWidth: '60px', overflowY: 'scroll' }}
+                    >
+                      <div className="font-mono leading-relaxed text-right pr-2" style={{ fontSize: `${fontSize}px` }}>
+                        {editScriptText.split('\n').map((_, index) => {
+                          const lineComments = previewComments.filter(c => c.lineNumber === index);
+                          const hasComment = lineComments.length > 0;
+                          return (
+                            <div 
+                              key={index} 
+                              className={`relative ${hasComment ? 'text-yellow-400 font-bold' : 'text-slate-500'}`}
+                            >
+                              {hasComment && (
+                                <div className="absolute left-0 w-1 h-full bg-yellow-400 rounded-full"></div>
+                              )}
+                              <span className="relative">{index + 1}</span>
+                              {hasComment && (
+                                <span className="ml-1 text-xs">({lineComments.length})</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    
+                    {/* Textarea */}
+                    <textarea
+                      ref={editTextareaRef}
+                      value={editScriptText}
+                      onChange={(e) => handleEditTextChange(e.target.value)}
+                      onScroll={handleEditScroll}
+                      className="flex-1 bg-slate-900 text-white p-4 rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none font-mono leading-relaxed"
+                      style={{ fontSize: `${fontSize}px` }}
+                      placeholder="Enter your script text here..."
+                    />
+                  </div>
+                </div>
+              ) : (
               <div className="font-mono leading-relaxed" style={{ fontSize: `${fontSize}px` }}>
                 {scriptLines.map((line, index) => {
                   const lineComments = getCommentsForLine(index);
@@ -1018,53 +1281,65 @@ const ScriptsFollowPage: React.FC = () => {
                     <div
                       key={index}
                       data-line-number={index}
-                      className={`flex items-start gap-3 py-2 transition-colors ${
+                      className={`relative flex items-start gap-3 py-2 transition-colors ${
                         selectedLine === index 
                           ? 'bg-blue-900 ring-2 ring-blue-500' 
-                          : hasComments 
-                          ? 'bg-slate-750 hover:bg-slate-700 border-l-4 border-blue-500' 
-                          : 'hover:bg-slate-700'
+                          : 'hover:bg-slate-700' 
                       }`}
                     >
-                      {/* Line Number */}
-                      <button
-                        onClick={() => setSelectedLine(index)}
-                        className={`flex-shrink-0 w-16 text-right font-bold select-none cursor-pointer transition-colors ${
-                          hasComments
-                            ? 'text-blue-400 hover:text-blue-300'
-                            : 'text-slate-500 hover:text-slate-400'
-                        }`}
-                        style={{ fontSize: `${Math.max(12, fontSize - 2)}px` }}
-                        title={hasComments ? `${lineComments.length} comment(s) - Click to add more` : 'Click to add comment'}
-                      >
-                        <div className="flex items-center justify-end gap-1">
+                      {/* Yellow indicator line - positioned absolutely so it doesn't affect layout */}
+                      {hasComments && (
+                        <div className="absolute left-0 top-2 w-1 bg-yellow-400 rounded-full shadow-lg" style={{ height: 'calc(100% - 1rem)' }}></div>
+                      )}
+                      
+                      {/* Line Number - Fixed width to maintain alignment */}
+                      <div className="flex-shrink-0 w-16 text-right pr-2 relative z-10">
+                        <button
+                          onClick={() => setSelectedLine(index)}
+                          className={`font-bold select-none cursor-pointer transition-colors ${
+                            hasComments
+                              ? 'text-blue-400 hover:text-blue-300'
+                              : 'text-slate-500 hover:text-slate-400'
+                          }`}
+                          style={{ fontSize: `${Math.max(12, fontSize - 2)}px` }}
+                          title={hasComments ? `${lineComments.length} comment(s) - Click to add more` : 'Click to add comment'}
+                        >
                           {index + 1}
-                          {hasComments && (
-                            <div className="flex items-center gap-1">
-                              {/* Show icons for different comment types */}
-                              {[...new Set(lineComments.map(c => c.type || 'GENERAL'))].map(type => (
-                                <span key={type} className="text-sm" title={COMMENT_TYPES[type as CommentType].label}>
-                                  {COMMENT_TYPES[type as CommentType].icon}
-                                </span>
-                              ))}
-                              <span className="text-xs bg-blue-600 text-white rounded-full px-1.5 min-w-[20px] text-center">
-                                {lineComments.length}
-                              </span>
-                            </div>
-                          )}
+                        </button>
+                      </div>
+                      
+                      {/* Script Line and Icons */}
+                      <div className="flex-1 flex items-start justify-between relative z-10">
+                        <div className={`whitespace-pre-wrap break-words ${
+                          hasComments 
+                            ? 'text-white font-medium bg-blue-900 rounded-md px-2 py-1' 
+                            : 'text-white'
+                        }`}>
+                          {line || '\u00A0'}
                         </div>
-                      </button>
-
-                      {/* Script Line */}
-                      <div className={`flex-1 whitespace-pre-wrap break-words ${
-                        hasComments ? 'text-white font-medium' : 'text-white'
-                      }`}>
-                        {line || '\u00A0'}
+                        {hasComments && (
+                          <div className="flex items-center gap-1 flex-shrink-0 ml-4 bg-slate-800 px-2 py-1 rounded-lg">
+                            {/* Show comment type icons */}
+                            {[...new Set(lineComments.map(c => c.type || 'GENERAL'))].map(type => (
+                              <span 
+                                key={type} 
+                                className={`text-lg px-1 rounded-full ${COMMENT_TYPES[type as CommentType].bgColor} shadow-md`}
+                                title={COMMENT_TYPES[type as CommentType].label}
+                              >
+                                {COMMENT_TYPES[type as CommentType].icon}
+                              </span>
+                            ))}
+                            <span className="text-sm bg-yellow-500 text-white rounded-full px-2 min-w-[24px] text-center font-bold shadow-md">
+                              {lineComments.length}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
                 })}
               </div>
+              )}
             </div>
           ) : (
             <div className="h-[calc(100%-60px)] flex items-center justify-center bg-slate-800 rounded-lg">
