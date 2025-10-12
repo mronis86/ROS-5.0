@@ -1679,17 +1679,31 @@ app.delete('/api/backups/:backupId', async (req, res) => {
 // Scripts Follow API Endpoints
 // ========================================
 
-// Get script for an event
-app.get('/api/scripts/:eventId', async (req, res) => {
+// Get all scripts (list)
+app.get('/api/scripts', async (req, res) => {
   try {
-    const { eventId } = req.params;
     const result = await pool.query(
-      'SELECT * FROM scripts WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [eventId]
+      'SELECT id, script_name, created_at, updated_at, created_by FROM scripts ORDER BY updated_at DESC'
+    );
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching scripts:', error);
+    res.status(500).json({ error: 'Failed to fetch scripts' });
+  }
+});
+
+// Get specific script with comments
+app.get('/api/scripts/:scriptId', async (req, res) => {
+  try {
+    const { scriptId } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM scripts WHERE id = $1',
+      [scriptId]
     );
     
     if (result.rows.length === 0) {
-      return res.json({ script: null, comments: [] });
+      return res.status(404).json({ error: 'Script not found' });
     }
     
     const script = result.rows[0];
@@ -1710,47 +1724,67 @@ app.get('/api/scripts/:eventId', async (req, res) => {
   }
 });
 
-// Save or update script
+// Create new script
 app.post('/api/scripts', async (req, res) => {
   try {
-    const { event_id, script_text, created_by } = req.body;
+    const { script_name, script_text, created_by } = req.body;
     
-    // Check if script already exists for this event
-    const existing = await pool.query(
-      'SELECT id FROM scripts WHERE event_id = $1',
-      [event_id]
+    const result = await pool.query(
+      'INSERT INTO scripts (script_name, script_text, created_by) VALUES ($1, $2, $3) RETURNING *',
+      [script_name, script_text, created_by]
     );
     
-    let result;
-    if (existing.rows.length > 0) {
-      // Update existing script
-      result = await pool.query(
-        'UPDATE scripts SET script_text = $1, updated_at = NOW() WHERE event_id = $2 RETURNING *',
-        [script_text, event_id]
-      );
-    } else {
-      // Insert new script
-      result = await pool.query(
-        'INSERT INTO scripts (event_id, script_text, created_by) VALUES ($1, $2, $3) RETURNING *',
-        [event_id, script_text, created_by]
-      );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating script:', error);
+    res.status(500).json({ error: 'Failed to create script' });
+  }
+});
+
+// Update script
+app.put('/api/scripts/:scriptId', async (req, res) => {
+  try {
+    const { scriptId } = req.params;
+    const { script_name, script_text } = req.body;
+    
+    const result = await pool.query(
+      'UPDATE scripts SET script_name = $1, script_text = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
+      [script_name, script_text, scriptId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Script not found' });
     }
     
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error saving script:', error);
-    res.status(500).json({ error: 'Failed to save script' });
+    console.error('Error updating script:', error);
+    res.status(500).json({ error: 'Failed to update script' });
+  }
+});
+
+// Delete script
+app.delete('/api/scripts/:scriptId', async (req, res) => {
+  try {
+    const { scriptId } = req.params;
+    
+    await pool.query('DELETE FROM scripts WHERE id = $1', [scriptId]);
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting script:', error);
+    res.status(500).json({ error: 'Failed to delete script' });
   }
 });
 
 // Add comment
 app.post('/api/script-comments', async (req, res) => {
   try {
-    const { script_id, event_id, line_number, comment_text, author } = req.body;
+    const { script_id, line_number, comment_text, author } = req.body;
     
     const result = await pool.query(
-      'INSERT INTO script_comments (script_id, event_id, line_number, comment_text, author) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [script_id, event_id, line_number, comment_text, author]
+      'INSERT INTO script_comments (script_id, line_number, comment_text, author) VALUES ($1, $2, $3, $4) RETURNING *',
+      [script_id, line_number, comment_text, author]
     );
     
     res.json(result.rows[0]);
