@@ -14,10 +14,12 @@ CREATE TABLE IF NOT EXISTS script_comments (
     script_id UUID NOT NULL,
     line_number INTEGER NOT NULL,
     comment_text TEXT NOT NULL,
+    comment_type VARCHAR(50) DEFAULT 'GENERAL',
     author VARCHAR(255) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    CONSTRAINT fk_script FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+    CONSTRAINT fk_script FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE,
+    CONSTRAINT check_comment_type CHECK (comment_type IN ('GENERAL', 'CUE', 'AUDIO', 'GFX', 'VIDEO', 'LIGHTING'))
 );
 
 -- Create indexes for better query performance

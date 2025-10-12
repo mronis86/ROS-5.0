@@ -3,13 +3,26 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 
+type CommentType = 'GENERAL' | 'CUE' | 'AUDIO' | 'GFX' | 'VIDEO' | 'LIGHTING';
+
 interface Comment {
   id: string;
   lineNumber: number;
   text: string;
   author: string;
   timestamp: Date | string; // Can be Date locally or string from WebSocket
+  type: CommentType;
 }
+
+// Comment type configuration with colors and icons
+const COMMENT_TYPES: Record<CommentType, { label: string; color: string; bgColor: string; icon: string }> = {
+  GENERAL: { label: 'General', color: 'text-slate-300', bgColor: 'bg-slate-600', icon: '💬' },
+  CUE: { label: 'Cue', color: 'text-yellow-300', bgColor: 'bg-yellow-600', icon: '🎬' },
+  AUDIO: { label: 'Audio', color: 'text-green-300', bgColor: 'bg-green-600', icon: '🎵' },
+  GFX: { label: 'GFX', color: 'text-purple-300', bgColor: 'bg-purple-600', icon: '🎨' },
+  VIDEO: { label: 'Video', color: 'text-red-300', bgColor: 'bg-red-600', icon: '📹' },
+  LIGHTING: { label: 'Lighting', color: 'text-orange-300', bgColor: 'bg-orange-600', icon: '💡' }
+};
 
 interface ScriptData {
   id?: string;
@@ -49,6 +62,7 @@ const ScriptsFollowPage: React.FC = () => {
   const [savedScripts, setSavedScripts] = useState<any[]>([]);
   const [showScriptManager, setShowScriptManager] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [commentType, setCommentType] = useState<CommentType>('GENERAL');
   
   const scriptRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -353,7 +367,8 @@ const ScriptsFollowPage: React.FC = () => {
       lineNumber: selectedLine,
       text: newComment.trim(),
       author: userName,
-      timestamp: new Date()
+      timestamp: new Date(),
+      type: commentType
     };
 
     setComments(prev => [...prev, comment]);
@@ -491,6 +506,7 @@ const ScriptsFollowPage: React.FC = () => {
               script_id: savedScript.id,
               line_number: comment.lineNumber,
               comment_text: comment.text,
+              comment_type: comment.type,
               author: comment.author
             })
           });
@@ -523,7 +539,8 @@ const ScriptsFollowPage: React.FC = () => {
         lineNumber: c.line_number,
         text: c.comment_text,
         author: c.author,
-        timestamp: new Date(c.created_at)
+        timestamp: new Date(c.created_at),
+        type: c.comment_type || 'GENERAL'
       }));
       setComments(loadedComments);
       
@@ -708,7 +725,7 @@ const ScriptsFollowPage: React.FC = () => {
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <div className="text-lg font-bold text-white flex items-center gap-2">
-                    💬 Add Comment
+                    {COMMENT_TYPES[commentType].icon} Add Comment
                   </div>
                   <span className="text-sm text-blue-300">
                     Line {selectedLine + 1}
@@ -718,6 +735,7 @@ const ScriptsFollowPage: React.FC = () => {
                   onClick={() => {
                     setSelectedLine(null);
                     setNewComment('');
+                    setCommentType('GENERAL');
                   }}
                   className="text-slate-300 hover:text-white text-xl font-bold"
                   title="Cancel"
@@ -725,6 +743,27 @@ const ScriptsFollowPage: React.FC = () => {
                   ✕
                 </button>
               </div>
+              
+              {/* Comment Type Selector */}
+              <div className="mb-3">
+                <label className="text-sm text-slate-300 mb-2 block">Comment Type:</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(Object.keys(COMMENT_TYPES) as CommentType[]).map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => setCommentType(type)}
+                      className={`px-3 py-2 rounded text-sm font-medium transition-all ${
+                        commentType === type
+                          ? `${COMMENT_TYPES[type].bgColor} text-white ring-2 ring-white`
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      {COMMENT_TYPES[type].icon} {COMMENT_TYPES[type].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
               <textarea
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
@@ -829,7 +868,12 @@ const ScriptsFollowPage: React.FC = () => {
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Comment Type Badge */}
+                        <span className={`text-xs px-2 py-1 rounded font-bold ${COMMENT_TYPES[comment.type || 'GENERAL'].bgColor} text-white`}>
+                          {COMMENT_TYPES[comment.type || 'GENERAL'].icon} {COMMENT_TYPES[comment.type || 'GENERAL'].label}
+                        </span>
+                        
                         <span className="text-xs font-bold text-blue-400">
                           Line {comment.lineNumber + 1}
                         </span>
@@ -996,9 +1040,14 @@ const ScriptsFollowPage: React.FC = () => {
                         <div className="flex items-center justify-end gap-1">
                           {index + 1}
                           {hasComments && (
-                            <div className="flex flex-col items-center">
-                              <span className="text-yellow-400">📝</span>
-                              <span className="text-xs bg-blue-600 text-white rounded-full px-1 min-w-[16px] text-center">
+                            <div className="flex items-center gap-1">
+                              {/* Show icons for different comment types */}
+                              {[...new Set(lineComments.map(c => c.type || 'GENERAL'))].map(type => (
+                                <span key={type} className="text-sm" title={COMMENT_TYPES[type as CommentType].label}>
+                                  {COMMENT_TYPES[type as CommentType].icon}
+                                </span>
+                              ))}
+                              <span className="text-xs bg-blue-600 text-white rounded-full px-1.5 min-w-[20px] text-center">
                                 {lineComments.length}
                               </span>
                             </div>

@@ -1780,11 +1780,11 @@ app.delete('/api/scripts/:scriptId', async (req, res) => {
 // Add comment
 app.post('/api/script-comments', async (req, res) => {
   try {
-    const { script_id, line_number, comment_text, author } = req.body;
+    const { script_id, line_number, comment_text, comment_type, author } = req.body;
     
     const result = await pool.query(
-      'INSERT INTO script_comments (script_id, line_number, comment_text, author) VALUES ($1, $2, $3, $4) RETURNING *',
-      [script_id, line_number, comment_text, author]
+      'INSERT INTO script_comments (script_id, line_number, comment_text, comment_type, author) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [script_id, line_number, comment_text, comment_type || 'GENERAL', author]
     );
     
     res.json(result.rows[0]);
