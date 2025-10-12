@@ -6743,7 +6743,6 @@ const RunOfShowPage: React.FC = () => {
   // Scroll synchronization between header and main grid
   useEffect(() => {
     const mainScrollContainer = document.getElementById('main-scroll-container');
-
     if (!mainScrollContainer) return;
 
     let isSyncing = false;
@@ -6783,7 +6782,10 @@ const RunOfShowPage: React.FC = () => {
       }
     });
 
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
 
     return () => {
       mainScrollContainer.removeEventListener('scroll', handleMainScroll);
@@ -8093,6 +8095,7 @@ const RunOfShowPage: React.FC = () => {
                   </div>
                 </div>
 
+
                 {/* Center Scrollable Section Headers */}
                 <div className="flex-1 overflow-x-auto sticky-header-scroll-container" style={{ scrollbarWidth: 'thin' }}>
                   <div className="min-w-max">
@@ -8473,6 +8476,7 @@ const RunOfShowPage: React.FC = () => {
                 <span className="text-white font-bold text-xs">#</span>
               </div>
               
+              
               {/* Row Numbers */}
               {getFilteredSchedule().length === 0 ? (
                 <div className="h-24 flex items-center justify-center text-slate-500">
@@ -8611,6 +8615,7 @@ const RunOfShowPage: React.FC = () => {
                   )}
                 </span>
               </div>
+              
               
                              {/* CUEs with Controls */}
                {getFilteredSchedule().length === 0 ? (
@@ -8995,6 +9000,7 @@ const RunOfShowPage: React.FC = () => {
                     )
                   )}
                 </div>
+
 
                 {/* Schedule Rows */}
                 {getFilteredSchedule().length === 0 ? (
@@ -9791,6 +9797,7 @@ const RunOfShowPage: React.FC = () => {
                   )}
                 </span>
               </div>
+              
               
               {/* Timer Controls for each row */}
               {getFilteredSchedule().length === 0 ? (
