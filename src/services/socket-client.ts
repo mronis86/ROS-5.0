@@ -170,6 +170,23 @@ class SocketClient {
     }
   }
 
+  // Emit script scroll position for Scripts Follow page
+  emitScriptScroll(scrollPosition: number, lineNumber: number, fontSize: number) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('scriptScrollUpdate', {
+        eventId: this.eventId,
+        scrollPosition,
+        lineNumber,
+        fontSize
+      });
+    }
+  }
+
+  // Get the raw socket instance for custom event listeners
+  getSocket() {
+    return this.socket;
+  }
+
   /**
    * Perform initial sync when WebSocket connects
    * This ensures we get current state when reconnecting or joining mid-timer

@@ -1361,6 +1361,20 @@ io.on('connection', (socket) => {
     console.log(`📡 Reset all states and completed cues cleared broadcasted to event:${data.eventId}`);
   });
 
+  // Handle script scroll position updates
+  socket.on('scriptScrollUpdate', (data) => {
+    const { eventId, scrollPosition, lineNumber, fontSize } = data;
+    console.log(`📜 Script scroll update for event:${eventId} - position: ${scrollPosition}, line: ${lineNumber}, fontSize: ${fontSize}`);
+    
+    // Broadcast to all other clients in the event room (except sender)
+    socket.to(`event:${eventId}`).emit('scriptScrollSync', {
+      scrollPosition,
+      lineNumber,
+      fontSize,
+      timestamp: Date.now()
+    });
+  });
+
   // Handle sync request event
   socket.on('requestSync', async (data) => {
     console.log(`🔄 Sync request received for event: ${data.eventId}`);
