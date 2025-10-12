@@ -1675,6 +1675,122 @@ app.delete('/api/backups/:backupId', async (req, res) => {
 
 // Auth is now handled via direct database connection
 
+// ========================================
+// Scripts Follow API Endpoints
+// ========================================
+
+// Get script for an event
+app.get('/api/scripts/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM scripts WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [eventId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.json({ script: null, comments: [] });
+    }
+    
+    const script = result.rows[0];
+    
+    // Get comments for this script
+    const commentsResult = await pool.query(
+      'SELECT * FROM script_comments WHERE script_id = $1 ORDER BY line_number ASC',
+      [script.id]
+    );
+    
+    res.json({
+      script: script,
+      comments: commentsResult.rows
+    });
+  } catch (error) {
+    console.error('Error fetching script:', error);
+    res.status(500).json({ error: 'Failed to fetch script' });
+  }
+});
+
+// Save or update script
+app.post('/api/scripts', async (req, res) => {
+  try {
+    const { event_id, script_text, created_by } = req.body;
+    
+    // Check if script already exists for this event
+    const existing = await pool.query(
+      'SELECT id FROM scripts WHERE event_id = $1',
+      [event_id]
+    );
+    
+    let result;
+    if (existing.rows.length > 0) {
+      // Update existing script
+      result = await pool.query(
+        'UPDATE scripts SET script_text = $1, updated_at = NOW() WHERE event_id = $2 RETURNING *',
+        [script_text, event_id]
+      );
+    } else {
+      // Insert new script
+      result = await pool.query(
+        'INSERT INTO scripts (event_id, script_text, created_by) VALUES ($1, $2, $3) RETURNING *',
+        [event_id, script_text, created_by]
+      );
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error saving script:', error);
+    res.status(500).json({ error: 'Failed to save script' });
+  }
+});
+
+// Add comment
+app.post('/api/script-comments', async (req, res) => {
+  try {
+    const { script_id, event_id, line_number, comment_text, author } = req.body;
+    
+    const result = await pool.query(
+      'INSERT INTO script_comments (script_id, event_id, line_number, comment_text, author) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [script_id, event_id, line_number, comment_text, author]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error adding comment:', error);
+    res.status(500).json({ error: 'Failed to add comment' });
+  }
+});
+
+// Update comment
+app.put('/api/script-comments/:commentId', async (req, res) => {
+  try {
+    const { commentId} = req.params;
+    const { comment_text } = req.body;
+    
+    const result = await pool.query(
+      'UPDATE script_comments SET comment_text = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+      [comment_text, commentId]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating comment:', error);
+    res.status(500).json({ error: 'Failed to update comment' });
+  }
+});
+
+// Delete comment
+app.delete('/api/script-comments/:commentId', async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    
+    await pool.query('DELETE FROM script_comments WHERE id = $1', [commentId]);
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting comment:', error);
+    res.status(500).json({ error: 'Failed to delete comment' });
+  }
+});
 
 // Start server on all network interfaces (allows local network access)
 server.listen(PORT, '0.0.0.0', () => {
