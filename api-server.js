@@ -910,42 +910,33 @@ app.post('/api/change-log', async (req, res) => {
       event_id,
       user_id,
       user_name,
-      user_role,
       action,
       table_name,
       record_id,
-      field_name,
       old_value,
       new_value,
       description,
-      metadata,
-      row_number,
-      cue_number
+      metadata
     } = req.body;
 
     console.log('📝 Logging change:', { event_id, action, user_name, description });
 
     const result = await pool.query(
       `INSERT INTO change_log (
-        event_id, user_id, user_name, user_role, action, table_name, record_id,
-        field_name, old_value, new_value, description, metadata, row_number, cue_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        event_id, user_id, user_name, action, table_name, record_id,
+        old_values, new_values, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING id`,
       [
         event_id,
         user_id,
         user_name,
-        user_role,
         action,
         table_name,
         record_id,
-        field_name,
-        old_value,
-        new_value,
-        description,
-        metadata ? JSON.stringify(metadata) : null,
-        row_number,
-        cue_number
+        old_value ? JSON.stringify(old_value) : null,
+        new_value ? JSON.stringify(new_value) : null,
+        metadata ? JSON.stringify(metadata) : null
       ]
     );
 

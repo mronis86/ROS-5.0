@@ -160,17 +160,17 @@ class ChangeLogService {
             event_id: change.eventId,
             user_id: change.eventId, // Will be extracted from metadata if available
             user_name: 'System',
-            user_role: 'EDITOR',
             action: change.changeType,
             table_name: 'run_of_show_data',
             record_id: change.eventId,
-            field_name: null,
             old_value: null,
             new_value: change.details,
             description: change.details,
-            metadata: { segmentName: change.segmentName },
-            row_number: change.rowNumber || null,
-            cue_number: change.cueNumber || null
+            metadata: { 
+              segmentName: change.segmentName,
+              rowNumber: change.rowNumber,
+              cueNumber: change.cueNumber
+            }
           };
           
           console.log('📤 Sending change to API:', changeData);
