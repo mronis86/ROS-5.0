@@ -781,6 +781,16 @@ const RunOfShowPage: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
+  // Drag-to-scroll refs and state
+  const mainScrollRef = useRef<HTMLDivElement | null>(null);
+  const stickyHeaderScrollRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef({
+    isDragging: false,
+    startX: 0,
+    scrollLeft: 0,
+    container: null as HTMLDivElement | null
+  });
+  
   // Function to handle user editing state
   const handleUserEditing = () => {
     console.log('✏️ User started editing - pausing sync');
@@ -3694,7 +3704,7 @@ const RunOfShowPage: React.FC = () => {
     // ALWAYS save the updated schedule to the database (with the new duration)
     console.log('💾 Saving updated schedule to database with new duration...');
     try {
-      await DatabaseService.saveRunOfShowData({
+      const saveResult = await DatabaseService.saveRunOfShowData({
         event_id: event.id,
         event_name: event.name,
         event_date: event.date,
@@ -3707,6 +3717,20 @@ const RunOfShowPage: React.FC = () => {
         userRole: currentUserRole || 'VIEWER'
       });
       console.log('✅ Schedule saved to database with updated duration');
+      
+      // Force a re-render by triggering a state update
+      // This ensures the UI updates to show the new start times
+      console.log('🔄 Triggering UI update to reflect new start times...');
+      setSchedule(prev => [...prev]); // Force re-render
+      
+      // Clear the editing state so other users can receive the update
+      // This ensures the WebSocket update isn't blocked by isUserEditing flag
+      console.log('🔄 Clearing user editing state to allow WebSocket updates');
+      setIsUserEditing(false);
+      
+      // The WebSocket will automatically broadcast this change to all connected users
+      // The onRunOfShowDataUpdated callback will update all other users' schedules
+      console.log('📡 Schedule update will be broadcast to all users via WebSocket');
     } catch (error) {
       console.error('❌ Failed to save schedule:', error);
     }
@@ -4665,9 +4689,10 @@ const RunOfShowPage: React.FC = () => {
           return;
         }
         
-        // Skip if user is actively editing (prevent conflicts)
+        // Skip if user is actively editing (prevent conflicts) - EXCEPT for timer duration updates
+        // Timer duration updates should always be applied to keep schedules in sync
         if (isUserEditing) {
-          console.log('⏭️ Skipping WebSocket update - user is actively editing');
+          console.log('⏭️ Skipping WebSocket update - user is actively editing (non-timer change)');
           return;
         }
         
@@ -6789,6 +6814,120 @@ const RunOfShowPage: React.FC = () => {
 
     return () => {
       mainScrollContainer.removeEventListener('scroll', handleMainScroll);
+      observer.disconnect();
+    };
+  }, []);
+
+  // Drag-to-scroll functionality for horizontal scrolling
+  useEffect(() => {
+    const setupDragToScroll = (container: HTMLDivElement) => {
+      const handleMouseDown = (e: MouseEvent) => {
+        // Only enable drag on left mouse button
+        if (e.button !== 0) return;
+        
+        // Don't start drag if clicking on interactive elements
+        const target = e.target as HTMLElement;
+        if (
+          target.tagName === 'INPUT' || 
+          target.tagName === 'TEXTAREA' || 
+          target.tagName === 'BUTTON' ||
+          target.tagName === 'SELECT' ||
+          target.closest('button') ||
+          target.closest('input') ||
+          target.closest('textarea') ||
+          target.closest('select') ||
+          target.classList.contains('cursor-col-resize')
+        ) {
+          return;
+        }
+
+        dragStateRef.current = {
+          isDragging: true,
+          startX: e.pageX - container.offsetLeft,
+          scrollLeft: container.scrollLeft,
+          container
+        };
+        
+        container.style.cursor = 'grabbing';
+        container.style.userSelect = 'none';
+        e.preventDefault();
+      };
+
+      const handleMouseMove = (e: MouseEvent) => {
+        if (!dragStateRef.current.isDragging) return;
+        e.preventDefault();
+        
+        const x = e.pageX - (dragStateRef.current.container?.offsetLeft || 0);
+        const walk = (x - dragStateRef.current.startX) * 1.5; // Multiply for faster scroll
+        if (dragStateRef.current.container) {
+          dragStateRef.current.container.scrollLeft = dragStateRef.current.scrollLeft - walk;
+        }
+      };
+
+      const handleMouseUp = () => {
+        if (dragStateRef.current.isDragging && dragStateRef.current.container) {
+          dragStateRef.current.container.style.cursor = 'grab';
+          dragStateRef.current.container.style.userSelect = '';
+        }
+        dragStateRef.current.isDragging = false;
+      };
+
+      const handleMouseLeave = () => {
+        if (dragStateRef.current.isDragging && dragStateRef.current.container) {
+          dragStateRef.current.container.style.cursor = 'grab';
+          dragStateRef.current.container.style.userSelect = '';
+        }
+        dragStateRef.current.isDragging = false;
+      };
+
+      container.style.cursor = 'grab';
+      container.addEventListener('mousedown', handleMouseDown);
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      container.addEventListener('mouseleave', handleMouseLeave);
+
+      return () => {
+        container.style.cursor = '';
+        container.removeEventListener('mousedown', handleMouseDown);
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        container.removeEventListener('mouseleave', handleMouseLeave);
+      };
+    };
+
+    // Set up drag-to-scroll for main container
+    const mainScrollContainer = document.getElementById('main-scroll-container') as HTMLDivElement;
+    let cleanupMain: (() => void) | undefined;
+    if (mainScrollContainer) {
+      mainScrollRef.current = mainScrollContainer;
+      cleanupMain = setupDragToScroll(mainScrollContainer);
+    }
+
+    // Set up drag-to-scroll for sticky header container
+    const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container') as HTMLDivElement;
+    let cleanupSticky: (() => void) | undefined;
+    if (stickyHeaderContainer) {
+      stickyHeaderScrollRef.current = stickyHeaderContainer;
+      cleanupSticky = setupDragToScroll(stickyHeaderContainer);
+    }
+
+    // Use MutationObserver to watch for sticky header appearing
+    const observer = new MutationObserver(() => {
+      const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container') as HTMLDivElement;
+      if (stickyHeaderContainer && !stickyHeaderScrollRef.current) {
+        stickyHeaderScrollRef.current = stickyHeaderContainer;
+        cleanupSticky = setupDragToScroll(stickyHeaderContainer);
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    return () => {
+      if (cleanupMain) cleanupMain();
+      if (cleanupSticky) cleanupSticky();
       observer.disconnect();
     };
   }, []);
