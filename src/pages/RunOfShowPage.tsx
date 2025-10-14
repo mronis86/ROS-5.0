@@ -3621,13 +3621,11 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Adjust timer duration and update start times
-  const adjustTimerDuration = async (seconds: number) => {
+  const adjustTimerDuration = (seconds: number) => {
     console.log('⏱️⏱️⏱️ ADJUST TIMER CLICKED:', seconds, 'seconds');
     console.log('⏱️⏱️⏱️ activeItemId:', activeItemId);
     console.log('⏱️⏱️⏱️ user:', user);
     console.log('⏱️⏱️⏱️ event:', event);
-    console.log('⏱️⏱️⏱️ schedule length:', schedule.length);
-    console.log('⏱️⏱️⏱️ schedule items:', schedule.map(s => ({ id: s.id, name: s.segmentName })));
     
     if (!activeItemId || !user || !event?.id) {
       console.log('❌ Cannot adjust timer - missing data:', { activeItemId, user: !!user, eventId: event?.id });
@@ -3658,7 +3656,7 @@ const RunOfShowPage: React.FC = () => {
     const newMinutes = Math.floor((newDurationSeconds % 3600) / 60);
     const newSecs = newDurationSeconds % 60;
     
-    // Update schedule with new duration
+    // Update schedule with new duration - this will trigger the auto-save mechanism
     const updatedSchedule = schedule.map(scheduleItem => 
       scheduleItem.id === numericActiveItemId 
         ? { 
@@ -3684,47 +3682,13 @@ const RunOfShowPage: React.FC = () => {
           total: newDurationSeconds
         }
       }));
-      
-      // Update timer in API if it's currently running
-      if (activeTimers[numericActiveItemId]) {
-        console.log('✅ Timer duration updated locally for running timer');
-        
-        // Update the server with the new duration so Browser B gets the update
-        const updateSuccess = await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
-        if (updateSuccess) {
-          console.log('✅ Timer duration updated on server - Browser B will see the change');
-        } else {
-          console.warn('⚠️ Failed to update timer duration on server');
-        }
-      } else {
-        console.log('✅ Timer duration updated locally for loaded timer');
-      }
     }
     
-    // ALWAYS save the updated schedule to the database (with the new duration)
-    console.log('💾 Saving updated schedule to database with new duration...');
-    try {
-      const saveResult = await DatabaseService.saveRunOfShowData({
-        event_id: event.id,
-        event_name: event.name,
-        event_date: event.date,
-        schedule_items: updatedSchedule,
-        custom_columns: customColumns,
-        settings: {}
-      }, {
-        userId: user.id,
-        userName: user.full_name || user.email || 'Unknown User',
-        userRole: currentUserRole || 'VIEWER'
-      });
-      console.log('✅ Schedule saved to database with updated duration');
-      
-      // Force a re-render by triggering a state update
-      // This ensures the UI updates to show the new start times
-      console.log('🔄 Triggering UI update to reflect new start times...');
-      setSchedule(prev => [...prev]); // Force re-render
-    } catch (error) {
-      console.error('❌ Failed to save schedule:', error);
-    }
+    // Mark user as editing - this will pause sync and trigger auto-save after pause
+    console.log('✏️ Marking user as editing (timer duration change)');
+    handleUserEditing();
+    
+    console.log('✅ Timer duration updated locally - will sync when user pauses editing');
   };
 
   // Load a CUE (stop any active timer and select the CUE)
