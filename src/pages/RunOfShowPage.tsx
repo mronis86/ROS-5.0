@@ -3722,15 +3722,6 @@ const RunOfShowPage: React.FC = () => {
       // This ensures the UI updates to show the new start times
       console.log('🔄 Triggering UI update to reflect new start times...');
       setSchedule(prev => [...prev]); // Force re-render
-      
-      // Clear the editing state so other users can receive the update
-      // This ensures the WebSocket update isn't blocked by isUserEditing flag
-      console.log('🔄 Clearing user editing state to allow WebSocket updates');
-      setIsUserEditing(false);
-      
-      // The WebSocket will automatically broadcast this change to all connected users
-      // The onRunOfShowDataUpdated callback will update all other users' schedules
-      console.log('📡 Schedule update will be broadcast to all users via WebSocket');
     } catch (error) {
       console.error('❌ Failed to save schedule:', error);
     }
@@ -4689,10 +4680,9 @@ const RunOfShowPage: React.FC = () => {
           return;
         }
         
-        // Skip if user is actively editing (prevent conflicts) - EXCEPT for timer duration updates
-        // Timer duration updates should always be applied to keep schedules in sync
+        // Skip if user is actively editing (prevent conflicts)
         if (isUserEditing) {
-          console.log('⏭️ Skipping WebSocket update - user is actively editing (non-timer change)');
+          console.log('⏭️ Skipping WebSocket update - user is actively editing');
           return;
         }
         
