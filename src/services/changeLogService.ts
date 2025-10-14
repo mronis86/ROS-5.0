@@ -42,11 +42,16 @@ class ChangeLogService {
     }
     
     this.saveLocalChanges();
-    console.log('📝 Change logged:', newChange.changeType, newChange.details);
+    console.log('📝 Change logged locally:', newChange.changeType, newChange.details);
+    console.log('📝 Total changes:', this.localChanges.length, 'Unsynced:', this.localChanges.filter(c => !c.synced).length);
     
     // Trigger sync if we have enough changes
-    if (this.localChanges.filter(c => !c.synced).length >= this.MAX_BATCH_SIZE) {
+    const unsyncedCount = this.localChanges.filter(c => !c.synced).length;
+    if (unsyncedCount >= this.MAX_BATCH_SIZE) {
+      console.log('🔄 Triggering sync due to batch size:', unsyncedCount);
       this.syncChanges();
+    } else {
+      console.log('⏳ Waiting for more changes or timer. Unsynced:', unsyncedCount);
     }
   }
 
@@ -79,11 +84,15 @@ class ChangeLogService {
       clearInterval(this.syncTimer);
     }
     
+    console.log('⏰ Starting change log sync timer (5 second interval)');
+    
     this.syncTimer = setInterval(() => {
       const unsyncedChanges = this.getUnsyncedChanges();
       if (unsyncedChanges.length > 0) {
-        console.log(`🔄 Auto-syncing ${unsyncedChanges.length} changes...`);
+        console.log(`⏰ Timer tick: Auto-syncing ${unsyncedChanges.length} changes...`);
         this.syncChanges();
+      } else {
+        console.log('⏰ Timer tick: No unsynced changes');
       }
     }, this.SYNC_DELAY);
   }
