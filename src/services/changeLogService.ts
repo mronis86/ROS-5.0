@@ -95,7 +95,7 @@ class ChangeLogService {
     }
   }
 
-  // Sync changes to API (temporarily disabled - using localStorage only)
+  // Sync changes to API
   async syncChanges(): Promise<boolean> {
     try {
       const unsyncedChanges = this.getUnsyncedChanges();
@@ -106,15 +106,22 @@ class ChangeLogService {
       console.log(`🔄 Syncing ${unsyncedChanges.length} changes to API...`);
 
       try {
-        // For now, just mark all changes as synced to localStorage
-        // TODO: Implement API sync when change log endpoints are ready
+        // Group changes by event ID
+        const groupedChanges = this.groupChangesByEvent(unsyncedChanges);
+        
+        // Sync each event's changes
+        for (const [eventId, changes] of groupedChanges.entries()) {
+          await this.syncEventChanges(eventId, changes);
+        }
+        
+        // Mark all changes as synced
         this.localChanges = this.localChanges.map(change => ({
           ...change,
           synced: true
         }));
         
         this.saveLocalChanges();
-        console.log('✅ All changes synced to localStorage (API sync disabled)');
+        console.log('✅ All changes synced to API');
         return true;
       } catch (error) {
         console.error('❌ Error syncing changes:', error);
@@ -140,19 +147,36 @@ class ChangeLogService {
     return grouped;
   }
 
-  // Sync changes for a specific event (placeholder for future API implementation)
+  // Sync changes for a specific event
   private async syncEventChanges(eventId: string, changes: LocalChange[]): Promise<void> {
     try {
       console.log(`📤 Syncing ${changes.length} changes for event ${eventId}`);
       
-      // TODO: Implement API call to sync changes
-      // For now, just log that we would sync these changes
-      console.log('📝 Changes to sync:', changes.map(c => ({
-        type: c.changeType,
-        details: c.details,
-        timestamp: c.timestamp
-      })));
+      // Use DatabaseService to log changes
+      for (const change of changes) {
+        try {
+          await DatabaseService.logChange(
+            change.eventId,
+            change.eventId, // userId - will be extracted from metadata
+            '', // userName - will be extracted from metadata
+            'EDITOR', // userRole
+            change.changeType as any,
+            'run_of_show_data', // tableName
+            change.eventId, // recordId
+            undefined, // fieldName
+            undefined, // oldValue
+            change.details, // newValue (using details as description)
+            change.details, // description
+            undefined, // rowNumber
+            change.cueNumber, // cueNumber
+            { segmentName: change.segmentName } // metadata
+          );
+        } catch (error) {
+          console.error('❌ Error logging individual change:', error);
+        }
+      }
       
+      console.log(`✅ Synced ${changes.length} changes for event ${eventId}`);
     } catch (error) {
       console.error('❌ Error syncing event changes:', error);
       throw new Error(`Failed to sync changes for event ${eventId}: ${error.message}`);
@@ -192,18 +216,30 @@ class ChangeLogService {
     console.log('🗑️ Local changes cleared');
   }
 
-  // Clear master change log (placeholder for future API implementation)
+  // Clear master change log
   async clearMasterChangeLog(eventId: string): Promise<{ success: boolean; error?: string; deletedCount: number }> {
     try {
       console.log('🔄 Clearing master change log for event:', eventId);
       
-      // TODO: Implement API call to clear master change log
-      console.log('📝 Would clear master change log for event:', eventId);
+      // Call API to delete change log entries
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/change-log/${eventId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to clear change log: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      console.log(`✅ Cleared ${result.deletedCount || 0} change log entries`);
       
       return { 
         success: true, 
         error: null, 
-        deletedCount: 0 
+        deletedCount: result.deletedCount || 0 
       };
     } catch (error) {
       console.error('❌ Error clearing master change log:', error);
@@ -215,15 +251,14 @@ class ChangeLogService {
     }
   }
 
-  // Get master change log from API (temporarily disabled - using localStorage only)
+  // Get master change log from API
   async getMasterChangeLog(eventId: string, limit: number = 100): Promise<any[]> {
     try {
       console.log('🔄 Fetching master change log from API for event:', eventId);
       
-      // For now, just return empty array since we're not syncing to API yet
-      // TODO: Implement API-based change log when endpoints are ready
-      console.log('📊 Master change log disabled - using localStorage only');
-      return [];
+      const changes = await apiClient.getChangeLog(eventId, limit);
+      console.log(`📊 Fetched ${changes.length} changes from master log`);
+      return changes;
     } catch (error) {
       console.error('❌ Error getting master change log:', error);
       return [];
