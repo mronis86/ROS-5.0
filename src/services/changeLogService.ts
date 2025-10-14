@@ -151,6 +151,7 @@ class ChangeLogService {
   private async syncEventChanges(eventId: string, changes: LocalChange[]): Promise<void> {
     try {
       console.log(`📤 Syncing ${changes.length} changes for event ${eventId}`);
+      console.log('📤 Changes to sync:', changes.map(c => ({ type: c.changeType, details: c.details })));
       
       // Use API client to log changes
       for (const change of changes) {
@@ -172,16 +173,19 @@ class ChangeLogService {
             cue_number: change.cueNumber || null
           };
           
-          await apiClient.logChange(changeData);
-          console.log('✅ Logged change:', change.changeType);
+          console.log('📤 Sending change to API:', changeData);
+          const result = await apiClient.logChange(changeData);
+          console.log('✅ Change logged successfully:', result);
         } catch (error) {
           console.error('❌ Error logging individual change:', error);
+          console.error('❌ Error details:', error.message, error.stack);
         }
       }
       
       console.log(`✅ Synced ${changes.length} changes for event ${eventId}`);
     } catch (error) {
       console.error('❌ Error syncing event changes:', error);
+      console.error('❌ Error details:', error.message, error.stack);
       throw new Error(`Failed to sync changes for event ${eventId}: ${error.message}`);
     }
   }
