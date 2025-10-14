@@ -187,7 +187,8 @@ class ChangeLogService {
             }
           };
           
-          console.log('📤 Sending change to API:', changeData);
+          console.log('📤 Sending change to API:', JSON.stringify(changeData, null, 2));
+          console.log('📤 Original change object:', JSON.stringify(change, null, 2));
           const result = await apiClient.logChange(changeData);
           console.log('✅ Change logged successfully:', result);
         } catch (error) {
