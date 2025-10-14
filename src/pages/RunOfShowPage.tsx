@@ -5194,6 +5194,15 @@ const RunOfShowPage: React.FC = () => {
       localStorage.setItem(`runOfShowSchedule_${event.id}`, JSON.stringify(restoredData.scheduleData));
       localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(restoredData.customColumnsData));
       
+      // Log the restore
+      logChange('RESTORE_BACKUP', `Restored from backup: ${restoredData.backupName}`, {
+        changeType: 'RESTORE',
+        backupName: restoredData.backupName,
+        backupId: selectedBackup.id,
+        itemCount: restoredData.scheduleData.length,
+        customColumnsCount: restoredData.customColumnsData.length
+      });
+      
       // Save to API
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
@@ -5205,6 +5214,10 @@ const RunOfShowPage: React.FC = () => {
         userName: user?.full_name || user?.email || 'Unknown User',
         userRole: user?.role || 'VIEWER'
       });
+      
+      // Trigger auto-save mechanism to ensure all users see the update
+      console.log('💾 Triggering auto-save after backup restore...');
+      handleUserEditing();
       
       console.log('✅ Restored from backup:', restoredData.backupName);
       
@@ -6490,6 +6503,10 @@ const RunOfShowPage: React.FC = () => {
         itemCount: newScheduleItems.length,
         source: 'Excel'
       });
+      
+      // Trigger auto-save mechanism
+      console.log('💾 Triggering auto-save after Excel import...');
+      handleUserEditing();
       
       console.log('✅ Excel import completed successfully');
       
