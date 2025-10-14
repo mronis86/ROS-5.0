@@ -233,6 +233,13 @@ class ApiClient {
     return this.request(`/api/change-log/${eventId}?limit=${limit}`);
   }
 
+  async logChange(changeData: any) {
+    return this.request('/api/change-log', {
+      method: 'POST',
+      body: JSON.stringify(changeData)
+    });
+  }
+
   // Timer Messages
   async getTimerMessages(eventId: string) {
     return this.request(`/api/timer-messages/${eventId}`);

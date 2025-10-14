@@ -152,25 +152,28 @@ class ChangeLogService {
     try {
       console.log(`📤 Syncing ${changes.length} changes for event ${eventId}`);
       
-      // Use DatabaseService to log changes
+      // Use API client to log changes
       for (const change of changes) {
         try {
-          await DatabaseService.logChange(
-            change.eventId,
-            change.eventId, // userId - will be extracted from metadata
-            '', // userName - will be extracted from metadata
-            'EDITOR', // userRole
-            change.changeType as any,
-            'run_of_show_data', // tableName
-            change.eventId, // recordId
-            undefined, // fieldName
-            undefined, // oldValue
-            change.details, // newValue (using details as description)
-            change.details, // description
-            undefined, // rowNumber
-            change.cueNumber, // cueNumber
-            { segmentName: change.segmentName } // metadata
-          );
+          const changeData = {
+            event_id: change.eventId,
+            user_id: change.eventId, // Will be extracted from metadata if available
+            user_name: 'System',
+            user_role: 'EDITOR',
+            action: change.changeType,
+            table_name: 'run_of_show_data',
+            record_id: change.eventId,
+            field_name: null,
+            old_value: null,
+            new_value: change.details,
+            description: change.details,
+            metadata: { segmentName: change.segmentName },
+            row_number: change.rowNumber || null,
+            cue_number: change.cueNumber || null
+          };
+          
+          await apiClient.logChange(changeData);
+          console.log('✅ Logged change:', change.changeType);
         } catch (error) {
           console.error('❌ Error logging individual change:', error);
         }

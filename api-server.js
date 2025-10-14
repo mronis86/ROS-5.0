@@ -903,6 +903,80 @@ app.get('/api/change-log/:eventId', async (req, res) => {
   }
 });
 
+// POST endpoint to create a change log entry
+app.post('/api/change-log', async (req, res) => {
+  try {
+    const {
+      event_id,
+      user_id,
+      user_name,
+      user_role,
+      action,
+      table_name,
+      record_id,
+      field_name,
+      old_value,
+      new_value,
+      description,
+      metadata,
+      row_number,
+      cue_number
+    } = req.body;
+
+    console.log('📝 Logging change:', { event_id, action, user_name, description });
+
+    const result = await pool.query(
+      `INSERT INTO change_log (
+        event_id, user_id, user_name, user_role, action, table_name, record_id,
+        field_name, old_value, new_value, description, metadata, row_number, cue_number
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING id`,
+      [
+        event_id,
+        user_id,
+        user_name,
+        user_role,
+        action,
+        table_name,
+        record_id,
+        field_name,
+        old_value,
+        new_value,
+        description,
+        metadata ? JSON.stringify(metadata) : null,
+        row_number,
+        cue_number
+      ]
+    );
+
+    console.log('✅ Change logged:', result.rows[0].id);
+    res.status(201).json({ id: result.rows[0].id, success: true });
+  } catch (error) {
+    console.error('Error logging change:', error);
+    res.status(500).json({ error: 'Failed to log change' });
+  }
+});
+
+// DELETE endpoint to clear change log for an event
+app.delete('/api/change-log/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    console.log('🗑️ Clearing change log for event:', eventId);
+
+    const result = await pool.query(
+      'DELETE FROM change_log WHERE event_id = $1 RETURNING id',
+      [eventId]
+    );
+
+    console.log(`✅ Cleared ${result.rowCount} change log entries`);
+    res.json({ success: true, deletedCount: result.rowCount });
+  } catch (error) {
+    console.error('Error clearing change log:', error);
+    res.status(500).json({ error: 'Failed to clear change log' });
+  }
+});
+
 // Timer Messages endpoints
 app.get('/api/timer-messages/:eventId', async (req, res) => {
   try {
