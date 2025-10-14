@@ -3621,7 +3621,7 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Adjust timer duration and update start times
-  const adjustTimerDuration = (seconds: number) => {
+  const adjustTimerDuration = async (seconds: number) => {
     console.log('⏱️⏱️⏱️ ADJUST TIMER CLICKED:', seconds, 'seconds');
     console.log('⏱️⏱️⏱️ activeItemId:', activeItemId);
     console.log('⏱️⏱️⏱️ user:', user);
@@ -3682,13 +3682,19 @@ const RunOfShowPage: React.FC = () => {
           total: newDurationSeconds
         }
       }));
+      
+      // If timer is currently running, update it in the database immediately for real-time sync
+      if (activeTimers[numericActiveItemId]) {
+        console.log('🔄 Updating running timer duration in database for real-time sync');
+        await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
+      }
     }
     
     // Mark user as editing - this will pause sync and trigger auto-save after pause
     console.log('✏️ Marking user as editing (timer duration change)');
     handleUserEditing();
     
-    console.log('✅ Timer duration updated locally - will sync when user pauses editing');
+    console.log('✅ Timer duration updated - running timer synced immediately, schedule will sync after pause');
   };
 
   // Load a CUE (stop any active timer and select the CUE)
