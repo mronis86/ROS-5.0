@@ -6,6 +6,10 @@ export interface LocalChange {
   timestamp: Date;
   eventId: string;
   changeType: string;
+  userId?: string;
+  userName?: string;
+  userRole?: string;
+  action?: string;
   rowNumber?: number;
   cueNumber?: number;
   details?: string;
@@ -160,16 +164,16 @@ class ChangeLogService {
   private async syncEventChanges(eventId: string, changes: LocalChange[]): Promise<void> {
     try {
       console.log(`📤 Syncing ${changes.length} changes for event ${eventId}`);
-      console.log('📤 Changes to sync:', changes.map(c => ({ type: c.changeType, details: c.details })));
+      console.log('📤 Changes to sync:', changes.map(c => ({ type: c.changeType || c.action, details: c.details })));
       
       // Use API client to log changes
       for (const change of changes) {
         try {
           const changeData = {
             event_id: change.eventId,
-            user_id: change.eventId, // Will be extracted from metadata if available
-            user_name: 'System',
-            action: change.changeType,
+            user_id: change.userId || change.eventId,
+            user_name: change.userName || 'System',
+            action: change.action || change.changeType,
             table_name: 'run_of_show_data',
             record_id: change.eventId,
             old_value: null,
@@ -178,7 +182,8 @@ class ChangeLogService {
             metadata: { 
               segmentName: change.segmentName,
               rowNumber: change.rowNumber,
-              cueNumber: change.cueNumber
+              cueNumber: change.cueNumber,
+              userRole: change.userRole
             }
           };
           
