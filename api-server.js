@@ -910,30 +910,42 @@ app.post('/api/change-log', async (req, res) => {
       event_id,
       user_id,
       user_name,
+      user_role,
       action,
       table_name,
       record_id,
+      field_name,
       old_value,
       new_value,
       description,
+      row_number,
+      cue_number,
       metadata
     } = req.body;
 
-    console.log('📝 Logging change:', { event_id, action, user_name, description });
+    console.log('📝 Logging change:', { event_id, action, user_name, user_role, description, row_number, cue_number });
 
     const result = await pool.query(
       `INSERT INTO change_log (
-        event_id, user_id, user_name, action, table_name, record_id,
-        old_values, new_values, metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING id`,
+        event_id, user_id, user_name, user_role, action, table_name, record_id,
+        field_name, old_value, new_value, description, row_number, cue_number,
+        old_values_json, new_values_json, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING id, created_at`,
       [
         event_id,
         user_id,
         user_name,
+        user_role,
         action,
         table_name,
         record_id,
+        field_name,
+        old_value,
+        new_value,
+        description,
+        row_number,
+        cue_number,
         old_value ? JSON.stringify(old_value) : null,
         new_value ? JSON.stringify(new_value) : null,
         metadata ? JSON.stringify(metadata) : null
@@ -941,10 +953,11 @@ app.post('/api/change-log', async (req, res) => {
     );
 
     console.log('✅ Change logged:', result.rows[0].id);
-    res.status(201).json({ id: result.rows[0].id, success: true });
+    res.status(201).json({ id: result.rows[0].id, created_at: result.rows[0].created_at, success: true });
   } catch (error) {
     console.error('Error logging change:', error);
-    res.status(500).json({ error: 'Failed to log change' });
+    console.error('Error details:', error.message);
+    res.status(500).json({ error: 'Failed to log change', details: error.message });
   }
 });
 

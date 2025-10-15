@@ -170,22 +170,34 @@ class ChangeLogService {
       // Use API client to log changes
       for (const change of changes) {
         try {
+          // Parse details if it's a string
+          let parsedDetails = change.details;
+          if (typeof change.details === 'string') {
+            try {
+              parsedDetails = JSON.parse(change.details);
+            } catch (e) {
+              parsedDetails = { raw: change.details };
+            }
+          }
+
           const changeData = {
             event_id: change.eventId,
             user_id: change.userId || change.eventId,
             user_name: change.userName || 'System',
+            user_role: change.userRole || 'EDITOR',
             action: change.action || change.changeType,
             table_name: 'run_of_show_data',
             record_id: change.eventId,
-            old_value: null,
-            new_value: change.details ? JSON.stringify(change.details) : null,
+            field_name: parsedDetails?.fieldName || null,
+            old_value: parsedDetails?.oldValue || parsedDetails?.oldValue === 0 ? String(parsedDetails.oldValue) : null,
+            new_value: parsedDetails?.newValue || parsedDetails?.newValue === 0 ? String(parsedDetails.newValue) : null,
             description: change.description || change.changeType,
+            row_number: change.rowNumber || null,
+            cue_number: change.cueNumber ? String(change.cueNumber) : null,
             metadata: { 
               segmentName: change.segmentName,
-              rowNumber: change.rowNumber,
-              cueNumber: change.cueNumber,
-              userRole: change.userRole,
-              action: change.action || change.changeType
+              action: change.action || change.changeType,
+              details: parsedDetails
             }
           };
           
