@@ -7109,7 +7109,11 @@ const RunOfShowPage: React.FC = () => {
                 )}
                 {showMasterChangeLog && (
                   <button
-                    onClick={loadMasterChangeLog}
+                    onClick={async () => {
+                      await loadMasterChangeLog();
+                      // Force a re-render by updating a dummy state
+                      setMasterChangeLog(prev => [...prev]);
+                    }}
                     className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                     title="Reload master change log"
                   >
@@ -7138,8 +7142,8 @@ const RunOfShowPage: React.FC = () => {
                       const metadata = change.metadata || {};
                       const rowNumber = change.row_number || metadata.rowNumber || details.rowNumber;
                       const cueNumber = change.cue_number || metadata.cueNumber || details.cueNumber;
-                      const userRole = change.user_role || metadata.userRole;
-                      const fieldName = change.field_name || details.fieldName;
+                      const userRole = change.user_role || metadata.userRole || 'EDITOR';
+                      const fieldName = change.field_name || details.fieldName || details.changeType;
                       const oldValue = change.old_value || details.oldValue;
                       const newValue = change.new_value || details.newValue;
                       const description = change.description || details.itemName;
@@ -7183,40 +7187,40 @@ const RunOfShowPage: React.FC = () => {
                           </div>
                         </div>
                         
-                        {/* Description */}
-                        {description && (
-                          <div className="text-gray-300 text-sm mb-2">
-                            {description}
-                          </div>
-                        )}
-                        
-                        {/* Clean field information display */}
-                        {(fieldName || details.fieldName) && (
-                          <div className="space-y-1 text-sm">
-                            {/* Show field changes in a clean format */}
+                        {/* Show field changes only (ROW/CUE already shown at top) */}
+                        <div className="space-y-1 text-sm">
+                          {/* Show field changes for FIELD_UPDATE - handle both new columns and existing JSON */}
+                          {change.action === 'FIELD_UPDATE' && (fieldName || details.fieldName) && (
                             <div className="text-gray-300">
                               <strong>Field:</strong> {fieldName || details.fieldName}
                             </div>
-                            
-                            {/* Show value changes */}
-                            {(oldValue !== undefined || details.oldValue !== undefined) && (
-                              <div className="text-gray-300">
-                                <strong>Changed from:</strong> 
-                                <span className="text-red-300 ml-1">"{oldValue || details.oldValue}"</span>
-                                <span className="text-slate-400 mx-1">→</span>
-                                <span className="text-green-300">"{newValue || details.newValue}"</span>
-                              </div>
-                            )}
-                            
-                            {/* Show batch information */}
-                            {change.batch_id && (
-                              <div className="text-gray-500 text-xs mt-2 pt-2 border-t border-slate-600">
-                                Batch: {change.batch_id.slice(0, 8)}... | 
-                                Synced: {new Date(change.batch_created_at).toLocaleString()}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                          )}
+                          
+                          {/* Show value changes - handle both new columns and existing JSON */}
+                          {change.action === 'FIELD_UPDATE' && (oldValue !== undefined || details.oldValue !== undefined) && (
+                            <div className="text-gray-300">
+                              <strong>Changed from:</strong> 
+                              <span className="text-red-300 ml-1">"{oldValue || details.oldValue}"</span>
+                              <span className="text-gray-400 mx-1">→</span>
+                              <span className="text-green-300">"{newValue || details.newValue}"</span>
+                            </div>
+                          )}
+                          
+                          {/* Fallback: if no field info, show the description but formatted nicely */}
+                          {change.action === 'FIELD_UPDATE' && !fieldName && !details.fieldName && description && (
+                            <div className="text-gray-300">
+                              <strong>Change:</strong> {description}
+                            </div>
+                          )}
+                          
+                          {/* Show batch information */}
+                          {change.batch_id && (
+                            <div className="text-gray-500 text-xs mt-2 pt-2 border-t border-slate-600">
+                              Batch: {change.batch_id.slice(0, 8)}... | 
+                              Synced: {new Date(change.batch_created_at).toLocaleString()}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )})}
                   </div>
