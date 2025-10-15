@@ -10,6 +10,7 @@ export interface LocalChange {
   userName?: string;
   userRole?: string;
   action?: string;
+  description?: string;
   rowNumber?: number;
   cueNumber?: number;
   details?: string;
@@ -177,13 +178,14 @@ class ChangeLogService {
             table_name: 'run_of_show_data',
             record_id: change.eventId,
             old_value: null,
-            new_value: change.details,
-            description: change.details,
+            new_value: change.details ? JSON.stringify(change.details) : null,
+            description: change.description || change.changeType,
             metadata: { 
               segmentName: change.segmentName,
               rowNumber: change.rowNumber,
               cueNumber: change.cueNumber,
-              userRole: change.userRole
+              userRole: change.userRole,
+              action: change.action || change.changeType
             }
           };
           
