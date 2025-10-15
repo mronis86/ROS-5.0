@@ -7132,7 +7132,19 @@ const RunOfShowPage: React.FC = () => {
                   <p className="text-gray-400 text-center py-8">No master changes found</p>
                 ) : (
                   <div className="space-y-3">
-                    {masterChangeLog.map((change) => (
+                    {masterChangeLog.map((change) => {
+                      // Parse data from new_values_json if new columns are null (before migration)
+                      const details = change.new_values_json || {};
+                      const metadata = change.metadata || {};
+                      const rowNumber = change.row_number || metadata.rowNumber || details.rowNumber;
+                      const cueNumber = change.cue_number || metadata.cueNumber || details.cueNumber;
+                      const userRole = change.user_role || metadata.userRole;
+                      const fieldName = change.field_name || details.fieldName;
+                      const oldValue = change.old_value || details.oldValue;
+                      const newValue = change.new_value || details.newValue;
+                      const description = change.description || details.itemName;
+                      
+                      return (
                       <div key={change.id} className="bg-slate-700 rounded-lg p-4">
                         <div className="flex justify-between items-start mb-2">
                           <div className="flex items-center gap-2">
@@ -7150,42 +7162,49 @@ const RunOfShowPage: React.FC = () => {
                             <span className="text-gray-300 text-sm">
                               by {change.user_name}
                             </span>
-                            <span className="text-gray-500 text-xs">
-                              ({change.user_role})
-                            </span>
-                            {change.row_number && (
-                              <span className="text-gray-400 text-xs bg-slate-600 px-2 py-1 rounded">
-                                ROW {change.row_number}
+                            {userRole && (
+                              <span className="text-gray-500 text-xs">
+                                ({userRole})
                               </span>
                             )}
-                            {change.cue_number && change.cue_number !== 'CUE' && (
+                            {rowNumber && (
                               <span className="text-gray-400 text-xs bg-slate-600 px-2 py-1 rounded">
-                                {formatCueDisplay(change.cue_number)}
+                                ROW {rowNumber}
+                              </span>
+                            )}
+                            {cueNumber && cueNumber !== 'CUE' && (
+                              <span className="text-gray-400 text-xs bg-slate-600 px-2 py-1 rounded">
+                                {formatCueDisplay(cueNumber)}
                               </span>
                             )}
                           </div>
                           <div className="text-gray-400 text-xs">
-                            {new Date(change.timestamp || change.change_timestamp).toLocaleString()}
+                            {new Date(change.created_at || change.timestamp || change.change_timestamp).toLocaleString()}
                           </div>
                         </div>
                         
+                        {/* Description */}
+                        {description && (
+                          <div className="text-gray-300 text-sm mb-2">
+                            {description}
+                          </div>
+                        )}
+                        
                         {/* Clean field information display */}
-                        {change.details && (
+                        {(fieldName || details.fieldName) && (
                           <div className="space-y-1 text-sm">
                             {/* Show field changes in a clean format */}
-                            {change.details.fieldName && (
-                              <div className="text-gray-300">
-                                <strong>Field:</strong> {change.details.fieldName}
-                              </div>
-                            )}
+                            <div className="text-gray-300">
+                              <strong>Field:</strong> {fieldName || details.fieldName}
+                            </div>
                             
                             {/* Show value changes */}
-                            {change.details.oldValue !== undefined && change.details.newValue !== undefined && (
+                            {(oldValue !== undefined || details.oldValue !== undefined) && (
                               <div className="text-gray-300">
                                 <strong>Changed from:</strong> 
-                                <span className="text-red-300 ml-1">"{change.details.oldValue}"</span>
+                                <span className="text-red-300 ml-1">"{oldValue || details.oldValue}"</span>
                                 <span className="text-slate-400 mx-1">→</span>
-                                <span className="text-green-300">"{change.details.newValue}"</span>
+                                <span className="text-green-300">"{newValue || details.newValue}"</span>
                               </div>
                             )}
                             
@@ -7199,7 +7218,7 @@ const RunOfShowPage: React.FC = () => {
                           </div>
                         )}
                       </div>
-                    ))}
+                    )})}
                   </div>
                 )
               ) : (
