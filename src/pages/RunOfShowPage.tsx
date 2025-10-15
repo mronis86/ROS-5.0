@@ -7252,7 +7252,7 @@ const RunOfShowPage: React.FC = () => {
                         <div className="space-y-1 text-sm">
                           {((change.details as any)?.rowNumber || (change.details as any)?.cueNumber) && (
                             <div className="text-gray-300">
-                              <strong>Row {(change.details as any)?.rowNumber || '?'} | {(change.details as any)?.cueNumber || 'CUE'}</strong>
+                              <strong>Row {(change.details as any)?.rowNumber || '?'} | {formatCueDisplay((change.details as any)?.cueNumber)}</strong>
                             </div>
                           )}
                           
@@ -7433,7 +7433,7 @@ const RunOfShowPage: React.FC = () => {
                           <div className="space-y-1 text-sm">
                             {((pendingChange.details as any)?.rowNumber || (pendingChange.details as any)?.cueNumber) && (
                               <div className="text-slate-300">
-                                <strong>Row {(pendingChange.details as any)?.rowNumber || '?'} | {(pendingChange.details as any)?.cueNumber || 'CUE'}</strong>
+                                <strong>Row {(pendingChange.details as any)?.rowNumber || '?'} | {formatCueDisplay((pendingChange.details as any)?.cueNumber)}</strong>
                               </div>
                             )}
                             {pendingChange.details.fieldName && (
