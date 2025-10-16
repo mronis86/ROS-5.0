@@ -635,26 +635,51 @@ app.post('/api/active-timers', async (req, res) => {
     // Provide default values for required fields
     const user_name = 'Unknown User';
     const user_role = 'OPERATOR';
+    
+    // Determine if we should use SQL NOW() for started_at to avoid clock drift
+    const useServerTime = !started_at || started_at === 'null';
+    
     // Handle started_at based on timer state
     let started_at_value;
     if (timer_state === 'running') {
-      // For running timers, use provided started_at or current time
-      started_at_value = (started_at && started_at !== 'null') ? started_at : new Date().toISOString();
+      // For running timers, use provided started_at or we'll use SQL NOW() below
+      started_at_value = (started_at && started_at !== 'null') ? started_at : null;
     } else {
       // For loaded timers, use a placeholder timestamp (NOT NULL constraint requires a value)
-      // We'll use a far future date to indicate "not started yet"
       started_at_value = (started_at && started_at !== 'null') ? started_at : '2099-12-31T23:59:59.999Z';
     }
     
     console.log('🔄 Processing active timer request:', {
       event_id, item_id, timer_state, is_active, is_running, 
-      started_at_original: started_at, started_at_value, duration_seconds
+      started_at_original: started_at, started_at_value, useServerTime, duration_seconds
     });
     
-    // Use UPSERT to ensure only ONE active timer per event
-    // If a record exists for this event, update it. Otherwise, insert a new one.
-    const result = await pool.query(
-      `INSERT INTO active_timers (event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at)
+    // Build SQL query - use NOW() for started_at when starting timer to avoid clock drift
+    let query, params;
+    if (useServerTime && timer_state === 'running') {
+      // Use SQL NOW() for perfect server time sync
+      query = `INSERT INTO active_timers (event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12, NOW(), NOW())
+       ON CONFLICT (event_id) 
+       DO UPDATE SET 
+         item_id = EXCLUDED.item_id,
+         user_id = EXCLUDED.user_id,
+         user_name = EXCLUDED.user_name,
+         user_role = EXCLUDED.user_role,
+         timer_state = EXCLUDED.timer_state,
+         is_active = EXCLUDED.is_active,
+         is_running = EXCLUDED.is_running,
+         started_at = NOW(),
+         last_loaded_cue_id = EXCLUDED.last_loaded_cue_id,
+         cue_is = EXCLUDED.cue_is,
+         duration_seconds = EXCLUDED.duration_seconds,
+         elapsed_seconds = EXCLUDED.elapsed_seconds,
+         updated_at = NOW()
+       RETURNING *`;
+      params = [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, last_loaded_cue_id, cue_is, duration_seconds || 300, 0];
+    } else {
+      // Use provided started_at
+      query = `INSERT INTO active_timers (event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
        ON CONFLICT (event_id) 
        DO UPDATE SET 
@@ -671,9 +696,11 @@ app.post('/api/active-timers', async (req, res) => {
          duration_seconds = EXCLUDED.duration_seconds,
          elapsed_seconds = EXCLUDED.elapsed_seconds,
          updated_at = NOW()
-       RETURNING *`,
-      [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is, duration_seconds || 300, 0]
-    );
+       RETURNING *`;
+      params = [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is, duration_seconds || 300, 0];
+    }
+    
+    const result = await pool.query(query, params);
     
     // For debugging: log what we're broadcasting
     console.log('⏰ Timer sync debug:', {

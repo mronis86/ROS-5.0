@@ -711,7 +711,8 @@ export class DatabaseService {
           timer_state: 'running',
           is_active: true,
           is_running: true,
-          started_at: startedAt || new Date().toISOString(),
+          // Don't send started_at - let API use database NOW() to avoid clock drift
+          // started_at: undefined will cause API to use NOW()
           last_loaded_cue_id: itemId,
           cue_is: cueDisplay,
           duration_seconds: totalDurationSeconds
