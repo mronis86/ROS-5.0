@@ -8,7 +8,7 @@ const { Server } = require('socket.io');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Force Railway rebuild - 2025-10-08 - Build #3
+// Force Railway rebuild - 2025-10-16 - Build #4 - Revert OSC timer changes
 // Auth is now handled via direct database connection
 // Neon database with PostgreSQL pg library
 // Ensuring Railway picks up latest changes
