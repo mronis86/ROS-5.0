@@ -2316,10 +2316,12 @@ const RunOfShowPage: React.FC = () => {
         }
         
         const result = await changeLogService.clearMasterChangeLog(event.id);
+        console.log('🔄 Clear master result:', result);
         
         if (result.success) {
           setMasterChangeLog([]);
           console.log('✅ Master change log cleared successfully');
+          alert(`✅ Successfully cleared ${result.deletedCount} master change log entries`);
           
           // Force reload to verify
           console.log('🔄 Verifying master change log is cleared...');
