@@ -675,10 +675,18 @@ app.post('/api/active-timers', async (req, res) => {
       [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is, duration_seconds || 300, 0]
     );
     
-    // Broadcast update via WebSocket
-    broadcastUpdate(event_id, 'timerUpdated', result.rows[0]);
+    // Calculate server-side elapsed_seconds to ensure all clients show same time
+    const timerDataWithElapsed = {
+      ...result.rows[0],
+      elapsed_seconds: timer_state === 'running' && result.rows[0].started_at
+        ? Math.floor((new Date() - new Date(result.rows[0].started_at)) / 1000)
+        : 0
+    };
     
-    res.status(201).json(result.rows[0]);
+    // Broadcast update via WebSocket with server-calculated elapsed time
+    broadcastUpdate(event_id, 'timerUpdated', timerDataWithElapsed);
+    
+    res.status(201).json(timerDataWithElapsed);
   } catch (error) {
     console.error('Error saving active timer:', error);
     res.status(500).json({ error: 'Failed to save active timer' });

@@ -4990,9 +4990,15 @@ const RunOfShowPage: React.FC = () => {
       const startedAt = new Date(activeTimer.started_at);
       const total = activeTimer.duration_seconds || 0;
       
+      // Use server's elapsed_seconds as the base to ensure all clients are in sync
+      const serverElapsed = activeTimer.elapsed_seconds || 0;
+      const serverTime = new Date(activeTimer.updated_at || activeTimer.started_at);
+      
       const updateCountdown = () => {
         const now = new Date();
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+        // Calculate elapsed based on server's elapsed + time since server update
+        const timeSinceServerUpdate = Math.floor((now.getTime() - serverTime.getTime()) / 1000);
+        const elapsed = serverElapsed + timeSinceServerUpdate;
         
         setHybridTimerProgress({
           elapsed: elapsed,
@@ -5021,7 +5027,7 @@ const RunOfShowPage: React.FC = () => {
         total: 0
       });
     }
-  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer]);
+  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer?.elapsed_seconds, hybridTimerData?.activeTimer?.updated_at, hybridTimerData?.activeTimer]);
 
   // Debug: Monitor schedule changes
   useEffect(() => {
