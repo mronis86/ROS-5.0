@@ -573,6 +573,9 @@ const RunOfShowPage: React.FC = () => {
   
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
+  
+  // Overtime tracking - stores overtime minutes for each cue (automatic from hybrid timer)
+  const [overtimeMinutes, setOvertimeMinutes] = useState<{[cueId: number]: number}>({});
   const [eventName, setEventName] = useState(event?.name || '');
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
@@ -4094,6 +4097,7 @@ const RunOfShowPage: React.FC = () => {
     setStoppedItems(new Set());
     setLoadedCueDependents(new Set()); // Clear dependent row highlighting
     setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
+    setOvertimeMinutes({}); // Clear all overtime indicators
     
     // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
     // The reset should only clear completed cues and timer states, not modify schedule structure
@@ -5869,6 +5873,33 @@ const RunOfShowPage: React.FC = () => {
       // Add to stopped items for inactive styling
       setStoppedItems(prev => new Set([...prev, itemId]));
       
+      // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
+      const currentProgress = timerProgress[itemId];
+      if (currentProgress && currentProgress.elapsed > 0) {
+        const scheduledDuration = (currentProgress.total || 0) / 60; // Convert to minutes
+        const actualDuration = (currentProgress.elapsed || 0) / 60; // Convert to minutes
+        const overtimeMinutes = Math.floor(actualDuration - scheduledDuration);
+        
+        // Only calculate overtime if there's a meaningful difference (at least 1 minute)
+        if (Math.abs(overtimeMinutes) >= 1) {
+          const overtimeType = overtimeMinutes > 0 ? 'over' : 'under';
+          console.log(`⏰ Automatic overtime detected: ${Math.abs(overtimeMinutes)} minutes ${overtimeType} for cue ${itemId}`);
+          setOvertimeMinutes(prev => ({
+            ...prev,
+            [itemId]: overtimeMinutes
+          }));
+          
+          // Log the overtime change
+          logChange('OVERTIME_DETECTED', {
+            cueId: itemId,
+            scheduledDuration: Math.floor(scheduledDuration),
+            actualDuration: Math.floor(actualDuration),
+            overtimeMinutes: overtimeMinutes,
+            overtimeType: overtimeType
+          });
+        }
+      }
+      
       // Mark cue as completed in database
       try {
         const item = schedule.find(s => s.id === itemId);
@@ -6707,6 +6738,61 @@ const RunOfShowPage: React.FC = () => {
     const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
     
     // Convert to 12-hour format
+    const date = new Date();
+    date.setHours(finalHours, finalMinutes, 0, 0);
+    return date.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    });
+  };
+
+  // Calculate start time with automatic overtime adjustments
+  const calculateStartTimeWithOvertime = (index: number) => {
+    const currentItem = schedule[index];
+    if (!currentItem) return '';
+    
+    // If this item is indented, return empty string (no start time)
+    if (indentedCues[currentItem.id]) {
+      return '';
+    }
+    
+    // Get the base start time
+    const baseStartTime = calculateStartTime(index);
+    if (!baseStartTime) return '';
+    
+    // Calculate total overtime from all previous cues
+    let totalOvertimeMinutes = 0;
+    for (let i = 0; i < index; i++) {
+      const item = schedule[i];
+      const itemDay = item.day || 1;
+      const currentItemDay = currentItem.day || 1;
+      
+      // Only count overtime from the same day and non-indented items
+      if (itemDay === currentItemDay && !indentedCues[item.id]) {
+        totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
+      }
+    }
+    
+    // If no overtime, return the base start time
+    if (totalOvertimeMinutes === 0) {
+      return baseStartTime;
+    }
+    
+    // Parse the base start time and add overtime
+    const [timePart, period] = baseStartTime.split(' ');
+    const [hours, minutes] = timePart.split(':').map(Number);
+    
+    let hour24 = hours;
+    if (period === 'PM' && hours !== 12) hour24 += 12;
+    if (period === 'AM' && hours === 12) hour24 = 0;
+    
+    // Add overtime minutes
+    const totalMinutes = hour24 * 60 + minutes + totalOvertimeMinutes;
+    const finalHours = Math.floor(totalMinutes / 60) % 24;
+    const finalMinutes = totalMinutes % 60;
+    
+    // Convert back to 12-hour format
     const date = new Date();
     date.setHours(finalHours, finalMinutes, 0, 0);
     return date.toLocaleTimeString('en-US', { 
@@ -9216,9 +9302,44 @@ const RunOfShowPage: React.FC = () => {
                            className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
                            style={{ width: columnWidths.start }}
                          >
-                           <span className="text-white font-mono text-base font-bold">
-                             {indentedCues[item.id] ? '↘' : calculateStartTime(index)}
-                           </span>
+                           <div className="flex flex-col items-center gap-1">
+                             <span className="text-white font-mono text-base font-bold">
+                               {indentedCues[item.id] ? '↘' : calculateStartTimeWithOvertime(index)}
+                             </span>
+                             {!indentedCues[item.id] && calculateStartTime(index) !== calculateStartTimeWithOvertime(index) && (
+                               <span className={`text-sm font-bold px-2 py-1 rounded ${
+                                 (() => {
+                                   // Calculate total overtime for this cue
+                                   let totalOvertime = 0;
+                                   for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
+                                     const prevItem = schedule[i];
+                                     const prevItemDay = prevItem.day || 1;
+                                     const currentItemDay = item.day || 1;
+                                     if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                       totalOvertime += overtimeMinutes[prevItem.id] || 0;
+                                     }
+                                   }
+                                   return totalOvertime;
+                                 })() > 0 
+                                   ? 'text-red-400 bg-red-900/30' 
+                                   : 'text-green-400 bg-green-900/30'
+                               }`} title="Time adjusted due to overtime">
+                                 {(() => {
+                                   // Calculate total overtime for this cue
+                                   let totalOvertime = 0;
+                                   for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
+                                     const prevItem = schedule[i];
+                                     const prevItemDay = prevItem.day || 1;
+                                     const currentItemDay = item.day || 1;
+                                     if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                       totalOvertime += overtimeMinutes[prevItem.id] || 0;
+                                     }
+                                   }
+                                   return totalOvertime > 0 ? `+${totalOvertime}m` : `${totalOvertime}m`;
+                                 })()}
+                               </span>
+                             )}
+                           </div>
                          </div>
                        )}
                        {visibleColumns.programType && (
