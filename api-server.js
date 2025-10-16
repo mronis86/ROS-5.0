@@ -8,10 +8,13 @@ const { Server } = require('socket.io');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Force Railway rebuild - 2025-10-16 - Build #4 - Revert OSC timer changes
+// Force Railway rebuild - 2025-10-16 - Build #5 - Server-driven timer sync
 // Auth is now handled via direct database connection
 // Neon database with PostgreSQL pg library
 // Ensuring Railway picks up latest changes
+
+// Server-side timer sync interval - broadcasts elapsed_seconds every second
+let serverTimerInterval = null;
 
 const app = express();
 const server = createServer(app);
@@ -1446,6 +1449,38 @@ app.post('/api/timers/reset', async (req, res) => {
 // ========================================
 // Socket.IO connection handling
 // ========================================
+
+// Server-side timer broadcast - sends elapsed_seconds every second for perfect sync
+async function broadcastTimerTick() {
+  try {
+    // Get all active running timers from database
+    const result = await pool.query(`
+      SELECT *, 
+        EXTRACT(EPOCH FROM (NOW() - started_at))::integer as server_elapsed_seconds
+      FROM active_timers 
+      WHERE is_running = true AND is_active = true
+    `);
+    
+    // Broadcast each active timer's current elapsed time to its event room
+    for (const timer of result.rows) {
+      const timerUpdate = {
+        ...timer,
+        elapsed_seconds: timer.server_elapsed_seconds
+      };
+      
+      io.to(`event:${timer.event_id}`).emit('timerTick', timerUpdate);
+    }
+  } catch (error) {
+    console.error('❌ Error broadcasting timer tick:', error);
+  }
+}
+
+// Start server-side timer broadcast (every 1 second)
+if (serverTimerInterval) {
+  clearInterval(serverTimerInterval);
+}
+serverTimerInterval = setInterval(broadcastTimerTick, 1000);
+console.log('⏰ Server-side timer broadcast started - will sync all clients every second');
 
 io.on('connection', (socket) => {
   console.log(`🔌 Socket.IO client connected: ${socket.id}`);

@@ -112,6 +112,11 @@ class SocketClient {
           console.log('Unknown Socket.IO message type:', message.type, message);
       }
     });
+    
+    // Listen for server-driven timer ticks (every second) for perfect sync
+    this.socket.on('timerTick', (timerData: any) => {
+      this.callbacks.onTimerTick?.(timerData);
+    });
 
     this.socket.on('disconnect', (reason) => {
       console.log(`❌ Socket.IO disconnected: ${reason}`);
