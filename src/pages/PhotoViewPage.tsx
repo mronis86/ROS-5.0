@@ -58,6 +58,7 @@ const PhotoViewPage: React.FC = () => {
   const [countdown, setCountdown] = useState<number>(20);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isUserEditing, setIsUserEditing] = useState<boolean>(false);
+  const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [activeTimers, setActiveTimers] = useState<{[key: number]: boolean}>({});
@@ -547,6 +548,19 @@ const PhotoViewPage: React.FC = () => {
     console.log('🔌 Setting up WebSocket connection for PhotoView timer updates');
     
     const callbacks = {
+      onServerTime: (data: any) => {
+        // Sync client clock with server clock
+        const serverTime = new Date(data.serverTime).getTime();
+        const clientTime = new Date().getTime();
+        const offset = serverTime - clientTime;
+        setClockOffset(offset);
+        console.log('🕐 PhotoView: Clock sync:', {
+          serverTime: data.serverTime,
+          clientTime: new Date().toISOString(),
+          offsetMs: offset,
+          offsetSeconds: Math.floor(offset / 1000)
+        });
+      },
       onTimerUpdated: (data: any) => {
         console.log('📡 PhotoView: Timer updated via WebSocket', data);
         // Update timer state directly from WebSocket data
@@ -858,8 +872,8 @@ const PhotoViewPage: React.FC = () => {
       console.log(`🔄 PhotoView: Starting continuous local timer for ${activeItemId} with duration ${duration}s, start time: ${startedAt.toISOString()}`);
       
       const continuousTimer = setInterval(() => {
-        const now = new Date();
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+        const syncedNow = new Date(Date.now() + clockOffset);
+        const elapsed = Math.floor((syncedNow.getTime() - startedAt.getTime()) / 1000);
         
         // Always update timer progress for smooth counting
         setTimerProgress(prev => ({
@@ -901,8 +915,8 @@ const PhotoViewPage: React.FC = () => {
           setSubCueTimerProgress(prev => {
             if (prev[itemId] && prev[itemId].startedAt) {
               const startedAt = prev[itemId].startedAt;
-              const now = new Date();
-              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+              const syncedNow = new Date(Date.now() + clockOffset);
+              const elapsed = Math.floor((syncedNow.getTime() - startedAt.getTime()) / 1000);
               
               return {
                 ...prev,
@@ -997,9 +1011,10 @@ const PhotoViewPage: React.FC = () => {
       setSecondaryTimer(prev => {
         if (!prev) return null;
         
-        // Calculate remaining time directly from start time
+        // Calculate remaining time directly from start time using synced clock
         const startTime = prev.startedAt?.getTime() || Date.now();
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const syncedNow = Date.now() + clockOffset;
+        const elapsed = Math.floor((syncedNow - startTime) / 1000);
         const remaining = Math.max(0, prev.duration - elapsed);
         
         return {

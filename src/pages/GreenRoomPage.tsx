@@ -59,6 +59,7 @@ const GreenRoomPage: React.FC = () => {
   const [dayStartTimes, setDayStartTimes] = useState<{[key: number]: string}>({});
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
+  const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
 
   // Calculate start time function (same as RunOfShowPage)
   const calculateStartTime = (index: number) => {
@@ -247,6 +248,19 @@ const GreenRoomPage: React.FC = () => {
     console.log('🔌 Setting up WebSocket connection for Green Room timer updates');
     
     const callbacks = {
+      onServerTime: (data: any) => {
+        // Sync client clock with server clock
+        const serverTime = new Date(data.serverTime).getTime();
+        const clientTime = new Date().getTime();
+        const offset = serverTime - clientTime;
+        setClockOffset(offset);
+        console.log('🕐 GreenRoom: Clock sync:', {
+          serverTime: data.serverTime,
+          clientTime: new Date().toISOString(),
+          offsetMs: offset,
+          offsetSeconds: Math.floor(offset / 1000)
+        });
+      },
       onTimerUpdated: (data: any) => {
         console.log('📡 Green Room: Timer updated via WebSocket', data);
         // Update timer state directly from WebSocket data (like PhotoViewPage)
@@ -458,8 +472,8 @@ const GreenRoomPage: React.FC = () => {
       console.log(`🔄 Green Room: Starting continuous local timer for ${activeItemId} with duration ${duration}s, start time: ${startedAt.toISOString()}`);
       
       const continuousTimer = setInterval(() => {
-        const now = new Date();
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+        const syncedNow = new Date(Date.now() + clockOffset);
+        const elapsed = Math.floor((syncedNow.getTime() - startedAt.getTime()) / 1000);
         
         // Always update timer progress for smooth counting
         setTimerProgress(prev => ({

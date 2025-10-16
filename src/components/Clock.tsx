@@ -54,10 +54,21 @@ const Clock: React.FC<ClockProps> = ({
   const [lastActiveItemId, setLastActiveItemId] = useState<number | null>(null);
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
 
   // Clock component always runs in WebSocket-only mode
 
   // Clock always uses WebSocket data, no props handling needed
+  
+  // Helper function to get synced current time (client time + offset)
+  const getSyncedNow = () => new Date(Date.now() + clockOffset);
+  
+  // Helper function to calculate elapsed time with clock sync
+  const calculateElapsed = (startedAt: Date | string) => {
+    const syncedNow = getSyncedNow();
+    const start = startedAt instanceof Date ? startedAt : new Date(startedAt);
+    return Math.floor((syncedNow.getTime() - start.getTime()) / 1000);
+  };
 
   // Update timer progress when props change (non-WebSocket mode)
   useEffect(() => {
@@ -90,10 +101,9 @@ const Clock: React.FC<ClockProps> = ({
       });
       
       const updateCountdown = () => {
-        const now = new Date();
-        const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+        const elapsed = calculateElapsed(startedAt);
         
-        console.log('🔍 [CLOCK DEBUG] Local countdown update', { elapsed, total });
+        console.log('🔍 [CLOCK DEBUG] Local countdown update', { elapsed, total, clockOffsetSeconds: Math.floor(clockOffset / 1000) });
         
         setTimerProgress({
           elapsed: elapsed,
@@ -131,7 +141,7 @@ const Clock: React.FC<ClockProps> = ({
         total: 0
       });
     }
-  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, supabaseOnly]);
+  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, supabaseOnly, clockOffset]);
 
   // Update current time every second
   useEffect(() => {
@@ -299,6 +309,19 @@ const Clock: React.FC<ClockProps> = ({
 
     // Set up WebSocket connection for real-time timer updates
     const callbacks = {
+      onServerTime: (data: any) => {
+        // Sync client clock with server clock
+        const serverTime = new Date(data.serverTime).getTime();
+        const clientTime = new Date().getTime();
+        const offset = serverTime - clientTime;
+        setClockOffset(offset);
+        console.log('🕐 Clock: Clock sync:', {
+          serverTime: data.serverTime,
+          clientTime: new Date().toISOString(),
+          offsetMs: offset,
+          offsetSeconds: Math.floor(offset / 1000)
+        });
+      },
       onTimerUpdated: (data: any) => {
         console.log('🔍 [CLOCK DEBUG] ===== WebSocket onTimerUpdated =====');
         console.log('🔍 [CLOCK DEBUG] Received data:', data);
@@ -982,9 +1005,7 @@ const Clock: React.FC<ClockProps> = ({
           if (currentSecondaryTimer) {
             // Check if timer has expired (reached zero or negative)
             if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-              const now = new Date();
-              const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+              const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
               const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
               const remaining = Math.max(0, totalDuration - elapsed);
               
@@ -1032,9 +1053,7 @@ const Clock: React.FC<ClockProps> = ({
           if (currentSecondaryTimer) {
             // Check if timer has expired (reached zero or negative)
             if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-              const now = new Date();
-              const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+              const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
               const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
               const remaining = Math.max(0, totalDuration - elapsed);
               
@@ -1069,9 +1088,7 @@ const Clock: React.FC<ClockProps> = ({
           <div className="font-mono text-3xl font-bold">
             {(() => {
               const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
-              const now = new Date();
-              const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+              const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
               const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
               const remaining = Math.max(0, totalDuration - elapsed);
               
