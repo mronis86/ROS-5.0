@@ -675,30 +675,23 @@ app.post('/api/active-timers', async (req, res) => {
       [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is, duration_seconds || 300, 0]
     );
     
-    // Calculate server-side elapsed_seconds to ensure all clients show same time
-    const dbStartedAt = new Date(result.rows[0].started_at);
-    const serverNow = new Date();
-    const calculatedElapsed = timer_state === 'running' && result.rows[0].started_at
-      ? Math.floor((serverNow - dbStartedAt) / 1000)
-      : 0;
-    
+    // For debugging: log what we're broadcasting
     console.log('⏰ Timer sync debug:', {
       timer_state,
       db_started_at: result.rows[0].started_at,
-      server_now: serverNow.toISOString(),
-      calculated_elapsed: calculatedElapsed,
-      duration_seconds: result.rows[0].duration_seconds
+      db_elapsed_seconds: result.rows[0].elapsed_seconds,
+      duration_seconds: result.rows[0].duration_seconds,
+      is_running: result.rows[0].is_running
     });
     
-    const timerDataWithElapsed = {
-      ...result.rows[0],
-      elapsed_seconds: calculatedElapsed
-    };
+    // Use the elapsed_seconds from the database (which we set to 0 in the SQL)
+    // Don't recalculate - it adds delay!
+    const timerData = result.rows[0];
     
-    // Broadcast update via WebSocket with server-calculated elapsed time
-    broadcastUpdate(event_id, 'timerUpdated', timerDataWithElapsed);
+    // Broadcast update via WebSocket with database elapsed_seconds
+    broadcastUpdate(event_id, 'timerUpdated', timerData);
     
-    res.status(201).json(timerDataWithElapsed);
+    res.status(201).json(timerData);
   } catch (error) {
     console.error('Error saving active timer:', error);
     res.status(500).json({ error: 'Failed to save active timer' });
