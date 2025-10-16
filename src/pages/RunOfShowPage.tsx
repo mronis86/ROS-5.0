@@ -4994,11 +4994,29 @@ const RunOfShowPage: React.FC = () => {
       const serverElapsed = activeTimer.elapsed_seconds || 0;
       const serverTime = new Date(activeTimer.updated_at || activeTimer.started_at);
       
+      console.log('⏰ Hybrid timer debug - Initial setup:', {
+        serverElapsed,
+        serverTime: serverTime.toISOString(),
+        started_at: activeTimer.started_at,
+        updated_at: activeTimer.updated_at,
+        total,
+        timer_state: activeTimer.timer_state
+      });
+      
       const updateCountdown = () => {
         const now = new Date();
         // Calculate elapsed based on server's elapsed + time since server update
         const timeSinceServerUpdate = Math.floor((now.getTime() - serverTime.getTime()) / 1000);
         const elapsed = serverElapsed + timeSinceServerUpdate;
+        
+        if (elapsed % 5 === 0) {
+          console.log('⏰ Hybrid timer tick:', {
+            serverElapsed,
+            timeSinceServerUpdate,
+            totalElapsed: elapsed,
+            remaining: total - elapsed
+          });
+        }
         
         setHybridTimerProgress({
           elapsed: elapsed,

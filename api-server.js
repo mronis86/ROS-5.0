@@ -676,11 +676,23 @@ app.post('/api/active-timers', async (req, res) => {
     );
     
     // Calculate server-side elapsed_seconds to ensure all clients show same time
+    const dbStartedAt = new Date(result.rows[0].started_at);
+    const serverNow = new Date();
+    const calculatedElapsed = timer_state === 'running' && result.rows[0].started_at
+      ? Math.floor((serverNow - dbStartedAt) / 1000)
+      : 0;
+    
+    console.log('⏰ Timer sync debug:', {
+      timer_state,
+      db_started_at: result.rows[0].started_at,
+      server_now: serverNow.toISOString(),
+      calculated_elapsed: calculatedElapsed,
+      duration_seconds: result.rows[0].duration_seconds
+    });
+    
     const timerDataWithElapsed = {
       ...result.rows[0],
-      elapsed_seconds: timer_state === 'running' && result.rows[0].started_at
-        ? Math.floor((new Date() - new Date(result.rows[0].started_at)) / 1000)
-        : 0
+      elapsed_seconds: calculatedElapsed
     };
     
     // Broadcast update via WebSocket with server-calculated elapsed time
