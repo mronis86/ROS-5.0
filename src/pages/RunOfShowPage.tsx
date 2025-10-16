@@ -2274,9 +2274,8 @@ const RunOfShowPage: React.FC = () => {
 
       if (result) {
         console.log('✅ Schedule data synced to database successfully');
-        // Refresh master log and force UI update
-        const updatedMasterLog = await changeLogService.getMasterChangeLog(event.id);
-        setMasterChangeLog(updatedMasterLog);
+        // Refresh master log using existing function
+        await loadMasterChangeLog();
         console.log('🔄 Master change log refreshed after sync');
       } else {
         console.log('❌ Failed to sync schedule data to database');
@@ -7093,9 +7092,11 @@ const RunOfShowPage: React.FC = () => {
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
+                        console.log('🔄 Sync button clicked - starting sync...');
                         await syncChanges();
                         // Force refresh of local change log display
                         const localChanges = changeLogService.getLocalChanges();
+                        console.log('🔄 Local changes after sync:', localChanges.length);
                         setChangeLog(localChanges);
                         console.log('🔄 Local change log refreshed after sync');
                       }}
@@ -7121,10 +7122,12 @@ const RunOfShowPage: React.FC = () => {
                 {showMasterChangeLog && (
                   <button
                     onClick={async () => {
-                      console.log('🔄 Manual reload of master change log...');
-                      const updatedMasterLog = await changeLogService.getMasterChangeLog(event?.id || '');
-                      setMasterChangeLog(updatedMasterLog);
-                      console.log(`🔄 Master change log reloaded: ${updatedMasterLog.length} entries`);
+                      console.log('🔄 Manual reload button clicked...');
+                      const beforeCount = masterChangeLog.length;
+                      console.log('📊 Master log entries before reload:', beforeCount);
+                      await loadMasterChangeLog();
+                      console.log('🔄 Master change log reloaded');
+                      console.log('📊 Master log entries after reload:', masterChangeLog.length);
                     }}
                     className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                     title="Reload master change log"
