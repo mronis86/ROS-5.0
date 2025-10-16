@@ -13,8 +13,8 @@ require('dotenv').config();
 // Neon database with PostgreSQL pg library
 // Ensuring Railway picks up latest changes
 
-// Server-side timer sync interval - broadcasts elapsed_seconds every second
-let serverTimerInterval = null;
+// Server time sync - clients can sync their clocks once
+// No interval needed - just provide server time on request
 
 const app = express();
 const server = createServer(app);
@@ -1450,45 +1450,18 @@ app.post('/api/timers/reset', async (req, res) => {
 // Socket.IO connection handling
 // ========================================
 
-// Server-side timer broadcast - sends elapsed_seconds every second for perfect sync
-async function broadcastTimerTick() {
-  try {
-    // Get all active running timers from database
-    const result = await pool.query(`
-      SELECT *, 
-        EXTRACT(EPOCH FROM (NOW() - started_at))::integer as server_elapsed_seconds
-      FROM active_timers 
-      WHERE is_running = true AND is_active = true
-    `);
-    
-    // Broadcast each active timer's current elapsed time to its event room
-    for (const timer of result.rows) {
-      const timerUpdate = {
-        ...timer,
-        elapsed_seconds: timer.server_elapsed_seconds
-      };
-      
-      io.to(`event:${timer.event_id}`).emit('timerTick', timerUpdate);
-    }
-  } catch (error) {
-    console.error('❌ Error broadcasting timer tick:', error);
-  }
-}
-
-// Start server-side timer broadcast (every 1 second)
-if (serverTimerInterval) {
-  clearInterval(serverTimerInterval);
-}
-serverTimerInterval = setInterval(broadcastTimerTick, 1000);
-console.log('⏰ Server-side timer broadcast started - will sync all clients every second');
-
 io.on('connection', (socket) => {
   console.log(`🔌 Socket.IO client connected: ${socket.id}`);
+  
+  // Send server time to client immediately on connection for clock sync
+  socket.emit('serverTime', { serverTime: new Date().toISOString() });
   
   // Join event room
   socket.on('joinEvent', (eventId) => {
     socket.join(`event:${eventId}`);
     console.log(`🔌 Socket.IO client ${socket.id} joined event:${eventId}`);
+    // Send server time again when joining event
+    socket.emit('serverTime', { serverTime: new Date().toISOString() });
   });
   
   // Leave event room

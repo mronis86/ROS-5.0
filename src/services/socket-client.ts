@@ -113,9 +113,9 @@ class SocketClient {
       }
     });
     
-    // Listen for server-driven timer ticks (every second) for perfect sync
-    this.socket.on('timerTick', (timerData: any) => {
-      this.callbacks.onTimerTick?.(timerData);
+    // Listen for server time sync (one-time on connect)
+    this.socket.on('serverTime', (data: any) => {
+      this.callbacks.onServerTime?.(data);
     });
 
     this.socket.on('disconnect', (reason) => {

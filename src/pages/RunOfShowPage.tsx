@@ -632,6 +632,7 @@ const RunOfShowPage: React.FC = () => {
   // ClockPage-style hybrid timer data for real-time updates
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
+  const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
@@ -4875,6 +4876,19 @@ const RunOfShowPage: React.FC = () => {
           console.log('✅ RunOfShow: Sub-cue timer stopped via WebSocket');
         }
       },
+      onServerTime: (data: any) => {
+        // Sync client clock with server clock
+        const serverTime = new Date(data.serverTime).getTime();
+        const clientTime = new Date().getTime();
+        const offset = serverTime - clientTime;
+        setClockOffset(offset);
+        console.log('🕐 Clock sync:', {
+          serverTime: data.serverTime,
+          clientTime: new Date().toISOString(),
+          offsetMs: offset,
+          offsetSeconds: Math.floor(offset / 1000)
+        });
+      },
       onTimerTick: (data: any) => {
         // Server broadcasts elapsed_seconds every second for perfect sync
         if (data && data.event_id === event?.id && data.item_id) {
@@ -4993,24 +5007,38 @@ const RunOfShowPage: React.FC = () => {
   }, [event?.id]);
 
   // Real-time countdown timer for running timers (ClockPage style)
-  // Now uses server-driven timerTick events for perfect sync
+  // Uses clock offset to sync with server time
   useEffect(() => {
     if (hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active) {
       const activeTimer = hybridTimerData.activeTimer;
+      const startedAt = new Date(activeTimer.started_at);
       const total = activeTimer.duration_seconds || 0;
-      const serverElapsed = activeTimer.elapsed_seconds || 0;
       
-      console.log('⏰ Hybrid timer - Using server elapsed:', {
-        serverElapsed,
+      console.log('⏰ Hybrid timer - Setup with clock offset:', {
+        started_at: activeTimer.started_at,
         total,
-        remaining: total - serverElapsed
+        clockOffsetMs: clockOffset,
+        clockOffsetSeconds: Math.floor(clockOffset / 1000)
       });
       
-      // Set initial state from server data
-      setHybridTimerProgress({
-        elapsed: serverElapsed,
-        total: total
-      });
+      const updateCountdown = () => {
+        // Use client time + clock offset to sync with server
+        const syncedNow = new Date(Date.now() + clockOffset);
+        const elapsed = Math.floor((syncedNow.getTime() - startedAt.getTime()) / 1000);
+        
+        setHybridTimerProgress({
+          elapsed: elapsed,
+          total: total
+        });
+      };
+      
+      // Update immediately
+      updateCountdown();
+      
+      // Set up interval for real-time updates
+      const interval = setInterval(updateCountdown, 1000);
+      
+      return () => clearInterval(interval);
     } else if (hybridTimerData?.activeTimer && !hybridTimerData?.activeTimer?.is_running) {
       // Timer is loaded but not running - show 0 elapsed
       const activeTimer = hybridTimerData.activeTimer;
@@ -5025,7 +5053,7 @@ const RunOfShowPage: React.FC = () => {
         total: 0
       });
     }
-  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer?.elapsed_seconds, hybridTimerData?.activeTimer?.updated_at, hybridTimerData?.activeTimer]);
+  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, clockOffset]);
 
   // Debug: Monitor schedule changes
   useEffect(() => {
