@@ -257,19 +257,11 @@ class ChangeLogService {
     try {
       console.log('🔄 Clearing master change log for event:', eventId);
       
-      // Call API to delete change log entries
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/change-log/${eventId}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json'
-        }
+      // Use apiClient instead of direct fetch to ensure correct API URL
+      const result = await apiClient.request(`/api/change-log/${eventId}`, {
+        method: 'DELETE'
       });
       
-      if (!response.ok) {
-        throw new Error(`Failed to clear change log: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
       console.log(`✅ Cleared ${result.deletedCount || 0} change log entries`);
       
       return { 
