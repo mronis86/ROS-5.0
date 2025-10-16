@@ -168,8 +168,15 @@ const ScriptsFollowPage: React.FC = () => {
     if (userRole === 'VIEWER') {
       console.log('👁️ Viewer: Setting up scroll sync listener');
       
-      const handleScrollSync = (data: { scrollPosition: number; lineNumber: number; fontSize: number; timestamp: number }) => {
+      const handleScrollSync = (data: { scrollPosition: number; lineNumber: number; fontSize: number; timestamp: number; eventId?: string }) => {
         console.log('📜 Received scroll sync:', data);
+        
+        // Only process scroll sync if it's for the current event
+        if (data.eventId && data.eventId !== eventId) {
+          console.log('📜 Skipping scroll sync - different event:', data.eventId, 'vs', eventId);
+          return;
+        }
+        
         setScrollerPosition(data.scrollPosition);
         
         // Sync font size first if it's different

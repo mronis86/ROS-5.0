@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Columns Live Data - VMIX</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #000;
+            color: #0f0;
+            margin: 0;
+            padding: 20px;
+            font-size: 12px;
+        }
+        .status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 10px;
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid #0f0;
+            border-radius: 4px;
+        }
+        .connected { color: #0f0; }
+        .disconnected { color: #f00; }
+        .data-container {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .info {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: rgba(0, 100, 255, 0.1);
+            border: 1px solid #0af;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="status">
+        <div>Status: <span id="connectionStatus" class="disconnected">Disconnected</span></div>
+        <div>Last Update: <span id="lastUpdate">Never</span></div>
+        <div>Data Size: <span id="dataSize">0</span> chars</div>
+    </div>
+
+    <div class="info">
+        <strong>VMIX Custom Columns Live Data</strong><br>
+        Format: <span id="format">XML</span> | 
+        Event ID: <span id="eventId">Loading...</span><br>
+        Updates: Real-time via WebSocket (Low Egress)<br>
+        <small>This page connects to Railway WebSocket and generates data in your browser.</small>
+    </div>
+
+    <div class="data-container" id="dataOutput">Loading...</div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const eventId = urlParams.get('eventId');
+        const format = urlParams.get('format') || 'xml';
+
+        document.getElementById('eventId').textContent = eventId || 'Not specified';
+        document.getElementById('format').textContent = format.toUpperCase();
+
+        if (!eventId) {
+            document.getElementById('dataOutput').textContent = 'ERROR: Event ID is required. Add ?eventId=YOUR_EVENT_ID to the URL';
+            document.getElementById('connectionStatus').textContent = 'Error';
+            throw new Error('Event ID required');
+        }
+
+        const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
+        let socket = null;
+        let currentData = null;
+
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+            statusEl.className = connected ? 'connected' : 'disconnected';
+        }
+
+        function generateXML(data) {
+            if (!data || !data.schedule_items || !data.custom_columns) {
+                return `<?xml version="1.0" encoding="UTF-8"?>
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <custom_columns>
+  </custom_columns>
+</data>`;
+            }
+
+            const scheduleItems = data.schedule_items;
+            const customFields = data.custom_columns || [];
+
+            const items = scheduleItems.map((item, index) => {
+                const customFieldsXML = customFields.map(field => {
+                    const value = item.customFields?.[field.id] || '';
+                    return `<${field.id}><![CDATA[${value}]]></${field.id}>`;
+                }).join('');
+                
+                return `
+    <item>
+      <id>${item.id}</id>
+      <row>${index + 1}</row>
+      <cue><![CDATA[${item.customFields?.cue || ''}]]></cue>
+      ${customFieldsXML}
+    </item>`;
+            }).join('');
+
+            return `<?xml version="1.0" encoding="UTF-8"?>
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <custom_columns>
+    ${items}
+  </custom_columns>
+</data>`;
+        }
+
+        function generateCSV(data) {
+            if (!data || !data.schedule_items || !data.custom_columns) {
+                return 'Row,Cue\n';
+            }
+
+            const scheduleItems = data.schedule_items;
+            const customFields = data.custom_columns || [];
+            
+            // Build header
+            let csv = 'Row,Cue';
+            customFields.forEach(field => {
+                csv += `,${field.name}`;
+            });
+            csv += '\n';
+
+            // Build rows
+            scheduleItems.forEach((item, index) => {
+                const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+                csv += `${index + 1},${escapeCsv(item.customFields?.cue || '')}`;
+                
+                customFields.forEach(field => {
+                    const value = item.customFields?.[field.id] || '';
+                    csv += `,${escapeCsv(value)}`;
+                });
+                
+                csv += '\n';
+            });
+
+            return csv;
+        }
+
+        function updateDisplay(data) {
+            currentData = data;
+            const output = format === 'csv' ? generateCSV(data) : generateXML(data);
+            document.getElementById('dataOutput').textContent = output;
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            document.getElementById('dataSize').textContent = output.length;
+        }
+
+        async function loadInitialData() {
+            try {
+                const response = await fetch(`${RAILWAY_URL}/api/run-of-show-data/${eventId}`);
+                if (!response.ok) throw new Error('Failed to fetch initial data');
+                const data = await response.json();
+                updateDisplay(data);
+            } catch (error) {
+                console.error('Error loading initial data:', error);
+                document.getElementById('dataOutput').textContent = 'ERROR: Failed to load initial data. Check console for details.';
+            }
+        }
+
+        function connectWebSocket() {
+            console.log('Connecting to Railway WebSocket...');
+            
+            socket = io(RAILWAY_URL, {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 10
+            });
+
+            socket.on('connect', () => {
+                console.log('✅ Connected to Railway WebSocket');
+                updateStatus(true);
+                socket.emit('join-event', eventId);
+            });
+
+            socket.on('disconnect', () => {
+                console.log('❌ Disconnected from Railway WebSocket');
+                updateStatus(false);
+            });
+
+            socket.on('run-of-show-data-updated', (data) => {
+                console.log('📡 Received data update via WebSocket');
+                if (data && data.event_id === eventId) {
+                    updateDisplay(data);
+                }
+            });
+
+            socket.on('initial-sync', async () => {
+                await loadInitialData();
+            });
+        }
+
+        loadInitialData();
+        connectWebSocket();
+
+        setInterval(() => {
+            if (!socket || !socket.connected) {
+                connectWebSocket();
+            }
+        }, 5000);
+    </script>
+</body>
+</html>

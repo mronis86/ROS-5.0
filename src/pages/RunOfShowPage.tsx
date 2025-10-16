@@ -7268,9 +7268,9 @@ const RunOfShowPage: React.FC = () => {
                               by {change.user_name}
                             </span>
                             {userRole && (
-                              <span className="text-gray-500 text-xs">
+                            <span className="text-gray-500 text-xs">
                                 ({userRole})
-                              </span>
+                            </span>
                             )}
                             {rowNumber && (
                               <span className="text-gray-400 text-xs bg-slate-600 px-2 py-1 rounded">
@@ -7289,18 +7289,18 @@ const RunOfShowPage: React.FC = () => {
                         </div>
                         
                         {/* Show field changes only (ROW/CUE already shown at top) */}
-                        <div className="space-y-1 text-sm">
+                          <div className="space-y-1 text-sm">
                           {/* Show field changes for FIELD_UPDATE - handle both new columns and existing JSON */}
                           {change.action === 'FIELD_UPDATE' && (fieldName || details.fieldName) && (
-                            <div className="text-gray-300">
+                              <div className="text-gray-300">
                               <strong>Field:</strong> {fieldName || details.fieldName}
-                            </div>
-                          )}
-                          
+                              </div>
+                            )}
+                            
                           {/* Show value changes - handle both new columns and existing JSON */}
                           {change.action === 'FIELD_UPDATE' && (oldValue !== undefined || details.oldValue !== undefined) && (
-                            <div className="text-gray-300">
-                              <strong>Changed from:</strong> 
+                              <div className="text-gray-300">
+                                <strong>Changed from:</strong> 
                               <span className="text-red-300 ml-1">"{oldValue || details.oldValue}"</span>
                               <span className="text-gray-400 mx-1">→</span>
                               <span className="text-green-300">"{newValue || details.newValue}"</span>
@@ -7311,17 +7311,17 @@ const RunOfShowPage: React.FC = () => {
                           {change.action === 'FIELD_UPDATE' && !fieldName && !details.fieldName && description && (
                             <div className="text-gray-300">
                               <strong>Change:</strong> {description}
-                            </div>
-                          )}
-                          
-                          {/* Show batch information */}
-                          {change.batch_id && (
-                            <div className="text-gray-500 text-xs mt-2 pt-2 border-t border-slate-600">
-                              Batch: {change.batch_id.slice(0, 8)}... | 
-                              Synced: {new Date(change.batch_created_at).toLocaleString()}
-                            </div>
-                          )}
-                        </div>
+                              </div>
+                            )}
+                            
+                            {/* Show batch information */}
+                            {change.batch_id && (
+                              <div className="text-gray-500 text-xs mt-2 pt-2 border-t border-slate-600">
+                                Batch: {change.batch_id.slice(0, 8)}... | 
+                                Synced: {new Date(change.batch_created_at).toLocaleString()}
+                              </div>
+                            )}
+                          </div>
                       </div>
                     )})}
                   </div>
@@ -9303,9 +9303,9 @@ const RunOfShowPage: React.FC = () => {
                            style={{ width: columnWidths.start }}
                          >
                            <div className="flex flex-col items-center gap-1">
-                             <span className="text-white font-mono text-base font-bold">
+                           <span className="text-white font-mono text-base font-bold">
                                {indentedCues[item.id] ? '↘' : calculateStartTimeWithOvertime(index)}
-                             </span>
+                           </span>
                              {!indentedCues[item.id] && calculateStartTime(index) !== calculateStartTimeWithOvertime(index) && (
                                <span className={`text-sm font-bold px-2 py-1 rounded ${
                                  (() => {

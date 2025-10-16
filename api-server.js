@@ -1447,6 +1447,7 @@ io.on('connection', (socket) => {
     
     // Broadcast to all other clients in the event room (except sender)
     socket.to(`event:${eventId}`).emit('scriptScrollSync', {
+      eventId,
       scrollPosition,
       lineNumber,
       fontSize,
