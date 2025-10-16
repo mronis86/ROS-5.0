@@ -2274,7 +2274,10 @@ const RunOfShowPage: React.FC = () => {
 
       if (result) {
         console.log('✅ Schedule data synced to database successfully');
-        loadMasterChangeLog(); // Refresh master log
+        // Refresh master log and force UI update
+        const updatedMasterLog = await changeLogService.getMasterChangeLog(event.id);
+        setMasterChangeLog(updatedMasterLog);
+        console.log('🔄 Master change log refreshed after sync');
       } else {
         console.log('❌ Failed to sync schedule data to database');
       }
@@ -7089,7 +7092,13 @@ const RunOfShowPage: React.FC = () => {
                 {!showMasterChangeLog && (
                   <div className="flex gap-2">
                     <button
-                      onClick={syncChanges}
+                      onClick={async () => {
+                        await syncChanges();
+                        // Force refresh of local change log display
+                        const localChanges = changeLogService.getLocalChanges();
+                        setChangeLog(localChanges);
+                        console.log('🔄 Local change log refreshed after sync');
+                      }}
                       className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-sm rounded transition-colors"
                       title="Sync changes to Supabase"
                     >
@@ -7112,9 +7121,10 @@ const RunOfShowPage: React.FC = () => {
                 {showMasterChangeLog && (
                   <button
                     onClick={async () => {
-                      await loadMasterChangeLog();
-                      // Force a re-render by updating a dummy state
-                      setMasterChangeLog(prev => [...prev]);
+                      console.log('🔄 Manual reload of master change log...');
+                      const updatedMasterLog = await changeLogService.getMasterChangeLog(event?.id || '');
+                      setMasterChangeLog(updatedMasterLog);
+                      console.log(`🔄 Master change log reloaded: ${updatedMasterLog.length} entries`);
                     }}
                     className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                     title="Reload master change log"
