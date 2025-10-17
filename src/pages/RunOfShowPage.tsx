@@ -4889,15 +4889,6 @@ const RunOfShowPage: React.FC = () => {
           offsetSeconds: Math.floor(offset / 1000)
         });
       },
-      onTimerTick: (data: any) => {
-        // Server broadcasts elapsed_seconds every second for perfect sync
-        if (data && data.event_id === event?.id && data.item_id) {
-          setHybridTimerProgress({
-            elapsed: data.server_elapsed_seconds || data.elapsed_seconds || 0,
-            total: data.duration_seconds || 0
-          });
-        }
-      },
       onActiveTimersUpdated: (data: any) => {
         console.log('📡 Real-time: Active timers updated via WebSocket');
         
