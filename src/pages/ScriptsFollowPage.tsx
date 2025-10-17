@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import { useAuth } from '../contexts/AuthContext';
 
 type CommentType = 'GENERAL' | 'CUE' | 'AUDIO' | 'GFX' | 'VIDEO' | 'LIGHTING';
 
@@ -38,6 +39,7 @@ type UserRole = 'SCROLLER' | 'VIEWER';
 const ScriptsFollowPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const eventId = searchParams.get('eventId');
   const eventName = searchParams.get('eventName');
 
