@@ -912,17 +912,37 @@ async function adjustTimer(minutes) {
     
     console.log(`⏱️ Adjusting from ${currentDurationMinutes}m to ${newDurationMinutes}m`);
     
-    // Update the timer duration in active_timers table (if timer is loaded/running)
-    await axios.put(`${config.apiUrl}/api/active-timers/${currentEvent.id}/${activeItemId}/duration`, {
-      duration_seconds: newTotalSeconds
-    });
-    
-    // Update local schedule
-    schedule = schedule.map(s => 
+    // Step 1: Update the schedule in run_of_show_data table (for row duration display)
+    const updatedSchedule = schedule.map(s => 
       s.id === activeItemId 
         ? { ...s, durationHours: newHours, durationMinutes: newMinutes, durationSeconds: newSeconds }
         : s
     );
+    
+    try {
+      await axios.put(`${config.apiUrl}/api/run-of-show-data/${currentEvent.id}`, {
+        schedule_items: updatedSchedule,
+        user_id: 'osc-electron-app',
+        user_name: 'OSC Control',
+        user_role: 'OPERATOR'
+      });
+      console.log('✅ Schedule row duration updated in database');
+    } catch (error) {
+      console.warn('⚠️ Could not update schedule:', error.message);
+    }
+    
+    // Step 2: Update the timer duration in active_timers table (for hybrid timer)
+    try {
+      await axios.put(`${config.apiUrl}/api/active-timers/${currentEvent.id}/${activeItemId}/duration`, {
+        duration_seconds: newTotalSeconds
+      });
+      console.log('✅ Hybrid timer duration updated');
+    } catch (error) {
+      console.warn('⚠️ Could not update hybrid timer:', error.message);
+    }
+    
+    // Update local schedule
+    schedule = updatedSchedule;
     
     // Update timer progress total
     if (timerProgress[activeItemId]) {
