@@ -169,13 +169,19 @@ const ScriptsFollowPage: React.FC = () => {
       console.log('👁️ Viewer: Setting up scroll sync listener');
       
       const handleScrollSync = (data: { scrollPosition: number; lineNumber: number; fontSize: number; timestamp: number; eventId?: string }) => {
-        console.log('📜 Received scroll sync:', data);
+        console.log('📜 ===== SCROLL SYNC RECEIVED =====');
+        console.log('📜 Data:', data);
+        console.log('📜 Current eventId:', eventId);
+        console.log('📜 scriptRef exists:', !!scriptRef.current);
+        console.log('📜 Current userRole:', userRole);
         
         // Only process scroll sync if it's for the current event
         if (data.eventId && data.eventId !== eventId) {
-          console.log('📜 Skipping scroll sync - different event:', data.eventId, 'vs', eventId);
+          console.log('📜 ❌ SKIPPING - Different event:', data.eventId, 'vs', eventId);
           return;
         }
+        
+        console.log('📜 ✅ Event ID matches - processing scroll sync');
         
         setScrollerPosition(data.scrollPosition);
         
@@ -187,12 +193,19 @@ const ScriptsFollowPage: React.FC = () => {
         
         // Auto-scroll viewer to scroller's position with smooth animation
         if (scriptRef.current) {
+          console.log('📜 Scrolling to position:', data.scrollPosition);
+          console.log('📜 Current scroll position:', scriptRef.current.scrollTop);
+          
           // Wait for font size to apply if it changed
           setTimeout(() => {
-            if (!scriptRef.current) return;
+            if (!scriptRef.current) {
+              console.log('📜 ❌ scriptRef lost after timeout');
+              return;
+            }
             
             // Use instant scrolling for real-time sync (smooth causes lag)
             scriptRef.current.scrollTop = data.scrollPosition;
+            console.log('📜 ✅ Scroll applied - new position:', scriptRef.current.scrollTop);
             
             // Update visible line range for viewer with accurate calculation
             setTimeout(() => {
@@ -216,9 +229,13 @@ const ScriptsFollowPage: React.FC = () => {
                 
                 setCurrentVisibleLine(startLine);
                 setVisibleLineRange({ start: startLine, end: endLine });
+                
+                console.log('📜 Updated visible range:', { start: startLine, end: endLine });
               }
             }, 50);
           }, data.fontSize !== fontSize ? 100 : 0); // Extra delay if font changed
+        } else {
+          console.log('📜 ❌ scriptRef is null - cannot scroll');
         }
       };
 
@@ -861,20 +878,43 @@ const ScriptsFollowPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Role Info Banner */}
-        <div className="mt-3 px-4 py-2 bg-slate-700 rounded text-sm flex items-center justify-between">
-          <div>
-            {userRole === 'SCROLLER' ? (
-              <span>🎬 You are the <strong>Scroller</strong> - Your scroll position is being broadcast to all viewers.</span>
-            ) : (
-              <span>👁️ You are a <strong>Viewer</strong> - Following the scroller's position automatically.</span>
-            )}
+        {/* Role Info Banner - Enhanced */}
+        <div className={`mt-3 px-6 py-4 rounded-lg text-base flex items-center justify-between shadow-lg border-2 ${
+          userRole === 'SCROLLER' 
+            ? 'bg-gradient-to-r from-green-900 to-green-800 border-green-600' 
+            : 'bg-gradient-to-r from-blue-900 to-blue-800 border-blue-600'
+        }`}>
+          <div className="flex items-center gap-4">
+            <div className={`text-3xl ${userRole === 'SCROLLER' ? 'animate-pulse' : ''}`}>
+              {userRole === 'SCROLLER' ? '🎬' : '👁️'}
+            </div>
+            <div>
+              <div className="font-bold text-lg text-white">
+                {userRole === 'SCROLLER' ? 'SCROLLER MODE' : 'VIEWER MODE'}
+              </div>
+              <div className="text-sm text-slate-200 mt-1">
+                {userRole === 'SCROLLER' ? (
+                  <span>Broadcasting your scroll position to all viewers for event: <strong>{eventName}</strong></span>
+                ) : (
+                  <span>Auto-following the scroller for event: <strong>{eventName}</strong></span>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isWebSocketConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-            <span className="text-xs text-slate-400">
-              {isWebSocketConnected ? 'Connected' : 'Disconnected'}
-            </span>
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
+              isWebSocketConnected ? 'bg-green-600' : 'bg-red-600'
+            }`}>
+              <div className={`w-3 h-3 rounded-full ${isWebSocketConnected ? 'bg-white animate-pulse' : 'bg-white'}`} />
+              <span className="text-sm font-bold text-white">
+                {isWebSocketConnected ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+            {userRole === 'VIEWER' && (
+              <div className="px-4 py-2 bg-blue-600 rounded-lg">
+                <span className="text-sm font-bold text-white">Event: {eventId?.slice(0, 8)}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
