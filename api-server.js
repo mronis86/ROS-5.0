@@ -808,19 +808,38 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
       return res.status(404).json({ error: 'Active timer not found' });
     }
     
-    // Get the updated timer data
+    // Get the updated timer data with server-calculated elapsed_seconds
     const timerResult = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 AND item_id = $2',
+      `SELECT *, 
+        CASE 
+          WHEN is_running = true AND started_at IS NOT NULL 
+          THEN EXTRACT(EPOCH FROM (NOW() - started_at))::integer
+          ELSE 0
+        END as server_elapsed_seconds
+      FROM active_timers 
+      WHERE event_id = $1 AND item_id = $2`,
       [eventId, itemId]
     );
     
-    // Broadcast update via WebSocket
-    broadcastUpdate(eventId, 'timerUpdated', timerResult.rows[0]);
+    const timerData = {
+      ...timerResult.rows[0],
+      elapsed_seconds: timerResult.rows[0].server_elapsed_seconds
+    };
+    
+    console.log('⏱️ Timer duration updated - broadcasting:', {
+      itemId,
+      duration_seconds,
+      elapsed_seconds: timerData.elapsed_seconds,
+      is_running: timerData.is_running
+    });
+    
+    // Broadcast update via WebSocket with current elapsed time
+    broadcastUpdate(eventId, 'timerUpdated', timerData);
     
     res.json({ 
       success: true, 
       message: 'Timer duration updated',
-      timer: timerResult.rows[0]
+      timer: timerData
     });
   } catch (error) {
     console.error('Error updating timer duration:', error);
