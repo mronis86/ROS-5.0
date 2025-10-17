@@ -55,7 +55,8 @@ const ScriptsFollowPage: React.FC = () => {
   const originalScriptTextRef = useRef<string>('');
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [newComment, setNewComment] = useState<string>('');
-  const [userName, setUserName] = useState<string>('User');
+  // Get user name from Stack Auth or default to "User"
+  const userName = user?.displayName || user?.primaryEmail || 'User';
   const [fontSize, setFontSize] = useState<number>(14); // Font size in px
   const [currentVisibleLine, setCurrentVisibleLine] = useState<number>(0); // Track current line in view
   const [visibleLineRange, setVisibleLineRange] = useState<{ start: number; end: number }>({ start: 0, end: 20 });
@@ -866,15 +867,6 @@ const ScriptsFollowPage: React.FC = () => {
             >
               📂 Load
             </button>
-
-            {/* User Name Input */}
-            <input
-              type="text"
-              value={userName}
-              onChange={(e) => setUserName(e.target.value)}
-              placeholder="Your name"
-              className="px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
           </div>
         </div>
 
