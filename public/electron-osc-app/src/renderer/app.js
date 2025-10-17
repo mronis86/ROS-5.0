@@ -920,15 +920,26 @@ async function adjustTimer(minutes) {
     );
     
     try {
-      await axios.put(`${config.apiUrl}/api/run-of-show-data/${currentEvent.id}`, {
+      // First, get the current run_of_show_data to preserve custom_columns and settings
+      const currentDataResponse = await axios.get(`${config.apiUrl}/api/run-of-show-data/${currentEvent.id}`);
+      const currentData = currentDataResponse.data;
+      
+      // Update with preserved data
+      await axios.post(`${config.apiUrl}/api/run-of-show-data`, {
+        event_id: currentEvent.id,
+        event_name: currentData.event_name,
+        event_date: currentData.event_date,
         schedule_items: updatedSchedule,
-        user_id: 'osc-electron-app',
-        user_name: 'OSC Control',
-        user_role: 'OPERATOR'
+        custom_columns: currentData.custom_columns || [],
+        settings: currentData.settings || {},
+        last_modified_by: 'osc-electron-app',
+        last_modified_by_name: 'OSC Control',
+        last_modified_by_role: 'OPERATOR'
       });
       console.log('✅ Schedule row duration updated in database');
     } catch (error) {
       console.warn('⚠️ Could not update schedule:', error.message);
+      console.error(error);
     }
     
     // Step 2: Update the timer duration in active_timers table (for hybrid timer)
