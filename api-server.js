@@ -47,6 +47,37 @@ const pool = new Pool({
   allowExitOnIdle: true
 });
 
+// Upstash Redis REST API helper - for caching graphics data
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+async function setUpstashCache(key, value, expirySeconds = 3600) {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+    console.log('⚠️ Upstash not configured, skipping cache update');
+    return false;
+  }
+  
+  try {
+    const response = await fetch(`${UPSTASH_URL}/set/${key}/${value}?EX=${expirySeconds}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${UPSTASH_TOKEN}`
+      }
+    });
+    
+    if (response.ok) {
+      console.log(`✅ Upstash cache updated: ${key}`);
+      return true;
+    } else {
+      console.error(`❌ Upstash cache update failed for ${key}:`, response.status);
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Upstash error for ${key}:`, error.message);
+    return false;
+  }
+}
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -293,17 +324,67 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
   </lower_thirds>
 </data>`;
 
+    // Cache to Upstash for fast access by Singular.Live, vMix, etc.
+    const fullXML = xmlHeader + xmlContent;
+    await setUpstashCache(`lower-thirds-xml-${eventId}`, encodeURIComponent(fullXML), 3600);
+    
     res.set({
       'Content-Type': 'application/xml; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
       'Expires': '0'
     });
-    res.send(xmlHeader + xmlContent);
+    res.send(fullXML);
   } catch (error) {
     console.error('Error in lower-thirds.xml:', error);
     res.set('Content-Type', 'application/xml');
     res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Internal server error</error>');
+  }
+});
+
+// ========================================
+// UPSTASH CACHED ENDPOINTS
+// These endpoints read from Upstash cache for fast, low-cost access
+// Perfect for Singular.Live, vMix, and other graphics platforms
+// ========================================
+
+// Upstash-cached Lower Thirds XML - for Singular.Live
+app.get('/api/cache/lower-thirds.xml', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    
+    if (!eventId) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      return res.status(503).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache service not configured</error>');
+    }
+    
+    // Get from Upstash cache
+    const response = await fetch(`${UPSTASH_URL}/get/lower-thirds-xml-${eventId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result) {
+        const xmlContent = decodeURIComponent(data.result);
+        res.set('Content-Type', 'application/xml; charset=utf-8');
+        return res.send(xmlContent);
+      }
+    }
+    
+    // If not in cache, return error (data will be cached on next update)
+    res.set('Content-Type', 'application/xml');
+    res.status(404).send('<?xml version="1.0" encoding="UTF-8"?><error>Data not yet cached. Please update your schedule first.</error>');
+    
+  } catch (error) {
+    console.error('Error reading from Upstash:', error);
+    res.set('Content-Type', 'application/xml');
+    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache read error</error>');
   }
 });
 
