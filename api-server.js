@@ -225,6 +225,54 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Diagnostic endpoint to check Neon connections and activity
+app.get('/api/neon-diagnostics', async (req, res) => {
+  try {
+    // Check active connections
+    const connections = await pool.query(`
+      SELECT 
+        COUNT(*) as total_connections,
+        COUNT(*) FILTER (WHERE state = 'active') as active_connections,
+        COUNT(*) FILTER (WHERE state = 'idle') as idle_connections
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+    `);
+    
+    // Check recent queries
+    const recentQueries = await pool.query(`
+      SELECT 
+        query,
+        state,
+        state_change,
+        NOW() - state_change as idle_duration
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+      ORDER BY state_change DESC
+      LIMIT 10
+    `);
+    
+    // Get pool stats
+    const poolStats = {
+      totalCount: pool.totalCount,
+      idleCount: pool.idleCount,
+      waitingCount: pool.waitingCount
+    };
+    
+    res.json({
+      timestamp: new Date().toISOString(),
+      neonConnections: connections.rows[0],
+      railwayPoolStats: poolStats,
+      recentQueries: recentQueries.rows.map(q => ({
+        query: q.query.substring(0, 100),
+        state: q.state,
+        idleFor: q.idle_duration
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Test endpoint to verify Upstash is working
 app.get('/api/test-upstash', async (req, res) => {
   try {
