@@ -92,6 +92,7 @@ const TeleprompterPage: React.FC = () => {
   const isAutoScrollingRef = useRef<boolean>(false);
   const targetScrollPositionRef = useRef<number>(0);
   const viewerAnimationFrameRef = useRef<number | null>(null);
+  const lineRefsMap = useRef<Map<number, HTMLDivElement>>(new Map());
   
   // Load script from database if not in state
   useEffect(() => {
@@ -151,7 +152,7 @@ const TeleprompterPage: React.FC = () => {
     console.log('👁️ Viewer: Setting up teleprompter scroll sync listener');
     
     const handleScrollSync = (data: { scrollPosition: number; lineNumber: number; fontSize: number; timestamp: number; eventId?: string }) => {
-      console.log('📜 Teleprompter: Received scroll sync:', data);
+      console.log('📜 Teleprompter: Received scroll sync - line:', data.lineNumber, 'position:', data.scrollPosition);
       
       // Only process scroll sync if it's for the current event
       if (data.eventId && data.eventId !== eventId) {
@@ -159,8 +160,23 @@ const TeleprompterPage: React.FC = () => {
         return;
       }
       
-      // Set target position for smooth interpolation
-      targetScrollPositionRef.current = data.scrollPosition;
+      // Sync font size first
+      if (data.fontSize && data.fontSize !== settings.fontSize) {
+        updateSettings({ fontSize: data.fontSize });
+      }
+      
+      // Use line-based scrolling for better alignment
+      // Find which line should be at the reading guide (50% viewport)
+      if (scriptRef.current) {
+        const containerHeight = scriptRef.current.clientHeight;
+        const targetLineAtGuide = Math.floor(data.scrollPosition / (data.fontSize * settings.lineHeight));
+        
+        // Scroll so that line is at 50% of viewport
+        const targetScroll = data.scrollPosition;
+        targetScrollPositionRef.current = targetScroll;
+        
+        console.log('📜 Target line at guide:', targetLineAtGuide, 'Target scroll:', targetScroll);
+      }
     };
     
     socket.on('scriptScrollSync', handleScrollSync);
@@ -425,9 +441,7 @@ const TeleprompterPage: React.FC = () => {
               >
                 ← Back to Scripts Follow
               </button>
-              {userRole === 'SCROLLER' && (
-                <h1 className="text-xl font-bold text-white">{eventName} - Teleprompter</h1>
-              )}
+              <h1 className="text-xl font-bold text-white">{eventName} - Teleprompter</h1>
             </div>
           
           <div className="flex items-center gap-4">
@@ -468,97 +482,100 @@ const TeleprompterPage: React.FC = () => {
         </div>
       </div>
       
-      {/* Controls Panel - SCROLLER only */}
-      {userRole === 'SCROLLER' && (
-        <div className={`bg-slate-800 border-b border-slate-700 transition-all duration-300 ${showControls ? 'max-h-96' : 'max-h-12'} overflow-hidden`}>
-          <div className="p-4">
-            <button
-              onClick={() => setShowControls(!showControls)}
-              className="text-sm text-slate-400 hover:text-white mb-2"
-            >
-              {showControls ? '▼ Hide Controls' : '▶ Show Controls'}
-            </button>
-            
-            {showControls && (
-              <div className="space-y-4">
-                {/* Row 1: Manual Mode Toggle and Control Buttons */}
-                <div className="flex items-center gap-4">
-                  {/* Manual Mode Toggle Switch */}
-                  <div className="flex items-center gap-3 bg-slate-700 px-4 py-3 rounded-lg">
-                    <label className="text-sm text-slate-300 font-medium">Manual Mode:</label>
+      {/* Main Area: Sidebar + Script */}
+      <div className="flex flex-1" style={{ height: 'calc(100vh - 72px)' }}>
+        {/* Left Sidebar - Controls (SCROLLER only) */}
+        {userRole === 'SCROLLER' && (
+          <div className={`bg-slate-800 border-r border-slate-700 transition-all duration-300 overflow-y-auto flex-shrink-0 ${
+            showControls ? 'w-80' : 'w-12'
+          }`}>
+            <div className="p-3">
+              {/* Toggle and Manual Mode Row */}
+              <div className="flex gap-2 mb-4">
+                <button
+                  onClick={() => setShowControls(!showControls)}
+                  className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium transition-colors"
+                >
+                  {showControls ? '◀' : '▶'}
+                </button>
+                
+                {showControls && (
+                  <div className="flex-1 bg-slate-700 px-3 py-2 rounded-lg flex items-center justify-between">
+                    <label className="text-xs text-slate-300 font-medium">Manual</label>
                     <button
                       onClick={toggleManualMode}
-                      className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${
+                      className={`relative h-6 w-12 items-center rounded-full transition-colors flex ${
                         isManualMode ? 'bg-blue-600' : 'bg-slate-500'
                       }`}
                     >
-                      <span
-                        className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
-                          isManualMode ? 'translate-x-9' : 'translate-x-1'
+                      <span className={`inline-block h-4 w-4 ml-1 transform rounded-full bg-white transition-transform ${
+                          isManualMode ? 'translate-x-6' : ''
                         }`}
                       />
                     </button>
-                    <span className={`text-sm font-bold ${isManualMode ? 'text-blue-300' : 'text-slate-400'}`}>
+                    <span className={`text-xs font-bold ${isManualMode ? 'text-blue-300' : 'text-slate-400'}`}>
                       {isManualMode ? 'ON' : 'OFF'}
                     </span>
                   </div>
+                )}
+              </div>
+              
+              {showControls && (
+                <div className="space-y-3">
                   
-                  {/* Playback Control Buttons */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handlePlay}
-                      disabled={isManualMode || isAutoScrolling}
-                      className={`px-5 py-3 rounded-lg font-bold text-base transition-colors ${
-                        isManualMode || isAutoScrolling
-                          ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
-                          : 'bg-green-600 text-white hover:bg-green-500'
-                      }`}
-                      title={isManualMode ? 'Turn off Manual Mode to use auto-scroll' : isAutoScrolling ? 'Already playing' : 'Start auto-scroll'}
-                    >
-                      ▶️ Play
-                    </button>
-                    
-                    <button
-                      onClick={handlePause}
-                      disabled={isManualMode || !isAutoScrolling}
-                      className={`px-5 py-3 rounded-lg font-bold text-base transition-colors ${
-                        isManualMode || !isAutoScrolling
-                          ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
-                          : 'bg-yellow-600 text-white hover:bg-yellow-500'
-                      }`}
-                      title={isManualMode ? 'Disabled in Manual Mode' : ''}
-                    >
-                      ⏸️ Pause
-                    </button>
-                    
-                    <button
-                      onClick={handleStop}
-                      disabled={isManualMode}
-                      className={`px-5 py-3 rounded-lg font-bold text-base transition-colors ${
-                        isManualMode
-                          ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
-                          : 'bg-red-600 text-white hover:bg-red-500'
-                      }`}
-                      title={isManualMode ? 'Disabled in Manual Mode' : ''}
-                    >
-                      ⏹️ Stop
-                    </button>
-                    
-                    <button
-                      onClick={handleReset}
-                      className="px-5 py-3 rounded-lg font-bold text-base bg-purple-600 text-white hover:bg-purple-500 transition-colors"
-                      title="Scroll to top of script"
-                    >
-                      🔄 Reset
-                    </button>
+                  {/* Playback Controls */}
+                  <div>
+                    <label className="text-xs text-slate-300 mb-2 block">Playback:</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={handlePlay}
+                        disabled={isManualMode || isAutoScrolling}
+                        className={`px-3 py-2 rounded text-xs font-bold transition-colors ${
+                          isManualMode || isAutoScrolling
+                            ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
+                            : 'bg-green-600 text-white hover:bg-green-500'
+                        }`}
+                      >
+                        ▶️ Play
+                      </button>
+                      
+                      <button
+                        onClick={handlePause}
+                        disabled={isManualMode || !isAutoScrolling}
+                        className={`px-3 py-2 rounded text-xs font-bold transition-colors ${
+                          isManualMode || !isAutoScrolling
+                            ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
+                            : 'bg-yellow-600 text-white hover:bg-yellow-500'
+                        }`}
+                      >
+                        ⏸️ Pause
+                      </button>
+                      
+                      <button
+                        onClick={handleStop}
+                        disabled={isManualMode}
+                        className={`px-3 py-2 rounded text-xs font-bold transition-colors ${
+                          isManualMode
+                            ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
+                            : 'bg-red-600 text-white hover:bg-red-500'
+                        }`}
+                      >
+                        ⏹️ Stop
+                      </button>
+                      
+                      <button
+                        onClick={handleReset}
+                        className="px-3 py-2 rounded text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 transition-colors"
+                      >
+                        🔄 Reset
+                      </button>
+                    </div>
                   </div>
                   
-                  <div className="flex-1">
-                    <label className="block text-sm text-slate-300 mb-1">
-                      Scroll Speed: {settings.scrollSpeed} px/s
-                      <span className="ml-2 text-xs text-slate-400">
-                        (Tip: Manual scroll auto-pauses)
-                      </span>
+                  {/* Scroll Speed */}
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">
+                      Speed: {settings.scrollSpeed} px/s
                     </label>
                     <input
                       type="range"
@@ -570,13 +587,11 @@ const TeleprompterPage: React.FC = () => {
                       className="w-full"
                     />
                   </div>
-                </div>
-                
-                {/* Row 2: Font Size and Line Height */}
-                <div className="flex items-center gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm text-slate-300 mb-1">
-                      Font Size: {settings.fontSize}px
+                  
+                  {/* Font Size */}
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">
+                      Font: {settings.fontSize}px
                     </label>
                     <input
                       type="range"
@@ -589,8 +604,9 @@ const TeleprompterPage: React.FC = () => {
                     />
                   </div>
                   
-                  <div className="flex-1">
-                    <label className="block text-sm text-slate-300 mb-1">
+                  {/* Line Height */}
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">
                       Line Height: {settings.lineHeight}
                     </label>
                     <input
@@ -603,120 +619,125 @@ const TeleprompterPage: React.FC = () => {
                       className="w-full"
                     />
                   </div>
-                </div>
-                
-                {/* Row 3: Text Alignment */}
-                <div className="flex items-center gap-4">
-                  <label className="text-sm text-slate-300">Text Align:</label>
-                  <div className="flex gap-2">
-                    {(['left', 'center', 'right'] as const).map((align) => (
+                  
+                  {/* Text Alignment */}
+                  <div>
+                    <label className="text-xs text-slate-300 mb-2 block">Text Align:</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['left', 'center', 'right'] as const).map((align) => (
+                        <button
+                          key={align}
+                          onClick={() => updateSettings({ textAlign: align })}
+                          className={`px-2 py-2 rounded text-xl transition-colors ${
+                            settings.textAlign === align
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                          }`}
+                        >
+                          {align === 'left' ? '⬅️' : align === 'center' ? '↔️' : '➡️'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Colors */}
+                  <div>
+                    <label className="text-xs text-slate-300 mb-2 block">Colors:</label>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400">Background:</span>
+                        <input
+                          type="color"
+                          value={settings.backgroundColor}
+                          onChange={(e) => updateSettings({ backgroundColor: e.target.value })}
+                          className="w-12 h-8 rounded cursor-pointer"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400">Text:</span>
+                        <input
+                          type="color"
+                          value={settings.textColor}
+                          onChange={(e) => updateSettings({ textColor: e.target.value })}
+                          className="w-12 h-8 rounded cursor-pointer"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400">Guide:</span>
+                        <input
+                          type="color"
+                          value={settings.readingGuideColor}
+                          onChange={(e) => updateSettings({ readingGuideColor: e.target.value })}
+                          className="w-12 h-8 rounded cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Flip/Mirror */}
+                  <div>
+                    <label className="text-xs text-slate-300 mb-2 block">Flip/Mirror:</label>
+                    <div className="grid grid-cols-2 gap-2">
                       <button
-                        key={align}
-                        onClick={() => updateSettings({ textAlign: align })}
-                        className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                          settings.textAlign === align
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        onClick={() => updateSettings({ isMirroredHorizontal: !settings.isMirroredHorizontal })}
+                        className={`px-2 py-2 rounded text-xs font-medium transition-colors ${
+                          settings.isMirroredHorizontal ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                         }`}
                       >
-                        {align === 'left' ? '⬅️ Left' : align === 'center' ? '↔️ Center' : '➡️ Right'}
+                        ↔️ H-Flip
                       </button>
-                    ))}
+                      
+                      <button
+                        onClick={() => updateSettings({ isMirroredVertical: !settings.isMirroredVertical })}
+                        className={`px-2 py-2 rounded text-xs font-medium transition-colors ${
+                          settings.isMirroredVertical ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        }`}
+                      >
+                        ↕️ V-Flip
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Features */}
+                  <div>
+                    <label className="text-xs text-slate-300 mb-2 block">Features:</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => updateSettings({ showReadingGuide: !settings.showReadingGuide })}
+                        className={`px-2 py-2 rounded text-xs font-medium transition-colors ${
+                          settings.showReadingGuide ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        }`}
+                      >
+                        🎯 Guide
+                      </button>
+                      
+                      <button
+                        onClick={() => updateSettings({ showComments: !settings.showComments })}
+                        className={`px-2 py-2 rounded text-xs font-medium transition-colors ${
+                          settings.showComments ? 'bg-yellow-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        }`}
+                      >
+                        💬 Comments
+                      </button>
+                    </div>
                   </div>
                 </div>
-                
-                {/* Row 4: Colors and Mirror */}
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-slate-300">Background:</label>
-                    <input
-                      type="color"
-                      value={settings.backgroundColor}
-                      onChange={(e) => updateSettings({ backgroundColor: e.target.value })}
-                      className="w-16 h-10 rounded cursor-pointer"
-                    />
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-slate-300">Text Color:</label>
-                    <input
-                      type="color"
-                      value={settings.textColor}
-                      onChange={(e) => updateSettings({ textColor: e.target.value })}
-                      className="w-16 h-10 rounded cursor-pointer"
-                    />
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-slate-300">Guide:</label>
-                    <input
-                      type="color"
-                      value={settings.readingGuideColor}
-                      onChange={(e) => updateSettings({ readingGuideColor: e.target.value })}
-                      className="w-16 h-10 rounded cursor-pointer"
-                    />
-                  </div>
-                </div>
-                
-                {/* Row 5: Flip/Mirror and Features */}
-                <div className="flex items-center gap-4 flex-wrap">
-                  <button
-                    onClick={() => updateSettings({ isMirroredHorizontal: !settings.isMirroredHorizontal })}
-                    className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                      settings.isMirroredHorizontal
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                    }`}
-                  >
-                    ↔️ {settings.isMirroredHorizontal ? 'H-Flip ON' : 'Flip Horizontal'}
-                  </button>
-                  
-                  <button
-                    onClick={() => updateSettings({ isMirroredVertical: !settings.isMirroredVertical })}
-                    className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                      settings.isMirroredVertical
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                    }`}
-                  >
-                    ↕️ {settings.isMirroredVertical ? 'V-Flip ON' : 'Flip Vertical'}
-                  </button>
-                  
-                  <button
-                    onClick={() => updateSettings({ showReadingGuide: !settings.showReadingGuide })}
-                    className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                      settings.showReadingGuide
-                        ? 'bg-red-600 text-white'
-                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                    }`}
-                  >
-                    🎯 {settings.showReadingGuide ? 'Guide ON' : 'Reading Guide'}
-                  </button>
-                  
-                  <button
-                    onClick={() => updateSettings({ showComments: !settings.showComments })}
-                    className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                      settings.showComments
-                        ? 'bg-yellow-600 text-white'
-                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                    }`}
-                  >
-                    💬 {settings.showComments ? 'Comments ON' : 'Show Comments'}
-                  </button>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      )}
-      
-      {/* Reading Guide - Fixed at 50% viewport */}
+        )
+      }
+        
+      {/* Reading Guide - Fixed at 50% viewport, only over script area */}
       {settings.showReadingGuide && (
         <div
-          className="fixed left-0 right-0 pointer-events-none z-50"
+          className="fixed pointer-events-none z-50"
           style={{
+            left: userRole === 'SCROLLER' ? (showControls ? '320px' : '48px') : '0',
+            right: '0',
             top: '50%',
-            transform: 'translateY(-50%)'
+            transform: 'translateY(-50%)',
+            transition: 'left 0.3s ease'
           }}
         >
           {/* Left arrow pointing RIGHT (inward) */}
@@ -745,15 +766,16 @@ const TeleprompterPage: React.FC = () => {
         </div>
       )}
       
-      {/* Script Display */}
+      {/* Script Display - Full height, flex-1 to fill remaining space */}
       <div
         ref={scriptRef}
         onScroll={handleManualScroll}
-        className="overflow-y-auto"
+        className="flex-1 overflow-y-auto"
         style={{
-          height: userRole === 'SCROLLER' ? 'calc(100vh - 280px)' : '100vh',
+          height: 'calc(100vh - 72px)',
           transform: `${settings.isMirroredHorizontal ? 'scaleX(-1)' : 'scaleX(1)'} ${settings.isMirroredVertical ? 'scaleY(-1)' : 'scaleY(1)'}`,
-          padding: '20vh 5vw'
+          padding: '50vh 5vw 50vh 5vw',
+          scrollBehavior: userRole === 'SCROLLER' && isManualMode ? 'smooth' : 'auto'
         }}
       >
         <div
@@ -772,7 +794,14 @@ const TeleprompterPage: React.FC = () => {
             const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
             
             return (
-              <div key={index} className="mb-2">
+              <div 
+                key={index} 
+                className="mb-2"
+                data-line-number={index}
+                ref={(el) => {
+                  if (el) lineRefsMap.current.set(index, el);
+                }}
+              >
                 {/* Render comment bars from PREVIOUS line BEFORE current line text */}
                 {lineComments.length > 0 && (
                   <div className="mb-2 space-y-2">
@@ -808,9 +837,7 @@ const TeleprompterPage: React.FC = () => {
             );
           })}
         </div>
-        
-        {/* Spacer at the end */}
-        <div style={{ height: '50vh' }} />
+      </div>
       </div>
     </div>
   );
