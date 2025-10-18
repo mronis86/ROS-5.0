@@ -1536,6 +1536,19 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle teleprompter settings updates
+  socket.on('teleprompterSettingsUpdate', (data) => {
+    const { eventId, settings } = data;
+    console.log(`🎨 Teleprompter settings update for event:${eventId}`);
+    
+    // Broadcast to all other clients in the event room (except sender)
+    socket.to(`event:${eventId}`).emit('teleprompterSettingsUpdated', {
+      eventId,
+      settings,
+      timestamp: Date.now()
+    });
+  });
+
   // Handle sync request event
   socket.on('requestSync', async (data) => {
     console.log(`🔄 Sync request received for event: ${data.eventId}`);

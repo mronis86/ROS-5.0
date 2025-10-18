@@ -869,6 +869,23 @@ const ScriptsFollowPage: React.FC = () => {
             >
               📂 Load
             </button>
+
+            {/* Open in Teleprompter Button */}
+            <button
+              onClick={() => {
+                navigate(`/teleprompter?eventId=${eventId}&eventName=${encodeURIComponent(eventName || '')}`, {
+                  state: {
+                    scriptText,
+                    comments,
+                    scriptId: currentScriptId
+                  }
+                });
+              }}
+              disabled={!scriptText}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
+            >
+              📺 Teleprompter
+            </button>
           </div>
         </div>
 
@@ -1414,7 +1431,7 @@ const ScriptsFollowPage: React.FC = () => {
             </div>
             
             <div className="flex-1 overflow-y-auto p-6">
-              {savedScripts.length === 0 ? (
+              {!Array.isArray(savedScripts) || savedScripts.length === 0 ? (
                 <div className="text-center py-12 text-slate-400">
                   <p className="text-lg mb-2">No saved scripts yet</p>
                   <p className="text-sm">Import a script and click Save to get started</p>

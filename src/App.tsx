@@ -20,6 +20,7 @@ import ReportsPage from './pages/ReportsPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
 import ScriptsFollowPage from './pages/ScriptsFollowPage';
+import TeleprompterPage from './pages/TeleprompterPage';
 
 function AppContent() {
   const location = useLocation();
@@ -28,6 +29,7 @@ function AppContent() {
   const isGreenRoom = location.pathname === '/green-room';
   const isPhotoView = location.pathname === '/photo-view';
   const isScriptsFollow = location.pathname === '/scripts-follow';
+  const isTeleprompter = location.pathname === '/teleprompter';
   const isGoogleSheets = location.pathname === '/google-sheets-vmix';
   const isLocalXML = location.pathname === '/lower-thirds-xml' || location.pathname === '/schedule-xml' || location.pathname === '/custom-columns-xml';
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
@@ -35,7 +37,7 @@ function AppContent() {
   return (
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isGoogleSheets && !isLocalXML && !isNetlifyXML && <AppHeader />}
+      {!isFullScreenTimer && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && <AppHeader />}
       
       <AuthGuard>
         <Routes>
@@ -47,6 +49,7 @@ function AppContent() {
           <Route path="/green-room" element={<GreenRoomPage />} />
           <Route path="/photo-view" element={<PhotoViewPage />} />
           <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
+          <Route path="/teleprompter" element={<TeleprompterPage />} />
         </Routes>
       </AuthGuard>
       
