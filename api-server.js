@@ -94,12 +94,75 @@ app.get('/health', async (req, res) => {
       status: 'healthy', 
       timestamp: new Date().toISOString(),
       dbConnected: result.rows[0].health === 1,
-      database: 'connected'
+      database: 'connected',
+      upstashConfigured: !!(UPSTASH_URL && UPSTASH_TOKEN)
     });
   } catch (error) {
     res.status(500).json({ 
       status: 'unhealthy', 
       error: error.message 
+    });
+  }
+});
+
+// Test endpoint to verify Upstash is working
+app.get('/api/test-upstash', async (req, res) => {
+  try {
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      return res.json({
+        configured: false,
+        message: 'Upstash environment variables not set',
+        hasURL: !!UPSTASH_URL,
+        hasToken: !!UPSTASH_TOKEN
+      });
+    }
+    
+    // Try to write a test value
+    const testKey = 'test-key';
+    const testValue = 'test-value-' + Date.now();
+    
+    const writeResponse = await fetch(`${UPSTASH_URL}/set/${testKey}/${encodeURIComponent(testValue)}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (!writeResponse.ok) {
+      return res.json({
+        configured: true,
+        writeSuccess: false,
+        writeStatus: writeResponse.status,
+        writeError: await writeResponse.text()
+      });
+    }
+    
+    // Try to read it back
+    const readResponse = await fetch(`${UPSTASH_URL}/get/${testKey}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (readResponse.ok) {
+      const data = await readResponse.json();
+      return res.json({
+        configured: true,
+        writeSuccess: true,
+        readSuccess: true,
+        testValue: data.result,
+        message: 'Upstash is working correctly!'
+      });
+    }
+    
+    return res.json({
+      configured: true,
+      writeSuccess: true,
+      readSuccess: false,
+      readStatus: readResponse.status
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      configured: true,
+      error: error.message
     });
   }
 });
