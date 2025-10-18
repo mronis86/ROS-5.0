@@ -412,7 +412,7 @@ app.get('/api/cache/lower-thirds.csv', async (req, res) => {
       const data = await response.json();
       if (data.result) {
         const csvContent = decodeURIComponent(data.result);
-        res.set('Content-Type': 'text/csv; charset=utf-8');
+        res.set('Content-Type', 'text/csv; charset=utf-8');
         return res.send(csvContent);
       }
     }
