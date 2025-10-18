@@ -218,8 +218,8 @@
             // Initial load
             fetchXMLData();
             
-            // Auto-refresh every 10 seconds
-            setInterval(fetchXMLData, 10000);
+            // Auto-refresh every 60 seconds (reduced from 10s to minimize Neon data transfer)
+            setInterval(fetchXMLData, 60000);
         }
     </script>
 </body>

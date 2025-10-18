@@ -223,11 +223,11 @@
             if (isPolling) return;
             
             isPolling = true;
-            showStatus('Polling for changes every 5 seconds...', 'info');
+            showStatus('Polling for changes every 60 seconds...', 'info');
             
             setInterval(() => {
                 loadData();
-            }, 5000);
+            }, 60000);
         }
 
         // Initialize on page load

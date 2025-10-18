@@ -148,11 +148,11 @@
         // Load data on page load
         loadData();
         
-        // Poll Supabase every 10 seconds for live updates
+        // Poll Supabase every 60 seconds for live updates (reduced from 10s to minimize data transfer)
         setInterval(function() {
-            console.log('🔄 10-second Supabase poll triggered...');
+            console.log('🔄 60-second Supabase poll triggered...');
             loadData();
-        }, 10000);
+        }, 60000);
     </script>
 </body>
 </html>
