@@ -154,9 +154,24 @@ const GraphicsLinksPage: React.FC = () => {
 
     socketClient.connect(event.id, callbacks);
 
+    // Handle tab visibility changes - disconnect when hidden to save costs
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('👁️ Graphics Links: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(event.id);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ Graphics Links: Tab visible - reconnecting WebSocket');
+        socketClient.connect(event.id, callbacks);
+        callbacks.onInitialSync?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       console.log('🔄 Graphics Links: Cleaning up WebSocket connection');
       socketClient.disconnect(event.id);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [event?.id]);
 

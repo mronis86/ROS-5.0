@@ -306,6 +306,26 @@ const ScriptsFollowPage: React.FC = () => {
     socket.on('scriptCommentSync', handleCommentSync);
     console.log('✅ Comment sync listener attached');
 
+    // Handle tab visibility changes - disconnect when hidden to save costs
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('👁️ Scripts Follow: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(eventId);
+        setIsWebSocketConnected(false);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ Scripts Follow: Tab visible - reconnecting WebSocket');
+        socketClient.connect(eventId, {});
+        const newSocket = socketClient.getSocket();
+        if (newSocket) {
+          newSocket.on('connect', handleConnect);
+          newSocket.on('disconnect', handleDisconnect);
+          setIsWebSocketConnected(newSocket.connected);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       console.log('🔌 Cleaning up Scripts Follow WebSocket');
       const socket = socketClient.getSocket();
@@ -316,6 +336,7 @@ const ScriptsFollowPage: React.FC = () => {
         socket.off('disconnect', handleDisconnect);
         console.log('✅ Removed Scripts Follow socket listeners');
       }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [eventId, userRole]);
 

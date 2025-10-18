@@ -136,9 +136,23 @@ const TeleprompterPage: React.FC = () => {
     
     socketClient.connect(eventId, callbacks);
     
+    // Handle tab visibility changes - disconnect when hidden to save costs
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('👁️ Teleprompter: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(eventId);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ Teleprompter: Tab visible - reconnecting WebSocket');
+        socketClient.connect(eventId, callbacks);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
     return () => {
       console.log('🔄 Cleaning up Teleprompter WebSocket connection');
       socketClient.disconnect(eventId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [eventId]);
   

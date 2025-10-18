@@ -280,9 +280,24 @@ const LowerThirdsXMLPage: React.FC = () => {
 
     socketClient.connect(eventId, callbacks);
 
+    // Handle tab visibility changes - disconnect when hidden to save costs
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('👁️ Lower Thirds XML: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(eventId);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ Lower Thirds XML: Tab visible - reconnecting WebSocket');
+        socketClient.connect(eventId, callbacks);
+        fetchLowerThirds(); // Reload data on reconnect
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       console.log('🔄 Lower Thirds XML: Cleaning up WebSocket connection');
       socketClient.disconnect(eventId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [eventId]);
 
