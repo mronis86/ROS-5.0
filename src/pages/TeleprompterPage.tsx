@@ -31,11 +31,14 @@ interface TeleprompterSettings {
   scrollSpeed: number;
   fontSize: number;
   textAlign: 'left' | 'center' | 'right';
-  isMirrored: boolean;
+  isMirroredHorizontal: boolean;
+  isMirroredVertical: boolean;
   backgroundColor: string;
   textColor: string;
   lineHeight: number;
   showComments: boolean;
+  showReadingGuide: boolean;
+  readingGuideColor: string;
 }
 
 const TeleprompterPage: React.FC = () => {
@@ -71,11 +74,14 @@ const TeleprompterPage: React.FC = () => {
     scrollSpeed: 50, // pixels per second
     fontSize: 48,
     textAlign: 'center',
-    isMirrored: false,
+    isMirroredHorizontal: false,
+    isMirroredVertical: false,
     backgroundColor: '#000000',
     textColor: '#FFFFFF',
     lineHeight: 1.8,
-    showComments: true
+    showComments: true,
+    showReadingGuide: true,
+    readingGuideColor: '#FF0000'
   });
   
   // Refs
@@ -83,7 +89,9 @@ const TeleprompterPage: React.FC = () => {
   const lastScrollBroadcastRef = useRef<number>(0);
   const lastTimestampRef = useRef<number>(0);
   const animationFrameIdRef = useRef<number | null>(null);
-  const isAutoScrollingRef = useRef<boolean>(false); // Track if we're auto-scrolling to prevent manual detection
+  const isAutoScrollingRef = useRef<boolean>(false);
+  const targetScrollPositionRef = useRef<number>(0);
+  const viewerAnimationFrameRef = useRef<number | null>(null);
   
   // Load script from database if not in state
   useEffect(() => {

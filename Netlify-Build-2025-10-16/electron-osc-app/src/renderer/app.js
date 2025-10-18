@@ -912,17 +912,48 @@ async function adjustTimer(minutes) {
     
     console.log(`⏱️ Adjusting from ${currentDurationMinutes}m to ${newDurationMinutes}m`);
     
-    // Update the timer duration in active_timers table (if timer is loaded/running)
-    await axios.put(`${config.apiUrl}/api/active-timers/${currentEvent.id}/${activeItemId}/duration`, {
-      duration_seconds: newTotalSeconds
-    });
-    
-    // Update local schedule
-    schedule = schedule.map(s => 
+    // Step 1: Update the schedule in run_of_show_data table (for row duration display)
+    const updatedSchedule = schedule.map(s => 
       s.id === activeItemId 
         ? { ...s, durationHours: newHours, durationMinutes: newMinutes, durationSeconds: newSeconds }
         : s
     );
+    
+    try {
+      // First, get the current run_of_show_data to preserve custom_columns and settings
+      const currentDataResponse = await axios.get(`${config.apiUrl}/api/run-of-show-data/${currentEvent.id}`);
+      const currentData = currentDataResponse.data;
+      
+      // Update with preserved data
+      await axios.post(`${config.apiUrl}/api/run-of-show-data`, {
+        event_id: currentEvent.id,
+        event_name: currentData.event_name,
+        event_date: currentData.event_date,
+        schedule_items: updatedSchedule,
+        custom_columns: currentData.custom_columns || [],
+        settings: currentData.settings || {},
+        last_modified_by: 'osc-electron-app',
+        last_modified_by_name: 'OSC Control',
+        last_modified_by_role: 'OPERATOR'
+      });
+      console.log('✅ Schedule row duration updated in database');
+    } catch (error) {
+      console.warn('⚠️ Could not update schedule:', error.message);
+      console.error(error);
+    }
+    
+    // Step 2: Update the timer duration in active_timers table (for hybrid timer)
+    try {
+      await axios.put(`${config.apiUrl}/api/active-timers/${currentEvent.id}/${activeItemId}/duration`, {
+        duration_seconds: newTotalSeconds
+      });
+      console.log('✅ Hybrid timer duration updated');
+    } catch (error) {
+      console.warn('⚠️ Could not update hybrid timer:', error.message);
+    }
+    
+    // Update local schedule
+    schedule = updatedSchedule;
     
     // Update timer progress total
     if (timerProgress[activeItemId]) {
