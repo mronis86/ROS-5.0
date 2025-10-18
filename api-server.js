@@ -352,6 +352,7 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
 app.get('/api/cache/lower-thirds.xml', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    console.log('🔄 CACHE REQUEST: Lower Thirds XML for event:', eventId);
     
     if (!eventId) {
       res.set('Content-Type', 'application/xml');
@@ -359,9 +360,11 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      console.log('❌ Upstash not configured!');
       return res.status(503).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache service not configured</error>');
     }
     
+    console.log('📦 Reading from Upstash cache (NOT Neon database)');
     // Get from Upstash cache
     const response = await fetch(`${UPSTASH_URL}/get/lower-thirds-xml-${eventId}`, {
       method: 'GET',
@@ -372,17 +375,19 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
       const data = await response.json();
       if (data.result) {
         const xmlContent = decodeURIComponent(data.result);
+        console.log('✅ CACHE HIT: Serving from Upstash (zero Neon queries!)');
         res.set('Content-Type', 'application/xml; charset=utf-8');
         return res.send(xmlContent);
       }
     }
     
     // If not in cache, return error (data will be cached on next update)
+    console.log('❌ CACHE MISS: Data not in Upstash yet');
     res.set('Content-Type', 'application/xml');
     res.status(404).send('<?xml version="1.0" encoding="UTF-8"?><error>Data not yet cached. Please update your schedule first.</error>');
     
   } catch (error) {
-    console.error('Error reading from Upstash:', error);
+    console.error('❌ Upstash read error:', error);
     res.set('Content-Type', 'application/xml');
     res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache read error</error>');
   }
@@ -392,6 +397,7 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
 app.get('/api/cache/lower-thirds.csv', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    console.log('🔄 CACHE REQUEST: Lower Thirds CSV for event:', eventId);
     
     if (!eventId) {
       res.set('Content-Type', 'text/csv');
@@ -399,9 +405,11 @@ app.get('/api/cache/lower-thirds.csv', async (req, res) => {
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      console.log('❌ Upstash not configured!');
       return res.status(503).send('Error,Cache service not configured');
     }
     
+    console.log('📦 Reading from Upstash cache (NOT Neon database)');
     // Get from Upstash cache
     const response = await fetch(`${UPSTASH_URL}/get/lower-thirds-csv-${eventId}`, {
       method: 'GET',
@@ -412,17 +420,19 @@ app.get('/api/cache/lower-thirds.csv', async (req, res) => {
       const data = await response.json();
       if (data.result) {
         const csvContent = decodeURIComponent(data.result);
+        console.log('✅ CACHE HIT: Serving from Upstash (zero Neon queries!)');
         res.set('Content-Type', 'text/csv; charset=utf-8');
         return res.send(csvContent);
       }
     }
     
     // If not in cache, return error
+    console.log('❌ CACHE MISS: Data not in Upstash yet');
     res.set('Content-Type', 'text/csv');
     res.status(404).send('Error,Data not yet cached. Please update your schedule first.');
     
   } catch (error) {
-    console.error('Error reading from Upstash:', error);
+    console.error('❌ Upstash read error:', error);
     res.set('Content-Type', 'text/csv');
     res.status(500).send('Error,Cache read error');
   }
