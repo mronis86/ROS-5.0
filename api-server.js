@@ -1167,47 +1167,27 @@ app.put('/api/timer-messages/:id', async (req, res) => {
   }
 });
 
-// Server-Sent Events support
+// Server-Sent Events support - DISABLED (redundant with Socket.IO)
+// SSE was causing high egress due to heartbeat every 30s per client
+// Socket.IO handles all real-time updates more efficiently
 const SSEConnections = new Map(); // Store active SSE connections by eventId
 
-// SSE endpoint for real-time updates
+// SSE endpoint for real-time updates - DISABLED
 app.get('/api/events/:eventId/stream', (req, res) => {
   const { eventId } = req.params;
   
-  // Set SSE headers
+  // DISABLED: SSE is redundant with Socket.IO and causes high egress
+  // Just send a message that SSE is disabled and close the connection
   res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Cache-Control'
+    'Content-Type': 'text/plain',
+    'Access-Control-Allow-Origin': '*'
   });
-
-  // Send initial connection event
-  res.write(`data: ${JSON.stringify({ type: 'connected', eventId, timestamp: new Date().toISOString() })}\n\n`);
-
-  // Store connection
-  SSEConnections.set(eventId, res);
-
-  // Handle client disconnect
-  req.on('close', () => {
-    console.log(`🔌 SSE connection closed for event: ${eventId}`);
-    SSEConnections.delete(eventId);
-  });
-
-  // Send heartbeat every 30 seconds
-  const heartbeat = setInterval(() => {
-    if (!SSEConnections.has(eventId)) {
-      clearInterval(heartbeat);
-      return;
-    }
-    res.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: new Date().toISOString() })}\n\n`);
-  }, 30000);
-
-  console.log(`🔌 SSE connection established for event: ${eventId}`);
+  res.end('SSE disabled - using Socket.IO for real-time updates');
+  
+  console.log(`⚠️ SSE connection attempt for event ${eventId} - SSE is disabled, use Socket.IO instead`);
 });
 
-// Helper function to broadcast updates to SSE clients
+// Helper function to broadcast updates via Socket.IO only (SSE disabled)
 function broadcastUpdate(eventId, updateType, data) {
   const message = {
     type: updateType,
@@ -1216,19 +1196,11 @@ function broadcastUpdate(eventId, updateType, data) {
     timestamp: new Date().toISOString()
   };
   
-  // Send via SSE (if connection exists)
-  const sseConnection = SSEConnections.get(eventId);
-  if (sseConnection) {
-    try {
-      sseConnection.write(`data: ${JSON.stringify(message)}\n\n`);
-      console.log(`📡 SSE broadcast sent for event ${eventId}: ${updateType}`);
-    } catch (error) {
-      console.error('SSE broadcast error:', error);
-      SSEConnections.delete(eventId);
-    }
-  }
+  // SSE DISABLED - only using Socket.IO to reduce egress
+  // const sseConnection = SSEConnections.get(eventId);
+  // if (sseConnection) { ... }
   
-  // Send via WebSocket (Socket.IO) - PRIMARY method
+  // Send via WebSocket (Socket.IO) - ONLY method now
   if (io) {
     io.to(`event:${eventId}`).emit('update', message);
     console.log(`🔌 WebSocket broadcast sent for event ${eventId}: ${updateType}`);
