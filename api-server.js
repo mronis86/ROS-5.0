@@ -78,6 +78,126 @@ async function setUpstashCache(key, value, expirySeconds = 3600) {
   }
 }
 
+// Regenerate all Upstash cache formats when schedule updates
+async function regenerateUpstashCache(eventId, runOfShowData) {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+    console.log('⚠️ Upstash not configured, skipping cache regeneration');
+    return;
+  }
+  
+  try {
+    const scheduleItems = runOfShowData.schedule_items || [];
+    
+    // Generate Lower Thirds XML
+    const lowerThirdsData = [];
+    scheduleItems.forEach((item) => {
+      const speakers = [];
+      if (item.speakersText) {
+        try {
+          const speakersArray = typeof item.speakersText === 'string' 
+            ? JSON.parse(item.speakersText) 
+            : item.speakersText;
+          if (Array.isArray(speakersArray)) {
+            speakersArray.forEach((speaker) => {
+              speakers.push({
+                title: speaker.fullName || speaker.name || '',
+                subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
+                photo: speaker.photoLink || ''
+              });
+            });
+          }
+        } catch (e) {
+          console.error('Error parsing speakers:', e);
+        }
+      }
+      lowerThirdsData.push({
+        id: String(item.id),
+        cue: item.customFields?.cue || '',
+        program: item.programType || '',
+        segmentName: item.segmentName || '',
+        speakers
+      });
+    });
+    
+    const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+    const xmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <lower_thirds>
+    ${lowerThirdsData.map(item => {
+      const speakers = new Array(21).fill('');
+      if (item.speakers && item.speakers.length > 0) {
+        item.speakers.forEach((speaker, speakerIndex) => {
+          if (speakerIndex < 7) {
+            const baseIdx = speakerIndex * 3;
+            speakers[baseIdx] = speaker.title || '';
+            speakers[baseIdx + 1] = speaker.subtitle || '';
+            speakers[baseIdx + 2] = speaker.photo || '';
+          }
+        });
+      }
+      return `
+    <item>
+      <id>${item.id}</id>
+      <cue>${item.cue}</cue>
+      <program>${item.program}</program>
+      <segment>${item.segmentName}</segment>
+      ${speakers.map((speaker, idx) => `<speaker${Math.floor(idx/3) + 1}_${['name', 'title', 'photo'][idx % 3]}>${speaker}</speaker${Math.floor(idx/3) + 1}_${['name', 'title', 'photo'][idx % 3]}>`).join('\n      ')}
+    </item>`;
+    }).join('')}
+  </lower_thirds>
+</data>`;
+    
+    const fullXML = xmlHeader + xmlContent;
+    
+    // Generate CSV
+    let csv = 'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
+    
+    scheduleItems.forEach((item, index) => {
+      const speakers = new Array(21).fill('');
+      if (item.speakersText) {
+        try {
+          const speakersArray = typeof item.speakersText === 'string' 
+            ? JSON.parse(item.speakersText) 
+            : item.speakersText;
+          if (Array.isArray(speakersArray)) {
+            speakersArray.forEach((speaker, speakerIndex) => {
+              if (speakerIndex < 7) {
+                const baseIdx = speakerIndex * 3;
+                speakers[baseIdx] = speaker.fullName || speaker.name || '';
+                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                speakers[baseIdx + 2] = speaker.photoLink || '';
+              }
+            });
+          }
+        } catch (e) {
+          console.error('Error parsing speakers:', e);
+        }
+      }
+      
+      const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+      const cue = item.customFields?.cue || '';
+      const program = item.programType || '';
+      const segmentName = item.segmentName || '';
+      
+      csv += `${index + 1},${escapeCsv(cue)},${escapeCsv(program)},${escapeCsv(segmentName)}`;
+      for (let i = 0; i < 21; i++) {
+        csv += `,${escapeCsv(speakers[i])}`;
+      }
+      csv += '\n';
+    });
+    
+    // Update both XML and CSV in Upstash
+    await setUpstashCache(`lower-thirds-xml-${eventId}`, encodeURIComponent(fullXML), 3600);
+    await setUpstashCache(`lower-thirds-csv-${eventId}`, encodeURIComponent(csv), 3600);
+    
+    console.log('✅ Upstash cache regenerated for event:', eventId);
+  } catch (error) {
+    console.error('❌ Error regenerating Upstash cache:', error);
+  }
+}
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -625,6 +745,10 @@ app.post('/api/run-of-show-data', async (req, res) => {
     );
     
     const savedData = result.rows[0];
+    
+    // Update Upstash cache immediately when schedule changes
+    console.log('🔄 Schedule updated - regenerating Upstash cache for all formats...');
+    await regenerateUpstashCache(event_id, savedData);
     
     // Broadcast update via SSE
     broadcastUpdate(event_id, 'runOfShowDataUpdated', savedData);
