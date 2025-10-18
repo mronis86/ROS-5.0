@@ -270,7 +270,7 @@ const TeleprompterPage: React.FC = () => {
           
           // Broadcast position via WebSocket (throttled)
           const now = Date.now();
-          if (now - lastScrollBroadcastRef.current >= 50) { // 20 updates per second max
+          if (now - lastScrollBroadcastRef.current >= 100) { // 10 updates per second (reduced from 20 to save Railway egress)
             const lineHeight = settings.fontSize * settings.lineHeight;
             const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
             
@@ -321,19 +321,19 @@ const TeleprompterPage: React.FC = () => {
     // Broadcast scroll position if we're the scroller
     if (eventId) {
       const now = Date.now();
-      const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
-      
-      // Throttle to 20 updates per second
-      if (timeSinceLastBroadcast >= 50) {
-        const lineHeight = settings.fontSize * settings.lineHeight;
-        const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
+        const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
         
-        socketClient.emitScriptScroll(
-          scriptRef.current.scrollTop,
-          currentLine,
-          settings.fontSize
-        );
-        lastScrollBroadcastRef.current = now;
+        // Throttle to 10 updates per second (reduced from 20 to save Railway egress)
+        if (timeSinceLastBroadcast >= 100) {
+          const lineHeight = settings.fontSize * settings.lineHeight;
+          const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
+          
+          socketClient.emitScriptScroll(
+            scriptRef.current.scrollTop,
+            currentLine,
+            settings.fontSize
+          );
+          lastScrollBroadcastRef.current = now;
       }
     }
     

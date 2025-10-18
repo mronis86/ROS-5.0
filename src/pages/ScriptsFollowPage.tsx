@@ -364,8 +364,8 @@ const ScriptsFollowPage: React.FC = () => {
         const now = Date.now();
         const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
         
-        // Broadcast immediately if 50ms has passed (20 updates per second max)
-        if (timeSinceLastBroadcast >= 50) {
+        // Broadcast if 100ms has passed (10 updates per second - reduced from 20 to save Railway egress)
+        if (timeSinceLastBroadcast >= 100) {
           const startLine = Math.max(0, Math.floor(position / (fontSize * 2)));
           socketClient.emitScriptScroll(position, startLine, fontSize);
           lastScrollBroadcastRef.current = now;
