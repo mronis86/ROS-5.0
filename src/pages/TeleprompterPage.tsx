@@ -159,9 +159,8 @@ const TeleprompterPage: React.FC = () => {
         return;
       }
       
-      if (scriptRef.current) {
-        scriptRef.current.scrollTop = data.scrollPosition;
-      }
+      // Set target position for smooth interpolation
+      targetScrollPositionRef.current = data.scrollPosition;
     };
     
     socket.on('scriptScrollSync', handleScrollSync);
@@ -171,6 +170,41 @@ const TeleprompterPage: React.FC = () => {
       socket.off('scriptScrollSync', handleScrollSync);
     };
   }, [userRole, eventId]);
+  
+  // Smooth scroll interpolation for viewers
+  useEffect(() => {
+    if (userRole !== 'VIEWER') {
+      if (viewerAnimationFrameRef.current) {
+        cancelAnimationFrame(viewerAnimationFrameRef.current);
+        viewerAnimationFrameRef.current = null;
+      }
+      return;
+    }
+    
+    const smoothScroll = () => {
+      if (scriptRef.current && targetScrollPositionRef.current !== null) {
+        const current = scriptRef.current.scrollTop;
+        const target = targetScrollPositionRef.current;
+        const diff = target - current;
+        
+        // Use smooth interpolation - move 15% of the distance each frame
+        if (Math.abs(diff) > 0.5) {
+          scriptRef.current.scrollTop = current + (diff * 0.15);
+        }
+      }
+      
+      viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+    };
+    
+    viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+    
+    return () => {
+      if (viewerAnimationFrameRef.current) {
+        cancelAnimationFrame(viewerAnimationFrameRef.current);
+        viewerAnimationFrameRef.current = null;
+      }
+    };
+  }, [userRole]);
   
   // Listen for settings sync events (Viewers only) using raw socket
   useEffect(() => {
@@ -266,10 +300,30 @@ const TeleprompterPage: React.FC = () => {
   
   // Handle manual scroll (pauses auto-scroll for SCROLLER and switches to manual mode)
   const handleManualScroll = () => {
-    // Only react to manual scroll if we're NOT currently auto-scrolling
-    if (userRole === 'SCROLLER' && isAutoScrolling && !isManualMode && !isAutoScrollingRef.current) {
+    if (userRole !== 'SCROLLER' || !scriptRef.current) return;
+    
+    // Broadcast scroll position if we're the scroller
+    if (eventId) {
+      const now = Date.now();
+      const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
+      
+      // Throttle to 20 updates per second
+      if (timeSinceLastBroadcast >= 50) {
+        const lineHeight = settings.fontSize * settings.lineHeight;
+        const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
+        
+        socketClient.emitScriptScroll(
+          scriptRef.current.scrollTop,
+          currentLine,
+          settings.fontSize
+        );
+        lastScrollBroadcastRef.current = now;
+      }
+    }
+    
+    // If auto-scrolling, switch to manual mode
+    if (isAutoScrolling && !isManualMode && !isAutoScrollingRef.current) {
       console.log('📜 Manual scroll detected - switching to Manual Mode');
-      // Cancel animation frame immediately
       if (animationFrameIdRef.current) {
         cancelAnimationFrame(animationFrameIdRef.current);
         animationFrameIdRef.current = null;
@@ -593,15 +647,50 @@ const TeleprompterPage: React.FC = () => {
                     />
                   </div>
                   
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-slate-300">Guide:</label>
+                    <input
+                      type="color"
+                      value={settings.readingGuideColor}
+                      onChange={(e) => updateSettings({ readingGuideColor: e.target.value })}
+                      className="w-16 h-10 rounded cursor-pointer"
+                    />
+                  </div>
+                </div>
+                
+                {/* Row 5: Flip/Mirror and Features */}
+                <div className="flex items-center gap-4 flex-wrap">
                   <button
-                    onClick={() => updateSettings({ isMirrored: !settings.isMirrored })}
+                    onClick={() => updateSettings({ isMirroredHorizontal: !settings.isMirroredHorizontal })}
                     className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                      settings.isMirrored
+                      settings.isMirroredHorizontal
                         ? 'bg-purple-600 text-white'
                         : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                     }`}
                   >
-                    🔄 {settings.isMirrored ? 'Mirrored' : 'Mirror'}
+                    ↔️ {settings.isMirroredHorizontal ? 'H-Flip ON' : 'Flip Horizontal'}
+                  </button>
+                  
+                  <button
+                    onClick={() => updateSettings({ isMirroredVertical: !settings.isMirroredVertical })}
+                    className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+                      settings.isMirroredVertical
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                    }`}
+                  >
+                    ↕️ {settings.isMirroredVertical ? 'V-Flip ON' : 'Flip Vertical'}
+                  </button>
+                  
+                  <button
+                    onClick={() => updateSettings({ showReadingGuide: !settings.showReadingGuide })}
+                    className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+                      settings.showReadingGuide
+                        ? 'bg-red-600 text-white'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                    }`}
+                  >
+                    🎯 {settings.showReadingGuide ? 'Guide ON' : 'Reading Guide'}
                   </button>
                   
                   <button
@@ -612,11 +701,46 @@ const TeleprompterPage: React.FC = () => {
                         : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                     }`}
                   >
-                    💬 {settings.showComments ? 'Hide Comments' : 'Show Comments'}
+                    💬 {settings.showComments ? 'Comments ON' : 'Show Comments'}
                   </button>
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      
+      {/* Reading Guide - Fixed at 50% viewport */}
+      {settings.showReadingGuide && (
+        <div
+          className="fixed left-0 right-0 pointer-events-none z-50"
+          style={{
+            top: '50%',
+            transform: 'translateY(-50%)'
+          }}
+        >
+          {/* Left arrow pointing RIGHT (inward) */}
+          <div className="absolute left-8 top-1/2 -translate-y-1/2">
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <polygon 
+                points="15,10 45,30 15,50" 
+                fill={settings.readingGuideColor}
+                stroke={settings.readingGuideColor}
+                strokeWidth="4"
+              />
+            </svg>
+          </div>
+          
+          {/* Right arrow pointing LEFT (inward) */}
+          <div className="absolute right-8 top-1/2 -translate-y-1/2">
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <polygon 
+                points="45,10 15,30 45,50" 
+                fill={settings.readingGuideColor}
+                stroke={settings.readingGuideColor}
+                strokeWidth="4"
+              />
+            </svg>
           </div>
         </div>
       )}
@@ -628,7 +752,7 @@ const TeleprompterPage: React.FC = () => {
         className="overflow-y-auto"
         style={{
           height: userRole === 'SCROLLER' ? 'calc(100vh - 280px)' : '100vh',
-          transform: settings.isMirrored ? 'scaleX(-1)' : 'none',
+          transform: `${settings.isMirroredHorizontal ? 'scaleX(-1)' : 'scaleX(1)'} ${settings.isMirroredVertical ? 'scaleY(-1)' : 'scaleY(1)'}`,
           padding: '20vh 5vw'
         }}
       >
@@ -643,16 +767,15 @@ const TeleprompterPage: React.FC = () => {
           }}
         >
           {scriptLines.map((line, index) => {
-            // Get comments from the PREVIOUS line to show at the start of this line
-            // If comment is on line 39, show it at the start of line 40 (after line 39 ends)
-            // index 39 (line 40) should show comments from lineNumber 39
-            const lineComments = settings.showComments ? getCommentsForLine(index) : [];
+            // Get comments from PREVIOUS line (index - 1) to show after it
+            // Comment on line 39 (stored as lineNumber: 38) appears before line 40 (index 39)
+            const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
             
             return (
               <div key={index} className="mb-2">
-                {/* Render full-width comment bars from previous line (appears AFTER previous line) */}
-                {index > 0 && lineComments.length > 0 && (
-                  <div className="mt-2 space-y-2">
+                {/* Render comment bars from PREVIOUS line BEFORE current line text */}
+                {lineComments.length > 0 && (
+                  <div className="mb-2 space-y-2">
                     {lineComments.map((comment) => {
                       const commentConfig = COMMENT_TYPES[comment.type];
                       return (
@@ -661,7 +784,7 @@ const TeleprompterPage: React.FC = () => {
                           className={`${commentConfig.bgColor} px-4 py-3 rounded-lg border-l-4 border-${comment.type.toLowerCase()}-400`}
                           style={{
                             fontSize: `${settings.fontSize * 0.6}px`,
-                            transform: settings.isMirrored ? 'scaleX(-1)' : 'none'
+                            transform: settings.isMirroredHorizontal ? 'scaleX(-1)' : 'none'
                           }}
                         >
                           <div className="flex items-start gap-2">
@@ -678,6 +801,9 @@ const TeleprompterPage: React.FC = () => {
                     })}
                   </div>
                 )}
+                
+                {/* Current line text */}
+                <div>{line || '\u00A0'}</div>
               </div>
             );
           })}
