@@ -107,9 +107,24 @@ const ClockPage: React.FC = () => {
 
     socketClient.connect(eventId, callbacks);
 
+    // Handle tab visibility changes - disconnect when hidden to save costs
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('👁️ ClockPage: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(eventId);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ ClockPage: Tab visible - reconnecting WebSocket');
+        socketClient.connect(eventId, callbacks);
+        loadMessage(); // Reload message on reconnect
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       console.log('📨 Cleaning up ClockPage WebSocket connection');
       socketClient.disconnect(eventId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [eventId]);
 

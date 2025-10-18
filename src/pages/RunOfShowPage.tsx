@@ -4979,9 +4979,14 @@ const RunOfShowPage: React.FC = () => {
 
     // Handle tab visibility changes - resync when user returns to tab
     const handleVisibilityChange = () => {
-      if (!document.hidden && socketClient.isConnected()) {
-        console.log('🔄 Tab became visible - triggering resync');
-        // Trigger initial sync again
+      if (document.hidden) {
+        // Tab hidden - disconnect WebSocket to allow server to sleep
+        console.log('👁️ Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(event.id);
+      } else if (!socketClient.isConnected()) {
+        // Tab visible - reconnect and resync
+        console.log('👁️ Tab visible - reconnecting WebSocket');
+        socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
       }
     };

@@ -841,11 +841,14 @@ const PhotoViewPage: React.FC = () => {
     // Connect to WebSocket
     socketClient.connect(event.id, callbacks);
 
-    // Handle tab visibility changes - resync when user returns to tab
+    // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
-      if (!document.hidden && socketClient.isConnected()) {
-        console.log('🔄 PhotoView: Tab became visible - triggering resync');
-        // Trigger initial sync again
+      if (document.hidden) {
+        console.log('👁️ PhotoView: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(event.id);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ PhotoView: Tab visible - reconnecting WebSocket');
+        socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
       }
     };

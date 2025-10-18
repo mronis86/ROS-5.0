@@ -442,11 +442,14 @@ const GreenRoomPage: React.FC = () => {
     // Connect to WebSocket
     socketClient.connect(event.id, callbacks);
 
-    // Handle tab visibility changes - resync when user returns to tab
+    // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
-      if (!document.hidden && socketClient.isConnected()) {
-        console.log('🔄 Green Room: Tab became visible - triggering resync');
-        // Trigger initial sync again
+      if (document.hidden) {
+        console.log('👁️ Green Room: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(event.id);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ Green Room: Tab visible - reconnecting WebSocket');
+        socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
       }
     };
@@ -695,11 +698,14 @@ const GreenRoomPage: React.FC = () => {
     // Connect to WebSocket for schedule updates
     socketClient.connect(event.id, callbacks);
 
-    // Handle tab visibility changes - resync when user returns to tab
+    // Handle tab visibility changes - disconnect when hidden to save costs
     const handleScheduleVisibilityChange = () => {
-      if (!document.hidden && socketClient.isConnected()) {
-        console.log('🔄 Green Room: Schedule tab became visible - triggering resync');
-        // Trigger initial sync again
+      if (document.hidden) {
+        console.log('👁️ Green Room: Schedule tab hidden - disconnecting WebSocket to save costs');
+        socketClient.disconnect(event.id);
+      } else if (!socketClient.isConnected()) {
+        console.log('👁️ Green Room: Schedule tab visible - reconnecting WebSocket');
+        socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
       }
     };
