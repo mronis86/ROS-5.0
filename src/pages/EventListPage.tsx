@@ -46,15 +46,15 @@ const EventListPage: React.FC = () => {
     loadEventsFromSupabase();
   }, []);
 
-  // Add a refresh mechanism - reload events every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      console.log('🔄 Auto-refreshing events list...');
-      loadEventsFromSupabase();
-    }, 30000); // 30 seconds
-
-    return () => clearInterval(interval);
-  }, []);
+  // Auto-refresh disabled to reduce database usage - users can manually refresh
+  // useEffect(() => {
+  //   const interval = setInterval(() => {
+  //     console.log('🔄 Auto-refreshing events list...');
+  //     loadEventsFromSupabase();
+  //   }, 300000); // 5 minutes
+  //
+  //   return () => clearInterval(interval);
+  // }, []);
 
   const loadEventsFromSupabase = async () => {
     try {
@@ -563,6 +563,7 @@ const EventListPage: React.FC = () => {
         <p className="text-xl text-slate-400 mb-4">
           Manage your events and schedules
         </p>
+        
         {user && (
           <div className="text-center mb-6">
             <p className="text-white font-medium text-lg">
@@ -603,32 +604,54 @@ const EventListPage: React.FC = () => {
         {/* Search and Filter */}
         <div className="flex justify-center mb-6">
           <div className="bg-slate-800 rounded-lg p-4 w-full max-w-4xl">
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <span className="text-white font-semibold">🔍 Search:</span>
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search events by name or location..."
-                  className="w-80 px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
-                />
+            <div className="flex items-center gap-6 justify-between">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-semibold">🔍 Search:</span>
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search events by name or location..."
+                    className="w-80 px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-semibold">📍 Filter by location:</span>
+                  <select
+                    value={filterLocation}
+                    onChange={(e) => setFilterLocation(e.target.value)}
+                    className="px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                  >
+                    <option value="all">All Locations</option>
+                    {LOCATION_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-white font-semibold">📍 Filter by location:</span>
-                <select
-                  value={filterLocation}
-                  onChange={(e) => setFilterLocation(e.target.value)}
-                  className="px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
-                >
-                  <option value="all">All Locations</option>
-                  {LOCATION_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              
+              {/* Refresh Button */}
+              <button
+                onClick={() => {
+                  console.log('🔄 Manual refresh triggered');
+                  loadEventsFromSupabase();
+                }}
+                disabled={isLoading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm"
+                title="Refresh events list"
+              >
+                {isLoading ? '🔄 Refreshing...' : '🔄 Refresh'}
+              </button>
+            </div>
+            
+            {/* Info message below search bar */}
+            <div className="mt-3 text-center">
+              <p className="text-xs text-slate-400">
+                ℹ️ Events don't auto-refresh. Click "Refresh" to check for new events.
+              </p>
             </div>
           </div>
         </div>

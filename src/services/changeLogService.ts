@@ -21,7 +21,7 @@ export interface LocalChange {
 class ChangeLogService {
   private localChanges: LocalChange[] = [];
   private syncTimer: NodeJS.Timeout | null = null;
-  private readonly SYNC_DELAY = 5000; // 5 seconds
+  private readonly SYNC_DELAY = 300000; // 5 minutes (300 seconds)
   private readonly MAX_BATCH_SIZE = 10;
   private readonly MAX_SYNC_ATTEMPTS = 3;
 
@@ -89,7 +89,7 @@ class ChangeLogService {
       clearInterval(this.syncTimer);
     }
     
-    console.log('⏰ Starting change log sync timer (5 second interval)');
+    console.log('⏰ Starting change log sync timer (5 minute interval)');
     
     this.syncTimer = setInterval(() => {
       const unsyncedChanges = this.getUnsyncedChanges();
