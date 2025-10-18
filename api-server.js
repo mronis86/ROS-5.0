@@ -1937,6 +1937,20 @@ app.delete('/api/scripts/:scriptId', async (req, res) => {
   }
 });
 
+// Delete all comments for a script
+app.delete('/api/script-comments/script/:scriptId', async (req, res) => {
+  try {
+    const { scriptId } = req.params;
+    
+    await pool.query('DELETE FROM script_comments WHERE script_id = $1', [scriptId]);
+    
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting script comments:', error);
+    res.status(500).json({ error: 'Failed to delete comments' });
+  }
+});
+
 // Add comment
 app.post('/api/script-comments', async (req, res) => {
   try {

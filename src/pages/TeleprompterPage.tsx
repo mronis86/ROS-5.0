@@ -51,10 +51,14 @@ const TeleprompterPage: React.FC = () => {
   // Get script text and comments from navigation state
   const scriptTextFromState = location.state?.scriptText || '';
   const commentsFromState = location.state?.comments || [];
+  const scriptIdFromState = location.state?.scriptId || scriptId;
+  const scriptNameFromState = location.state?.scriptName || '';
   
   // State
   const [scriptText, setScriptText] = useState<string>(scriptTextFromState);
   const [comments, setComments] = useState<Comment[]>(commentsFromState);
+  const [currentScriptId, setCurrentScriptId] = useState<string | null>(scriptIdFromState);
+  const [currentScriptName, setCurrentScriptName] = useState<string>(scriptNameFromState);
   const [userRole, setUserRole] = useState<UserRole>('VIEWER');
   const [isAutoScrolling, setIsAutoScrolling] = useState<boolean>(false);
   const [isManualMode, setIsManualMode] = useState<boolean>(true); // Manual mode by default
@@ -342,17 +346,27 @@ const TeleprompterPage: React.FC = () => {
       {/* Header - Always show for easy role switching */}
       <div className="bg-slate-800 border-b border-slate-700 p-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate(-1)}
-              className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium transition-colors"
-            >
-              ← Back
-            </button>
-            {userRole === 'SCROLLER' && (
-              <h1 className="text-xl font-bold text-white">{eventName} - Teleprompter</h1>
-            )}
-          </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => {
+                  // Navigate back to Scripts Follow with the current script and comments
+                  navigate(`/scripts-follow?eventId=${eventId}&eventName=${encodeURIComponent(eventName || '')}`, {
+                    state: {
+                      scriptText,
+                      comments,
+                      scriptId: currentScriptId,
+                      scriptName: currentScriptName
+                    }
+                  });
+                }}
+                className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium transition-colors"
+              >
+                ← Back to Scripts Follow
+              </button>
+              {userRole === 'SCROLLER' && (
+                <h1 className="text-xl font-bold text-white">{eventName} - Teleprompter</h1>
+              )}
+            </div>
           
           <div className="flex items-center gap-4">
             {/* Role Toggle - Always visible */}

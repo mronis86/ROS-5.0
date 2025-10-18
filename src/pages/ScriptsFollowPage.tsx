@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { useAuth } from '../contexts/AuthContext';
@@ -39,13 +39,20 @@ type UserRole = 'SCROLLER' | 'VIEWER';
 const ScriptsFollowPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const eventId = searchParams.get('eventId');
   const eventName = searchParams.get('eventName');
+  
+  // Get script data from navigation state (when returning from Teleprompter)
+  const scriptTextFromState = location.state?.scriptText || '';
+  const commentsFromState = location.state?.comments || [];
+  const scriptIdFromState = location.state?.scriptId || null;
+  const scriptNameFromState = location.state?.scriptName || '';
 
   // State
-  const [scriptText, setScriptText] = useState<string>('');
-  const [comments, setComments] = useState<Comment[]>([]);
+  const [scriptText, setScriptText] = useState<string>(scriptTextFromState);
+  const [comments, setComments] = useState<Comment[]>(commentsFromState);
   const [userRole, setUserRole] = useState<UserRole>('VIEWER');
   const [scrollerPosition, setScrollerPosition] = useState<number>(0);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -66,8 +73,8 @@ const ScriptsFollowPage: React.FC = () => {
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editText, setEditText] = useState<string>('');
   const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(false);
-  const [currentScriptId, setCurrentScriptId] = useState<string | null>(null);
-  const [currentScriptName, setCurrentScriptName] = useState<string>('');
+  const [currentScriptId, setCurrentScriptId] = useState<string | null>(scriptIdFromState);
+  const [currentScriptName, setCurrentScriptName] = useState<string>(scriptNameFromState);
   const [savedScripts, setSavedScripts] = useState<any[]>([]);
   const [showScriptManager, setShowScriptManager] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -710,24 +717,30 @@ const ScriptsFollowPage: React.FC = () => {
       setCurrentScriptId(savedScript.id);
       setCurrentScriptName(savedScript.script_name);
       
-      // Save comments
-      if (currentScriptId) {
-        // Delete existing comments and re-add (simple approach)
-        // In production, you'd want a more sophisticated sync
-        for (const comment of comments) {
-          await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              script_id: savedScript.id,
-              line_number: comment.lineNumber,
-              comment_text: comment.text,
-              comment_type: comment.type,
-              author: comment.author
-            })
-          });
-        }
+      // Save comments - delete all existing comments first, then add current ones
+      console.log('💾 Saving comments for script:', savedScript.id, '- Total comments:', comments.length);
+      
+      // Delete all existing comments for this script
+      await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments/script/${savedScript.id}`, {
+        method: 'DELETE'
+      });
+      console.log('🗑️ Deleted existing comments');
+      
+      // Add current comments
+      for (const comment of comments) {
+        await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            script_id: savedScript.id,
+            line_number: comment.lineNumber,
+            comment_text: comment.text,
+            comment_type: comment.type,
+            author: comment.author
+          })
+        });
       }
+      console.log('✅ Saved', comments.length, 'comments');
 
       alert(`Script "${scriptName}" saved successfully!`);
       loadSavedScripts();
