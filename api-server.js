@@ -388,6 +388,46 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
   }
 });
 
+// Upstash-cached Lower Thirds CSV - for vMix, Singular.Live
+app.get('/api/cache/lower-thirds.csv', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send('Error,Event ID is required');
+    }
+    
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      return res.status(503).send('Error,Cache service not configured');
+    }
+    
+    // Get from Upstash cache
+    const response = await fetch(`${UPSTASH_URL}/get/lower-thirds-csv-${eventId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result) {
+        const csvContent = decodeURIComponent(data.result);
+        res.set('Content-Type': 'text/csv; charset=utf-8');
+        return res.send(csvContent);
+      }
+    }
+    
+    // If not in cache, return error
+    res.set('Content-Type', 'text/csv');
+    res.status(404).send('Error,Data not yet cached. Please update your schedule first.');
+    
+  } catch (error) {
+    console.error('Error reading from Upstash:', error);
+    res.set('Content-Type', 'text/csv');
+    res.status(500).send('Error,Cache read error');
+  }
+});
+
 // Lower Thirds CSV endpoint
 app.get('/api/lower-thirds.csv', async (req, res) => {
   try {
@@ -449,6 +489,9 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
       csv += '\n';
     });
 
+    // Cache to Upstash for fast access
+    await setUpstashCache(`lower-thirds-csv-${eventId}`, encodeURIComponent(csv), 3600);
+    
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
