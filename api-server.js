@@ -31,12 +31,20 @@ const io = new Server(server, {
 });
 const PORT = process.env.PORT || 3001;
 
-// Database connection
+// Database connection with optimized pooling to reduce Neon compute hours
 const pool = new Pool({
   connectionString: process.env.NEON_DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
-  }
+  },
+  // Reduce max connections (Railway default is 10, we only need 2-3)
+  max: 3,
+  // Close idle connections after 30 seconds to allow Neon auto-suspend
+  idleTimeoutMillis: 30000,
+  // Timeout for acquiring a connection from the pool
+  connectionTimeoutMillis: 10000,
+  // Allow Neon to reclaim resources faster
+  allowExitOnIdle: true
 });
 
 // Middleware
@@ -45,13 +53,16 @@ app.use(cors());
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
-// Health check endpoint
+// Health check endpoint - lightweight version to reduce Neon queries
+// Only checks database connection, doesn't keep it awake unnecessarily
 app.get('/health', async (req, res) => {
   try {
-    const result = await pool.query('SELECT NOW()');
+    // Use a lightweight query that doesn't prevent auto-suspend
+    const result = await pool.query('SELECT 1 as health');
     res.json({ 
       status: 'healthy', 
-      timestamp: result.rows[0].now,
+      timestamp: new Date().toISOString(),
+      dbConnected: result.rows[0].health === 1,
       database: 'connected'
     });
   } catch (error) {
