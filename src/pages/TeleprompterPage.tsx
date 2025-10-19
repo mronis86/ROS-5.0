@@ -434,16 +434,27 @@ const TeleprompterPage: React.FC = () => {
     }
   };
   
-  // Fullscreen toggle function for VIEWER role
+  /**
+   * Fullscreen toggle function for VIEWER role
+   * 
+   * This function enables distraction-free viewing mode for talent/presenters by:
+   * - Entering native browser fullscreen mode (uses Fullscreen API)
+   * - Hiding the header and all UI chrome when in fullscreen
+   * - Adjusting layout to use full viewport height (100vh)
+   * - Repositioning reading guide to accommodate fullscreen dimensions
+   * 
+   * The fullscreen state is synced with browser events (ESC key, F11, browser controls)
+   * and automatically exits on component unmount to prevent stuck fullscreen states.
+   */
   const toggleFullscreen = async () => {
     try {
       if (!isFullscreen) {
-        // Enter fullscreen
+        // Enter fullscreen - requests native browser fullscreen on the entire document
         await document.documentElement.requestFullscreen();
         setIsFullscreen(true);
         console.log('✅ Entered fullscreen mode');
       } else {
-        // Exit fullscreen
+        // Exit fullscreen - returns to normal windowed mode
         if (document.fullscreenElement) {
           await document.exitFullscreen();
         }
@@ -455,7 +466,17 @@ const TeleprompterPage: React.FC = () => {
     }
   };
   
-  // Listen for fullscreen changes (ESC key, browser UI)
+  /**
+   * Listen for fullscreen changes from browser controls
+   * 
+   * Syncs the isFullscreen state when user exits fullscreen via:
+   * - ESC key
+   * - F11 key (browser fullscreen)
+   * - Browser UI controls
+   * 
+   * Also ensures fullscreen is properly exited when component unmounts
+   * to prevent stuck fullscreen states when navigating away.
+   */
   useEffect(() => {
     const handleFullscreenChange = () => {
       const isCurrentlyFullscreen = !!document.fullscreenElement;
@@ -467,7 +488,7 @@ const TeleprompterPage: React.FC = () => {
     
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      // Exit fullscreen on unmount
+      // Exit fullscreen on unmount to prevent stuck states
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(err => console.log('Fullscreen exit error:', err));
       }
@@ -524,7 +545,7 @@ const TeleprompterPage: React.FC = () => {
               </button>
             </div>
             
-            {/* Fullscreen Button - VIEWER only */}
+            {/* Fullscreen Button - VIEWER only for distraction-free talent viewing */}
             {userRole === 'VIEWER' && (
               <button
                 onClick={toggleFullscreen}
