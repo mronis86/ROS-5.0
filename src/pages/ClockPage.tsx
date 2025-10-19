@@ -263,6 +263,32 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
   const [minutes, setMinutes] = useState(0);
   
   const minuteValues = [0, 5, 10, 15, 20, 25, 30];
+  const hoursRef = React.useRef<HTMLDivElement>(null);
+  const minutesRef = React.useRef<HTMLDivElement>(null);
+  
+  // Initialize scroll position on mount
+  React.useEffect(() => {
+    if (hoursRef.current) {
+      hoursRef.current.scrollTop = hours * 50; // 50px per item
+    }
+    if (minutesRef.current) {
+      minutesRef.current.scrollTop = minuteValues.indexOf(minutes) * 50;
+    }
+  }, []);
+  
+  // Handle scroll for hours
+  const handleHoursScroll = () => {
+    if (!hoursRef.current) return;
+    const index = Math.round(hoursRef.current.scrollTop / 50);
+    setHours(Math.max(0, Math.min(index, 24)));
+  };
+  
+  // Handle scroll for minutes
+  const handleMinutesScroll = () => {
+    if (!minutesRef.current) return;
+    const index = Math.round(minutesRef.current.scrollTop / 50);
+    setMinutes(minuteValues[Math.max(0, Math.min(index, minuteValues.length - 1))]);
+  };
   
   return (
     <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[999999]">
@@ -271,32 +297,66 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
         <p className="text-slate-400 mb-8 text-center">How long should this connection stay active?</p>
         
         <div className="flex items-center justify-center gap-12 mb-10 py-8">
+          {/* Hours Picker */}
           <div className="flex flex-col items-center gap-4">
             <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Hours</div>
-            <select 
-              value={hours} 
-              onChange={(e) => setHours(Number(e.target.value))}
-              className="w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl text-slate-100 text-2xl font-semibold text-center cursor-pointer shadow-inner hover:border-blue-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/30 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-600"
-            >
-              {Array.from({length: 25}, (_, i) => (
-                <option key={i} value={i}>{i}</option>
-              ))}
-            </select>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              {/* Highlight bar */}
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              {/* Fade gradients */}
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              {/* Scrollable list */}
+              <div 
+                ref={hoursRef}
+                onScroll={handleHoursScroll}
+                className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory"
+                style={{ scrollBehavior: 'smooth' }}
+              >
+                {Array.from({length: 25}, (_, i) => (
+                  <div 
+                    key={i}
+                    className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${
+                      hours === i ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'
+                    }`}
+                  >
+                    {i}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
           
           <div className="text-slate-300 text-4xl font-light mt-10">:</div>
           
+          {/* Minutes Picker */}
           <div className="flex flex-col items-center gap-4">
             <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Minutes</div>
-            <select 
-              value={minutes} 
-              onChange={(e) => setMinutes(Number(e.target.value))}
-              className="w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl text-slate-100 text-2xl font-semibold text-center cursor-pointer shadow-inner hover:border-blue-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/30 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-600"
-            >
-              {minuteValues.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              {/* Highlight bar */}
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              {/* Fade gradients */}
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              {/* Scrollable list */}
+              <div 
+                ref={minutesRef}
+                onScroll={handleMinutesScroll}
+                className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory"
+                style={{ scrollBehavior: 'smooth' }}
+              >
+                {minuteValues.map(m => (
+                  <div 
+                    key={m}
+                    className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${
+                      minutes === m ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'
+                    }`}
+                  >
+                    {m}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
         
