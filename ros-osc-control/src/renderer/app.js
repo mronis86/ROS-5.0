@@ -13,6 +13,8 @@ let activeTimers = {};
 let timerInterval = null;
 let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
+let disconnectTimer = null; // Timer for auto-disconnect
+let disconnectTimeoutMinutes = 0; // 0 = never disconnect
 
 // Initialize
 async function init() {
@@ -47,8 +49,118 @@ async function init() {
   }
 }
 
+// Start disconnect timer based on user selection
+function startDisconnectTimer(minutes) {
+  // Clear existing timer
+  stopDisconnectTimer();
+  
+  if (minutes === 0) {
+    console.log('⏰ Disconnect timer: Never (running indefinitely)');
+    return;
+  }
+  
+  disconnectTimeoutMinutes = minutes;
+  const ms = minutes * 60 * 1000;
+  
+  console.log(`⏰ Disconnect timer started: ${minutes} minutes`);
+  
+  disconnectTimer = setTimeout(() => {
+    if (socket && socket.connected) {
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      let timeText = '';
+      if (hours > 0) timeText += `${hours}h `;
+      if (mins > 0) timeText += `${mins}m`;
+      
+      console.log(`⏰ Auto-disconnect timer expired (${timeText.trim()}) - showing notification and disconnecting WebSocket`);
+      
+      // Show notification FIRST
+      showDisconnectNotification(timeText.trim());
+      
+      // Then disconnect (small delay to ensure notification is visible)
+      setTimeout(() => {
+        if (socket && socket.connected) {
+          socket.disconnect();
+          console.log('🔌 WebSocket disconnected after timer expiry');
+        }
+        // Stop timer updates to prevent continued polling
+        stopTimerUpdates();
+        console.log('⏹️ Timer updates stopped');
+      }, 100);
+    }
+  }, ms);
+}
+
+// Show disconnect notification with reconnect option
+function showDisconnectNotification(duration) {
+  console.log('📢 Showing disconnect notification:', duration);
+  
+  // Create backdrop
+  const backdrop = document.createElement('div');
+  backdrop.className = 'disconnect-backdrop';
+  
+  // Create notification
+  const notification = document.createElement('div');
+  notification.className = 'disconnect-notification';
+  notification.innerHTML = `
+    <div class="disconnect-content">
+      <div class="disconnect-icon">🔌</div>
+      <div class="disconnect-message">
+        <h4>Connection Closed</h4>
+        <p>Auto-disconnected after ${duration}</p>
+      </div>
+      <button class="reconnect-btn" id="reconnectBtn">🔄 Reconnect</button>
+    </div>
+  `;
+  
+  document.body.appendChild(backdrop);
+  document.body.appendChild(notification);
+  console.log('✅ Disconnect notification added to DOM');
+  
+  // Handle reconnect button
+  document.getElementById('reconnectBtn').addEventListener('click', () => {
+    notification.style.animation = 'slideOut 0.3s ease-out';
+    backdrop.style.animation = 'fadeOut 0.3s ease-out';
+    
+    setTimeout(() => {
+      if (notification.parentNode) document.body.removeChild(notification);
+      if (backdrop.parentNode) document.body.removeChild(backdrop);
+    }, 300);
+    
+    // Reconnect to Socket.IO and show timer modal again
+    if (currentEvent) {
+      connectToSocketIO(currentEvent.id);
+    } else {
+      showToast('No event selected. Please select an event first.', 'error');
+    }
+  });
+}
+
+// Stop disconnect timer
+function stopDisconnectTimer() {
+  if (disconnectTimer) {
+    clearTimeout(disconnectTimer);
+    disconnectTimer = null;
+    console.log('🛑 Disconnect timer stopped');
+  }
+}
+
 // Setup event listeners
 function setupEventListeners() {
+  // Event tabs (upcoming/past)
+  document.querySelectorAll('.event-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const filter = tab.dataset.filter;
+      
+      // Update active tab
+      document.querySelectorAll('.event-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      // Load filtered events
+      loadEvents(filter);
+    });
+  });
+  
   // API mode selector
   document.getElementById('apiModeSelect').addEventListener('change', async (e) => {
     const newMode = e.target.value;
@@ -77,6 +189,13 @@ function setupEventListeners() {
     schedule = [];
     activeItemId = null;
     stopTimerUpdates();
+    stopDisconnectTimer(); // Stop disconnect timer when leaving event
+    
+    // Disconnect socket when leaving event
+    if (socket) {
+      socket.disconnect();
+      socket = null;
+    }
   });
   
   // Clear log button
@@ -186,27 +305,49 @@ async function handleOSCCommand(command, data) {
 }
 
 // Load events from API
-async function loadEvents() {
+async function loadEvents(filter = 'upcoming') {
   console.log('📥 Loading events from API...');
   const eventList = document.getElementById('eventList');
   eventList.innerHTML = '<div class="loading">Loading events...</div>';
   
   try {
     const response = await axios.get(`${config.apiUrl}/api/calendar-events`);
-    const events = response.data;
-    console.log('✅ Events loaded:', events.length);
-    console.log('📋 Events data:', events);
+    const allEvents = response.data;
+    console.log('✅ Events loaded:', allEvents.length);
+    console.log('📋 Events data:', allEvents);
     
-    if (events.length === 0) {
+    if (allEvents.length === 0) {
       eventList.innerHTML = '<div class="loading">No events found</div>';
       return;
     }
     
+    // Filter events by upcoming/past
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const filteredEvents = allEvents.filter(event => {
+      const eventDate = new Date(event.date);
+      eventDate.setHours(0, 0, 0, 0);
+      
+      if (filter === 'upcoming') {
+        return eventDate >= today;
+      } else {
+        return eventDate < today;
+      }
+    });
+    
+    console.log(`📊 ${filter} events:`, filteredEvents.length);
+    
+    if (filteredEvents.length === 0) {
+      eventList.innerHTML = `<div class="loading">No ${filter} events found</div>`;
+      return;
+    }
+    
     // Store events globally for click handlers
-    window.eventsData = events;
+    window.eventsData = filteredEvents;
     
     // Render event cards with proper event listeners
-    eventList.innerHTML = events.map((event, index) => {
+    eventList.innerHTML = filteredEvents.map((event, index) => {
       console.log(`Event ${index}:`, event);
       
       // Extract numberOfDays from schedule_data (it's stored as JSON)
@@ -1211,6 +1352,9 @@ function connectToSocketIO(eventId) {
     // Join the event room
     socket.emit('join-event', eventId);
     console.log(`📡 Joined event room: event:${eventId}`);
+    
+    // Show disconnect timer selection modal
+    showDisconnectTimerModal();
   });
   
   // Listen for server time sync
@@ -1228,6 +1372,9 @@ function connectToSocketIO(eventId) {
   
   socket.on('disconnect', () => {
     console.log('🔌 Socket.IO disconnected');
+    
+    // Stop disconnect timer when disconnected
+    stopDisconnectTimer();
   });
   
   socket.on('error', (error) => {
@@ -1363,6 +1510,182 @@ function handleResetAllStates(data) {
   // Show notification
   addOSCLogEntry('All states reset via Socket.IO', 'info');
   showToast('All states reset');
+}
+
+// Show disconnect timer selection modal
+function showDisconnectTimerModal() {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  
+  // Generate hour items (0-24)
+  const hourItems = Array.from({length: 25}, (_, i) => 
+    `<div class="picker-item" data-value="${i}">${i}</div>`
+  ).join('');
+  
+  // Generate minute items (0, 5, 10, 15, 20, 25, 30)
+  const minuteValues = [0, 5, 10, 15, 20, 25, 30];
+  const minuteItems = minuteValues.map(m => 
+    `<div class="picker-item" data-value="${m}">${m}</div>`
+  ).join('');
+  
+  modal.innerHTML = `
+    <div class="modal-content">
+      <h3>⏰ Auto-Disconnect Timer</h3>
+      <p>How long should this connection stay active?</p>
+      <div class="timer-picker-container">
+        <div class="picker-column">
+          <div class="picker-label">Hours</div>
+          <div class="picker-wrapper">
+            <div class="picker-highlight"></div>
+            <div class="picker-scroll" id="hoursPicker">
+              ${hourItems}
+            </div>
+            <div class="picker-fade-top"></div>
+            <div class="picker-fade-bottom"></div>
+          </div>
+        </div>
+        <div class="picker-separator">:</div>
+        <div class="picker-column">
+          <div class="picker-label">Minutes</div>
+          <div class="picker-wrapper">
+            <div class="picker-highlight"></div>
+            <div class="picker-scroll" id="minutesPicker">
+              ${minuteItems}
+            </div>
+            <div class="picker-fade-top"></div>
+            <div class="picker-fade-bottom"></div>
+          </div>
+        </div>
+      </div>
+      <div class="timer-actions">
+        <button class="timer-btn-confirm" id="confirmTimerBtn">✓ Confirm</button>
+        <button class="timer-btn-never" id="neverDisconnectBtn">∞ Never Disconnect</button>
+      </div>
+      <p class="timer-note">⚠️ "Never" may increase database costs</p>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Initialize pickers
+  const hoursPicker = document.getElementById('hoursPicker');
+  const minutesPicker = document.getElementById('minutesPicker');
+  
+  let selectedHours = 2;
+  let selectedMinutes = 0;
+  
+  // Setup picker scroll behavior
+  function setupPicker(picker, initialValue, values) {
+    const items = picker.querySelectorAll('.picker-item');
+    const itemHeight = 50; // Height of each item
+    let currentIndex = values.indexOf(initialValue);
+    let isDragging = false;
+    let startY = 0;
+    let scrollTop = 0;
+    
+    // Center the picker on initial value
+    function scrollToIndex(index, smooth = false) {
+      const targetScroll = index * itemHeight;
+      if (smooth) {
+        picker.style.scrollBehavior = 'smooth';
+      } else {
+        picker.style.scrollBehavior = 'auto';
+      }
+      picker.scrollTop = targetScroll;
+      currentIndex = index;
+      updateSelection();
+    }
+    
+    function updateSelection() {
+      items.forEach((item, idx) => {
+        if (idx === currentIndex) {
+          item.classList.add('selected');
+        } else {
+          item.classList.remove('selected');
+        }
+      });
+    }
+    
+    // Mouse/touch events for dragging
+    picker.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      startY = e.clientY;
+      scrollTop = picker.scrollTop;
+      picker.style.scrollBehavior = 'auto';
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const deltaY = startY - e.clientY;
+      picker.scrollTop = scrollTop + deltaY;
+    });
+    
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      snapToNearest();
+    });
+    
+    // Snap to nearest item on scroll end
+    function snapToNearest() {
+      const index = Math.round(picker.scrollTop / itemHeight);
+      const clampedIndex = Math.max(0, Math.min(index, items.length - 1));
+      scrollToIndex(clampedIndex, true);
+    }
+    
+    picker.addEventListener('scroll', () => {
+      if (!isDragging) {
+        clearTimeout(picker.snapTimeout);
+        picker.snapTimeout = setTimeout(snapToNearest, 100);
+      }
+    });
+    
+    // Click to select
+    items.forEach((item, idx) => {
+      item.addEventListener('click', () => {
+        scrollToIndex(idx, true);
+      });
+    });
+    
+    // Initialize
+    scrollToIndex(currentIndex);
+    
+    return {
+      getValue: () => values[currentIndex],
+      scrollToIndex
+    };
+  }
+  
+  const hoursControl = setupPicker(hoursPicker, selectedHours, Array.from({length: 25}, (_, i) => i));
+  const minutesControl = setupPicker(minutesPicker, selectedMinutes, minuteValues);
+  
+  // Handle confirm button
+  document.getElementById('confirmTimerBtn').addEventListener('click', () => {
+    const hours = hoursControl.getValue();
+    const mins = minutesControl.getValue();
+    const totalMinutes = (hours * 60) + mins;
+    
+    if (totalMinutes === 0) {
+      showToast('Please select a time greater than 0, or use "Never Disconnect"');
+      return;
+    }
+    
+    startDisconnectTimer(totalMinutes);
+    
+    let timeText = '';
+    if (hours > 0) timeText += `${hours}h `;
+    if (mins > 0) timeText += `${mins}m`;
+    
+    showToast(`Auto-disconnect: ${timeText.trim()}`);
+    document.body.removeChild(modal);
+  });
+  
+  // Handle never disconnect button
+  document.getElementById('neverDisconnectBtn').addEventListener('click', () => {
+    startDisconnectTimer(0);
+    showToast('Auto-disconnect: Never (⚠️ may increase costs)');
+    document.body.removeChild(modal);
+  });
 }
 
 // Initialize on load

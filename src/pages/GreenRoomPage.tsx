@@ -60,6 +60,11 @@ const GreenRoomPage: React.FC = () => {
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
+  const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
+  const [disconnectDuration, setDisconnectDuration] = useState('');
+  const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
+  const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
 
   // Calculate start time function (same as RunOfShowPage)
   const calculateStartTime = (index: number) => {
@@ -441,16 +446,24 @@ const GreenRoomPage: React.FC = () => {
 
     // Connect to WebSocket
     socketClient.connect(event.id, callbacks);
+    
+    // Show disconnect timer modal only on first connect
+    if (!hasShownModalOnce) {
+      setShowDisconnectModal(true);
+      setHasShownModalOnce(true);
+    }
 
     // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
       if (document.hidden) {
         console.log('👁️ Green Room: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(event.id);
+        // Timer keeps running in background
       } else if (!socketClient.isConnected()) {
-        console.log('👁️ Green Room: Tab visible - reconnecting WebSocket');
+        console.log('👁️ Green Room: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
+        // Modal won't show again - timer still running
       }
     };
 
@@ -460,6 +473,7 @@ const GreenRoomPage: React.FC = () => {
       console.log('🔄 Cleaning up Green Room WebSocket connection');
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (disconnectTimer) clearTimeout(disconnectTimer);
     };
   }, [event?.id]);
 
@@ -871,8 +885,87 @@ const GreenRoomPage: React.FC = () => {
     );
   }
 
+  // Handle disconnect timer confirmation
+  const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
+    const totalMinutes = (hours * 60) + minutes;
+    
+    if (totalMinutes === 0) {
+      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      return;
+    }
+    
+    // Clear any existing timer
+    if (disconnectTimer) clearTimeout(disconnectTimer);
+    
+    // Start new disconnect timer
+    const ms = totalMinutes * 60 * 1000;
+    const timer = setTimeout(() => {
+      let timeText = '';
+      if (hours > 0) timeText += `${hours}h `;
+      if (minutes > 0) timeText += `${minutes}m`;
+      
+      console.log(`⏰ GreenRoomPage: Auto-disconnect timer expired (${timeText.trim()})`);
+      console.log('📢 GreenRoomPage: Showing disconnect notification...');
+      
+      // Show notification and disconnect
+      setDisconnectDuration(timeText.trim());
+      setShowDisconnectNotification(true);
+      console.log('✅ GreenRoomPage: Notification state set to true');
+      
+      setTimeout(() => {
+        if (event?.id) {
+          socketClient.disconnect(event.id);
+          console.log('🔌 GreenRoomPage: WebSocket disconnected');
+        }
+      }, 100);
+    }, ms);
+    
+    setDisconnectTimer(timer);
+    setShowDisconnectModal(false);
+    
+    let timeText = '';
+    if (hours > 0) timeText += `${hours}h `;
+    if (minutes > 0) timeText += `${minutes}m`;
+    console.log(`⏰ GreenRoomPage: Disconnect timer set to ${timeText.trim()}`);
+  };
+  
+  // Handle never disconnect
+  const handleNeverDisconnect = () => {
+    if (disconnectTimer) clearTimeout(disconnectTimer);
+    setDisconnectTimer(null);
+    setShowDisconnectModal(false);
+    console.log('⏰ GreenRoomPage: Disconnect timer set to Never');
+  };
+  
+  // Handle reconnect from notification
+  const handleReconnect = () => {
+    setShowDisconnectNotification(false);
+    if (event?.id) {
+      // Reconnect with original callbacks
+      const loadSchedule = async () => {
+        try {
+          const data = await DatabaseService.getRunOfShowData(event.id);
+          if (data && data.schedule_items) {
+            setSchedule(data.schedule_items);
+          }
+          if (data && data.settings && data.settings.masterStartTime) {
+            setMasterStartTime(data.settings.masterStartTime);
+          }
+        } catch (error) {
+          console.error('❌ Error loading schedule:', error);
+        }
+      };
+      
+      loadSchedule();
+      
+      // Show modal again after timed disconnect to set new timer
+      setShowDisconnectModal(true);
+    }
+  };
+
   return (
-    <div className="w-full h-screen text-white overflow-hidden relative" style={{ aspectRatio: '9/16' }}>
+    <>
+      <div className="w-full h-screen text-white overflow-hidden relative" style={{ aspectRatio: '9/16' }}>
       {/* Video Background */}
       <video
         autoPlay
@@ -975,7 +1068,112 @@ const GreenRoomPage: React.FC = () => {
         </div>
         </div>
       </div>
+      
+      {/* Disconnect Timer Modal */}
+      {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
+      
+      {/* Disconnect Notification */}
+      {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
+      
+    </>
+  );
+};
+
+// Reuse the same components from ClockPage
+const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) => void; onNever: () => void }> = ({ onConfirm, onNever }) => {
+  const [hours, setHours] = useState(2);
+  const [minutes, setMinutes] = useState(0);
+  
+  const minuteValues = [0, 5, 10, 15, 20, 25, 30];
+  const hoursRef = React.useRef<HTMLDivElement>(null);
+  const minutesRef = React.useRef<HTMLDivElement>(null);
+  
+  React.useEffect(() => {
+    if (hoursRef.current) hoursRef.current.scrollTop = hours * 50;
+    if (minutesRef.current) minutesRef.current.scrollTop = minuteValues.indexOf(minutes) * 50;
+  }, []);
+  
+  const handleHoursScroll = () => {
+    if (!hoursRef.current) return;
+    const index = Math.round(hoursRef.current.scrollTop / 50);
+    setHours(Math.max(0, Math.min(index, 24)));
+  };
+  
+  const handleMinutesScroll = () => {
+    if (!minutesRef.current) return;
+    const index = Math.round(minutesRef.current.scrollTop / 50);
+    setMinutes(minuteValues[Math.max(0, Math.min(index, minuteValues.length - 1))]);
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[999999]">
+      <div className="bg-slate-800 p-10 rounded-2xl border border-slate-700 shadow-2xl max-w-3xl w-[90%]">
+        <h3 className="text-slate-100 text-3xl font-semibold mb-2 text-center">⏰ Auto-Disconnect Timer</h3>
+        <p className="text-slate-400 mb-8 text-center">How long should this connection stay active?</p>
+        
+        <div className="flex items-center justify-center gap-12 mb-10 py-8">
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Hours</div>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              <div ref={hoursRef} onScroll={handleHoursScroll} className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory" style={{ scrollBehavior: 'smooth' }}>
+                {Array.from({length: 25}, (_, i) => (
+                  <div key={i} className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${hours === i ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'}`}>{i}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <div className="text-slate-300 text-4xl font-light mt-10">:</div>
+          
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Minutes</div>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              <div ref={minutesRef} onScroll={handleMinutesScroll} className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory" style={{ scrollBehavior: 'smooth' }}>
+                {minuteValues.map(m => (
+                  <div key={m} className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${minutes === m ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'}`}>{m}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex gap-3">
+          <button onClick={() => onConfirm(hours, minutes)} className="flex-1 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-600/30">✓ Confirm</button>
+          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">∞ Never Disconnect</button>
+        </div>
+        
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+      </div>
     </div>
+  );
+};
+
+const DisconnectNotification: React.FC<{ duration: string; onReconnect: () => void }> = ({ duration, onReconnect }) => {
+  React.useEffect(() => {
+    console.log('🔔 GreenRoom DisconnectNotification mounted:', duration);
+    return () => console.log('🔔 GreenRoom DisconnectNotification unmounted');
+  }, []);
+  
+  return (
+    <>
+      <div className="fixed inset-0 bg-black bg-opacity-70 z-[999998] animate-fade-in pointer-events-auto" />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999999] animate-slide-in pointer-events-auto">
+        <div className="bg-gradient-to-br from-slate-800 to-slate-700 p-10 rounded-2xl border-2 border-slate-600 shadow-2xl flex items-center gap-6 min-w-[450px]">
+          <div className="text-6xl animate-pulse-slow">🔌</div>
+          <div className="flex-1">
+            <h4 className="text-slate-100 text-2xl font-semibold mb-2">Connection Closed</h4>
+            <p className="text-slate-400 text-base">Auto-disconnected after {duration}</p>
+          </div>
+          <button onClick={onReconnect} className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-base font-medium whitespace-nowrap transition transform hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-600/40">🔄 Reconnect</button>
+        </div>
+      </div>
+    </>
   );
 };
 
