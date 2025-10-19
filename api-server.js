@@ -188,11 +188,87 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
       csv += '\n';
     });
     
-    // Update both XML and CSV in Upstash
+    // Update Lower Thirds in Upstash
     await setUpstashCache(`lower-thirds-xml-${eventId}`, encodeURIComponent(fullXML), 3600);
     await setUpstashCache(`lower-thirds-csv-${eventId}`, encodeURIComponent(csv), 3600);
     
-    console.log('✅ Upstash cache regenerated for event:', eventId);
+    // ========================================
+    // Generate Schedule XML & CSV
+    // ========================================
+    const scheduleXmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <schedule>
+    ${scheduleItems.map((item, index) => `
+    <item>
+      <row>${index + 1}</row>
+      <cue>${item.customFields?.cue || ''}</cue>
+      <program>${item.programType || ''}</program>
+      <segment>${item.segmentName || ''}</segment>
+      <duration_hours>${item.durationHours || 0}</duration_hours>
+      <duration_minutes>${item.durationMinutes || 0}</duration_minutes>
+      <duration_seconds>${item.durationSeconds || 0}</duration_seconds>
+      <notes>${item.notes || ''}</notes>
+      <has_ppt>${item.hasPPT ? 'true' : 'false'}</has_ppt>
+      <has_qa>${item.hasQA ? 'true' : 'false'}</has_qa>
+    </item>`).join('')}
+  </schedule>
+</data>`;
+    
+    const scheduleXml = xmlHeader + scheduleXmlContent;
+    
+    let scheduleCsv = 'Row,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA\n';
+    scheduleItems.forEach((item, index) => {
+      const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+      scheduleCsv += `${index + 1},${escapeCsv(item.customFields?.cue || '')},${escapeCsv(item.programType || '')},${escapeCsv(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsv(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'}\n`;
+    });
+    
+    await setUpstashCache(`schedule-xml-${eventId}`, encodeURIComponent(scheduleXml), 3600);
+    await setUpstashCache(`schedule-csv-${eventId}`, encodeURIComponent(scheduleCsv), 3600);
+    
+    // ========================================
+    // Generate Custom Columns XML & CSV
+    // ========================================
+    const customColumns = runOfShowData.custom_columns || {};
+    const columnKeys = Object.keys(customColumns);
+    
+    if (columnKeys.length > 0) {
+      const customColumnsXmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${eventId}</event_id>
+  <custom_columns>
+    ${scheduleItems.map((item, index) => {
+      const customFields = item.customFields || {};
+      return `
+    <item>
+      <row>${index + 1}</row>
+      ${columnKeys.map(key => `<${key}>${customFields[key] || ''}</${key}>`).join('\n      ')}
+    </item>`;
+    }).join('')}
+  </custom_columns>
+</data>`;
+      
+      const customColumnsXml = xmlHeader + customColumnsXmlContent;
+      
+      // CSV header with all custom column names
+      let customColumnsCsv = 'Row,' + columnKeys.map(key => `"${key}"`).join(',') + '\n';
+      scheduleItems.forEach((item, index) => {
+        const customFields = item.customFields || {};
+        const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+        customColumnsCsv += `${index + 1}`;
+        columnKeys.forEach(key => {
+          customColumnsCsv += `,${escapeCsv(customFields[key] || '')}`;
+        });
+        customColumnsCsv += '\n';
+      });
+      
+      await setUpstashCache(`custom-columns-xml-${eventId}`, encodeURIComponent(customColumnsXml), 3600);
+      await setUpstashCache(`custom-columns-csv-${eventId}`, encodeURIComponent(customColumnsCsv), 3600);
+    }
+    
+    console.log('✅ Upstash cache regenerated for event (Lower Thirds + Schedule + Custom Columns):', eventId);
   } catch (error) {
     console.error('❌ Error regenerating Upstash cache:', error);
   }
@@ -222,54 +298,6 @@ app.get('/health', async (req, res) => {
       status: 'unhealthy', 
       error: error.message 
     });
-  }
-});
-
-// Diagnostic endpoint to check Neon connections and activity
-app.get('/api/neon-diagnostics', async (req, res) => {
-  try {
-    // Check active connections
-    const connections = await pool.query(`
-      SELECT 
-        COUNT(*) as total_connections,
-        COUNT(*) FILTER (WHERE state = 'active') as active_connections,
-        COUNT(*) FILTER (WHERE state = 'idle') as idle_connections
-      FROM pg_stat_activity
-      WHERE datname = current_database()
-    `);
-    
-    // Check recent queries
-    const recentQueries = await pool.query(`
-      SELECT 
-        query,
-        state,
-        state_change,
-        NOW() - state_change as idle_duration
-      FROM pg_stat_activity
-      WHERE datname = current_database()
-      ORDER BY state_change DESC
-      LIMIT 10
-    `);
-    
-    // Get pool stats
-    const poolStats = {
-      totalCount: pool.totalCount,
-      idleCount: pool.idleCount,
-      waitingCount: pool.waitingCount
-    };
-    
-    res.json({
-      timestamp: new Date().toISOString(),
-      neonConnections: connections.rows[0],
-      railwayPoolStats: poolStats,
-      recentQueries: recentQueries.rows.map(q => ({
-        query: q.query.substring(0, 100),
-        state: q.state,
-        idleFor: q.idle_duration
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
@@ -658,6 +686,178 @@ app.get('/api/cache/lower-thirds.csv', async (req, res) => {
     }
     
     // If not in cache, return error
+    console.log('❌ CACHE MISS: Data not in Upstash yet');
+    res.set('Content-Type', 'text/csv');
+    res.status(404).send('Error,Data not yet cached. Please update your schedule first.');
+    
+  } catch (error) {
+    console.error('❌ Upstash read error:', error);
+    res.set('Content-Type', 'text/csv');
+    res.status(500).send('Error,Cache read error');
+  }
+});
+
+// Upstash-cached Schedule XML
+app.get('/api/cache/schedule.xml', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    console.log('🔄 CACHE REQUEST: Schedule XML for event:', eventId);
+    
+    if (!eventId) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      console.log('❌ Upstash not configured!');
+      return res.status(503).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache service not configured</error>');
+    }
+    
+    console.log('📦 Reading from Upstash cache (NOT Neon database)');
+    const response = await fetch(`${UPSTASH_URL}/get/schedule-xml-${eventId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result) {
+        const xmlContent = decodeURIComponent(data.result);
+        console.log('✅ CACHE HIT: Serving Schedule XML from Upstash (zero Neon queries!)');
+        res.set('Content-Type', 'application/xml; charset=utf-8');
+        return res.send(xmlContent);
+      }
+    }
+    
+    console.log('❌ CACHE MISS: Data not in Upstash yet');
+    res.set('Content-Type', 'application/xml');
+    res.status(404).send('<?xml version="1.0" encoding="UTF-8"?><error>Data not yet cached. Please update your schedule first.</error>');
+    
+  } catch (error) {
+    console.error('❌ Upstash read error:', error);
+    res.set('Content-Type', 'application/xml');
+    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache read error</error>');
+  }
+});
+
+// Upstash-cached Schedule CSV
+app.get('/api/cache/schedule.csv', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    console.log('🔄 CACHE REQUEST: Schedule CSV for event:', eventId);
+    
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send('Error,Event ID is required');
+    }
+    
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      console.log('❌ Upstash not configured!');
+      return res.status(503).send('Error,Cache service not configured');
+    }
+    
+    console.log('📦 Reading from Upstash cache (NOT Neon database)');
+    const response = await fetch(`${UPSTASH_URL}/get/schedule-csv-${eventId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result) {
+        const csvContent = decodeURIComponent(data.result);
+        console.log('✅ CACHE HIT: Serving Schedule CSV from Upstash (zero Neon queries!)');
+        res.set('Content-Type', 'text/csv; charset=utf-8');
+        return res.send(csvContent);
+      }
+    }
+    
+    console.log('❌ CACHE MISS: Data not in Upstash yet');
+    res.set('Content-Type', 'text/csv');
+    res.status(404).send('Error,Data not yet cached. Please update your schedule first.');
+    
+  } catch (error) {
+    console.error('❌ Upstash read error:', error);
+    res.set('Content-Type', 'text/csv');
+    res.status(500).send('Error,Cache read error');
+  }
+});
+
+// Upstash-cached Custom Columns XML
+app.get('/api/cache/custom-columns.xml', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    console.log('🔄 CACHE REQUEST: Custom Columns XML for event:', eventId);
+    
+    if (!eventId) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      console.log('❌ Upstash not configured!');
+      return res.status(503).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache service not configured</error>');
+    }
+    
+    console.log('📦 Reading from Upstash cache (NOT Neon database)');
+    const response = await fetch(`${UPSTASH_URL}/get/custom-columns-xml-${eventId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result) {
+        const xmlContent = decodeURIComponent(data.result);
+        console.log('✅ CACHE HIT: Serving Custom Columns XML from Upstash (zero Neon queries!)');
+        res.set('Content-Type', 'application/xml; charset=utf-8');
+        return res.send(xmlContent);
+      }
+    }
+    
+    console.log('❌ CACHE MISS: Data not in Upstash yet');
+    res.set('Content-Type', 'application/xml');
+    res.status(404).send('<?xml version="1.0" encoding="UTF-8"?><error>Data not yet cached. Please update your schedule first.</error>');
+    
+  } catch (error) {
+    console.error('❌ Upstash read error:', error);
+    res.set('Content-Type', 'application/xml');
+    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Cache read error</error>');
+  }
+});
+
+// Upstash-cached Custom Columns CSV
+app.get('/api/cache/custom-columns.csv', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    console.log('🔄 CACHE REQUEST: Custom Columns CSV for event:', eventId);
+    
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send('Error,Event ID is required');
+    }
+    
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+      console.log('❌ Upstash not configured!');
+      return res.status(503).send('Error,Cache service not configured');
+    }
+    
+    console.log('📦 Reading from Upstash cache (NOT Neon database)');
+    const response = await fetch(`${UPSTASH_URL}/get/custom-columns-csv-${eventId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result) {
+        const csvContent = decodeURIComponent(data.result);
+        console.log('✅ CACHE HIT: Serving Custom Columns CSV from Upstash (zero Neon queries!)');
+        res.set('Content-Type', 'text/csv; charset=utf-8');
+        return res.send(csvContent);
+      }
+    }
+    
     console.log('❌ CACHE MISS: Data not in Upstash yet');
     res.set('Content-Type', 'text/csv');
     res.status(404).send('Error,Data not yet cached. Please update your schedule first.');
