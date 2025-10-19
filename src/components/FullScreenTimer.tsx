@@ -25,6 +25,7 @@ interface FullScreenTimerProps {
     segmentName: string;
   } | null;
   hybridTimerData?: any; // Add hybridTimerData prop for direct RunOfShowPage communication
+  clockOffset?: number; // Add clockOffset for synced timer
 }
 
 const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
@@ -39,7 +40,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   supabaseMessage = null,
   mainTimer = null,
   secondaryTimer = null,
-  hybridTimerData = null
+  hybridTimerData = null,
+  clockOffset = 0
 }) => {
   const [timerProgress, setTimerProgress] = useState<{ elapsed: number; total: number }>({
     elapsed: elapsedTime,
