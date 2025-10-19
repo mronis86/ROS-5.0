@@ -409,6 +409,51 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                             Higher egress cost
                           </p>
                         </div>
+                        
+                        <div className="mt-6 pt-6 border-t border-purple-500/30">
+                          <h4 className="font-semibold text-purple-300 mb-3 text-base flex items-center gap-2">
+                            ⚡ Upstash Cached URLs (Recommended for vMix/Singular.Live)
+                            <span className="text-xs font-normal text-purple-400">Zero database cost!</span>
+                          </h4>
+                          
+                          <div className="space-y-3">
+                            <div>
+                              <h5 className="font-semibold text-purple-200 mb-2 text-sm">XML (Upstash Cache):</h5>
+                              <div className="bg-gray-900 p-3 rounded border border-purple-500/30 flex items-center justify-between">
+                                <code className="text-purple-300 break-all flex-1 text-sm">
+                                  {RAILWAY_API_URL}/cache/lower-thirds.xml?eventId={eventId}
+                                </code>
+                                <button
+                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/lower-thirds.xml?eventId={eventId}`)}
+                                  className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                              <p className="text-purple-400 text-xs mt-1">
+                                ⚡ Ultra-fast • Zero Neon queries • Auto-updates on schedule save
+                              </p>
+                            </div>
+                            
+                            <div>
+                              <h5 className="font-semibold text-purple-200 mb-2 text-sm">CSV (Upstash Cache):</h5>
+                              <div className="bg-gray-900 p-3 rounded border border-purple-500/30 flex items-center justify-between">
+                                <code className="text-purple-300 break-all flex-1 text-sm">
+                                  {RAILWAY_API_URL}/cache/lower-thirds.csv?eventId={eventId}
+                                </code>
+                                <button
+                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/lower-thirds.csv?eventId={eventId}`)}
+                                  className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                              <p className="text-purple-400 text-xs mt-1">
+                                ⚡ Ultra-fast • Zero Neon queries • Auto-updates on schedule save
+                              </p>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
