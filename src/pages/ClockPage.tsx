@@ -193,14 +193,17 @@ const ClockPage: React.FC = () => {
       if (minutes > 0) timeText += `${minutes}m`;
       
       console.log(`⏰ ClockPage: Auto-disconnect timer expired (${timeText.trim()})`);
+      console.log('📢 ClockPage: Showing disconnect notification...');
       
       // Show notification and disconnect
       setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
+      console.log('✅ ClockPage: Notification state set to true');
       
       setTimeout(() => {
         if (eventId) {
           socketClient.disconnect(eventId);
+          console.log('🔌 ClockPage: WebSocket disconnected');
         }
       }, 100);
     }, ms);
@@ -383,10 +386,15 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
 
 // Disconnect Notification Component
 const DisconnectNotification: React.FC<{ duration: string; onReconnect: () => void }> = ({ duration, onReconnect }) => {
+  React.useEffect(() => {
+    console.log('🔔 DisconnectNotification component mounted with duration:', duration);
+    return () => console.log('🔔 DisconnectNotification component unmounted');
+  }, []);
+  
   return (
     <>
-      <div className="fixed inset-0 bg-black bg-opacity-70 z-[999998] animate-fade-in" />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999999] animate-slide-in">
+      <div className="fixed inset-0 bg-black bg-opacity-70 z-[999998] animate-fade-in pointer-events-auto" />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999999] animate-slide-in pointer-events-auto">
         <div className="bg-gradient-to-br from-slate-800 to-slate-700 p-10 rounded-2xl border-2 border-slate-600 shadow-2xl flex items-center gap-6 min-w-[450px]">
           <div className="text-6xl animate-pulse-slow">🔌</div>
           <div className="flex-1">
