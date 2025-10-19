@@ -823,20 +823,31 @@ const TeleprompterPage: React.FC = () => {
         style={{
           height: isFullscreen ? '100vh' : 'calc(100vh - 72px)',
           transform: `${settings.isMirroredHorizontal ? 'scaleX(-1)' : 'scaleX(1)'} ${settings.isMirroredVertical ? 'scaleY(-1)' : 'scaleY(1)'}`,
-          padding: '50vh 5vw 50vh 5vw',
+          padding: '0 5vw',
           scrollBehavior: userRole === 'SCROLLER' && isManualMode ? 'smooth' : 'auto'
         }}
       >
+        {/* Content wrapper with proper spacing for teleprompter */}
         <div
           style={{
-            fontSize: `${settings.fontSize}px`,
-            lineHeight: settings.lineHeight,
-            textAlign: settings.textAlign,
-            color: settings.textColor,
-            fontFamily: 'Arial, sans-serif',
-            fontWeight: 500
+            minHeight: '100%',
+            paddingTop: '50vh',
+            paddingBottom: '50vh',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
           }}
         >
+          <div
+            style={{
+              fontSize: `${settings.fontSize}px`,
+              lineHeight: settings.lineHeight,
+              textAlign: settings.textAlign,
+              color: settings.textColor,
+              fontFamily: 'Arial, sans-serif',
+              fontWeight: 500
+            }}
+          >
           {scriptLines.map((line, index) => {
             // Get comments from PREVIOUS line (index - 1) to show after it
             // Comment on line 39 (stored as lineNumber: 38) appears before line 40 (index 39)
@@ -885,6 +896,7 @@ const TeleprompterPage: React.FC = () => {
               </div>
             );
           })}
+          </div>
         </div>
       </div>
       
