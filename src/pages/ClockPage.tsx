@@ -25,6 +25,7 @@ const ClockPage: React.FC = () => {
   const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
+  const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -111,20 +112,23 @@ const ClockPage: React.FC = () => {
 
     socketClient.connect(eventId, callbacks);
     
-    // Show disconnect timer modal on connect
-    setShowDisconnectModal(true);
+    // Show disconnect timer modal only on first connect
+    if (!hasShownModalOnce) {
+      setShowDisconnectModal(true);
+      setHasShownModalOnce(true);
+    }
 
     // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
       if (document.hidden) {
         console.log('👁️ ClockPage: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(eventId);
-        if (disconnectTimer) clearTimeout(disconnectTimer);
+        // Timer keeps running in background
       } else if (!socketClient.isConnected()) {
-        console.log('👁️ ClockPage: Tab visible - reconnecting WebSocket');
+        console.log('👁️ ClockPage: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(eventId, callbacks);
         loadMessage(); // Reload message on reconnect
-        setShowDisconnectModal(true); // Show modal again on reconnect
+        // Modal won't show again - timer still running
       }
     };
 
@@ -229,6 +233,7 @@ const ClockPage: React.FC = () => {
           }
         }
       });
+      // Show modal again after timed disconnect to set new timer
       setShowDisconnectModal(true);
     }
   };
