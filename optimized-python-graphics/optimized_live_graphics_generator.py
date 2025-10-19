@@ -35,6 +35,10 @@ class FixedGraphicsGenerator:
         self.message_queue = queue.Queue()
         self.update_thread = None
         
+        # Disconnect timer
+        self.disconnect_timer = None
+        self.disconnect_duration = ""
+        
         self.setup_ui()
     
     def setup_ui(self):
@@ -229,6 +233,8 @@ class FixedGraphicsGenerator:
                 # Join the event room
                 self.sio.emit('join_event', {'eventId': self.event_id.get()})
                 self.log_message("Joined event room")
+                # Show disconnect timer dialog
+                self.root.after(500, self.show_disconnect_timer_dialog)
             
             @self.sio.event
             def disconnect():
@@ -282,6 +288,138 @@ class FixedGraphicsGenerator:
                     pass
                 self.sio = None
     
+    def show_disconnect_timer_dialog(self):
+        """Show dialog to select auto-disconnect timer"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("⏰ Auto-Disconnect Timer")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (400 // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Title
+        ttk.Label(dialog, text="⏰ Auto-Disconnect Timer", 
+                 font=('Arial', 16, 'bold')).pack(pady=(20, 10))
+        ttk.Label(dialog, text="How long should this connection stay active?",
+                 foreground='gray').pack(pady=(0, 20))
+        
+        # Time selector frame
+        time_frame = ttk.Frame(dialog)
+        time_frame.pack(pady=20)
+        
+        # Hours
+        hours_frame = ttk.Frame(time_frame)
+        hours_frame.pack(side='left', padx=10)
+        ttk.Label(hours_frame, text="Hours").pack()
+        hours_var = tk.IntVar(value=2)
+        hours_spin = ttk.Spinbox(hours_frame, from_=0, to=24, textvariable=hours_var, 
+                                width=10, font=('Arial', 14))
+        hours_spin.pack()
+        
+        # Separator
+        ttk.Label(time_frame, text=":", font=('Arial', 18)).pack(side='left', padx=5)
+        
+        # Minutes
+        mins_frame = ttk.Frame(time_frame)
+        mins_frame.pack(side='left', padx=10)
+        ttk.Label(mins_frame, text="Minutes").pack()
+        mins_var = tk.IntVar(value=0)
+        mins_spin = ttk.Spinbox(mins_frame, from_=0, to=55, increment=5, 
+                               textvariable=mins_var, width=10, font=('Arial', 14))
+        mins_spin.pack()
+        
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=20)
+        
+        def confirm():
+            hours = hours_var.get()
+            mins = mins_var.get()
+            total_minutes = (hours * 60) + mins
+            
+            if total_minutes == 0:
+                messagebox.showwarning("Invalid Time", 
+                    "Please select a time greater than 0, or use 'Never Disconnect'")
+                return
+            
+            self.start_disconnect_timer(hours, mins)
+            dialog.destroy()
+        
+        def never():
+            self.log_message("⏰ Disconnect timer: Never (running indefinitely)")
+            dialog.destroy()
+        
+        ttk.Button(btn_frame, text="✓ Confirm", command=confirm, 
+                  width=15).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="∞ Never Disconnect", command=never, 
+                  width=20).pack(side='left', padx=5)
+        
+        # Warning
+        ttk.Label(dialog, text="⚠️ 'Never' may increase database costs", 
+                 foreground='orange', font=('Arial', 9)).pack(pady=10)
+    
+    def start_disconnect_timer(self, hours, minutes):
+        """Start the auto-disconnect timer"""
+        total_minutes = (hours * 60) + minutes
+        ms = total_minutes * 60 * 1000
+        
+        time_text = ''
+        if hours > 0:
+            time_text += f"{hours}h "
+        if minutes > 0:
+            time_text += f"{minutes}m"
+        
+        self.disconnect_duration = time_text.strip()
+        self.log_message(f"⏰ Disconnect timer started: {self.disconnect_duration}")
+        
+        # Schedule disconnect
+        self.disconnect_timer = self.root.after(ms, self.on_timer_expired)
+    
+    def on_timer_expired(self):
+        """Called when disconnect timer expires"""
+        self.log_message(f"⏰ Auto-disconnect timer expired ({self.disconnect_duration})")
+        
+        # Disconnect
+        if self.is_connected:
+            self.disconnect()
+        
+        # Show notification
+        self.show_disconnect_notification()
+    
+    def show_disconnect_notification(self):
+        """Show notification when disconnected due to timer"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🔌 Connection Closed")
+        dialog.geometry("450x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (200 // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Message
+        ttk.Label(dialog, text="🔌", font=('Arial', 48)).pack(pady=(20, 10))
+        ttk.Label(dialog, text="Connection Closed", 
+                 font=('Arial', 14, 'bold')).pack()
+        ttk.Label(dialog, text=f"Auto-disconnected after {self.disconnect_duration}",
+                 foreground='gray').pack(pady=5)
+        
+        # Reconnect button
+        def reconnect():
+            dialog.destroy()
+            self.connect()
+        
+        ttk.Button(dialog, text="🔄 Reconnect", command=reconnect,
+                  width=20).pack(pady=20)
+    
     def disconnect(self):
         """Disconnect from server"""
         if self.sio:
@@ -292,6 +430,11 @@ class FixedGraphicsGenerator:
         self.generate_btn.config(state='disabled')
         self.update_status("Disconnected", 'red')
         self.log_message("Disconnected from server")
+        
+        # Stop disconnect timer
+        if self.disconnect_timer:
+            self.root.after_cancel(self.disconnect_timer)
+            self.disconnect_timer = None
         
         # Stop update thread
         if self.update_thread and self.update_thread.is_alive():
