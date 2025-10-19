@@ -1068,6 +1068,7 @@ const GreenRoomPage: React.FC = () => {
         </div>
       </div>
       </div>
+      </div>
       
       {/* Disconnect Timer Modal */}
       {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
