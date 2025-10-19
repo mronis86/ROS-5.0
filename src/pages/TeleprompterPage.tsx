@@ -68,6 +68,7 @@ const TeleprompterPage: React.FC = () => {
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   
   // Teleprompter settings
   const [settings, setSettings] = useState<TeleprompterSettings>({
@@ -433,10 +434,50 @@ const TeleprompterPage: React.FC = () => {
     }
   };
   
+  // Fullscreen toggle function for VIEWER role
+  const toggleFullscreen = async () => {
+    try {
+      if (!isFullscreen) {
+        // Enter fullscreen
+        await document.documentElement.requestFullscreen();
+        setIsFullscreen(true);
+        console.log('✅ Entered fullscreen mode');
+      } else {
+        // Exit fullscreen
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        }
+        setIsFullscreen(false);
+        console.log('✅ Exited fullscreen mode');
+      }
+    } catch (error) {
+      console.error('❌ Fullscreen error:', error);
+    }
+  };
+  
+  // Listen for fullscreen changes (ESC key, browser UI)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(isCurrentlyFullscreen);
+      console.log('🔄 Fullscreen state changed:', isCurrentlyFullscreen);
+    };
+    
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      // Exit fullscreen on unmount
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(err => console.log('Fullscreen exit error:', err));
+      }
+    };
+  }, []);
+  
   return (
     <div className="min-h-screen" style={{ backgroundColor: settings.backgroundColor }}>
-      {/* Header - Always show for easy role switching */}
-      <div className="bg-slate-800 border-b border-slate-700 p-4">
+      {/* Header - Hidden in fullscreen mode */}
+      <div className="bg-slate-800 border-b border-slate-700 p-4" style={{ display: isFullscreen ? 'none' : 'block' }}>
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
@@ -483,6 +524,17 @@ const TeleprompterPage: React.FC = () => {
               </button>
             </div>
             
+            {/* Fullscreen Button - VIEWER only */}
+            {userRole === 'VIEWER' && (
+              <button
+                onClick={toggleFullscreen}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-medium transition-colors"
+                title={isFullscreen ? 'Exit Fullscreen (ESC)' : 'Enter Fullscreen'}
+              >
+                {isFullscreen ? '⛶ Exit Fullscreen' : '⛶ Fullscreen'}
+              </button>
+            )}
+            
             {/* Connection Status */}
             <div className={`flex items-center gap-2 px-3 py-2 rounded ${
               isWebSocketConnected ? 'bg-green-600' : 'bg-red-600'
@@ -497,7 +549,7 @@ const TeleprompterPage: React.FC = () => {
       </div>
       
       {/* Main Area: Sidebar + Script */}
-      <div className="flex flex-1" style={{ height: 'calc(100vh - 72px)' }}>
+      <div className="flex flex-1" style={{ height: isFullscreen ? '100vh' : 'calc(100vh - 72px)' }}>
         {/* Left Sidebar - Controls (SCROLLER only) */}
         {userRole === 'SCROLLER' && (
           <div className={`bg-slate-800 border-r border-slate-700 transition-all duration-300 overflow-y-auto flex-shrink-0 ${
@@ -741,44 +793,6 @@ const TeleprompterPage: React.FC = () => {
           </div>
         )
       }
-        
-      {/* Reading Guide - Fixed at 50% viewport, only over script area */}
-      {settings.showReadingGuide && (
-        <div
-          className="fixed pointer-events-none z-50"
-          style={{
-            left: userRole === 'SCROLLER' ? (showControls ? '320px' : '48px') : '0',
-            right: '0',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            transition: 'left 0.3s ease'
-          }}
-        >
-          {/* Left arrow pointing RIGHT (inward) */}
-          <div className="absolute left-8 top-1/2 -translate-y-1/2">
-            <svg width="60" height="60" viewBox="0 0 60 60">
-              <polygon 
-                points="15,10 45,30 15,50" 
-                fill={settings.readingGuideColor}
-                stroke={settings.readingGuideColor}
-                strokeWidth="4"
-              />
-            </svg>
-          </div>
-          
-          {/* Right arrow pointing LEFT (inward) */}
-          <div className="absolute right-8 top-1/2 -translate-y-1/2">
-            <svg width="60" height="60" viewBox="0 0 60 60">
-              <polygon 
-                points="45,10 15,30 45,50" 
-                fill={settings.readingGuideColor}
-                stroke={settings.readingGuideColor}
-                strokeWidth="4"
-              />
-            </svg>
-          </div>
-        </div>
-      )}
       
       {/* Script Display - Full height, flex-1 to fill remaining space */}
       <div
@@ -786,7 +800,7 @@ const TeleprompterPage: React.FC = () => {
         onScroll={handleManualScroll}
         className="flex-1 overflow-y-auto"
         style={{
-          height: 'calc(100vh - 72px)',
+          height: isFullscreen ? '100vh' : 'calc(100vh - 72px)',
           transform: `${settings.isMirroredHorizontal ? 'scaleX(-1)' : 'scaleX(1)'} ${settings.isMirroredVertical ? 'scaleY(-1)' : 'scaleY(1)'}`,
           padding: '50vh 5vw 50vh 5vw',
           scrollBehavior: userRole === 'SCROLLER' && isManualMode ? 'smooth' : 'auto'
@@ -852,6 +866,45 @@ const TeleprompterPage: React.FC = () => {
           })}
         </div>
       </div>
+      
+      {/* Reading Guide - Fixed at 50% viewport */}
+      {settings.showReadingGuide && (
+        <div
+          className="fixed pointer-events-none z-50"
+          style={{
+            left: isFullscreen ? '0' : (userRole === 'SCROLLER' ? (showControls ? '320px' : '48px') : '0'),
+            right: '0',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            transition: 'left 0.3s ease'
+          }}
+        >
+          {/* Left arrow pointing RIGHT (inward) */}
+          <div className="absolute left-8 top-1/2 -translate-y-1/2">
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <polygon 
+                points="15,10 45,30 15,50" 
+                fill={settings.readingGuideColor}
+                stroke={settings.readingGuideColor}
+                strokeWidth="4"
+              />
+            </svg>
+          </div>
+          
+          {/* Right arrow pointing LEFT (inward) */}
+          <div className="absolute right-8 top-1/2 -translate-y-1/2">
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <polygon 
+                points="45,10 15,30 45,50" 
+                fill={settings.readingGuideColor}
+                stroke={settings.readingGuideColor}
+                strokeWidth="4"
+              />
+            </svg>
+          </div>
+        </div>
+      )}
+      
       </div>
     </div>
   );
