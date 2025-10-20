@@ -1800,7 +1800,7 @@ app.post('/api/overtime-minutes', async (req, res) => {
     broadcastUpdate(event_id, 'overtimeUpdate', {
       event_id,
       item_id,
-      overtime_minutes
+      overtimeMinutes: overtime_minutes
     });
     
     console.log(`✅ Overtime minutes saved: ${overtime_minutes} minutes for item ${item_id} in event ${event_id}`);
@@ -2168,13 +2168,13 @@ io.on('connection', (socket) => {
 
   // Handle overtime update event
   socket.on('overtimeUpdate', (data) => {
-    const { eventId, itemId, overtimeMinutes } = data;
-    console.log(`⏰ Overtime update for event:${eventId}, item:${itemId}, overtime:${overtimeMinutes} minutes`);
+    const { event_id, item_id, overtimeMinutes } = data;
+    console.log(`⏰ Overtime update for event:${event_id}, item:${item_id}, overtime:${overtimeMinutes} minutes`);
     
     // Broadcast to all other clients in the event room (except sender)
-    socket.to(`event:${eventId}`).emit('overtimeUpdate', {
-      eventId,
-      itemId,
+    socket.to(`event:${event_id}`).emit('overtimeUpdate', {
+      event_id,
+      item_id,
       overtimeMinutes
     });
   });

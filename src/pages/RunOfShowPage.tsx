@@ -4984,19 +4984,37 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onOvertimeUpdate: (data: any) => {
-        console.log('📡 Real-time: Overtime update received via WebSocket');
+        console.log('📡 Real-time: Overtime update received via WebSocket', {
+          received_data: data,
+          expected_event_id: event?.id,
+          event_id_match: data?.event_id === event?.id,
+          has_item_id: !!data?.item_id,
+          overtimeMinutes_type: typeof data?.overtimeMinutes,
+          overtimeMinutes_value: data?.overtimeMinutes
+        });
+        
         if (data && data.event_id === event?.id && data.item_id && typeof data.overtimeMinutes === 'number') {
-          console.log(`📡 Overtime update for item ${data.item_id}: ${data.overtimeMinutes} minutes`);
+          console.log(`✅ Overtime update validation passed - updating item ${data.item_id} to ${data.overtimeMinutes} minutes`);
           
           // Update local overtime state
-          setOvertimeMinutes(prev => ({
-            ...prev,
-            [data.item_id]: data.overtimeMinutes
-          }));
+          setOvertimeMinutes(prev => {
+            const updated = {
+              ...prev,
+              [data.item_id]: data.overtimeMinutes
+            };
+            console.log('📊 Overtime state after update:', updated);
+            return updated;
+          });
           
           console.log(`✅ Overtime state updated from WebSocket: item ${data.item_id} = ${data.overtimeMinutes} minutes`);
         } else {
-          console.log('⚠️ Overtime update ignored - invalid data or event ID mismatch:', data);
+          console.log('⚠️ Overtime update ignored - validation failed:', {
+            has_data: !!data,
+            event_match: data?.event_id === event?.id,
+            has_item: !!data?.item_id,
+            valid_overtime: typeof data?.overtimeMinutes === 'number',
+            received: data
+          });
         }
       }
     };
@@ -5599,15 +5617,16 @@ const RunOfShowPage: React.FC = () => {
       console.log('⏰ Master start time useEffect triggered:', {
         masterStartTime,
         isUserEditing,
-        eventId: event.id
+        eventId: event.id,
+        willSave: isUserEditing
       });
       localStorage.setItem(`masterStartTime_${event.id}`, masterStartTime);
       // Auto-save to API when master start time changes (only if user-initiated)
       if (isUserEditing) {
-        console.log('💾 User-initiated master start time change detected - auto-saving to API');
+        console.log('💾 User-initiated master start time change detected - auto-saving to API with value:', masterStartTime);
         saveToAPI();
       } else {
-        console.log('📥 Master start time change from API/sync - skipping auto-save');
+        console.log('📥 Master start time change from API/sync - skipping auto-save (value:', masterStartTime, ')');
       }
     }
   }, [masterStartTime, event?.id, saveToAPI, isUserEditing]);
@@ -5961,13 +5980,19 @@ const RunOfShowPage: React.FC = () => {
           if (event?.id) {
             const socket = socketClient.getSocket();
             if (socket) {
-              socket.emit('overtimeUpdate', {
-                eventId: event.id,
-                itemId: itemId,
+              const overtimePayload = {
+                event_id: event.id,
+                item_id: itemId,
                 overtimeMinutes: overtimeMinutes
-              });
-              console.log(`📡 Overtime update broadcasted via WebSocket: ${overtimeMinutes} minutes for item ${itemId}`);
+              };
+              console.log('📡 Broadcasting overtime update via WebSocket:', overtimePayload);
+              socket.emit('overtimeUpdate', overtimePayload);
+              console.log(`✅ Overtime update broadcasted: ${overtimeMinutes} minutes for item ${itemId}`);
+            } else {
+              console.warn('⚠️ Cannot broadcast overtime - socket not available');
             }
+          } else {
+            console.warn('⚠️ Cannot broadcast overtime - no event ID');
           }
           
           // Log the overtime change
