@@ -11,6 +11,9 @@ let activeItemId = null;
 let timerProgress = {};
 let activeTimers = {};
 let timerInterval = null;
+let autoRefreshInterval = null;
+let autoRefreshEnabled = false;
+let autoRefreshSeconds = 60;
 let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
 let disconnectTimer = null; // Timer for auto-disconnect
@@ -175,11 +178,41 @@ function setupEventListeners() {
   // Refresh button
   document.getElementById('refreshBtn').addEventListener('click', async () => {
     if (currentEvent) {
-      await loadEventSchedule(currentEvent.id);
+      await loadEventSchedule(currentEvent.id, selectedDay);
     } else {
       await loadEvents();
     }
-    showToast('Refreshed');
+    showToast('🔄 Refreshed');
+  });
+  
+  // Auto-refresh checkbox
+  document.getElementById('autoRefreshCheckbox').addEventListener('change', (e) => {
+    autoRefreshEnabled = e.target.checked;
+    const intervalSelect = document.getElementById('autoRefreshInterval');
+    intervalSelect.disabled = !autoRefreshEnabled;
+    
+    if (autoRefreshEnabled) {
+      autoRefreshSeconds = parseInt(intervalSelect.value);
+      startAutoRefresh();
+      showToast(`✅ Auto-refresh enabled (${autoRefreshSeconds}s)`);
+      console.log(`✅ Auto-refresh enabled: ${autoRefreshSeconds} seconds`);
+    } else {
+      stopAutoRefresh();
+      showToast('⏹️ Auto-refresh disabled');
+      console.log('⏹️ Auto-refresh disabled');
+    }
+  });
+  
+  // Auto-refresh interval selector
+  document.getElementById('autoRefreshInterval').addEventListener('change', (e) => {
+    autoRefreshSeconds = parseInt(e.target.value);
+    console.log(`⏰ Auto-refresh interval changed to: ${autoRefreshSeconds} seconds`);
+    
+    if (autoRefreshEnabled) {
+      stopAutoRefresh();
+      startAutoRefresh();
+      showToast(`⏰ Auto-refresh: ${autoRefreshSeconds}s`);
+    }
   });
   
   // Back to events button
@@ -190,6 +223,7 @@ function setupEventListeners() {
     activeItemId = null;
     stopTimerUpdates();
     stopDisconnectTimer(); // Stop disconnect timer when leaving event
+    stopAutoRefresh(); // Stop auto-refresh when leaving event
     
     // Disconnect socket when leaving event
     if (socket) {
@@ -1732,6 +1766,37 @@ function showDisconnectTimerModal() {
     showToast('Auto-disconnect: Never (⚠️ may increase costs)');
     document.body.removeChild(modal);
   });
+}
+
+// Auto-refresh functions
+function startAutoRefresh() {
+  console.log(`🔄 Starting auto-refresh with interval: ${autoRefreshSeconds} seconds`);
+  
+  // Clear any existing interval
+  stopAutoRefresh();
+  
+  // Set up new interval
+  autoRefreshInterval = setInterval(async () => {
+    if (currentEvent) {
+      console.log(`🔄 Auto-refresh: Reloading schedule for event ${currentEvent.id}, day ${selectedDay}`);
+      try {
+        await loadEventSchedule(currentEvent.id, selectedDay);
+        console.log('✅ Auto-refresh: Schedule reloaded successfully');
+      } catch (error) {
+        console.error('❌ Auto-refresh: Failed to reload schedule:', error);
+      }
+    }
+  }, autoRefreshSeconds * 1000);
+  
+  console.log(`✅ Auto-refresh started: Will refresh every ${autoRefreshSeconds} seconds`);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+    console.log('⏹️ Auto-refresh stopped');
+  }
 }
 
 // Initialize on load

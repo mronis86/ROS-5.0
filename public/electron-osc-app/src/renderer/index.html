@@ -25,6 +25,17 @@
             <option value="RAILWAY">Railway (Deployed)</option>
           </select>
         </div>
+        <div class="auto-refresh-controls">
+          <label>
+            <input type="checkbox" id="autoRefreshCheckbox">
+            Auto-Refresh
+          </label>
+          <select id="autoRefreshInterval" disabled>
+            <option value="30">30s</option>
+            <option value="60" selected>60s</option>
+            <option value="120">120s</option>
+          </select>
+        </div>
         <button id="refreshBtn" class="btn btn-secondary">🔄 Refresh</button>
       </div>
     </header>

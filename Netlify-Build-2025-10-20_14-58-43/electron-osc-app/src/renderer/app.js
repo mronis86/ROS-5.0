@@ -11,9 +11,6 @@ let activeItemId = null;
 let timerProgress = {};
 let activeTimers = {};
 let timerInterval = null;
-let autoRefreshInterval = null;
-let autoRefreshEnabled = false;
-let autoRefreshSeconds = 60;
 let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
 let disconnectTimer = null; // Timer for auto-disconnect
@@ -178,41 +175,11 @@ function setupEventListeners() {
   // Refresh button
   document.getElementById('refreshBtn').addEventListener('click', async () => {
     if (currentEvent) {
-      await loadEventSchedule(currentEvent.id, selectedDay);
+      await loadEventSchedule(currentEvent.id);
     } else {
       await loadEvents();
     }
-    showToast('🔄 Refreshed');
-  });
-  
-  // Auto-refresh checkbox
-  document.getElementById('autoRefreshCheckbox').addEventListener('change', (e) => {
-    autoRefreshEnabled = e.target.checked;
-    const intervalSelect = document.getElementById('autoRefreshInterval');
-    intervalSelect.disabled = !autoRefreshEnabled;
-    
-    if (autoRefreshEnabled) {
-      autoRefreshSeconds = parseInt(intervalSelect.value);
-      startAutoRefresh();
-      showToast(`✅ Auto-refresh enabled (${autoRefreshSeconds}s)`);
-      console.log(`✅ Auto-refresh enabled: ${autoRefreshSeconds} seconds`);
-    } else {
-      stopAutoRefresh();
-      showToast('⏹️ Auto-refresh disabled');
-      console.log('⏹️ Auto-refresh disabled');
-    }
-  });
-  
-  // Auto-refresh interval selector
-  document.getElementById('autoRefreshInterval').addEventListener('change', (e) => {
-    autoRefreshSeconds = parseInt(e.target.value);
-    console.log(`⏰ Auto-refresh interval changed to: ${autoRefreshSeconds} seconds`);
-    
-    if (autoRefreshEnabled) {
-      stopAutoRefresh();
-      startAutoRefresh();
-      showToast(`⏰ Auto-refresh: ${autoRefreshSeconds}s`);
-    }
+    showToast('Refreshed');
   });
   
   // Back to events button
@@ -223,7 +190,6 @@ function setupEventListeners() {
     activeItemId = null;
     stopTimerUpdates();
     stopDisconnectTimer(); // Stop disconnect timer when leaving event
-    stopAutoRefresh(); // Stop auto-refresh when leaving event
     
     // Disconnect socket when leaving event
     if (socket) {
@@ -1427,10 +1393,6 @@ function connectToSocketIO(eventId) {
       handleScheduleUpdate(data.data);
     } else if (data.type === 'resetAllStates') {
       handleResetAllStates(data.data);
-    } else if (data.type === 'overtimeUpdate') {
-      handleOvertimeUpdate(data.data);
-    } else if (data.type === 'overtimeReset') {
-      handleOvertimeReset(data.data);
     }
   });
 }
@@ -1509,15 +1471,8 @@ function handleTimerStopped(timerData) {
 // Handle schedule update from Socket.IO (real-time schedule changes)
 async function handleScheduleUpdate(data) {
   console.log('📋 Schedule updated via Socket.IO:', data);
-  console.log('📋 Current event ID:', currentEvent?.id);
-  console.log('📋 Received event ID:', data?.event_id);
   
-  if (!currentEvent) {
-    console.log('⚠️ No current event loaded, ignoring schedule update');
-    return;
-  }
-  
-  if (data.event_id && data.event_id !== currentEvent.id) {
+  if (!currentEvent || data.event_id !== currentEvent.id) {
     console.log('⚠️ Schedule update for different event, ignoring');
     return;
   }
@@ -1529,7 +1484,7 @@ async function handleScheduleUpdate(data) {
   
   // Show notification
   addOSCLogEntry('Schedule updated - reloaded from server', 'info');
-  showToast('📋 Schedule updated');
+  showToast('Schedule updated');
 }
 
 // Handle reset all states from Socket.IO
@@ -1555,41 +1510,6 @@ function handleResetAllStates(data) {
   // Show notification
   addOSCLogEntry('All states reset via Socket.IO', 'info');
   showToast('All states reset');
-}
-
-// Handle overtime update from Socket.IO
-function handleOvertimeUpdate(data) {
-  console.log('⏰ Overtime update received via Socket.IO:', data);
-  
-  if (!currentEvent || data.event_id !== currentEvent.id) {
-    console.log('⚠️ Overtime update for different event, ignoring');
-    return;
-  }
-  
-  console.log(`✅ Overtime updated for item ${data.item_id}: ${data.overtimeMinutes} minutes`);
-  
-  // Reload schedule to show updated overtime in the display
-  loadEventSchedule(currentEvent.id, selectedDay).then(() => {
-    addOSCLogEntry(`Overtime: ${data.overtimeMinutes > 0 ? '+' : ''}${data.overtimeMinutes}m for item ${data.item_id}`, 'info');
-  });
-}
-
-// Handle overtime reset from Socket.IO
-function handleOvertimeReset(data) {
-  console.log('⏰ Overtime reset received via Socket.IO:', data);
-  
-  if (!currentEvent || data.event_id !== currentEvent.id) {
-    console.log('⚠️ Overtime reset for different event, ignoring');
-    return;
-  }
-  
-  console.log('✅ Overtime data cleared, reloading schedule...');
-  
-  // Reload schedule to clear overtime display
-  loadEventSchedule(currentEvent.id, selectedDay).then(() => {
-    addOSCLogEntry('Overtime data reset', 'info');
-    showToast('Overtime cleared');
-  });
 }
 
 // Show disconnect timer selection modal
@@ -1766,37 +1686,6 @@ function showDisconnectTimerModal() {
     showToast('Auto-disconnect: Never (⚠️ may increase costs)');
     document.body.removeChild(modal);
   });
-}
-
-// Auto-refresh functions
-function startAutoRefresh() {
-  console.log(`🔄 Starting auto-refresh with interval: ${autoRefreshSeconds} seconds`);
-  
-  // Clear any existing interval
-  stopAutoRefresh();
-  
-  // Set up new interval
-  autoRefreshInterval = setInterval(async () => {
-    if (currentEvent) {
-      console.log(`🔄 Auto-refresh: Reloading schedule for event ${currentEvent.id}, day ${selectedDay}`);
-      try {
-        await loadEventSchedule(currentEvent.id, selectedDay);
-        console.log('✅ Auto-refresh: Schedule reloaded successfully');
-      } catch (error) {
-        console.error('❌ Auto-refresh: Failed to reload schedule:', error);
-      }
-    }
-  }, autoRefreshSeconds * 1000);
-  
-  console.log(`✅ Auto-refresh started: Will refresh every ${autoRefreshSeconds} seconds`);
-}
-
-function stopAutoRefresh() {
-  if (autoRefreshInterval) {
-    clearInterval(autoRefreshInterval);
-    autoRefreshInterval = null;
-    console.log('⏹️ Auto-refresh stopped');
-  }
 }
 
 // Initialize on load
