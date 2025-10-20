@@ -1747,6 +1747,71 @@ app.put('/api/timer-messages/:id', async (req, res) => {
   }
 });
 
+// Save overtime minutes for a schedule item
+app.post('/api/overtime-minutes', async (req, res) => {
+  try {
+    const { event_id, item_id, overtime_minutes } = req.body;
+    
+    if (!event_id || !item_id || typeof overtime_minutes !== 'number') {
+      return res.status(400).json({ error: 'event_id, item_id, and overtime_minutes are required' });
+    }
+    
+    console.log(`⏰ Saving overtime minutes: Event ${event_id}, Item ${item_id}, Overtime: ${overtime_minutes} minutes`);
+    
+    // Get current run of show data
+    const currentData = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [event_id]
+    );
+    
+    if (currentData.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    
+    const runOfShowData = currentData.rows[0];
+    const scheduleItems = runOfShowData.schedule_items || [];
+    
+    // Find and update the specific schedule item
+    const updatedScheduleItems = scheduleItems.map((item) => {
+      if (item.id === item_id) {
+        return { ...item, overtime_minutes };
+      }
+      return item;
+    });
+    
+    // Check if the item was found and updated
+    const itemFound = updatedScheduleItems.some(item => item.id === item_id);
+    if (!itemFound) {
+      return res.status(404).json({ error: 'Schedule item not found' });
+    }
+    
+    // Update the run of show data with the new schedule items
+    const result = await pool.query(
+      `UPDATE run_of_show_data 
+       SET schedule_items = $1, updated_at = NOW()
+       WHERE event_id = $2
+       RETURNING *`,
+      [JSON.stringify(updatedScheduleItems), event_id]
+    );
+    
+    const savedData = result.rows[0];
+    
+    // Broadcast update via WebSocket for real-time sync
+    broadcastUpdate(event_id, 'overtimeUpdate', {
+      event_id,
+      item_id,
+      overtime_minutes
+    });
+    
+    console.log(`✅ Overtime minutes saved: ${overtime_minutes} minutes for item ${item_id} in event ${event_id}`);
+    res.json({ success: true, overtime_minutes, item_id });
+    
+  } catch (error) {
+    console.error('Error saving overtime minutes:', error);
+    res.status(500).json({ error: 'Failed to save overtime minutes' });
+  }
+});
+
 // Server-Sent Events support - DISABLED (redundant with Socket.IO)
 // SSE was causing high egress due to heartbeat every 30s per client
 // Socket.IO handles all real-time updates more efficiently
@@ -2098,6 +2163,19 @@ io.on('connection', (socket) => {
       eventId,
       settings,
       timestamp: Date.now()
+    });
+  });
+
+  // Handle overtime update event
+  socket.on('overtimeUpdate', (data) => {
+    const { eventId, itemId, overtimeMinutes } = data;
+    console.log(`⏰ Overtime update for event:${eventId}, item:${itemId}, overtime:${overtimeMinutes} minutes`);
+    
+    // Broadcast to all other clients in the event room (except sender)
+    socket.to(`event:${eventId}`).emit('overtimeUpdate', {
+      eventId,
+      itemId,
+      overtimeMinutes
     });
   });
 
