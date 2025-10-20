@@ -1393,6 +1393,10 @@ function connectToSocketIO(eventId) {
       handleScheduleUpdate(data.data);
     } else if (data.type === 'resetAllStates') {
       handleResetAllStates(data.data);
+    } else if (data.type === 'overtimeUpdate') {
+      handleOvertimeUpdate(data.data);
+    } else if (data.type === 'overtimeReset') {
+      handleOvertimeReset(data.data);
     }
   });
 }
@@ -1471,8 +1475,15 @@ function handleTimerStopped(timerData) {
 // Handle schedule update from Socket.IO (real-time schedule changes)
 async function handleScheduleUpdate(data) {
   console.log('📋 Schedule updated via Socket.IO:', data);
+  console.log('📋 Current event ID:', currentEvent?.id);
+  console.log('📋 Received event ID:', data?.event_id);
   
-  if (!currentEvent || data.event_id !== currentEvent.id) {
+  if (!currentEvent) {
+    console.log('⚠️ No current event loaded, ignoring schedule update');
+    return;
+  }
+  
+  if (data.event_id && data.event_id !== currentEvent.id) {
     console.log('⚠️ Schedule update for different event, ignoring');
     return;
   }
@@ -1484,7 +1495,7 @@ async function handleScheduleUpdate(data) {
   
   // Show notification
   addOSCLogEntry('Schedule updated - reloaded from server', 'info');
-  showToast('Schedule updated');
+  showToast('📋 Schedule updated');
 }
 
 // Handle reset all states from Socket.IO
@@ -1510,6 +1521,41 @@ function handleResetAllStates(data) {
   // Show notification
   addOSCLogEntry('All states reset via Socket.IO', 'info');
   showToast('All states reset');
+}
+
+// Handle overtime update from Socket.IO
+function handleOvertimeUpdate(data) {
+  console.log('⏰ Overtime update received via Socket.IO:', data);
+  
+  if (!currentEvent || data.event_id !== currentEvent.id) {
+    console.log('⚠️ Overtime update for different event, ignoring');
+    return;
+  }
+  
+  console.log(`✅ Overtime updated for item ${data.item_id}: ${data.overtimeMinutes} minutes`);
+  
+  // Reload schedule to show updated overtime in the display
+  loadEventSchedule(currentEvent.id, selectedDay).then(() => {
+    addOSCLogEntry(`Overtime: ${data.overtimeMinutes > 0 ? '+' : ''}${data.overtimeMinutes}m for item ${data.item_id}`, 'info');
+  });
+}
+
+// Handle overtime reset from Socket.IO
+function handleOvertimeReset(data) {
+  console.log('⏰ Overtime reset received via Socket.IO:', data);
+  
+  if (!currentEvent || data.event_id !== currentEvent.id) {
+    console.log('⚠️ Overtime reset for different event, ignoring');
+    return;
+  }
+  
+  console.log('✅ Overtime data cleared, reloading schedule...');
+  
+  // Reload schedule to clear overtime display
+  loadEventSchedule(currentEvent.id, selectedDay).then(() => {
+    addOSCLogEntry('Overtime data reset', 'info');
+    showToast('Overtime cleared');
+  });
 }
 
 // Show disconnect timer selection modal
