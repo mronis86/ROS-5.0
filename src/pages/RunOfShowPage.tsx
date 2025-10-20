@@ -9,6 +9,7 @@ import { NeonBackupService, BackupData } from '../services/neon-backup-service';
 import { useAuth } from '../contexts/AuthContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
+import { neonStatusChecker, NeonStatusInfo } from '../services/neon-status-checker';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import CompleteChangeLog from '../components/CompleteChangeLog';
 import OSCModal from '../components/OSCModal';
@@ -771,6 +772,10 @@ const RunOfShowPage: React.FC = () => {
   const [timeToastEnabled, setTimeToastEnabled] = useState(true); // New state to track if toast is enabled
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
+  
+  // Database status toast
+  const [showDatabaseStatusToast, setShowDatabaseStatusToast] = useState(false);
+  const [databaseStatus, setDatabaseStatus] = useState<NeonStatusInfo | null>(null);
   const [timeDifference, setTimeDifference] = useState(0);
   
   // Skip next sync when user makes a change
@@ -1281,6 +1286,29 @@ const RunOfShowPage: React.FC = () => {
       clearInterval(reliabilityInterval);
     };
   }, [event?.id, user?.id]);
+
+  // Monitor Neon database status
+  useEffect(() => {
+    if (!event?.id) return;
+
+    console.log('🔍 Starting Neon database status monitoring');
+    
+    neonStatusChecker.startMonitoring((status: NeonStatusInfo) => {
+      setDatabaseStatus(status);
+      if (!status.isHealthy) {
+        console.warn('⚠️ Database connectivity issues detected:', status.message);
+        setShowDatabaseStatusToast(true);
+      } else if (showDatabaseStatusToast && status.isHealthy) {
+        // Database recovered
+        console.log('✅ Database connectivity restored');
+        setShowDatabaseStatusToast(false);
+      }
+    });
+
+    return () => {
+      neonStatusChecker.stopMonitoring();
+    };
+  }, [event?.id]);
 
   // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
@@ -11876,6 +11904,37 @@ const RunOfShowPage: React.FC = () => {
             <button
               onClick={() => setShowTimeToast(false)}
               className="ml-4 text-xl hover:opacity-70 transition-opacity"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Database Status Toast - Neon Connectivity Alert */}
+      {showDatabaseStatusToast && databaseStatus && !databaseStatus.isHealthy && (
+        <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[100]">
+          <div className="px-6 py-4 rounded-lg shadow-2xl border-2 bg-red-600 border-red-500 text-red-100 flex items-center gap-3 min-w-[500px] animate-pulse">
+            <div className="text-4xl flex-shrink-0">
+              ⚠️
+            </div>
+            <div className="flex-1">
+              <div className="font-bold text-xl mb-1">
+                DATABASE CONNECTIVITY ISSUE
+              </div>
+              <div className="text-sm font-medium mb-2">
+                {databaseStatus.message}
+              </div>
+              <div className="text-xs opacity-90">
+                Region: <span className="font-bold">{databaseStatus.region}</span> (AWS Northern Virginia)
+                <br />
+                Data may not save until connectivity is restored.
+              </div>
+            </div>
+            <button
+              onClick={() => setShowDatabaseStatusToast(false)}
+              className="ml-4 text-2xl hover:opacity-70 transition-opacity"
+              title="Dismiss (will reappear if issue persists)"
             >
               ×
             </button>
