@@ -1771,19 +1771,27 @@ app.post('/api/overtime-minutes', async (req, res) => {
     const runOfShowData = currentData.rows[0];
     const scheduleItems = runOfShowData.schedule_items || [];
     
+    console.log(`📊 Current schedule items count: ${scheduleItems.length}`);
+    console.log(`🔍 Looking for item_id: ${item_id} (type: ${typeof item_id})`);
+    console.log(`🔍 Schedule item IDs:`, scheduleItems.map(item => ({ id: item.id, type: typeof item.id })));
+    
     // Find and update the specific schedule item
     const updatedScheduleItems = scheduleItems.map((item) => {
       if (item.id === item_id) {
+        console.log(`✅ Found matching item! Updating with overtime_minutes: ${overtime_minutes}`);
         return { ...item, overtime_minutes };
       }
       return item;
     });
     
     // Check if the item was found and updated
-    const itemFound = updatedScheduleItems.some(item => item.id === item_id);
+    const itemFound = updatedScheduleItems.some(item => item.id === item_id && item.overtime_minutes === overtime_minutes);
     if (!itemFound) {
+      console.error(`❌ Item ${item_id} not found in schedule items!`);
       return res.status(404).json({ error: 'Schedule item not found' });
     }
+    
+    console.log(`✅ Item found and updated. Saving to database...`);
     
     // Update the run of show data with the new schedule items
     const result = await pool.query(
