@@ -4509,6 +4509,18 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         
+        // Load overtime minutes from schedule items
+        if (newSchedule.length > 0) {
+          const overtimeData: {[key: number]: number} = {};
+          newSchedule.forEach((item: any) => {
+            if (item.id && typeof item.overtime_minutes === 'number') {
+              overtimeData[item.id] = item.overtime_minutes;
+            }
+          });
+          setOvertimeMinutes(overtimeData);
+          console.log('✅ Loaded overtime minutes from database:', overtimeData);
+        }
+        
         // Update change tracking - store updated_at for comparison
         setLastChangeAt(data.updated_at || null);
         setHasChanges(false);
@@ -4969,6 +4981,22 @@ const RunOfShowPage: React.FC = () => {
           }
         } catch (error) {
           console.error('❌ Initial sync failed to load completed cues:', error);
+        }
+      },
+      onOvertimeUpdate: (data: any) => {
+        console.log('📡 Real-time: Overtime update received via WebSocket');
+        if (data && data.event_id === event?.id && data.item_id && typeof data.overtimeMinutes === 'number') {
+          console.log(`📡 Overtime update for item ${data.item_id}: ${data.overtimeMinutes} minutes`);
+          
+          // Update local overtime state
+          setOvertimeMinutes(prev => ({
+            ...prev,
+            [data.item_id]: data.overtimeMinutes
+          }));
+          
+          console.log(`✅ Overtime state updated from WebSocket: item ${data.item_id} = ${data.overtimeMinutes} minutes`);
+        } else {
+          console.log('⚠️ Overtime update ignored - invalid data or event ID mismatch:', data);
         }
       }
     };
@@ -5912,13 +5940,38 @@ const RunOfShowPage: React.FC = () => {
         if (Math.abs(overtimeMinutes) >= 1) {
           const overtimeType = overtimeMinutes > 0 ? 'over' : 'under';
           console.log(`⏰ Automatic overtime detected: ${Math.abs(overtimeMinutes)} minutes ${overtimeType} for cue ${itemId}`);
+          
+          // Update local state
           setOvertimeMinutes(prev => ({
             ...prev,
             [itemId]: overtimeMinutes
           }));
           
+          // Save to database
+          if (event?.id) {
+            try {
+              await DatabaseService.saveOvertimeMinutes(event.id, itemId, overtimeMinutes);
+              console.log(`✅ Overtime minutes saved to database: ${overtimeMinutes} minutes for item ${itemId}`);
+            } catch (error) {
+              console.error('❌ Failed to save overtime minutes to database:', error);
+            }
+          }
+          
+          // Broadcast via WebSocket to other users
+          if (event?.id) {
+            const socket = socketClient.getSocket();
+            if (socket) {
+              socket.emit('overtimeUpdate', {
+                eventId: event.id,
+                itemId: itemId,
+                overtimeMinutes: overtimeMinutes
+              });
+              console.log(`📡 Overtime update broadcasted via WebSocket: ${overtimeMinutes} minutes for item ${itemId}`);
+            }
+          }
+          
           // Log the overtime change
-          logChange('OVERTIME_DETECTED', {
+          logChange('OVERTIME_DETECTED', `${Math.abs(overtimeMinutes)} minutes ${overtimeType} for cue ${itemId}`, {
             cueId: itemId,
             scheduledDuration: Math.floor(scheduledDuration),
             actualDuration: Math.floor(actualDuration),

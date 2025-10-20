@@ -316,6 +316,20 @@ export class DatabaseService {
     }
   }
 
+  static async saveOvertimeMinutes(eventId: string, itemId: number, overtimeMinutes: number): Promise<boolean> {
+    try {
+      console.log('🔄 Saving overtime minutes via API for event:', eventId, 'item:', itemId, 'overtime:', overtimeMinutes);
+      
+      const result = await apiClient.saveOvertimeMinutes(eventId, itemId, overtimeMinutes);
+      
+      console.log('✅ Overtime minutes saved via API:', result ? 'Success' : 'Failed');
+      return !!result;
+    } catch (error) {
+      console.error('❌ Exception saving overtime minutes:', error);
+      return false;
+    }
+  }
+
   static async getRunOfShowData(eventId: string): Promise<RunOfShowData | null> {
     try {
       console.log('🔄 Loading run of show data from API for event:', eventId);

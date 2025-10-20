@@ -180,6 +180,22 @@ class ApiClient {
     return result;
   }
 
+  // Overtime tracking
+  async saveOvertimeMinutes(eventId: string, itemId: number, overtimeMinutes: number) {
+    const result = await this.request('/api/overtime-minutes', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        event_id: eventId, 
+        item_id: itemId, 
+        overtime_minutes: overtimeMinutes 
+      }),
+    });
+    
+    // Invalidate run of show data cache since overtime affects schedule display
+    this.cache.delete(`runOfShowData_${eventId}`);
+    return result;
+  }
+
   // Completed Cues
   async getCompletedCues(eventId: string) {
     return this.request(`/api/completed-cues/${eventId}`, {}, `completedCues_${eventId}`, this.CACHE_TTL.completedCues);
