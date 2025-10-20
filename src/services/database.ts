@@ -344,8 +344,15 @@ export class DatabaseService {
       // Convert array to object keyed by item_id
       const overtimeData: {[itemId: number]: number} = {};
       result.forEach((record: any) => {
-        if (record.item_id && typeof record.overtime_minutes === 'number') {
-          overtimeData[record.item_id] = record.overtime_minutes;
+        if (record.item_id) {
+          // Handle both number and string types (in case DB stores as string)
+          const overtimeValue = typeof record.overtime_minutes === 'number' 
+            ? record.overtime_minutes 
+            : parseFloat(record.overtime_minutes);
+          
+          if (!isNaN(overtimeValue)) {
+            overtimeData[record.item_id] = overtimeValue;
+          }
         }
       });
       
