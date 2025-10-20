@@ -21,6 +21,7 @@ interface SocketCallbacks {
   onInitialSync?: () => Promise<void>; // NEW! For initial sync on connect
   onTimerMessageUpdated?: (data: any) => void; // NEW! For ClockPage messages
   onOvertimeUpdate?: (data: any) => void; // NEW! For overtime sync
+  onOvertimeReset?: (data: any) => void; // NEW! For overtime reset
 }
 
 class SocketClient {
@@ -112,6 +113,10 @@ class SocketClient {
         case 'overtimeUpdate': // NEW! For overtime sync
           console.log('📡 SocketClient: Received overtimeUpdate event:', message.data);
           this.callbacks.onOvertimeUpdate?.(message.data);
+          break;
+        case 'overtimeReset': // NEW! For overtime reset
+          console.log('📡 SocketClient: Received overtimeReset event:', message.data);
+          this.callbacks.onOvertimeReset?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);

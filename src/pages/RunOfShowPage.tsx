@@ -4115,6 +4115,10 @@ const RunOfShowPage: React.FC = () => {
         // Clear active_timers table
         await DatabaseService.clearAllActiveTimersForEvent(event.id);
         console.log('✅ Cleared all active timers from API');
+        
+        // Clear overtime_minutes table
+        await DatabaseService.clearOvertimeMinutes(event.id);
+        console.log('✅ Cleared overtime minutes from database');
       } catch (error) {
         console.warn('⚠️ Failed to clear database:', error);
       }
@@ -4783,6 +4787,7 @@ const RunOfShowPage: React.FC = () => {
         setTimerProgress({});
         setSubCueTimerProgress({});
         setCompletedCues({});
+        setOvertimeMinutes({}); // Clear overtime data
         setActiveItemId(null);
         setStoppedItems(new Set());
         setLoadedCueDependents(new Set());
@@ -4793,6 +4798,13 @@ const RunOfShowPage: React.FC = () => {
         // The reset should only clear completed cues and timer states, not modify schedule structure
         
         console.log('✅ RunOfShow: All states reset via WebSocket');
+      },
+      onOvertimeReset: (data: any) => {
+        console.log('📡 Real-time: Overtime reset received via WebSocket');
+        if (data && data.event_id === event?.id) {
+          setOvertimeMinutes({});
+          console.log('✅ Overtime data cleared from WebSocket reset');
+        }
       },
       onTimerUpdated: (data: any) => {
         console.log('📡 Real-time: Timer updated via WebSocket');

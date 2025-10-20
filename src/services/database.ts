@@ -1349,6 +1349,31 @@ export class DatabaseService {
     }
   }
 
+  // Clear all overtime minutes for an event
+  static async clearOvertimeMinutes(eventId: string): Promise<boolean> {
+    try {
+      console.log('⏰ Clearing all overtime minutes from database via API:', { eventId });
+      
+      const response = await fetch(`${API_BASE_URL}/api/overtime-minutes/${eventId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        console.error('❌ Error clearing overtime minutes via API:', response.statusText);
+        return false;
+      }
+
+      console.log('✅ Successfully deleted all overtime minutes from database for event:', eventId);
+      return true;
+    } catch (error) {
+      console.error('❌ Error clearing overtime minutes:', error);
+      return false;
+    }
+  }
+
   // INDENTED CUES METHODS - Similar to completed cues but for indented/sub-cue relationships
 
   // Get indented cues for an event

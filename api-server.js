@@ -1845,6 +1845,35 @@ app.get('/api/overtime-minutes/:eventId', async (req, res) => {
   }
 });
 
+// Delete all overtime minutes for an event (used during reset)
+app.delete('/api/overtime-minutes/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    console.log(`⏰ Deleting all overtime minutes for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'DELETE FROM overtime_minutes WHERE event_id = $1 RETURNING *',
+      [eventId]
+    );
+    
+    console.log(`✅ Deleted ${result.rows.length} overtime records for event ${eventId}`);
+    
+    // Broadcast the reset to other clients
+    broadcastUpdate(eventId, 'overtimeReset', { event_id: eventId });
+    
+    res.json({ 
+      success: true, 
+      deletedCount: result.rows.length,
+      message: `Deleted ${result.rows.length} overtime records` 
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting overtime minutes:', error);
+    res.status(500).json({ error: 'Failed to delete overtime minutes', details: error.message });
+  }
+});
+
 // Server-Sent Events support - DISABLED (redundant with Socket.IO)
 // SSE was causing high egress due to heartbeat every 30s per client
 // Socket.IO handles all real-time updates more efficiently
