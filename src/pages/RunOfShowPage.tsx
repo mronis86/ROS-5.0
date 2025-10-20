@@ -4513,22 +4513,10 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         
-        // Load overtime minutes from schedule items
-        if (newSchedule.length > 0) {
-          const overtimeData: {[key: number]: number} = {};
-          console.log('🔍 Checking schedule items for overtime data:', newSchedule.map((item: any) => ({ 
-            id: item.id, 
-            overtime_minutes: item.overtime_minutes,
-            has_overtime: typeof item.overtime_minutes === 'number'
-          })));
-          newSchedule.forEach((item: any) => {
-            if (item.id && typeof item.overtime_minutes === 'number') {
-              overtimeData[item.id] = item.overtime_minutes;
-            }
-          });
-          setOvertimeMinutes(overtimeData);
-          console.log('✅ Loaded overtime minutes from database:', overtimeData);
-        }
+        // Load overtime minutes from dedicated table (like completed_cues)
+        const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
+        setOvertimeMinutes(overtimeData);
+        console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
         
         // Update change tracking - store updated_at for comparison
         setLastChangeAt(data.updated_at || null);

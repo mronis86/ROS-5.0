@@ -330,6 +330,33 @@ export class DatabaseService {
     }
   }
 
+  static async getOvertimeMinutes(eventId: string): Promise<{[itemId: number]: number}> {
+    try {
+      console.log('🔄 Loading overtime minutes via API for event:', eventId);
+      
+      const result = await apiClient.getOvertimeMinutes(eventId);
+      
+      if (!result || !Array.isArray(result)) {
+        console.log('📊 No overtime minutes found');
+        return {};
+      }
+      
+      // Convert array to object keyed by item_id
+      const overtimeData: {[itemId: number]: number} = {};
+      result.forEach((record: any) => {
+        if (record.item_id && typeof record.overtime_minutes === 'number') {
+          overtimeData[record.item_id] = record.overtime_minutes;
+        }
+      });
+      
+      console.log('✅ Loaded overtime minutes from API:', overtimeData);
+      return overtimeData;
+    } catch (error) {
+      console.error('❌ Exception loading overtime minutes:', error);
+      return {};
+    }
+  }
+
   static async getRunOfShowData(eventId: string): Promise<RunOfShowData | null> {
     try {
       console.log('🔄 Loading run of show data from API for event:', eventId);

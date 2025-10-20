@@ -284,16 +284,26 @@ const TeleprompterPage: React.FC = () => {
         const target = targetScrollPositionRef.current;
         const diff = target - current;
         
-        // Use smooth interpolation - move 15% of the distance each frame
-        if (Math.abs(diff) > 0.5) {
-          scriptRef.current.scrollTop = current + (diff * 0.15);
+        // Use faster interpolation - move 40% of the distance each frame for more responsive sync
+        if (Math.abs(diff) > 1) {
+          scriptRef.current.scrollTop = current + (diff * 0.4);
+          // Continue animation if still moving
+          viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+        } else {
+          // Close enough - stop animation and set exact position
+          scriptRef.current.scrollTop = target;
+          viewerAnimationFrameRef.current = null;
         }
+      } else {
+        // No target or ref - stop animation
+        viewerAnimationFrameRef.current = null;
       }
-      
-      viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
     };
     
-    viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+    // Only start animation if there's a target position
+    if (targetScrollPositionRef.current !== null) {
+      viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+    }
     
     return () => {
       if (viewerAnimationFrameRef.current) {
@@ -349,19 +359,19 @@ const TeleprompterPage: React.FC = () => {
         if (scriptRef.current) {
           scriptRef.current.scrollTop += scrollAmount;
           
-          // Broadcast position via WebSocket (throttled)
-          const now = Date.now();
-          if (now - lastScrollBroadcastRef.current >= 100) { // 10 updates per second (reduced from 20 to save Railway egress)
-            const lineHeight = settings.fontSize * settings.lineHeight;
-            const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
-            
-            socketClient.emitScriptScroll(
-              scriptRef.current.scrollTop,
-              currentLine,
-              settings.fontSize
-            );
-            lastScrollBroadcastRef.current = now;
-          }
+            // Broadcast position via WebSocket (throttled)
+            const now = Date.now();
+            if (now - lastScrollBroadcastRef.current >= 50) { // 20 updates per second for smoother sync
+              const lineHeight = settings.fontSize * settings.lineHeight;
+              const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
+              
+              socketClient.emitScriptScroll(
+                scriptRef.current.scrollTop,
+                currentLine,
+                settings.fontSize
+              );
+              lastScrollBroadcastRef.current = now;
+            }
         }
       }
       lastTimestampRef.current = timestamp;
@@ -404,8 +414,8 @@ const TeleprompterPage: React.FC = () => {
       const now = Date.now();
         const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
         
-        // Throttle to 10 updates per second (reduced from 20 to save Railway egress)
-        if (timeSinceLastBroadcast >= 100) {
+        // Throttle to 20 updates per second for smoother sync
+        if (timeSinceLastBroadcast >= 50) {
           const lineHeight = settings.fontSize * settings.lineHeight;
           const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
           
@@ -983,8 +993,8 @@ const TeleprompterPage: React.FC = () => {
                     const now = Date.now();
                     const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
                     
-                    // Throttle to 10 updates per second
-                    if (timeSinceLastBroadcast >= 100) {
+                    // Throttle to 20 updates per second for smoother sync
+                    if (timeSinceLastBroadcast >= 50) {
                       const lineHeight = settings.fontSize * settings.lineHeight;
                       const currentLine = Math.floor(e.currentTarget.scrollTop / lineHeight);
                       

@@ -1,0 +1,28 @@
+{
+  "name": "ros-osc-control",
+  "version": "1.0.0",
+  "description": "Run of Show OSC Control - Electron app that never sleeps, receives OSC commands to control events",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --inspect=5858"
+  },
+  "keywords": [
+    "electron",
+    "osc",
+    "run-of-show",
+    "timer",
+    "control"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1",
+    "osc": "^2.4.4",
+    "socket.io-client": "^4.5.4"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0"
+  }
+}

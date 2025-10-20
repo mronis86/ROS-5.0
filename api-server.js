@@ -1758,51 +1758,20 @@ app.post('/api/overtime-minutes', async (req, res) => {
     
     console.log(`⏰ Saving overtime minutes: Event ${event_id}, Item ${item_id}, Overtime: ${overtime_minutes} minutes`);
     
-    // Get current run of show data
-    const currentData = await pool.query(
-      'SELECT * FROM run_of_show_data WHERE event_id = $1',
-      [event_id]
-    );
-    
-    if (currentData.rows.length === 0) {
-      return res.status(404).json({ error: 'Event not found' });
-    }
-    
-    const runOfShowData = currentData.rows[0];
-    const scheduleItems = runOfShowData.schedule_items || [];
-    
-    console.log(`📊 Current schedule items count: ${scheduleItems.length}`);
-    console.log(`🔍 Looking for item_id: ${item_id} (type: ${typeof item_id})`);
-    console.log(`🔍 Schedule item IDs:`, scheduleItems.map(item => ({ id: item.id, type: typeof item.id })));
-    
-    // Find and update the specific schedule item
-    const updatedScheduleItems = scheduleItems.map((item) => {
-      if (item.id === item_id) {
-        console.log(`✅ Found matching item! Updating with overtime_minutes: ${overtime_minutes}`);
-        return { ...item, overtime_minutes };
-      }
-      return item;
-    });
-    
-    // Check if the item was found and updated
-    const itemFound = updatedScheduleItems.some(item => item.id === item_id && item.overtime_minutes === overtime_minutes);
-    if (!itemFound) {
-      console.error(`❌ Item ${item_id} not found in schedule items!`);
-      return res.status(404).json({ error: 'Schedule item not found' });
-    }
-    
-    console.log(`✅ Item found and updated. Saving to database...`);
-    
-    // Update the run of show data with the new schedule items
+    // Insert or update overtime in dedicated table (like completed_cues)
     const result = await pool.query(
-      `UPDATE run_of_show_data 
-       SET schedule_items = $1, updated_at = NOW()
-       WHERE event_id = $2
+      `INSERT INTO overtime_minutes (event_id, item_id, overtime_minutes, created_at, updated_at)
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (event_id, item_id)
+       DO UPDATE SET 
+         overtime_minutes = EXCLUDED.overtime_minutes,
+         updated_at = NOW()
        RETURNING *`,
-      [JSON.stringify(updatedScheduleItems), event_id]
+      [event_id, item_id, overtime_minutes]
     );
     
     const savedData = result.rows[0];
+    console.log(`✅ Overtime saved to database:`, savedData);
     
     // Broadcast update via WebSocket for real-time sync
     broadcastUpdate(event_id, 'overtimeUpdate', {
@@ -1811,12 +1780,33 @@ app.post('/api/overtime-minutes', async (req, res) => {
       overtimeMinutes: overtime_minutes
     });
     
-    console.log(`✅ Overtime minutes saved: ${overtime_minutes} minutes for item ${item_id} in event ${event_id}`);
-    res.json({ success: true, overtime_minutes, item_id });
+    console.log(`📡 Overtime update broadcasted via WebSocket: ${overtime_minutes} minutes for item ${item_id}`);
+    res.json({ success: true, overtime_minutes, item_id, data: savedData });
     
   } catch (error) {
-    console.error('Error saving overtime minutes:', error);
-    res.status(500).json({ error: 'Failed to save overtime minutes' });
+    console.error('❌ Error saving overtime minutes:', error);
+    res.status(500).json({ error: 'Failed to save overtime minutes', details: error.message });
+  }
+});
+
+// Get overtime minutes for an event
+app.get('/api/overtime-minutes/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    console.log(`📊 Fetching overtime minutes for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'SELECT * FROM overtime_minutes WHERE event_id = $1',
+      [eventId]
+    );
+    
+    console.log(`✅ Found ${result.rows.length} overtime records`);
+    res.json(result.rows);
+    
+  } catch (error) {
+    console.error('❌ Error fetching overtime minutes:', error);
+    res.status(500).json({ error: 'Failed to fetch overtime minutes' });
   }
 });
 

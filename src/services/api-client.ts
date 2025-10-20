@@ -191,9 +191,13 @@ class ApiClient {
       }),
     });
     
-    // Invalidate run of show data cache since overtime affects schedule display
-    this.cache.delete(`runOfShowData_${eventId}`);
+    // Invalidate overtime cache
+    this.cache.delete(`overtimeMinutes_${eventId}`);
     return result;
+  }
+
+  async getOvertimeMinutes(eventId: string) {
+    return this.request(`/api/overtime-minutes/${eventId}`, {}, `overtimeMinutes_${eventId}`, this.CACHE_TTL.completedCues);
   }
 
   // Completed Cues
