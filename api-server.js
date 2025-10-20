@@ -1258,7 +1258,7 @@ app.post('/api/active-timers', async (req, res) => {
          elapsed_seconds = EXCLUDED.elapsed_seconds,
          updated_at = NOW()
        RETURNING *`;
-      params = [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, last_loaded_cue_id, cue_is, duration_seconds || 300, 0];
+      params = [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, last_loaded_cue_id, cue_is, duration_seconds ?? 300, 0];
     } else {
       // Use provided started_at
       query = `INSERT INTO active_timers (event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at)
@@ -1279,7 +1279,7 @@ app.post('/api/active-timers', async (req, res) => {
          elapsed_seconds = EXCLUDED.elapsed_seconds,
          updated_at = NOW()
        RETURNING *`;
-      params = [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is, duration_seconds || 300, 0];
+      params = [event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running, started_at_value, last_loaded_cue_id, cue_is, duration_seconds ?? 300, 0];
     }
     
     const result = await pool.query(query, params);
@@ -1983,7 +1983,7 @@ app.post('/api/cues/load', async (req, res) => {
       'OSC User',
       'OPERATOR',
       cue_is || `CUE ${item_id}`, 
-      duration_seconds || 300
+      duration_seconds ?? 300
     ]);
     
     console.log(`✅ OSC: Cue loaded - Item ${item_id} written to active_timers table`);
