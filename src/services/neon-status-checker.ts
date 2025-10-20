@@ -79,11 +79,32 @@ class NeonStatusChecker {
 
       clearTimeout(timeoutId);
 
-      const isHealthy = response.ok;
+      let isHealthy = response.ok;
+      let message = '';
+      
+      // If response is OK, check the status field in the JSON
+      if (response.ok) {
+        try {
+          const data = await response.json();
+          isHealthy = data.status === 'healthy';
+          
+          if (data.status === 'degraded') {
+            message = data.warnings?.join(', ') || 'Database tables are missing or inaccessible';
+          } else if (data.status === 'unhealthy') {
+            message = data.error || 'Database connectivity issues detected';
+          }
+        } catch (jsonError) {
+          // JSON parsing failed, fall back to response.ok
+          isHealthy = response.ok;
+        }
+      } else {
+        message = 'Unable to connect to database server';
+      }
+
       const newStatus: NeonStatusInfo = {
         isHealthy,
         region: 'us-east-1',
-        message: isHealthy ? '' : 'Database connectivity issues detected',
+        message,
         lastChecked: new Date()
       };
 
