@@ -1342,6 +1342,12 @@ app.put('/api/active-timers/stop', async (req, res) => {
   try {
     const { event_id, item_id, user_id, user_name, user_role } = req.body;
     
+    // Get timer data BEFORE stopping to calculate overtime
+    const timerBeforeStop = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 AND item_id = $2',
+      [event_id, item_id]
+    );
+    
     // Update the single active timer record for this event
     const result = await pool.query(
       `UPDATE active_timers 
@@ -1353,7 +1359,41 @@ app.put('/api/active-timers/stop', async (req, res) => {
       [event_id, item_id, user_id, user_name, user_role]
     );
     
-    // Broadcast update via WebSocket
+    // Calculate and save overtime if timer was running
+    if (timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running) {
+      const timer = timerBeforeStop.rows[0];
+      const startedAt = new Date(timer.started_at);
+      const stoppedAt = new Date();
+      const actualSeconds = Math.floor((stoppedAt - startedAt) / 1000);
+      const scheduledSeconds = timer.duration_seconds || 0;
+      const overtimeMinutes = Math.floor((actualSeconds - scheduledSeconds) / 60);
+      
+      if (Math.abs(overtimeMinutes) >= 1) {
+        console.log(`⏰ Server: Overtime detected: ${overtimeMinutes} minutes for item ${item_id}`);
+        
+        // Save overtime to database
+        await pool.query(
+          `INSERT INTO overtime_minutes (event_id, item_id, overtime_minutes, created_at, updated_at)
+           VALUES ($1, $2, $3, NOW(), NOW())
+           ON CONFLICT (event_id, item_id)
+           DO UPDATE SET 
+             overtime_minutes = EXCLUDED.overtime_minutes,
+             updated_at = NOW()`,
+          [event_id, item_id, overtimeMinutes]
+        );
+        
+        // Broadcast overtime update
+        broadcastUpdate(event_id, 'overtimeUpdate', {
+          event_id,
+          item_id,
+          overtimeMinutes
+        });
+        
+        console.log(`✅ Server: Overtime saved and broadcasted: ${overtimeMinutes} minutes`);
+      }
+    }
+    
+    // Broadcast timer stop update via WebSocket
     broadcastUpdate(event_id, 'timerStopped', result.rows[0]);
     
     res.json({ 
@@ -2028,7 +2068,13 @@ app.post('/api/timers/stop', async (req, res) => {
     
     console.log(`⏹️ OSC: Stopping timer - Event: ${event_id}, Item: ${item_id}`);
     
-    // ONLY update active_timers table (like Supabase RPC did)
+    // Get timer data BEFORE stopping to calculate overtime
+    const timerBeforeStop = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 AND item_id = $2',
+      [event_id, parseInt(item_id)]
+    );
+    
+    // Update active_timers table
     await pool.query(`
       UPDATE active_timers 
       SET 
@@ -2040,6 +2086,40 @@ app.post('/api/timers/stop', async (req, res) => {
     `, [event_id, parseInt(item_id)]);
     
     console.log(`✅ OSC: Timer stopped for item ${item_id} in active_timers table`);
+    
+    // Calculate and save overtime if timer was running
+    if (timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running) {
+      const timer = timerBeforeStop.rows[0];
+      const startedAt = new Date(timer.started_at);
+      const stoppedAt = new Date();
+      const actualSeconds = Math.floor((stoppedAt - startedAt) / 1000);
+      const scheduledSeconds = timer.duration_seconds || 0;
+      const overtimeMinutes = Math.floor((actualSeconds - scheduledSeconds) / 60);
+      
+      if (Math.abs(overtimeMinutes) >= 1) {
+        console.log(`⏰ OSC: Overtime detected: ${overtimeMinutes} minutes for item ${item_id}`);
+        
+        // Save overtime to database
+        await pool.query(
+          `INSERT INTO overtime_minutes (event_id, item_id, overtime_minutes, created_at, updated_at)
+           VALUES ($1, $2, $3, NOW(), NOW())
+           ON CONFLICT (event_id, item_id)
+           DO UPDATE SET 
+             overtime_minutes = EXCLUDED.overtime_minutes,
+             updated_at = NOW()`,
+          [event_id, parseInt(item_id), overtimeMinutes]
+        );
+        
+        // Broadcast overtime update
+        broadcastUpdate(event_id, 'overtimeUpdate', {
+          event_id,
+          item_id: parseInt(item_id),
+          overtimeMinutes
+        });
+        
+        console.log(`✅ OSC: Overtime saved and broadcasted: ${overtimeMinutes} minutes`);
+      }
+    }
     
     // Fetch the complete timer record to send via Socket.IO
     const timerResult = await pool.query(
