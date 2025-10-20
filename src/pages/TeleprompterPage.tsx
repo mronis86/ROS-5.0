@@ -27,6 +27,8 @@ const COMMENT_TYPES: Record<CommentType, { label: string; color: string; bgColor
   LIGHTING: { label: 'Lighting', color: 'text-orange-300', bgColor: 'bg-orange-700', icon: '💡' }
 };
 
+type ReadingGuideMode = 'off' | 'arrows' | 'arrows-with-lines';
+
 interface TeleprompterSettings {
   scrollSpeed: number;
   fontSize: number;
@@ -37,7 +39,8 @@ interface TeleprompterSettings {
   textColor: string;
   lineHeight: number;
   showComments: boolean;
-  showReadingGuide: boolean;
+  showReadingGuide: boolean; // Keep for backward compatibility
+  readingGuideMode: ReadingGuideMode;
   readingGuideColor: string;
 }
 
@@ -69,6 +72,12 @@ const TeleprompterPage: React.FC = () => {
   const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [show16x9Preview, setShow16x9Preview] = useState<boolean>(true); // Default to 16x9 preview
+  const [showDisconnectModal, setShowDisconnectModal] = useState<boolean>(false);
+  const [showDisconnectNotification, setShowDisconnectNotification] = useState<boolean>(false);
+  const [disconnectDuration, setDisconnectDuration] = useState<string>('');
+  const [disconnectTimerState, setDisconnectTimerState] = useState<NodeJS.Timeout | null>(null);
+  const [hasShownModalOnce, setHasShownModalOnce] = useState<boolean>(false);
   
   // Teleprompter settings
   const [settings, setSettings] = useState<TeleprompterSettings>({
@@ -81,7 +90,8 @@ const TeleprompterPage: React.FC = () => {
     textColor: '#FFFFFF',
     lineHeight: 1.8,
     showComments: true,
-    showReadingGuide: true,
+    showReadingGuide: true, // Keep for backward compatibility
+    readingGuideMode: 'arrows-with-lines',
     readingGuideColor: '#FF0000'
   });
   
@@ -95,12 +105,67 @@ const TeleprompterPage: React.FC = () => {
   const viewerAnimationFrameRef = useRef<number | null>(null);
   const lineRefsMap = useRef<Map<number, HTMLDivElement>>(new Map());
   
+
+  // Handle disconnect timer confirmation
+  const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
+    const totalMinutes = (hours * 60) + minutes;
+    
+    if (totalMinutes === 0) {
+      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      return;
+    }
+    
+    setShowDisconnectModal(false);
+    
+    // Clear existing timer
+    if (disconnectTimerState) {
+      clearTimeout(disconnectTimerState);
+    }
+    
+    // Set new timer
+    const timeout = setTimeout(() => {
+      console.log('⏰ Teleprompter: Auto-disconnecting after timer');
+      socketClient.disconnect(eventId);
+      setIsWebSocketConnected(false);
+      setShowDisconnectNotification(true);
+    }, totalMinutes * 60 * 1000);
+    
+    setDisconnectTimerState(timeout);
+    
+    // Format duration for display
+    let timeText = '';
+    if (hours > 0) timeText += `${hours}h `;
+    if (minutes > 0) timeText += `${minutes}m`;
+    console.log(`⏰ Teleprompter: Disconnect timer set to ${timeText.trim()}`);
+  };
+  
+  const handleNeverDisconnect = () => {
+    if (disconnectTimerState) clearTimeout(disconnectTimerState);
+    setDisconnectTimerState(null);
+    setShowDisconnectModal(false);
+    console.log('⏰ Teleprompter: Disconnect timer set to Never');
+  };
+
+  const handleReconnect = () => {
+    setShowDisconnectNotification(false);
+    console.log('🔄 Teleprompter: Reconnecting...');
+    socketClient.connect(eventId, {});
+  };
+  
   // Load script from database if not in state
   useEffect(() => {
     if (!scriptText && eventId) {
       loadScriptFromDatabase();
     }
   }, [eventId]);
+
+  // Show disconnect timer modal only on first connect
+  useEffect(() => {
+    if (eventId && !hasShownModalOnce) {
+      setShowDisconnectModal(true);
+      setHasShownModalOnce(true);
+    }
+  }, [eventId, hasShownModalOnce]);
   
   const loadScriptFromDatabase = async () => {
     if (!eventId) return;
@@ -142,8 +207,9 @@ const TeleprompterPage: React.FC = () => {
       if (document.hidden) {
         console.log('👁️ Teleprompter: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(eventId);
+        // Timer keeps running in background
       } else if (!socketClient.isConnected()) {
-        console.log('👁️ Teleprompter: Tab visible - reconnecting WebSocket');
+        console.log('👁️ Teleprompter: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(eventId, callbacks);
       }
     };
@@ -200,7 +266,7 @@ const TeleprompterPage: React.FC = () => {
     return () => {
       socket.off('scriptScrollSync', handleScrollSync);
     };
-  }, [userRole, eventId]);
+  }, [userRole, eventId, isWebSocketConnected]);
   
   // Smooth scroll interpolation for viewers
   useEffect(() => {
@@ -494,6 +560,21 @@ const TeleprompterPage: React.FC = () => {
       }
     };
   }, []);
+
+  // Sync scroll positions for scroller (always in 16:9 preview mode now)
+  useEffect(() => {
+    if (userRole === 'SCROLLER') {
+      // Force sync after a small delay to ensure DOM is ready
+      setTimeout(() => {
+        const mainScrollTop = scriptRef.current?.scrollTop || 0;
+        // Force sync by setting scroll position directly
+        if (scriptRef.current) {
+          scriptRef.current.scrollTop = mainScrollTop;
+        }
+        console.log('🔄 Scroller mode initialized, syncing scroll position:', mainScrollTop);
+      }, 50);
+    }
+  }, [userRole]);
   
   return (
     <div className="min-h-screen" style={{ backgroundColor: settings.backgroundColor }}>
@@ -790,12 +871,23 @@ const TeleprompterPage: React.FC = () => {
                     <label className="text-xs text-slate-300 mb-2 block">Features:</label>
                     <div className="grid grid-cols-2 gap-2">
                       <button
-                        onClick={() => updateSettings({ showReadingGuide: !settings.showReadingGuide })}
+                        onClick={() => {
+                          const modes: ReadingGuideMode[] = ['arrows-with-lines', 'arrows', 'off'];
+                          const currentIndex = modes.indexOf(settings.readingGuideMode);
+                          const nextMode = modes[(currentIndex + 1) % modes.length];
+                          updateSettings({ 
+                            readingGuideMode: nextMode,
+                            showReadingGuide: nextMode !== 'off' // Keep backward compatibility
+                          });
+                        }}
                         className={`px-2 py-2 rounded text-xs font-medium transition-colors ${
-                          settings.showReadingGuide ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                          settings.readingGuideMode === 'arrows-with-lines' ? 'bg-red-600 text-white' :
+                          settings.readingGuideMode === 'arrows' ? 'bg-orange-600 text-white' :
+                          'bg-slate-700 text-slate-300 hover:bg-slate-600'
                         }`}
+                        title={`Click to cycle guide modes`}
                       >
-                        🎯 Guide
+                        🎯 {settings.readingGuideMode === 'arrows-with-lines' ? 'Lines' : settings.readingGuideMode === 'arrows' ? 'Arrows' : 'Off'}
                       </button>
                       
                       <button
@@ -806,6 +898,7 @@ const TeleprompterPage: React.FC = () => {
                       >
                         💬 Comments
                       </button>
+                      
                     </div>
                   </div>
                 </div>
@@ -823,31 +916,301 @@ const TeleprompterPage: React.FC = () => {
         style={{
           height: isFullscreen ? '100vh' : 'calc(100vh - 72px)',
           transform: `${settings.isMirroredHorizontal ? 'scaleX(-1)' : 'scaleX(1)'} ${settings.isMirroredVertical ? 'scaleY(-1)' : 'scaleY(1)'}`,
-          padding: '0 5vw',
-          scrollBehavior: userRole === 'SCROLLER' && isManualMode ? 'smooth' : 'auto'
+          padding: userRole === 'SCROLLER' ? '20px' : '0 5vw',
+          scrollBehavior: userRole === 'SCROLLER' && isManualMode ? 'smooth' : 'auto',
+          display: userRole === 'SCROLLER' ? 'flex' : 'block',
+          justifyContent: userRole === 'SCROLLER' ? 'center' : 'flex-start',
+          alignItems: userRole === 'SCROLLER' ? 'center' : 'stretch',
+          backgroundColor: userRole === 'SCROLLER' ? '#1a1a1a' : 'transparent',
+          overflow: userRole === 'SCROLLER' ? 'hidden' : 'auto' // Remove horizontal scrollbar in preview mode
         }}
       >
-        {/* Content wrapper with proper spacing for teleprompter */}
+        {/* 16:9 Preview Window - Emulates VIEWER fullscreen with synchronized scrolling */}
+        {userRole === 'SCROLLER' ? (
         <div
           style={{
-            minHeight: '100%',
-            paddingTop: '50vh',
-            paddingBottom: '50vh',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}
-        >
-          <div
-            style={{
-              fontSize: `${settings.fontSize}px`,
-              lineHeight: settings.lineHeight,
-              textAlign: settings.textAlign,
-              color: settings.textColor,
-              fontFamily: 'Arial, sans-serif',
-              fontWeight: 500
+              display: 'flex',
+              width: '100%',
+              height: '100%',
+              alignItems: 'center',
+              justifyContent: 'center',
+              position: 'relative'
             }}
           >
+            {/* 16:9 Preview Container with scrollable content */}
+            <div
+              style={{
+                width: '1920px',
+                height: '1080px',
+                backgroundColor: settings.backgroundColor,
+                borderRadius: '12px',
+                overflow: 'hidden',
+                position: 'relative',
+                transform: 'scale(0.6)', // Adjusted scale for better sizing
+                transformOrigin: 'center center',
+                border: '3px solid #333',
+                boxShadow: '0 0 20px rgba(0,0,0,0.5)',
+                flexShrink: 0
+              }}
+            >
+              {/* Scrollable preview content - mirrors the main script content */}
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  overflow: 'auto',
+                  position: 'relative'
+                }}
+                ref={(el) => {
+                  // Sync this preview scroll with the main script scroll
+                  if (el && scriptRef.current) {
+                    // Force immediate sync without any delay
+                    el.scrollTop = scriptRef.current.scrollTop;
+                    // Also ensure the main container scroll is synced back
+                    if (scriptRef.current.scrollTop !== el.scrollTop) {
+                      scriptRef.current.scrollTop = el.scrollTop;
+                    }
+                  }
+                }}
+                onScroll={(e) => {
+                  // Sync main script scroll with preview scroll
+                  if (scriptRef.current) {
+                    scriptRef.current.scrollTop = e.currentTarget.scrollTop;
+                  }
+                  
+                  // Broadcast scroll position to viewers when scrolling in 16:9 preview mode
+                  if (userRole === 'SCROLLER' && eventId) {
+                    const now = Date.now();
+                    const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
+                    
+                    // Throttle to 10 updates per second
+                    if (timeSinceLastBroadcast >= 100) {
+                      const lineHeight = settings.fontSize * settings.lineHeight;
+                      const currentLine = Math.floor(e.currentTarget.scrollTop / lineHeight);
+                      
+                      socketClient.emitScriptScroll(
+                        e.currentTarget.scrollTop,
+                        currentLine,
+                        settings.fontSize
+                      );
+                      
+                      lastScrollBroadcastRef.current = now;
+                    }
+                  }
+                }}
+                onWheel={(e) => {
+                  // Handle wheel events on preview
+                  e.preventDefault();
+                  if (scriptRef.current) {
+                    scriptRef.current.scrollTop += e.deltaY;
+                  }
+                }}
+              >
+                {/* Content wrapper with adjusted padding for 16:9 preview */}
+                <div
+                  style={{
+                    minHeight: '100%',
+                    paddingTop: '540px', // 50% of 1080px container height
+                    paddingBottom: '540px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center'
+                  }}
+                >
+                <div
+                  style={{
+                    fontSize: `${settings.fontSize * 1.35}px`, // Scale up font to compensate for 0.6 preview scale
+            lineHeight: settings.lineHeight,
+            textAlign: settings.textAlign,
+            color: settings.textColor,
+            fontFamily: 'Arial, sans-serif',
+                    fontWeight: 500,
+                    width: '95%',
+                    margin: '0 auto'
+                  }}
+                >
+                  {scriptLines.map((line, index) => {
+                    const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
+                    
+                    return (
+                      <div 
+                        key={index} 
+                        className="mb-2"
+                        data-line-number={index}
+                      >
+                        {/* Render comment bars from PREVIOUS line BEFORE current line text */}
+                        {lineComments.length > 0 && (
+                          <div className="mb-2 space-y-2">
+                            {lineComments.map((comment) => {
+                              const commentConfig = COMMENT_TYPES[comment.type];
+                              return (
+                                <div
+                                  key={comment.id}
+                                  className={`${commentConfig.bgColor} px-4 py-3 rounded-lg border-l-4 border-${comment.type.toLowerCase()}-400`}
+                                  style={{
+                                    fontSize: `${settings.fontSize * 0.6}px`,
+                                    transform: settings.isMirroredHorizontal ? 'scaleX(-1)' : 'none'
+                                  }}
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-2xl">{commentConfig.icon}</span>
+                                    <div className="flex-1">
+                                      <div className={`font-bold ${commentConfig.color} text-sm`}>
+                                        {commentConfig.label}
+                                      </div>
+                                      <div className="text-white mt-1">{comment.text}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        {/* Current line text */}
+                        <div>{line || '\u00A0'}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                </div>
+              </div>
+              
+              {/* Reading Guide for Preview - Fixed to preview container, not scrollable content */}
+              {settings.readingGuideMode !== 'off' && (
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: '0',
+                    right: '0',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    zIndex: 50,
+                    width: '100%',
+                    height: '60px'
+                  }}
+                >
+                  {/* Horizontal lines above and below - only in arrows-with-lines mode */}
+                  {settings.readingGuideMode === 'arrows-with-lines' && (
+                    <svg width="100%" height="60" style={{ position: 'absolute', top: 0, left: 0 }}>
+                      <line 
+                        x1="0" 
+                        y1="0" 
+                        x2="100%" 
+                        y2="0" 
+                        stroke={settings.readingGuideColor} 
+                        strokeWidth="3"
+                        opacity="0.7"
+                      />
+                      <line 
+                        x1="0" 
+                        y1="60" 
+                        x2="100%" 
+                        y2="60" 
+                        stroke={settings.readingGuideColor} 
+                        strokeWidth="3"
+                        opacity="0.7"
+                      />
+                    </svg>
+                  )}
+                  
+                  {/* Left arrow pointing RIGHT (inward) - at the very left edge */}
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2">
+                    <svg width="60" height="60" viewBox="0 0 60 60">
+                      <polygon 
+                        points="15,10 45,30 15,50" 
+                        fill={settings.readingGuideColor}
+                        stroke={settings.readingGuideColor}
+                        strokeWidth="4"
+                        opacity="0.75"
+                      />
+                    </svg>
+                  </div>
+                  
+                  {/* Right arrow pointing LEFT (inward) - at the very right edge */}
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2">
+                    <svg width="60" height="60" viewBox="0 0 60 60">
+                      <polygon 
+                        points="45,10 15,30 45,50" 
+                        fill={settings.readingGuideColor}
+                        stroke={settings.readingGuideColor}
+                        strokeWidth="4"
+                        opacity="0.75"
+                      />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* VIEWER: Always show cropped 16x9 view (scaled down when not fullscreen) */
+          <div
+            style={{
+              display: 'flex',
+              width: '100%',
+              height: '100%',
+              alignItems: 'center',
+              justifyContent: 'center',
+              position: 'relative',
+              backgroundColor: !isFullscreen ? '#1a1a1a' : 'transparent' // Letterbox effect when not fullscreen
+            }}
+          >
+            <div
+              style={{
+                width: '1920px',
+                height: '1080px',
+                backgroundColor: settings.backgroundColor,
+                overflow: 'hidden',
+                position: 'relative',
+                transform: !isFullscreen 
+                  ? `scale(${Math.min((window.innerWidth * 0.9) / 1920, (window.innerHeight * 0.8) / 1080)})` // Smaller scale when not fullscreen
+                  : `scale(${Math.min(window.innerWidth / 1920, window.innerHeight / 1080)})`, // Full scale in fullscreen
+                transformOrigin: 'center center',
+                flexShrink: 0,
+                border: !isFullscreen ? '3px solid #333' : 'none', // Border when not fullscreen
+                borderRadius: !isFullscreen ? '12px' : '0',
+                boxShadow: !isFullscreen ? '0 0 20px rgba(0,0,0,0.5)' : 'none'
+              }}
+            >
+              {/* Scrollable viewer content at fixed 1920x1080 */}
+              <div
+                ref={(el) => {
+                  // For VIEWER mode, we need to store a ref to this div for scroll sync
+                  if (el && userRole === 'VIEWER') {
+                    // Replace scriptRef for viewers in this mode
+                    (scriptRef as any).current = el;
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  overflow: 'auto', // Allow scrolling to sync with scroller
+                  position: 'relative'
+                }}
+              >
+                <div
+                  style={{
+                    minHeight: '100%',
+                    paddingTop: 'calc(50vh + 100px)', // Adjusted to better align with reading guide
+                    paddingBottom: 'calc(50vh + 100px)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: `${settings.fontSize * 1.35}px`, // Match the 16x9 preview font scaling
+                      lineHeight: settings.lineHeight,
+                      textAlign: settings.textAlign,
+                      color: settings.textColor,
+                      fontFamily: 'Arial, sans-serif',
+                      fontWeight: 500,
+                      width: '95%', // Match the 16x9 preview width
+                      margin: '0 auto'
+                    }}
+                  >
           {scriptLines.map((line, index) => {
             // Get comments from PREVIOUS line (index - 1) to show after it
             // Comment on line 39 (stored as lineNumber: 38) appears before line 40 (index 39)
@@ -896,50 +1259,188 @@ const TeleprompterPage: React.FC = () => {
               </div>
             );
           })}
+                  </div>
+                </div>
+              </div>
+      
+              {/* Reading Guide for VIEWER - Fixed inside the 1920x1080 container */}
+              {settings.readingGuideMode !== 'off' && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '0',
+                    right: '0',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    width: '100%',
+                    height: '60px',
+                    pointerEvents: 'none',
+                    zIndex: 50
+                  }}
+                >
+                  {/* Horizontal lines - only in arrows-with-lines mode */}
+                  {settings.readingGuideMode === 'arrows-with-lines' && (
+                    <svg width="100%" height="60" style={{ position: 'absolute', top: 0, left: 0 }}>
+                      <line 
+                        x1="0" 
+                        y1="0" 
+                        x2="100%" 
+                        y2="0" 
+                        stroke={settings.readingGuideColor} 
+                        strokeWidth="3"
+                        opacity="0.7"
+                      />
+                      <line 
+                        x1="0" 
+                        y1="60" 
+                        x2="100%" 
+                        y2="60" 
+                        stroke={settings.readingGuideColor} 
+                        strokeWidth="3"
+                        opacity="0.7"
+                      />
+                    </svg>
+                  )}
+                  
+                  {/* Left arrow pointing RIGHT (inward) - at the very left edge */}
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2">
+                    <svg width="60" height="60" viewBox="0 0 60 60">
+                      <polygon 
+                        points="15,10 45,30 15,50" 
+                        fill={settings.readingGuideColor}
+                        stroke={settings.readingGuideColor}
+                        strokeWidth="4"
+                        opacity="0.75"
+                      />
+                    </svg>
+                  </div>
+                  
+                  {/* Right arrow pointing LEFT (inward) - at the very right edge */}
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2">
+                    <svg width="60" height="60" viewBox="0 0 60 60">
+                      <polygon 
+                        points="45,10 15,30 45,50" 
+                        fill={settings.readingGuideColor}
+                        stroke={settings.readingGuideColor}
+                        strokeWidth="4"
+                        opacity="0.75"
+                      />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
       
-      {/* Reading Guide - Fixed at 50% viewport */}
-      {settings.showReadingGuide && (
-        <div
-          className="fixed pointer-events-none z-50"
-          style={{
-            left: isFullscreen ? '0' : (userRole === 'SCROLLER' ? (showControls ? '320px' : '48px') : '0'),
-            right: '0',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            transition: 'left 0.3s ease'
-          }}
-        >
-          {/* Left arrow pointing RIGHT (inward) */}
-          <div className="absolute left-8 top-1/2 -translate-y-1/2">
-            <svg width="60" height="60" viewBox="0 0 60 60">
-              <polygon 
-                points="15,10 45,30 15,50" 
-                fill={settings.readingGuideColor}
-                stroke={settings.readingGuideColor}
-                strokeWidth="4"
-              />
-            </svg>
-          </div>
-          
-          {/* Right arrow pointing LEFT (inward) */}
-          <div className="absolute right-8 top-1/2 -translate-y-1/2">
-            <svg width="60" height="60" viewBox="0 0 60 60">
-              <polygon 
-                points="45,10 15,30 45,50" 
-                fill={settings.readingGuideColor}
-                stroke={settings.readingGuideColor}
-                strokeWidth="4"
-              />
-            </svg>
-          </div>
-        </div>
-      )}
+
+      {/* Disconnect Timer Modal */}
+      {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
+      
+      {/* Disconnect Notification */}
+      {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
       
       </div>
     </div>
+  );
+};
+
+// Reuse the same components from PhotoViewPage
+const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) => void; onNever: () => void }> = ({ onConfirm, onNever }) => {
+  const [hours, setHours] = useState(2);
+  const [minutes, setMinutes] = useState(0);
+  
+  const minuteValues = [0, 5, 10, 15, 20, 25, 30];
+  const hoursRef = React.useRef<HTMLDivElement>(null);
+  const minutesRef = React.useRef<HTMLDivElement>(null);
+  
+  React.useEffect(() => {
+    if (hoursRef.current) hoursRef.current.scrollTop = hours * 50;
+    if (minutesRef.current) minutesRef.current.scrollTop = minuteValues.indexOf(minutes) * 50;
+  }, []);
+  
+  const handleHoursScroll = () => {
+    if (!hoursRef.current) return;
+    const index = Math.round(hoursRef.current.scrollTop / 50);
+    setHours(Math.max(0, Math.min(index, 24)));
+  };
+  
+  const handleMinutesScroll = () => {
+    if (!minutesRef.current) return;
+    const index = Math.round(minutesRef.current.scrollTop / 50);
+    setMinutes(minuteValues[Math.max(0, Math.min(index, minuteValues.length - 1))]);
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[999999]">
+      <div className="bg-slate-800 p-10 rounded-2xl border border-slate-700 shadow-2xl max-w-3xl w-[90%]">
+        <h3 className="text-slate-100 text-3xl font-semibold mb-2 text-center">⏰ Auto-Disconnect Timer</h3>
+        <p className="text-slate-400 mb-8 text-center">How long should this connection stay active?</p>
+        
+        <div className="flex items-center justify-center gap-12 mb-10 py-8">
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Hours</div>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              <div ref={hoursRef} onScroll={handleHoursScroll} className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory" style={{ scrollBehavior: 'smooth' }}>
+                {Array.from({length: 25}, (_, i) => (
+                  <div key={i} className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${hours === i ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'}`}>{i}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <div className="text-slate-300 text-4xl font-light mt-10">:</div>
+          
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Minutes</div>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              <div ref={minutesRef} onScroll={handleMinutesScroll} className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory" style={{ scrollBehavior: 'smooth' }}>
+                {minuteValues.map(m => (
+                  <div key={m} className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${minutes === m ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'}`}>{m}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex gap-3">
+          <button onClick={() => onConfirm(hours, minutes)} className="flex-1 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-600/30">✓ Confirm</button>
+          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">∞ Never Disconnect</button>
+        </div>
+        
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+      </div>
+    </div>
+  );
+};
+
+const DisconnectNotification: React.FC<{ duration: string; onReconnect: () => void }> = ({ duration, onReconnect }) => {
+  React.useEffect(() => {
+    console.log('🔔 Teleprompter DisconnectNotification mounted:', duration);
+    return () => console.log('🔔 Teleprompter DisconnectNotification unmounted');
+  }, []);
+  
+  return (
+    <>
+      <div className="fixed inset-0 bg-black bg-opacity-70 z-[999998] animate-fade-in pointer-events-auto" />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999999] animate-slide-in pointer-events-auto">
+        <div className="bg-gradient-to-br from-slate-800 to-slate-700 p-10 rounded-2xl border-2 border-slate-600 shadow-2xl flex items-center gap-6 min-w-[450px]">
+          <div className="text-6xl animate-pulse-slow">🔌</div>
+          <div className="flex-1">
+            <h4 className="text-slate-100 text-2xl font-semibold mb-2">Connection Closed</h4>
+            <p className="text-slate-400 text-base">Auto-disconnected after {duration}</p>
+          </div>
+          <button onClick={onReconnect} className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-base font-medium whitespace-nowrap transition transform hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-600/40">🔄 Reconnect</button>
+        </div>
+      </div>
+    </>
   );
 };
 
