@@ -281,49 +281,21 @@ app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
 // Health check endpoint - lightweight version to reduce Neon queries
-// Enhanced health check - tests database connectivity AND table access
 app.get('/health', async (req, res) => {
   try {
-    const startTime = Date.now();
-    
-    // Test 1: Basic connectivity
-    const connectResult = await pool.query('SELECT 1 as health');
-    const connectOk = connectResult.rows[0].health === 1;
-    
-    // Test 2: Check if critical tables exist
-    const tablesResult = await pool.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public' 
-        AND table_name IN ('run_of_show_data', 'completed_cues', 'overtime_minutes')
-    `);
-    
-    const existingTables = tablesResult.rows.map(row => row.table_name);
-    const criticalTables = {
-      run_of_show_data: existingTables.includes('run_of_show_data'),
-      completed_cues: existingTables.includes('completed_cues'),
-      overtime_minutes: existingTables.includes('overtime_minutes')
-    };
-    
-    const allTablesExist = Object.values(criticalTables).every(exists => exists);
-    const responseTime = Date.now() - startTime;
-    
+    // Use a lightweight query that doesn't prevent auto-suspend
+    const result = await pool.query('SELECT 1 as health');
     res.json({ 
-      status: allTablesExist ? 'healthy' : 'degraded', 
+      status: 'healthy', 
       timestamp: new Date().toISOString(),
-      dbConnected: connectOk,
+      dbConnected: result.rows[0].health === 1,
       database: 'connected',
-      tables: criticalTables,
-      responseTime: `${responseTime}ms`,
-      upstashConfigured: !!(UPSTASH_URL && UPSTASH_TOKEN),
-      warnings: allTablesExist ? [] : ['Some database tables are missing']
+      upstashConfigured: !!(UPSTASH_URL && UPSTASH_TOKEN)
     });
   } catch (error) {
-    console.error('❌ Health check failed:', error.message);
     res.status(500).json({ 
       status: 'unhealthy', 
-      error: error.message,
-      timestamp: new Date().toISOString()
+      error: error.message 
     });
   }
 });
