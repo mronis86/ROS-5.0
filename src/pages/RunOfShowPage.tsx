@@ -2192,16 +2192,20 @@ const RunOfShowPage: React.FC = () => {
     try {
       console.log('🔄 Backing up schedule data...');
       
-      
+      // Include current settings to prevent data loss
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
         event_name: event.name,
         event_date: event.date,
         schedule_items: schedule,
         custom_columns: customColumns,
-        settings: {}
+        settings: {
+          eventName,
+          masterStartTime,
+          dayStartTimes
+        }
       });
-      console.log('✅ Schedule data backed up');
+      console.log('✅ Schedule data backed up with settings');
     } catch (error) {
       console.error('❌ Error backing up schedule data:', error);
     }
