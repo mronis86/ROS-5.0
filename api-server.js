@@ -1822,18 +1822,26 @@ app.get('/api/overtime-minutes/:eventId', async (req, res) => {
     const { eventId } = req.params;
     
     console.log(`📊 Fetching overtime minutes for event: ${eventId}`);
+    console.log(`🔍 Query: SELECT * FROM overtime_minutes WHERE event_id = $1 with eventId: ${eventId}`);
     
     const result = await pool.query(
       'SELECT * FROM overtime_minutes WHERE event_id = $1',
       [eventId]
     );
     
-    console.log(`✅ Found ${result.rows.length} overtime records`);
+    console.log(`✅ Found ${result.rows.length} overtime records for event ${eventId}`);
+    console.log(`📊 Overtime data:`, result.rows.map(row => ({ 
+      item_id: row.item_id, 
+      overtime_minutes: row.overtime_minutes,
+      created_at: row.created_at 
+    })));
+    
     res.json(result.rows);
     
   } catch (error) {
     console.error('❌ Error fetching overtime minutes:', error);
-    res.status(500).json({ error: 'Failed to fetch overtime minutes' });
+    console.error('❌ Error details:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to fetch overtime minutes', details: error.message });
   }
 });
 
