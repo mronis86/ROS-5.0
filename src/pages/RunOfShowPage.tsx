@@ -9162,10 +9162,27 @@ const RunOfShowPage: React.FC = () => {
                                isStartCue: scheduleItem.id === newStartCueId
                              }));
                              
-                             // Save to database
-                             await DatabaseService.saveRunOfShowData(event.id, {
-                               ...runOfShowData,
-                               schedule_items: updatedSchedule
+                             // Update local schedule state
+                             setSchedule(updatedSchedule);
+                             
+                             // Save to database using the existing saveRunOfShowData method
+                             const runOfShowData = {
+                               event_id: event.id,
+                               event_name: eventName,
+                               event_date: event?.date || new Date().toISOString(),
+                               schedule_items: updatedSchedule,
+                               custom_columns: customColumns,
+                               settings: {
+                                 eventName: eventName,
+                                 masterStartTime: masterStartTime,
+                                 dayStartTimes: dayStartTimes
+                               }
+                             };
+                             
+                             await DatabaseService.saveRunOfShowData(runOfShowData, {
+                               userId: user?.id || 'unknown',
+                               userName: user?.name || 'Unknown User',
+                               userRole: user?.role || 'VIEWER'
                              });
                              
                              console.log(`✅ START cue selection saved to schedule: item ${newStartCueId || 'none'}`);
