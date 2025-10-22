@@ -18,12 +18,14 @@ let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
 let disconnectTimer = null; // Timer for auto-disconnect
 let disconnectTimeoutMinutes = 0; // 0 = never disconnect
-let eventTimezone = 'UTC'; // Default to UTC timezone to match database storage
+// Detect user's local timezone
+let eventTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 let allEvents = []; // Global events array
 
 // Initialize
 async function init() {
   console.log('🚀 Initializing ROS OSC Control...');
+  console.log('🌍 Detected local timezone:', eventTimezone);
   
   try {
     // Get config from main process
@@ -158,20 +160,19 @@ function setupTimezoneSelector() {
   const timezoneSelect = document.getElementById('timezoneSelect');
   
   if (timezoneSelect) {
-    // Set initial value to current eventTimezone
+    // Set initial value to detected local timezone
     timezoneSelect.value = eventTimezone;
+    console.log('🌍 Timezone selector initialized with detected timezone:', eventTimezone);
     
     // Add change listener
     timezoneSelect.addEventListener('change', (e) => {
       const selectedTimezone = e.target.value;
       eventTimezone = selectedTimezone;
-      console.log('🌍 Timezone changed to:', selectedTimezone);
+      console.log('🌍 Timezone override changed to:', selectedTimezone);
       
       // Reload events with new timezone
       loadEvents();
     });
-    
-    console.log('🌍 Timezone selector initialized with:', eventTimezone);
   }
 }
 
