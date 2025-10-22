@@ -8,7 +8,7 @@ const { Server } = require('socket.io');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Force Railway rebuild - 2025-10-20 - Build #6 - Overtime tracking with dedicated table
+// Force Railway rebuild - 2025-10-20 - Build #7 - Show start overtime table and star selection
 // Auth is now handled via direct database connection
 // Neon database with PostgreSQL pg library
 // Ensuring Railway picks up latest changes
