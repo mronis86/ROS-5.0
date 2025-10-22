@@ -4573,12 +4573,16 @@ const RunOfShowPage: React.FC = () => {
         // Load show start overtime from separate table
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
         if (showStartOvertimeData) {
-          setShowStartOvertime(showStartOvertimeData.overtimeMinutes);
-          setStartCueId(showStartOvertimeData.itemId); // Restore which row has the star
+          // Parse the data structure correctly
+          const overtimeMinutes = showStartOvertimeData.show_start_overtime || showStartOvertimeData.overtimeMinutes;
+          const itemId = showStartOvertimeData.item_id || showStartOvertimeData.itemId;
+          
+          setShowStartOvertime(overtimeMinutes);
+          setStartCueId(itemId); // Restore which row has the star
           console.log('✅ Loaded show start overtime:', showStartOvertimeData);
           console.log('⭐ START cue restored with overtime:', {
-            itemId: showStartOvertimeData.itemId,
-            showStartOvertime: showStartOvertimeData.overtimeMinutes
+            itemId: itemId,
+            showStartOvertime: overtimeMinutes
           });
         } else {
           console.log('⭐ No show start overtime found in database');
