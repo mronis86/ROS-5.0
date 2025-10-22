@@ -364,6 +364,37 @@ export class DatabaseService {
     }
   }
 
+  static async saveShowStartOvertime(
+    eventId: string, 
+    itemId: number, 
+    overtimeMinutes: number,
+    scheduledTime: string,
+    actualTime: string
+  ): Promise<boolean> {
+    try {
+      console.log('🔄 Saving show start overtime via API:', { eventId, itemId, overtimeMinutes, scheduledTime, actualTime });
+      
+      const result = await apiClient.saveShowStartOvertime(eventId, itemId, overtimeMinutes, scheduledTime, actualTime);
+      
+      console.log('✅ Show start overtime saved via API:', result ? 'Success' : 'Failed');
+      return !!result;
+    } catch (error) {
+      console.error('❌ Exception saving show start overtime:', error);
+      return false;
+    }
+  }
+
+  static async getShowStartOvertime(eventId: string): Promise<{overtimeMinutes: number, itemId: number} | null> {
+    try {
+      const result = await apiClient.getShowStartOvertime(eventId);
+      console.log('✅ Loaded show start overtime from API:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Exception getting show start overtime:', error);
+      return null;
+    }
+  }
+
   static async getRunOfShowData(eventId: string): Promise<RunOfShowData | null> {
     try {
       console.log('🔄 Loading run of show data from API for event:', eventId);
