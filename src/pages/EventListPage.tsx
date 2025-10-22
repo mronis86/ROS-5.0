@@ -93,6 +93,7 @@ const EventListPage: React.FC = () => {
             originalDate: calEvent.date, // Keep original for reference
             location: calEvent.schedule_data?.location || 'Great Hall',
             numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+            timezone: calEvent.schedule_data?.timezone || 'America/New_York',
             created_at: calEvent.created_at || new Date().toISOString(),
             updated_at: calEvent.updated_at || new Date().toISOString()
           };
@@ -296,7 +297,8 @@ const EventListPage: React.FC = () => {
             ...matchingCalendarEvent.schedule_data, // Preserve existing schedule_data FIRST
             location: updatedEvent.location,         // Then override with new values
             numberOfDays: updatedEvent.numberOfDays,
-            eventId: updatedEvent.id
+            eventId: updatedEvent.id,
+            timezone: updatedEvent.timezone
           }
         };
         
@@ -329,6 +331,7 @@ const EventListPage: React.FC = () => {
               eventDate: updatedEvent.date,
               location: updatedEvent.location,
               numberOfDays: updatedEvent.numberOfDays,
+              timezone: updatedEvent.timezone,
               lastSaved: new Date().toISOString()
             },
             last_modified_by: user?.id,
