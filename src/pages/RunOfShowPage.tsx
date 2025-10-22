@@ -4548,6 +4548,17 @@ const RunOfShowPage: React.FC = () => {
         const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
+        
+        // Restore START cue selection from schedule items
+        const startCueItem = newSchedule.find(item => item.isStartCue === true);
+        if (startCueItem) {
+          setStartCueId(startCueItem.id);
+          console.log('⭐ START cue restored from schedule:', startCueItem.id);
+        } else {
+          setStartCueId(null);
+          console.log('⭐ No START cue found in schedule');
+        }
+        
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
@@ -9137,9 +9148,31 @@ const RunOfShowPage: React.FC = () => {
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
                      <button
-                       onClick={() => {
+                       onClick={async () => {
                          // Toggle: if this cue is already the START cue, unset it; otherwise set it
-                         setStartCueId(startCueId === item.id ? null : item.id);
+                         const newStartCueId = startCueId === item.id ? null : item.id;
+                         setStartCueId(newStartCueId);
+                         
+                         // Update the schedule items to mark which one has the star
+                         if (event?.id) {
+                           try {
+                             // Create updated schedule items
+                             const updatedSchedule = schedule.map(scheduleItem => ({
+                               ...scheduleItem,
+                               isStartCue: scheduleItem.id === newStartCueId
+                             }));
+                             
+                             // Save to database
+                             await DatabaseService.saveRunOfShowData(event.id, {
+                               ...runOfShowData,
+                               schedule_items: updatedSchedule
+                             });
+                             
+                             console.log(`✅ START cue selection saved to schedule: item ${newStartCueId || 'none'}`);
+                           } catch (error) {
+                             console.error('❌ Failed to save START cue selection:', error);
+                           }
+                         }
                        }}
                        className={`w-7 h-7 flex items-center justify-center text-xl rounded transition-colors bg-slate-700 hover:bg-slate-600 ${
                          startCueId === item.id 
