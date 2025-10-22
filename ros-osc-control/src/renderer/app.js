@@ -43,6 +43,9 @@ async function init() {
     console.log('🎯 Setting up event listeners...');
     setupEventListeners();
     
+    // Setup timezone selector
+    setupTimezoneSelector();
+    
     // Load events
     console.log('📥 Loading events...');
     await loadEvents();
@@ -147,6 +150,37 @@ function stopDisconnectTimer() {
     clearTimeout(disconnectTimer);
     disconnectTimer = null;
     console.log('🛑 Disconnect timer stopped');
+  }
+}
+
+// Setup timezone selector
+function setupTimezoneSelector() {
+  const timezoneSelect = document.getElementById('timezoneSelect');
+  
+  if (timezoneSelect) {
+    // Set initial value to current eventTimezone
+    timezoneSelect.value = eventTimezone;
+    
+    // Add change listener
+    timezoneSelect.addEventListener('change', (e) => {
+      const selectedTimezone = e.target.value;
+      eventTimezone = selectedTimezone;
+      console.log('🌍 Timezone changed to:', selectedTimezone);
+      
+      // Reload events with new timezone
+      loadEvents();
+    });
+    
+    console.log('🌍 Timezone selector initialized with:', eventTimezone);
+  }
+}
+
+// Update timezone selector value
+function updateTimezoneSelector() {
+  const timezoneSelect = document.getElementById('timezoneSelect');
+  if (timezoneSelect) {
+    timezoneSelect.value = eventTimezone;
+    console.log('🌍 Timezone selector updated to:', eventTimezone);
   }
 }
 
@@ -355,6 +389,9 @@ async function loadEvents(filter = 'upcoming') {
     // Determine timezone for event list filtering
     eventTimezone = determineEventListTimezone(allEvents);
     
+    // Update timezone selector to match
+    updateTimezoneSelector();
+    
     if (allEvents.length === 0) {
       eventList.innerHTML = '<div class="loading">No events found</div>';
       return;
@@ -445,30 +482,9 @@ async function loadEvents(filter = 'upcoming') {
 
 // Determine timezone for event list filtering
 function determineEventListTimezone(events) {
-  if (!events || events.length === 0) {
-    return 'America/New_York'; // Default
-  }
-  
-  // Strategy: Use the timezone of the most recent event
-  // This ensures consistent filtering for the event list
-  const mostRecentEvent = events[0]; // Assuming events are sorted by date
-  
-  if (mostRecentEvent.schedule_data?.timezone) {
-    console.log('🌍 Using timezone from most recent event for list filtering:', mostRecentEvent.schedule_data.timezone);
-    return mostRecentEvent.schedule_data.timezone;
-  }
-  
-  // Fallback: check if there's a current event with timezone
-  if (currentEvent) {
-    const currentEventData = events.find(e => e.id === currentEvent.id);
-    if (currentEventData?.schedule_data?.timezone) {
-      console.log('🌍 Using timezone from current event for list filtering:', currentEventData.schedule_data.timezone);
-      return currentEventData.schedule_data.timezone;
-    }
-  }
-  
-  console.log('🌍 No timezone found, using default for list filtering: America/New_York');
-  return 'America/New_York';
+  // Use the manually selected timezone from the dropdown
+  console.log('🌍 Using manually selected timezone for list filtering:', eventTimezone);
+  return eventTimezone;
 }
 
 // Load event timezone from calendar events API
