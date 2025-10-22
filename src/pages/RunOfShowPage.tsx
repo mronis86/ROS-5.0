@@ -4142,6 +4142,18 @@ const RunOfShowPage: React.FC = () => {
     setLoadedCueDependents(new Set()); // Clear dependent row highlighting
     setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
     setOvertimeMinutes({}); // Clear all overtime indicators
+    setShowStartOvertime(0); // Clear show start overtime
+    setStartCueId(null); // Clear START cue selection
+    
+    // Clear show start overtime from database
+    if (event?.id) {
+      try {
+        await DatabaseService.clearShowStartOvertime(event.id);
+        console.log('✅ Show start overtime cleared from database');
+      } catch (error) {
+        console.error('❌ Failed to clear show start overtime from database:', error);
+      }
+    }
     
     // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
     // The reset should only clear completed cues and timer states, not modify schedule structure
@@ -4558,29 +4570,23 @@ const RunOfShowPage: React.FC = () => {
         setOvertimeMinutes(overtimeData);
         console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
         
-        // Load show start overtime from separate table FIRST
+        // Load show start overtime from separate table
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
         if (showStartOvertimeData) {
           setShowStartOvertime(showStartOvertimeData.overtimeMinutes);
-          setStartCueId(showStartOvertimeData.itemId); // Also restore which cue is marked as START
           console.log('✅ Loaded show start overtime:', showStartOvertimeData);
-          console.log('⭐ START cue restored with overtime:', {
-            itemId: showStartOvertimeData.itemId,
-            showStartOvertime: showStartOvertimeData.overtimeMinutes,
-            willApplyToRowsAfter: true
-          });
         } else {
           console.log('⭐ No show start overtime found in database');
-          
-          // If no show start overtime, check schedule for star selection
-          const startCueItem = newSchedule.find(item => item.isStartCue === true);
-          if (startCueItem) {
-            setStartCueId(startCueItem.id);
-            console.log('⭐ START cue restored from schedule:', startCueItem.id);
-          } else {
-            setStartCueId(null);
-            console.log('⭐ No START cue found in schedule');
-          }
+        }
+        
+        // Restore START cue selection from schedule items (just the marker)
+        const startCueItem = newSchedule.find(item => item.isStartCue === true);
+        if (startCueItem) {
+          setStartCueId(startCueItem.id);
+          console.log('⭐ START cue marker restored from schedule:', startCueItem.id);
+        } else {
+          setStartCueId(null);
+          console.log('⭐ No START cue marker found in schedule');
         }
         
         // CRITICAL: Combine show start overtime with duration overtime for total calculation

@@ -243,6 +243,15 @@ class ApiClient {
     return this.request(`/api/start-cue-selection/${eventId}`, {}, `startCueSelection_${eventId}`, this.CACHE_TTL.completedCues);
   }
 
+  async clearShowStartOvertime(eventId: string) {
+    const result = await this.request(`/api/show-start-overtime/${eventId}`, {
+      method: 'DELETE'
+    });
+    
+    this.cache.delete(`showStartOvertime_${eventId}`);
+    return result;
+  }
+
   // Completed Cues
   async getCompletedCues(eventId: string) {
     return this.request(`/api/completed-cues/${eventId}`, {}, `completedCues_${eventId}`, this.CACHE_TTL.completedCues);

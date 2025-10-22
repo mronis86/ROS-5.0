@@ -420,6 +420,20 @@ export class DatabaseService {
     }
   }
 
+  static async clearShowStartOvertime(eventId: string): Promise<boolean> {
+    try {
+      console.log('🔄 Clearing show start overtime via API:', eventId);
+      
+      const result = await apiClient.clearShowStartOvertime(eventId);
+      
+      console.log('✅ Show start overtime cleared via API:', result ? 'Success' : 'Failed');
+      return !!result;
+    } catch (error) {
+      console.error('❌ Exception clearing show start overtime:', error);
+      return false;
+    }
+  }
+
   static async getRunOfShowData(eventId: string): Promise<RunOfShowData | null> {
     try {
       console.log('🔄 Loading run of show data from API for event:', eventId);
