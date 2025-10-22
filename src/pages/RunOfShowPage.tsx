@@ -4565,11 +4565,6 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         
-        // Load overtime minutes from dedicated table (like completed_cues)
-        const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
-        setOvertimeMinutes(overtimeData);
-        console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
-        
         // FIRST: Always load star selection from main schedule (this is the source of truth)
         const startCueItem = newSchedule.find(item => item.isStartCue === true);
         if (startCueItem) {
@@ -4579,6 +4574,11 @@ const RunOfShowPage: React.FC = () => {
           setStartCueId(null);
           console.log('⭐ No START cue marker found in schedule');
         }
+        
+        // Load overtime minutes from dedicated table (like completed_cues)
+        const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
+        setOvertimeMinutes(overtimeData);
+        console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
         
         // SECOND: Load show start overtime from separate table (if it exists)
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
