@@ -1997,6 +1997,10 @@ app.post('/api/start-cue-selection', async (req, res) => {
     
     console.log(`⭐ Saving START cue selection: Event ${event_id}, Item ${item_id}`);
     
+    // Convert item_id to integer to match the table schema
+    const itemIdInt = parseInt(item_id);
+    console.log(`🔍 Converted item_id to integer: ${itemIdInt}`);
+    
     // Insert or update start cue selection in show_start_overtime table
     // We'll use this table to track both the selection and any overtime
     const result = await pool.query(
@@ -2006,7 +2010,7 @@ app.post('/api/start-cue-selection', async (req, res) => {
        DO UPDATE SET 
          updated_at = NOW()
        RETURNING *`,
-      [event_id, item_id]
+      [event_id, itemIdInt]
     );
     
     const savedData = result.rows[0];
@@ -2023,7 +2027,19 @@ app.post('/api/start-cue-selection', async (req, res) => {
     
   } catch (error) {
     console.error('❌ Error saving START cue selection:', error);
-    res.status(500).json({ error: 'Failed to save START cue selection', details: error.message });
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
+      query: error.query
+    });
+    res.status(500).json({ 
+      error: 'Failed to save START cue selection', 
+      details: error.message,
+      code: error.code,
+      hint: error.hint
+    });
   }
 });
 
