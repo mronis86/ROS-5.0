@@ -415,27 +415,24 @@ async function loadEvents(filter = 'upcoming') {
       // Get event's timezone from NEON database
       const eventTimezone = event.schedule_data?.timezone || 'America/New_York';
       
-      // Create today's date in the event's timezone
-      const todayInEventTimezone = new Date();
-      const todayInEventTz = new Date(todayInEventTimezone.toLocaleString("en-US", { timeZone: eventTimezone }));
-      todayInEventTz.setHours(0, 0, 0, 0);
-      
-      // Create event date in the event's timezone
-      const eventDateInEventTz = new Date(eventDate.toLocaleString("en-US", { timeZone: eventTimezone }));
-      eventDateInEventTz.setHours(0, 0, 0, 0);
+      // Simple approach: compare dates directly without timezone conversion
+      // The event date is already in the correct format for comparison
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      eventDate.setHours(0, 0, 0, 0);
       
       console.log(`🌍 Event "${event.name}" date comparison:`, {
         eventDate: event.date,
         eventTimezone: eventTimezone,
-        eventDateInEventTz: eventDateInEventTz.toISOString(),
-        todayInEventTz: todayInEventTz.toISOString(),
-        isUpcoming: eventDateInEventTz >= todayInEventTz
+        eventDateObj: eventDate.toISOString(),
+        todayObj: today.toISOString(),
+        isUpcoming: eventDate >= today
       });
       
       if (filter === 'upcoming') {
-        return eventDateInEventTz >= todayInEventTz;
+        return eventDate >= today;
       } else {
-        return eventDateInEventTz < todayInEventTz;
+        return eventDate < today;
       }
     });
     
@@ -1471,16 +1468,27 @@ function formatTime(seconds) {
 }
 
 function formatDate(dateString, timezone = 'America/New_York') {
-  // Parse the date string (YYYY-MM-DD format)
-  const [year, month, day] = dateString.split('-').map(Number);
-  const date = new Date(year, month - 1, day); // month is 0-indexed
-  
-  return date.toLocaleDateString('en-US', { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric',
-    timeZone: timezone
-  });
+  try {
+    // Parse the date string (YYYY-MM-DD format)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-indexed
+    
+    // Validate the date
+    if (isNaN(date.getTime())) {
+      console.error('Invalid date:', dateString);
+      return dateString; // Return original string if invalid
+    }
+    
+    return date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric',
+      timeZone: timezone
+    });
+  } catch (error) {
+    console.error('Error formatting date:', dateString, error);
+    return dateString; // Return original string on error
+  }
 }
 
 function escapeHtml(text) {
