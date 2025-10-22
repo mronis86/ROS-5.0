@@ -4588,6 +4588,24 @@ const RunOfShowPage: React.FC = () => {
           }
         }
         
+        // CRITICAL: Combine show start overtime with duration overtime for total calculation
+        console.log('🔄 Combining overtime calculations:');
+        console.log('  - Show start overtime:', showStartOvertime);
+        console.log('  - Duration overtime:', overtimeMinutes);
+        console.log('  - START cue ID:', startCueId);
+        
+        // Debug: Show which items have overtime
+        const itemsWithOvertime = schedule.filter(item => overtimeMinutes[item.id]);
+        console.log('📊 Items with duration overtime:', itemsWithOvertime.map(item => ({
+          id: item.id,
+          segmentName: item.segmentName,
+          overtime: overtimeMinutes[item.id]
+        })));
+        
+        if (startCueId && showStartOvertime !== 0) {
+          console.log('⭐ START cue overtime will apply to all rows after:', startCueId, 'with offset:', showStartOvertime);
+        }
+        
         // Update change tracking - store updated_at for comparison
         setLastChangeAt(data.updated_at || null);
         setHasChanges(false);
