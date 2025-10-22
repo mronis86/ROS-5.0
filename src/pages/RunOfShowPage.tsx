@@ -4143,7 +4143,7 @@ const RunOfShowPage: React.FC = () => {
     setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
     setOvertimeMinutes({}); // Clear all overtime indicators
     setShowStartOvertime(0); // Clear show start overtime
-    setStartCueId(null); // Clear START cue selection
+    // Note: Do NOT clear startCueId - the star is just a marker, not overtime data
     
     // Clear show start overtime from database
     if (event?.id) {
@@ -4574,19 +4574,24 @@ const RunOfShowPage: React.FC = () => {
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
         if (showStartOvertimeData) {
           setShowStartOvertime(showStartOvertimeData.overtimeMinutes);
+          setStartCueId(showStartOvertimeData.itemId); // Restore which row has the star
           console.log('✅ Loaded show start overtime:', showStartOvertimeData);
+          console.log('⭐ START cue restored with overtime:', {
+            itemId: showStartOvertimeData.itemId,
+            showStartOvertime: showStartOvertimeData.overtimeMinutes
+          });
         } else {
           console.log('⭐ No show start overtime found in database');
-        }
-        
-        // Restore START cue selection from schedule items (just the marker)
-        const startCueItem = newSchedule.find(item => item.isStartCue === true);
-        if (startCueItem) {
-          setStartCueId(startCueItem.id);
-          console.log('⭐ START cue marker restored from schedule:', startCueItem.id);
-        } else {
-          setStartCueId(null);
-          console.log('⭐ No START cue marker found in schedule');
+          
+          // If no show start overtime, check schedule for star selection
+          const startCueItem = newSchedule.find(item => item.isStartCue === true);
+          if (startCueItem) {
+            setStartCueId(startCueItem.id);
+            console.log('⭐ START cue marker restored from schedule:', startCueItem.id);
+          } else {
+            setStartCueId(null);
+            console.log('⭐ No START cue marker found in schedule');
+          }
         }
         
         // CRITICAL: Combine show start overtime with duration overtime for total calculation
