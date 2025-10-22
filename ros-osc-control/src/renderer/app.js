@@ -387,9 +387,10 @@ async function loadEvents(filter = 'upcoming') {
     console.log('📋 Events data:', allEvents);
     
     // Determine timezone for event list filtering
-    eventTimezone = determineEventListTimezone(allEvents);
+    const actualEventTimezone = determineEventListTimezone(allEvents);
+    eventTimezone = actualEventTimezone;
     
-    // Update timezone selector to match
+    // Update timezone selector to show the actual event timezone
     updateTimezoneSelector();
     
     if (allEvents.length === 0) {
@@ -440,10 +441,26 @@ async function loadEvents(filter = 'upcoming') {
       console.log(`  → Number of days: ${numberOfDays}`);
       const dayIndicator = numberOfDays > 1 ? `<div class="event-days">📅 ${numberOfDays} Days</div>` : '';
       
+      // Get timezone from event data
+      const eventTimezone = event.schedule_data?.timezone || 'America/New_York';
+      
+      // Debug logging for timezone
+      console.log(`🌍 Event "${event.name}" timezone debug:`, {
+        rawScheduleData: event.schedule_data,
+        timezoneFromData: event.schedule_data?.timezone,
+        finalTimezone: eventTimezone,
+        eventDate: event.date
+      });
+      
+      // Get location from event data
+      const eventLocation = event.schedule_data?.location || 'Great Hall';
+      
       return `
         <div class="event-card" data-event-index="${index}">
           <h3>${escapeHtml(event.name)}</h3>
-          <div class="event-date">📅 ${formatDate(event.date)}</div>
+          <div class="event-date">📅 ${formatDate(event.date, eventTimezone)}</div>
+          <div class="event-location">📍 ${eventLocation}</div>
+          <div class="event-timezone">🌍 ${eventTimezone}</div>
           ${dayIndicator}
           <div class="event-id">ID: ${event.id}</div>
         </div>
@@ -482,8 +499,19 @@ async function loadEvents(filter = 'upcoming') {
 
 // Determine timezone for event list filtering
 function determineEventListTimezone(events) {
-  // Use the manually selected timezone from the dropdown
-  console.log('🌍 Using manually selected timezone for list filtering:', eventTimezone);
+  // Use the event's actual timezone from the database, not the dropdown
+  if (events && events.length > 0) {
+    // Find the most recent event with a timezone
+    const eventWithTimezone = events.find(event => event.schedule_data?.timezone);
+    if (eventWithTimezone?.schedule_data?.timezone) {
+      const actualTimezone = eventWithTimezone.schedule_data.timezone;
+      console.log('🌍 Using event timezone from database for list filtering:', actualTimezone);
+      return actualTimezone;
+    }
+  }
+  
+  // Fallback to dropdown selection if no event timezone found
+  console.log('🌍 No event timezone found, using dropdown selection:', eventTimezone);
   return eventTimezone;
 }
 
@@ -1425,13 +1453,13 @@ function formatTime(seconds) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function formatDate(dateString) {
+function formatDate(dateString, timezone = eventTimezone) {
   const date = new Date(dateString);
   return date.toLocaleDateString('en-US', { 
     year: 'numeric', 
     month: 'long', 
     day: 'numeric',
-    timeZone: eventTimezone
+    timeZone: timezone
   });
 }
 
