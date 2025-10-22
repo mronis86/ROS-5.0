@@ -18,6 +18,8 @@ let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
 let disconnectTimer = null; // Timer for auto-disconnect
 let disconnectTimeoutMinutes = 0; // 0 = never disconnect
+let eventTimezone = 'America/New_York'; // Default to Eastern timezone
+let allEvents = []; // Global events array
 
 // Initialize
 async function init() {
@@ -44,6 +46,11 @@ async function init() {
     // Load events
     console.log('📥 Loading events...');
     await loadEvents();
+    
+    // Load timezone from first event if available
+    if (allEvents && allEvents.length > 0) {
+      await loadEventTimezone(allEvents[0].id);
+    }
     
     console.log('✅ Initialization complete');
   } catch (error) {
@@ -346,7 +353,7 @@ async function loadEvents(filter = 'upcoming') {
   
   try {
     const response = await axios.get(`${config.apiUrl}/api/calendar-events`);
-    const allEvents = response.data;
+    allEvents = response.data;
     console.log('✅ Events loaded:', allEvents.length);
     console.log('📋 Events data:', allEvents);
     
@@ -355,18 +362,20 @@ async function loadEvents(filter = 'upcoming') {
       return;
     }
     
-    // Filter events by upcoming/past
+    // Filter events by upcoming/past using event timezone
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayInEventTz = new Date(today.toLocaleString("en-US", { timeZone: eventTimezone }));
+    todayInEventTz.setHours(0, 0, 0, 0);
     
     const filteredEvents = allEvents.filter(event => {
       const eventDate = new Date(event.date);
-      eventDate.setHours(0, 0, 0, 0);
+      const eventDateInEventTz = new Date(eventDate.toLocaleString("en-US", { timeZone: eventTimezone }));
+      eventDateInEventTz.setHours(0, 0, 0, 0);
       
       if (filter === 'upcoming') {
-        return eventDate >= today;
+        return eventDateInEventTz >= todayInEventTz;
       } else {
-        return eventDate < today;
+        return eventDateInEventTz < todayInEventTz;
       }
     });
     
@@ -436,12 +445,33 @@ async function loadEvents(filter = 'upcoming') {
   }
 }
 
+// Load event timezone from API
+async function loadEventTimezone(eventId) {
+  try {
+    const response = await axios.get(`${config.apiUrl}/api/run-of-show-data/${eventId}`);
+    const data = response.data;
+    
+    if (data.settings?.timezone) {
+      eventTimezone = data.settings.timezone;
+      console.log('🌍 Event timezone loaded:', eventTimezone);
+    } else {
+      console.log('🌍 No timezone found, using default:', eventTimezone);
+    }
+  } catch (error) {
+    console.warn('⚠️ Could not load event timezone:', error.message);
+    console.log('🌍 Using default timezone:', eventTimezone);
+  }
+}
+
 // Select an event
 async function selectEvent(eventId, eventName, eventDate, numberOfDays = 1) {
   console.log('🎬 Event selected:', eventId, eventName, eventDate, 'days:', numberOfDays);
   
   try {
     currentEvent = { id: eventId, name: eventName, date: eventDate, numberOfDays: numberOfDays };
+    
+    // Load event timezone
+    await loadEventTimezone(eventId);
     
     // Update UI
     document.getElementById('currentEventName').textContent = eventName;
@@ -1355,7 +1385,8 @@ function formatDate(dateString) {
   return date.toLocaleDateString('en-US', { 
     year: 'numeric', 
     month: 'long', 
-    day: 'numeric' 
+    day: 'numeric',
+    timeZone: eventTimezone
   });
 }
 
