@@ -47,11 +47,6 @@ async function init() {
     console.log('📥 Loading events...');
     await loadEvents();
     
-    // Load timezone from first event if available
-    if (allEvents && allEvents.length > 0) {
-      await loadEventTimezone(allEvents[0].id);
-    }
-    
     console.log('✅ Initialization complete');
   } catch (error) {
     console.error('❌ Initialization failed:', error);
@@ -357,6 +352,15 @@ async function loadEvents(filter = 'upcoming') {
     console.log('✅ Events loaded:', allEvents.length);
     console.log('📋 Events data:', allEvents);
     
+    // Load timezone from first event if available
+    if (allEvents && allEvents.length > 0) {
+      const firstEvent = allEvents[0];
+      if (firstEvent.schedule_data?.timezone) {
+        eventTimezone = firstEvent.schedule_data.timezone;
+        console.log('🌍 Event timezone loaded from first event:', eventTimezone);
+      }
+    }
+    
     if (allEvents.length === 0) {
       eventList.innerHTML = '<div class="loading">No events found</div>';
       return;
@@ -445,20 +449,23 @@ async function loadEvents(filter = 'upcoming') {
   }
 }
 
-// Load event timezone from API
+// Load event timezone from calendar events API
 async function loadEventTimezone(eventId) {
   try {
-    const response = await axios.get(`${config.apiUrl}/api/run-of-show-data/${eventId}`);
-    const data = response.data;
+    const response = await axios.get(`${config.apiUrl}/api/calendar-events`);
+    const events = response.data;
     
-    if (data.settings?.timezone) {
-      eventTimezone = data.settings.timezone;
-      console.log('🌍 Event timezone loaded:', eventTimezone);
+    // Find the event with matching ID
+    const event = events.find(e => e.id === eventId);
+    
+    if (event && event.schedule_data?.timezone) {
+      eventTimezone = event.schedule_data.timezone;
+      console.log('🌍 Event timezone loaded from calendar events:', eventTimezone);
     } else {
-      console.log('🌍 No timezone found, using default:', eventTimezone);
+      console.log('🌍 No timezone found in calendar events, using default:', eventTimezone);
     }
   } catch (error) {
-    console.warn('⚠️ Could not load event timezone:', error.message);
+    console.warn('⚠️ Could not load event timezone from calendar events:', error.message);
     console.log('🌍 Using default timezone:', eventTimezone);
   }
 }
