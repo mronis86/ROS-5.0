@@ -5831,7 +5831,7 @@ const RunOfShowPage: React.FC = () => {
       timerId: generateRandomTimerId(),
       isIndented: newItem.isIndented || false,
       customFields: {
-        cue: newItem.cue ? `CUE${newItem.cue}` : 'CUE'
+        cue: newItem.cue || ''
       }
     };
     if (insertRowPosition !== null) {
