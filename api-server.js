@@ -1997,9 +1997,9 @@ app.post('/api/start-cue-selection', async (req, res) => {
     
     console.log(`⭐ Saving START cue selection: Event ${event_id}, Item ${item_id}`);
     
-    // Convert item_id to integer to match the table schema
-    const itemIdInt = parseInt(item_id);
-    console.log(`🔍 Converted item_id to integer: ${itemIdInt}`);
+    // Convert item_id to BigInt to match the table schema (BIGINT)
+    const itemIdBigInt = BigInt(item_id);
+    console.log(`🔍 Using item_id as BigInt: ${itemIdBigInt}`);
     
     // Insert or update start cue selection in show_start_overtime table
     // We'll use this table to track both the selection and any overtime
@@ -2010,7 +2010,7 @@ app.post('/api/start-cue-selection', async (req, res) => {
        DO UPDATE SET 
          updated_at = NOW()
        RETURNING *`,
-      [event_id, itemIdInt]
+      [event_id, itemIdBigInt.toString()]
     );
     
     const savedData = result.rows[0];
