@@ -4549,15 +4549,7 @@ const RunOfShowPage: React.FC = () => {
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
         
-        // Restore START cue selection from schedule items
-        const startCueItem = newSchedule.find(item => item.isStartCue === true);
-        if (startCueItem) {
-          setStartCueId(startCueItem.id);
-          console.log('⭐ START cue restored from schedule:', startCueItem.id);
-        } else {
-          setStartCueId(null);
-          console.log('⭐ No START cue found in schedule');
-        }
+        // START cue selection is loaded from show_start_overtime table below
         
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
@@ -9171,39 +9163,28 @@ const RunOfShowPage: React.FC = () => {
                          const newStartCueId = startCueId === item.id ? null : item.id;
                          setStartCueId(newStartCueId);
                          
-                         // Update the schedule items to mark which one has the star
+                         // Save START cue selection to dedicated show_start_overtime table
                          if (event?.id) {
                            try {
-                             // Create updated schedule items
-                             const updatedSchedule = schedule.map(scheduleItem => ({
-                               ...scheduleItem,
-                               isStartCue: scheduleItem.id === newStartCueId
-                             }));
-                             
-                             // Update local schedule state
-                             setSchedule(updatedSchedule);
-                             
-                             // Save to database using the existing saveRunOfShowData method
-                             const runOfShowData = {
-                               event_id: event.id,
-                               event_name: eventName,
-                               event_date: event?.date || new Date().toISOString(),
-                               schedule_items: updatedSchedule,
-                               custom_columns: customColumns,
-                               settings: {
-                                 eventName: eventName,
-                                 masterStartTime: masterStartTime,
-                                 dayStartTimes: dayStartTimes
+                             if (newStartCueId) {
+                               // Save the new START cue selection to show_start_overtime table
+                               await DatabaseService.saveStartCueSelection(event.id, newStartCueId);
+                               console.log(`✅ START cue selection saved to database: item ${newStartCueId}`);
+                               
+                               // Broadcast via WebSocket
+                               const socket = socketClient.getSocket();
+                               if (socket) {
+                                 socket.emit('startCueSelectionUpdate', {
+                                   event_id: event.id,
+                                   item_id: newStartCueId
+                                 });
+                                 console.log(`✅ START cue selection broadcasted: item ${newStartCueId}`);
                                }
-                             };
-                             
-                             await DatabaseService.saveRunOfShowData(runOfShowData, {
-                               userId: user?.id || 'unknown',
-                               userName: user?.name || 'Unknown User',
-                               userRole: user?.role || 'VIEWER'
-                             });
-                             
-                             console.log(`✅ START cue selection saved to schedule: item ${newStartCueId || 'none'}`);
+                             } else {
+                               // Clear the START cue selection (unset star)
+                               console.log('⭐ START cue selection cleared');
+                               // Note: We could add a DELETE endpoint for clearing, but for now just update local state
+                             }
                            } catch (error) {
                              console.error('❌ Failed to save START cue selection:', error);
                            }
