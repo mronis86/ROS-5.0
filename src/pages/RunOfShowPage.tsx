@@ -4549,16 +4549,6 @@ const RunOfShowPage: React.FC = () => {
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
         
-        // Restore START cue selection from schedule items
-        const startCueItem = newSchedule.find(item => item.isStartCue === true);
-        if (startCueItem) {
-          setStartCueId(startCueItem.id);
-          console.log('⭐ START cue restored from schedule:', startCueItem.id);
-        } else {
-          setStartCueId(null);
-          console.log('⭐ No START cue found in schedule');
-        }
-        
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
@@ -4568,23 +4558,28 @@ const RunOfShowPage: React.FC = () => {
         setOvertimeMinutes(overtimeData);
         console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
         
-        // Load show start overtime from separate table
+        // Load show start overtime from separate table FIRST
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
         if (showStartOvertimeData) {
           setShowStartOvertime(showStartOvertimeData.overtimeMinutes);
           setStartCueId(showStartOvertimeData.itemId); // Also restore which cue is marked as START
           console.log('✅ Loaded show start overtime:', showStartOvertimeData);
-          console.log('⭐ START cue restored:', {
+          console.log('⭐ START cue restored with overtime:', {
             itemId: showStartOvertimeData.itemId,
             showStartOvertime: showStartOvertimeData.overtimeMinutes,
             willApplyToRowsAfter: true
           });
         } else {
-          // If no show start overtime, still check for START cue selection
-          const startCueSelectionData = await DatabaseService.getStartCueSelection(event.id);
-          if (startCueSelectionData) {
-            setStartCueId(startCueSelectionData.itemId);
-            console.log('⭐ START cue selection restored (no overtime):', startCueSelectionData);
+          console.log('⭐ No show start overtime found in database');
+          
+          // If no show start overtime, check schedule for star selection
+          const startCueItem = newSchedule.find(item => item.isStartCue === true);
+          if (startCueItem) {
+            setStartCueId(startCueItem.id);
+            console.log('⭐ START cue restored from schedule:', startCueItem.id);
+          } else {
+            setStartCueId(null);
+            console.log('⭐ No START cue found in schedule');
           }
         }
         
