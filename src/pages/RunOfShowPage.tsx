@@ -7055,9 +7055,15 @@ const RunOfShowPage: React.FC = () => {
     const baseStartTime = calculateStartTime(index);
     if (!baseStartTime) return '';
     
-    // Calculate total overtime from all previous cues
+    // Calculate total overtime from previous cues, but ignore rows ABOVE the STAR
     let totalOvertimeMinutes = 0;
-    for (let i = 0; i < index; i++) {
+    
+    // Find the START cue index to know where to start counting overtime
+    const startCueIndex = startCueId ? schedule.findIndex(s => s.id === startCueId) : -1;
+    const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+    
+    // Only count overtime from START cue onwards (ignore rows above STAR)
+    for (let i = startCountingFrom; i < index; i++) {
       const item = schedule[i];
       const itemDay = item.day || 1;
       const currentItemDay = currentItem.day || 1;
@@ -7069,11 +7075,8 @@ const RunOfShowPage: React.FC = () => {
     }
     
     // Add show start overtime for START cue and all rows after it
-    if (showStartOvertime !== 0 && startCueId !== null) {
-      const startCueIndex = schedule.findIndex(s => s.id === startCueId);
-      if (startCueIndex !== -1 && index >= startCueIndex) {
-        totalOvertimeMinutes += showStartOvertime;
-      }
+    if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+      totalOvertimeMinutes += showStartOvertime;
     }
     
     // If no overtime, return the base start time
