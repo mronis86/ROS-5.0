@@ -352,14 +352,8 @@ async function loadEvents(filter = 'upcoming') {
     console.log('✅ Events loaded:', allEvents.length);
     console.log('📋 Events data:', allEvents);
     
-    // Load timezone from first event if available
-    if (allEvents && allEvents.length > 0) {
-      const firstEvent = allEvents[0];
-      if (firstEvent.schedule_data?.timezone) {
-        eventTimezone = firstEvent.schedule_data.timezone;
-        console.log('🌍 Event timezone loaded from first event:', eventTimezone);
-      }
-    }
+    // Determine timezone for event list filtering
+    eventTimezone = determineEventListTimezone(allEvents);
     
     if (allEvents.length === 0) {
       eventList.innerHTML = '<div class="loading">No events found</div>';
@@ -449,6 +443,34 @@ async function loadEvents(filter = 'upcoming') {
   }
 }
 
+// Determine timezone for event list filtering
+function determineEventListTimezone(events) {
+  if (!events || events.length === 0) {
+    return 'America/New_York'; // Default
+  }
+  
+  // Strategy: Use the timezone of the most recent event
+  // This ensures consistent filtering for the event list
+  const mostRecentEvent = events[0]; // Assuming events are sorted by date
+  
+  if (mostRecentEvent.schedule_data?.timezone) {
+    console.log('🌍 Using timezone from most recent event for list filtering:', mostRecentEvent.schedule_data.timezone);
+    return mostRecentEvent.schedule_data.timezone;
+  }
+  
+  // Fallback: check if there's a current event with timezone
+  if (currentEvent) {
+    const currentEventData = events.find(e => e.id === currentEvent.id);
+    if (currentEventData?.schedule_data?.timezone) {
+      console.log('🌍 Using timezone from current event for list filtering:', currentEventData.schedule_data.timezone);
+      return currentEventData.schedule_data.timezone;
+    }
+  }
+  
+  console.log('🌍 No timezone found, using default for list filtering: America/New_York');
+  return 'America/New_York';
+}
+
 // Load event timezone from calendar events API
 async function loadEventTimezone(eventId) {
   try {
@@ -477,7 +499,7 @@ async function selectEvent(eventId, eventName, eventDate, numberOfDays = 1) {
   try {
     currentEvent = { id: eventId, name: eventName, date: eventDate, numberOfDays: numberOfDays };
     
-    // Load event timezone
+    // Load specific event timezone for this event
     await loadEventTimezone(eventId);
     
     // Update UI
