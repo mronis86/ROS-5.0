@@ -9136,73 +9136,16 @@ const RunOfShowPage: React.FC = () => {
                    >
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
-                     {/* Debug display */}
-                     <div className="text-xs text-gray-400">
-                       {startCueId === item.id ? 'SELECTED' : 'NOT SELECTED'} (ID: {item.id})
-                     </div>
-                     
                      <button
-                       onClick={async () => {
-                         console.log('⭐ Star button clicked for item:', item.id, 'Current startCueId:', startCueId);
-                         
-                         // Show pause sync indicator
-                         setPauseSync(true);
-                         
-                         try {
-                           // Toggle: if this cue is already the START cue, unset it; otherwise set it
-                           const newStartCueId = startCueId === item.id ? null : item.id;
-                           console.log('⭐ Setting new startCueId:', newStartCueId);
-                           setStartCueId(newStartCueId);
-                           
-                           // Save to database
-                           if (event?.id) {
-                             if (newStartCueId) {
-                               // Save the new START cue selection
-                               await DatabaseService.saveStartCueSelection(event.id, newStartCueId);
-                               console.log(`✅ START cue selection saved: item ${newStartCueId}`);
-                               
-                               // Broadcast via WebSocket
-                               const socket = socketClient.getSocket();
-                               if (socket) {
-                                 socket.emit('startCueSelectionUpdate', {
-                                   event_id: event.id,
-                                   item_id: newStartCueId
-                                 });
-                                 console.log(`✅ START cue selection broadcasted: item ${newStartCueId}`);
-                               }
-                               
-                               // Log the change
-                               logChange('START_CUE_SELECTION', `Marked item ${newStartCueId} as START cue`, {
-                                 itemId: newStartCueId,
-                                 action: 'selected'
-                               });
-                             } else {
-                               // Clear the START cue selection (unset star)
-                               console.log('⭐ START cue selection cleared');
-                               
-                               // Log the change
-                               logChange('START_CUE_SELECTION', 'Cleared START cue selection', {
-                                 itemId: item.id,
-                                 action: 'cleared'
-                               });
-                             }
-                           }
-                         } catch (error) {
-                           console.error('❌ Failed to save START cue selection:', error);
-                         } finally {
-                           // Hide pause sync indicator
-                           setPauseSync(false);
-                         }
+                       onClick={() => {
+                         // Toggle: if this cue is already the START cue, unset it; otherwise set it
+                         setStartCueId(startCueId === item.id ? null : item.id);
                        }}
                        className={`w-7 h-7 flex items-center justify-center text-xl rounded transition-colors bg-slate-700 hover:bg-slate-600 ${
                          startCueId === item.id 
                            ? 'text-yellow-400' // Gold star when selected
                            : 'text-slate-400 hover:text-yellow-400'
                        }`}
-                       style={{ 
-                         border: startCueId === item.id ? '2px solid yellow' : 'none',
-                         backgroundColor: startCueId === item.id ? 'rgba(255, 255, 0, 0.1)' : undefined
-                       }}
                        title={startCueId === item.id ? "Unmark as SHOW START" : "Mark as SHOW START"}
                      >
                        {startCueId === item.id ? '⭐' : '☆'}
