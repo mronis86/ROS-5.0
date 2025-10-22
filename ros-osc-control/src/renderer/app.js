@@ -395,31 +395,42 @@ async function loadEvents(filter = 'upcoming') {
     console.log('✅ Events loaded:', allEvents.length);
     console.log('📋 Events data:', allEvents);
     
-    // Determine timezone for event list filtering (use current dropdown selection)
-    determineEventListTimezone(allEvents);
-    
-    // Don't update the timezone selector - let user's selection persist
+    // Each event uses its own timezone from NEON database
+    console.log('🌍 Each event will use its own timezone from schedule_data.timezone');
     
     if (allEvents.length === 0) {
       eventList.innerHTML = '<div class="loading">No events found</div>';
       return;
     }
     
-    // Filter events by upcoming/past using event timezone
+    // Filter events by upcoming/past - each event uses its own timezone
     const today = new Date();
-    console.log('🌍 Date filtering debug:', {
-      currentEventTimezone: eventTimezone,
-      today: today.toISOString(),
-      todayInEventTz: new Date(today.toLocaleString("en-US", { timeZone: eventTimezone })).toISOString()
-    });
-    
-    const todayInEventTz = new Date(today.toLocaleString("en-US", { timeZone: eventTimezone }));
-    todayInEventTz.setHours(0, 0, 0, 0);
+    console.log('🌍 Date filtering debug - each event uses its own timezone from NEON');
     
     const filteredEvents = allEvents.filter(event => {
-      const eventDate = new Date(event.date);
+      // Parse the event date (YYYY-MM-DD format)
+      const [year, month, day] = event.date.split('-').map(Number);
+      const eventDate = new Date(year, month - 1, day); // month is 0-indexed
+      
+      // Get event's timezone from NEON database
+      const eventTimezone = event.schedule_data?.timezone || 'America/New_York';
+      
+      // Create today's date in the event's timezone
+      const todayInEventTimezone = new Date();
+      const todayInEventTz = new Date(todayInEventTimezone.toLocaleString("en-US", { timeZone: eventTimezone }));
+      todayInEventTz.setHours(0, 0, 0, 0);
+      
+      // Create event date in the event's timezone
       const eventDateInEventTz = new Date(eventDate.toLocaleString("en-US", { timeZone: eventTimezone }));
       eventDateInEventTz.setHours(0, 0, 0, 0);
+      
+      console.log(`🌍 Event "${event.name}" date comparison:`, {
+        eventDate: event.date,
+        eventTimezone: eventTimezone,
+        eventDateInEventTz: eventDateInEventTz.toISOString(),
+        todayInEventTz: todayInEventTz.toISOString(),
+        isUpcoming: eventDateInEventTz >= todayInEventTz
+      });
       
       if (filter === 'upcoming') {
         return eventDateInEventTz >= todayInEventTz;
@@ -454,8 +465,8 @@ async function loadEvents(filter = 'upcoming') {
       console.log(`  → Number of days: ${numberOfDays}`);
       const dayIndicator = numberOfDays > 1 ? `<div class="event-days">📅 ${numberOfDays} Days</div>` : '';
       
-      // Use the dropdown selection as timezone override for all events
-      const displayTimezone = eventTimezone; // Use the global dropdown selection
+      // Use the event's timezone from NEON database
+      const displayTimezone = event.schedule_data?.timezone || 'America/New_York';
       
       // Debug logging for timezone
       console.log(`🌍 Event "${event.name}" timezone debug:`, {
@@ -1459,8 +1470,11 @@ function formatTime(seconds) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function formatDate(dateString, timezone = eventTimezone) {
-  const date = new Date(dateString);
+function formatDate(dateString, timezone = 'America/New_York') {
+  // Parse the date string (YYYY-MM-DD format)
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day); // month is 0-indexed
+  
   return date.toLocaleDateString('en-US', { 
     year: 'numeric', 
     month: 'long', 
