@@ -9136,14 +9136,22 @@ const RunOfShowPage: React.FC = () => {
                    >
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
+                     {/* Debug display */}
+                     <div className="text-xs text-gray-400">
+                       {startCueId === item.id ? 'SELECTED' : 'NOT SELECTED'} (ID: {item.id})
+                     </div>
+                     
                      <button
                        onClick={async () => {
+                         console.log('⭐ Star button clicked for item:', item.id, 'Current startCueId:', startCueId);
+                         
                          // Show pause sync indicator
                          setPauseSync(true);
                          
                          try {
                            // Toggle: if this cue is already the START cue, unset it; otherwise set it
                            const newStartCueId = startCueId === item.id ? null : item.id;
+                           console.log('⭐ Setting new startCueId:', newStartCueId);
                            setStartCueId(newStartCueId);
                            
                            // Save to database
@@ -9191,6 +9199,10 @@ const RunOfShowPage: React.FC = () => {
                            ? 'text-yellow-400' // Gold star when selected
                            : 'text-slate-400 hover:text-yellow-400'
                        }`}
+                       style={{ 
+                         border: startCueId === item.id ? '2px solid yellow' : 'none',
+                         backgroundColor: startCueId === item.id ? 'rgba(255, 255, 0, 0.1)' : undefined
+                       }}
                        title={startCueId === item.id ? "Unmark as SHOW START" : "Mark as SHOW START"}
                      >
                        {startCueId === item.id ? '⭐' : '☆'}
