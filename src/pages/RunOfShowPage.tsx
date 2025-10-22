@@ -9138,15 +9138,18 @@ const RunOfShowPage: React.FC = () => {
                      {/* Star button for marking START cue */}
                      <button
                        onClick={async () => {
-                         // Toggle: if this cue is already the START cue, unset it; otherwise set it
-                         const newStartCueId = startCueId === item.id ? null : item.id;
-                         setStartCueId(newStartCueId);
+                         // Show pause sync indicator
+                         setPauseSync(true);
                          
-                         // Save to database
-                         if (event?.id) {
-                           if (newStartCueId) {
-                             // Save the new START cue selection
-                             try {
+                         try {
+                           // Toggle: if this cue is already the START cue, unset it; otherwise set it
+                           const newStartCueId = startCueId === item.id ? null : item.id;
+                           setStartCueId(newStartCueId);
+                           
+                           // Save to database
+                           if (event?.id) {
+                             if (newStartCueId) {
+                               // Save the new START cue selection
                                await DatabaseService.saveStartCueSelection(event.id, newStartCueId);
                                console.log(`✅ START cue selection saved: item ${newStartCueId}`);
                                
@@ -9159,14 +9162,28 @@ const RunOfShowPage: React.FC = () => {
                                  });
                                  console.log(`✅ START cue selection broadcasted: item ${newStartCueId}`);
                                }
-                             } catch (error) {
-                               console.error('❌ Failed to save START cue selection:', error);
+                               
+                               // Log the change
+                               logChange('START_CUE_SELECTION', `Marked item ${newStartCueId} as START cue`, {
+                                 itemId: newStartCueId,
+                                 action: 'selected'
+                               });
+                             } else {
+                               // Clear the START cue selection (unset star)
+                               console.log('⭐ START cue selection cleared');
+                               
+                               // Log the change
+                               logChange('START_CUE_SELECTION', 'Cleared START cue selection', {
+                                 itemId: item.id,
+                                 action: 'cleared'
+                               });
                              }
-                           } else {
-                             // Clear the START cue selection (unset star)
-                             console.log('⭐ START cue selection cleared');
-                             // Note: We could add a DELETE endpoint for clearing, but for now just update local state
                            }
+                         } catch (error) {
+                           console.error('❌ Failed to save START cue selection:', error);
+                         } finally {
+                           // Hide pause sync indicator
+                           setPauseSync(false);
                          }
                        }}
                        className={`w-7 h-7 flex items-center justify-center text-xl rounded transition-colors bg-slate-700 hover:bg-slate-600 ${
