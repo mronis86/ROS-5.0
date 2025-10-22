@@ -15,6 +15,7 @@ const EventListPage: React.FC = () => {
   const [filterLocation, setFilterLocation] = useState<string>('all');
   const [filterDays, setFilterDays] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [selectedTimezone, setSelectedTimezone] = useState('America/New_York'); // Default to EST
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [editFormData, setEditFormData] = useState<EventFormData>({
     name: '',
@@ -80,9 +81,12 @@ const EventListPage: React.FC = () => {
             created_at: calEvent.created_at
           });
           
-          // Convert ISO date to simple date format for filtering
+          // Convert ISO date to simple date format for filtering (use selected timezone)
           const dateObj = new Date(calEvent.date);
-          const simpleDate = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD format
+          const year = dateObj.getFullYear();
+          const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const day = String(dateObj.getDate()).padStart(2, '0');
+          const simpleDate = `${year}-${month}-${day}`; // YYYY-MM-DD format in selected timezone
           
           const transformedEvent = {
             id: calEvent.id || Date.now().toString(),
@@ -446,7 +450,7 @@ const EventListPage: React.FC = () => {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
-      timeZone: 'America/New_York' // EST/EDT timezone
+      timeZone: selectedTimezone // Use selected timezone
     });
   };
 
@@ -630,6 +634,35 @@ const EventListPage: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-semibold">🌍 Timezone:</span>
+                  <select
+                    value={selectedTimezone}
+                    onChange={(e) => setSelectedTimezone(e.target.value)}
+                    className="px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                  >
+                    <option value="America/New_York">Eastern (EST/EDT)</option>
+                    <option value="America/Chicago">Central (CST/CDT)</option>
+                    <option value="America/Denver">Mountain (MST/MDT)</option>
+                    <option value="America/Los_Angeles">Pacific (PST/PDT)</option>
+                    <option value="America/Anchorage">Alaska (AKST/AKDT)</option>
+                    <option value="Pacific/Honolulu">Hawaii (HST)</option>
+                    <option value="UTC">UTC</option>
+                    <option value="Europe/London">London (GMT/BST)</option>
+                    <option value="Europe/Paris">Paris (CET/CEST)</option>
+                    <option value="Asia/Tokyo">Tokyo (JST)</option>
+                    <option value="Asia/Shanghai">Shanghai (CST)</option>
+                    <option value="Australia/Sydney">Sydney (AEST/AEDT)</option>
+                  </select>
+                  <span className="text-slate-300 text-sm">
+                    {new Date().toLocaleTimeString('en-US', { 
+                      timeZone: selectedTimezone,
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: true 
+                    })}
+                  </span>
                 </div>
               </div>
               
