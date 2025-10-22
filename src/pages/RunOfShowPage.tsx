@@ -579,6 +579,7 @@ const RunOfShowPage: React.FC = () => {
   const [eventName, setEventName] = useState(event?.name || '');
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
+  const [eventTimezone, setEventTimezone] = useState('America/New_York'); // Default to Eastern
   const [selectedDay, setSelectedDay] = useState<number>(1);
   
   // Change tracking state
@@ -4564,6 +4565,7 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
+        if (data.settings?.timezone) setEventTimezone(data.settings.timezone);
         
         // FIRST: Always load star selection from main schedule (this is the source of truth)
         const startCueItem = newSchedule.find(item => item.isStartCue === true);
@@ -4801,6 +4803,10 @@ const RunOfShowPage: React.FC = () => {
             if (data.settings.dayStartTimes !== undefined) {
               setDayStartTimes(data.settings.dayStartTimes);
               console.log('✅ Real-time: Day start times updated');
+            }
+            if (data.settings.timezone !== undefined) {
+              setEventTimezone(data.settings.timezone);
+              console.log('✅ Real-time: Event timezone updated');
             }
           }
           
