@@ -1886,6 +1886,106 @@ app.delete('/api/overtime-minutes/:eventId', async (req, res) => {
   }
 });
 
+// Save show start overtime for a schedule item (separate from duration overtime)
+app.post('/api/show-start-overtime', async (req, res) => {
+  try {
+    const { event_id, item_id, show_start_overtime, scheduled_time, actual_time } = req.body;
+    
+    if (!event_id || !item_id || typeof show_start_overtime !== 'number') {
+      return res.status(400).json({ error: 'event_id, item_id, and show_start_overtime are required' });
+    }
+    
+    console.log(`⭐ Saving show start overtime: Event ${event_id}, Item ${item_id}, Overtime: ${show_start_overtime} minutes`);
+    
+    // Insert or update show start overtime in dedicated table
+    const result = await pool.query(
+      `INSERT INTO show_start_overtime (event_id, item_id, show_start_overtime, scheduled_time, actual_time, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       ON CONFLICT (event_id, item_id)
+       DO UPDATE SET 
+         show_start_overtime = EXCLUDED.show_start_overtime,
+         scheduled_time = EXCLUDED.scheduled_time,
+         actual_time = EXCLUDED.actual_time,
+         updated_at = NOW()
+       RETURNING *`,
+      [event_id, item_id, show_start_overtime, scheduled_time, actual_time]
+    );
+    
+    const savedData = result.rows[0];
+    console.log(`✅ Show start overtime saved to database:`, savedData);
+    
+    // Broadcast update via WebSocket for real-time sync
+    broadcastUpdate(event_id, 'showStartOvertimeUpdate', {
+      event_id,
+      item_id,
+      showStartOvertime: show_start_overtime,
+      scheduledTime: scheduled_time,
+      actualTime: actual_time
+    });
+    
+    console.log(`📡 Show start overtime update broadcasted via WebSocket: ${show_start_overtime} minutes for item ${item_id}`);
+    res.json({ success: true, show_start_overtime, item_id, data: savedData });
+    
+  } catch (error) {
+    console.error('❌ Error saving show start overtime:', error);
+    res.status(500).json({ error: 'Failed to save show start overtime', details: error.message });
+  }
+});
+
+// Get show start overtime for an event
+app.get('/api/show-start-overtime/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    console.log(`📊 Fetching show start overtime for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'SELECT * FROM show_start_overtime WHERE event_id = $1',
+      [eventId]
+    );
+    
+    console.log(`✅ Found ${result.rows.length} show start overtime records for event ${eventId}`);
+    
+    // Return the first record (there should only be one per event)
+    const data = result.rows.length > 0 ? result.rows[0] : null;
+    res.json(data);
+    
+  } catch (error) {
+    console.error('❌ Error fetching show start overtime:', error);
+    console.error('❌ Error details:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to fetch show start overtime', details: error.message });
+  }
+});
+
+// Delete show start overtime for an event (used during reset)
+app.delete('/api/show-start-overtime/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    console.log(`⭐ Deleting show start overtime for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'DELETE FROM show_start_overtime WHERE event_id = $1 RETURNING *',
+      [eventId]
+    );
+    
+    console.log(`✅ Deleted ${result.rows.length} show start overtime records for event ${eventId}`);
+    
+    // Broadcast the reset to other clients
+    broadcastUpdate(eventId, 'showStartOvertimeReset', { event_id: eventId });
+    
+    res.json({ 
+      success: true, 
+      deletedCount: result.rows.length,
+      message: `Deleted ${result.rows.length} show start overtime records` 
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting show start overtime:', error);
+    res.status(500).json({ error: 'Failed to delete show start overtime', details: error.message });
+  }
+});
+
 // Server-Sent Events support - DISABLED (redundant with Socket.IO)
 // SSE was causing high egress due to heartbeat every 30s per client
 // Socket.IO handles all real-time updates more efficiently
@@ -2290,6 +2390,21 @@ io.on('connection', (socket) => {
       event_id,
       item_id,
       overtimeMinutes
+    });
+  });
+
+  // Handle show start overtime update event
+  socket.on('showStartOvertimeUpdate', (data) => {
+    const { event_id, item_id, showStartOvertime, scheduledTime, actualTime } = data;
+    console.log(`⭐ Show start overtime update for event:${event_id}, item:${item_id}, overtime:${showStartOvertime} minutes`);
+    
+    // Broadcast to all other clients in the event room (except sender)
+    socket.to(`event:${event_id}`).emit('showStartOvertimeUpdate', {
+      event_id,
+      item_id,
+      showStartOvertime,
+      scheduledTime,
+      actualTime
     });
   });
 
