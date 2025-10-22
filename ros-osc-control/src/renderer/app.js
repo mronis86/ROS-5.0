@@ -18,7 +18,7 @@ let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
 let disconnectTimer = null; // Timer for auto-disconnect
 let disconnectTimeoutMinutes = 0; // 0 = never disconnect
-let eventTimezone = 'America/New_York'; // Default to Eastern timezone
+let eventTimezone = 'UTC'; // Default to UTC timezone to match database storage
 let allEvents = []; // Global events array
 
 // Initialize
@@ -179,8 +179,16 @@ function setupTimezoneSelector() {
 function updateTimezoneSelector() {
   const timezoneSelect = document.getElementById('timezoneSelect');
   if (timezoneSelect) {
+    console.log('🌍 Updating timezone selector...');
+    console.log('🌍 Current eventTimezone:', eventTimezone);
+    console.log('🌍 Selector current value:', timezoneSelect.value);
+    
     timezoneSelect.value = eventTimezone;
+    
+    console.log('🌍 Selector new value:', timezoneSelect.value);
     console.log('🌍 Timezone selector updated to:', eventTimezone);
+  } else {
+    console.log('🌍 ❌ Timezone selector element not found');
   }
 }
 
@@ -386,12 +394,10 @@ async function loadEvents(filter = 'upcoming') {
     console.log('✅ Events loaded:', allEvents.length);
     console.log('📋 Events data:', allEvents);
     
-    // Determine timezone for event list filtering
-    const actualEventTimezone = determineEventListTimezone(allEvents);
-    eventTimezone = actualEventTimezone;
+    // Determine timezone for event list filtering (use current dropdown selection)
+    determineEventListTimezone(allEvents);
     
-    // Update timezone selector to show the actual event timezone
-    updateTimezoneSelector();
+    // Don't update the timezone selector - let user's selection persist
     
     if (allEvents.length === 0) {
       eventList.innerHTML = '<div class="loading">No events found</div>';
@@ -400,6 +406,12 @@ async function loadEvents(filter = 'upcoming') {
     
     // Filter events by upcoming/past using event timezone
     const today = new Date();
+    console.log('🌍 Date filtering debug:', {
+      currentEventTimezone: eventTimezone,
+      today: today.toISOString(),
+      todayInEventTz: new Date(today.toLocaleString("en-US", { timeZone: eventTimezone })).toISOString()
+    });
+    
     const todayInEventTz = new Date(today.toLocaleString("en-US", { timeZone: eventTimezone }));
     todayInEventTz.setHours(0, 0, 0, 0);
     
@@ -441,14 +453,14 @@ async function loadEvents(filter = 'upcoming') {
       console.log(`  → Number of days: ${numberOfDays}`);
       const dayIndicator = numberOfDays > 1 ? `<div class="event-days">📅 ${numberOfDays} Days</div>` : '';
       
-      // Get timezone from event data
-      const eventTimezone = event.schedule_data?.timezone || 'America/New_York';
+      // Use the dropdown selection as timezone override for all events
+      const displayTimezone = eventTimezone; // Use the global dropdown selection
       
       // Debug logging for timezone
       console.log(`🌍 Event "${event.name}" timezone debug:`, {
         rawScheduleData: event.schedule_data,
         timezoneFromData: event.schedule_data?.timezone,
-        finalTimezone: eventTimezone,
+        finalTimezone: displayTimezone,
         eventDate: event.date
       });
       
@@ -458,9 +470,9 @@ async function loadEvents(filter = 'upcoming') {
       return `
         <div class="event-card" data-event-index="${index}">
           <h3>${escapeHtml(event.name)}</h3>
-          <div class="event-date">📅 ${formatDate(event.date, eventTimezone)}</div>
+          <div class="event-date">📅 ${formatDate(event.date, displayTimezone)}</div>
           <div class="event-location">📍 ${eventLocation}</div>
-          <div class="event-timezone">🌍 ${eventTimezone}</div>
+          <div class="event-timezone">🌍 ${displayTimezone}</div>
           ${dayIndicator}
           <div class="event-id">ID: ${event.id}</div>
         </div>
@@ -499,19 +511,12 @@ async function loadEvents(filter = 'upcoming') {
 
 // Determine timezone for event list filtering
 function determineEventListTimezone(events) {
-  // Use the event's actual timezone from the database, not the dropdown
-  if (events && events.length > 0) {
-    // Find the most recent event with a timezone
-    const eventWithTimezone = events.find(event => event.schedule_data?.timezone);
-    if (eventWithTimezone?.schedule_data?.timezone) {
-      const actualTimezone = eventWithTimezone.schedule_data.timezone;
-      console.log('🌍 Using event timezone from database for list filtering:', actualTimezone);
-      return actualTimezone;
-    }
-  }
+  console.log('🌍 Determining timezone for event list filtering...');
+  console.log('🌍 Current eventTimezone state (dropdown selection):', eventTimezone);
+  console.log('🌍 Events available:', events?.length || 0);
   
-  // Fallback to dropdown selection if no event timezone found
-  console.log('🌍 No event timezone found, using dropdown selection:', eventTimezone);
+  // Use the dropdown selection as the override - don't auto-change it
+  console.log('🌍 Using dropdown selection as timezone override:', eventTimezone);
   return eventTimezone;
 }
 
