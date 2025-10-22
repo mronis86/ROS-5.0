@@ -1986,6 +1986,72 @@ app.delete('/api/show-start-overtime/:eventId', async (req, res) => {
   }
 });
 
+// Save which cue is marked as START (star selection)
+app.post('/api/start-cue-selection', async (req, res) => {
+  try {
+    const { event_id, item_id } = req.body;
+    
+    if (!event_id || !item_id) {
+      return res.status(400).json({ error: 'event_id and item_id are required' });
+    }
+    
+    console.log(`⭐ Saving START cue selection: Event ${event_id}, Item ${item_id}`);
+    
+    // Insert or update start cue selection in show_start_overtime table
+    // We'll use this table to track both the selection and any overtime
+    const result = await pool.query(
+      `INSERT INTO show_start_overtime (event_id, item_id, show_start_overtime, created_at, updated_at)
+       VALUES ($1, $2, 0, NOW(), NOW())
+       ON CONFLICT (event_id, item_id)
+       DO UPDATE SET 
+         updated_at = NOW()
+       RETURNING *`,
+      [event_id, item_id]
+    );
+    
+    const savedData = result.rows[0];
+    console.log(`✅ START cue selection saved to database:`, savedData);
+    
+    // Broadcast update via WebSocket for real-time sync
+    broadcastUpdate(event_id, 'startCueSelectionUpdate', {
+      event_id,
+      item_id
+    });
+    
+    console.log(`📡 START cue selection broadcasted via WebSocket: item ${item_id}`);
+    res.json({ success: true, item_id, data: savedData });
+    
+  } catch (error) {
+    console.error('❌ Error saving START cue selection:', error);
+    res.status(500).json({ error: 'Failed to save START cue selection', details: error.message });
+  }
+});
+
+// Get which cue is marked as START
+app.get('/api/start-cue-selection/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    console.log(`📊 Fetching START cue selection for event: ${eventId}`);
+    
+    const result = await pool.query(
+      'SELECT item_id FROM show_start_overtime WHERE event_id = $1',
+      [eventId]
+    );
+    
+    console.log(`✅ Found START cue selection for event ${eventId}:`, result.rows.length > 0 ? result.rows[0].item_id : 'none');
+    
+    // Return the item_id if found, null if not
+    const data = result.rows.length > 0 ? { itemId: result.rows[0].item_id } : null;
+    res.json(data);
+    
+  } catch (error) {
+    console.error('❌ Error fetching START cue selection:', error);
+    console.error('❌ Error details:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to fetch START cue selection', details: error.message });
+  }
+});
+
 // Server-Sent Events support - DISABLED (redundant with Socket.IO)
 // SSE was causing high egress due to heartbeat every 30s per client
 // Socket.IO handles all real-time updates more efficiently
@@ -2405,6 +2471,18 @@ io.on('connection', (socket) => {
       showStartOvertime,
       scheduledTime,
       actualTime
+    });
+  });
+
+  // Handle start cue selection update event
+  socket.on('startCueSelectionUpdate', (data) => {
+    const { event_id, item_id } = data;
+    console.log(`⭐ Start cue selection update for event:${event_id}, item:${item_id}`);
+    
+    // Broadcast to all other clients in the event room (except sender)
+    socket.to(`event:${event_id}`).emit('startCueSelectionUpdate', {
+      event_id,
+      item_id
     });
   });
 

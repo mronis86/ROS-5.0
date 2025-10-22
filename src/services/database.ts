@@ -395,6 +395,31 @@ export class DatabaseService {
     }
   }
 
+  static async saveStartCueSelection(eventId: string, itemId: number): Promise<boolean> {
+    try {
+      console.log('🔄 Saving START cue selection via API:', { eventId, itemId });
+      
+      const result = await apiClient.saveStartCueSelection(eventId, itemId);
+      
+      console.log('✅ START cue selection saved via API:', result ? 'Success' : 'Failed');
+      return !!result;
+    } catch (error) {
+      console.error('❌ Exception saving START cue selection:', error);
+      return false;
+    }
+  }
+
+  static async getStartCueSelection(eventId: string): Promise<{itemId: number} | null> {
+    try {
+      const result = await apiClient.getStartCueSelection(eventId);
+      console.log('✅ Loaded START cue selection from API:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Exception getting START cue selection:', error);
+      return null;
+    }
+  }
+
   static async getRunOfShowData(eventId: string): Promise<RunOfShowData | null> {
     try {
       console.log('🔄 Loading run of show data from API for event:', eventId);

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Custom Graphics JSON</title>
+</head>
+<body>
+    <script>
+        // Get eventId from URL parameters
+        function getEventId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('eventId');
+        }
+        
+        // JSON sanitization function for VMIX compatibility
+        function sanitizeJSONForVMIX(obj) {
+            if (typeof obj === 'string') {
+                // Escape & characters as \u0026
+                let sanitized = obj.replace(/&/g, '\\u0026');
+                // Replace newlines with spaces
+                sanitized = sanitized.replace(/\n/g, ' ').replace(/\r/g, ' ');
+                // Remove any remaining control characters that could break JSON
+                sanitized = sanitized.replace(/[\x00-\x1F\x7F]/g, ' ');
+                return sanitized;
+            } else if (Array.isArray(obj)) {
+                return obj.map(item => sanitizeJSONForVMIX(item));
+            } else if (obj !== null && typeof obj === 'object') {
+                const sanitized = {};
+                for (const [key, value] of Object.entries(obj)) {
+                    sanitized[key] = sanitizeJSONForVMIX(value);
+                }
+                return sanitized;
+            }
+            return obj;
+        }
+
+        // Calculate start time function
+        function calculateStartTime(schedule, index, masterStartTime) {
+            if (!masterStartTime) return '';
+            
+            let totalMinutes = 0;
+            for (let i = 0; i < index; i++) {
+                const item = schedule[i];
+                totalMinutes += (item.durationHours * 60) + item.durationMinutes;
+            }
+            
+            const [hours, minutes] = masterStartTime.split(':').map(Number);
+            const startDate = new Date();
+            startDate.setHours(hours, minutes + totalMinutes, 0, 0);
+            
+            return startDate.toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+        }
+
+        // Generate custom graphics JSON data
+        function generateCustomGraphicsJSON(schedule, masterStartTime, customColumns) {
+            const customGraphics = schedule
+                .filter(item => item.isPublic)
+                .map(item => {
+                    // Create base object with standard fields
+                    const baseItem = {
+                        type: item.segmentName || 'Segment',
+                        text: item.segmentName || 'Custom Graphic',
+                        duration: `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`,
+                        cue: item.customFields?.cue || 'CUE##',
+                        startTime: calculateStartTime(schedule, schedule.findIndex(s => s.id === item.id), masterStartTime),
+                        notes: item.notes || ''
+                    };
+                    
+                    // Add only custom column values that have data
+                    const customFields = {};
+                    customColumns.forEach(column => {
+                        const value = item.customFields?.[column.name];
+                        if (value && value.trim() !== '') {
+                            customFields[column.name] = value;
+                        }
+                    });
+                    
+                    // Combine base fields with custom fields
+                    return { ...baseItem, ...customFields };
+                });
+
+            const jsonData = {
+                event: 'Current Event',
+                generated: new Date().toISOString(),
+                customGraphics: customGraphics.length > 0 ? customGraphics : [
+                    { type: 'Title', text: 'Welcome to Event', duration: '00:00:10', cue: 'CUE01', startTime: '00:00:00', notes: 'Opening title' },
+                    { type: 'Break', text: 'Commercial Break', duration: '00:02:00', cue: 'CUE02', startTime: '00:15:00', notes: 'Commercial break' }
+                ]
+            };
+
+            return sanitizeJSONForVMIX(jsonData);
+        }
+        
+        // Load data and return JSON
+        async function loadData() {
+            try {
+                const eventId = getEventId();
+                if (!eventId) {
+                    document.write(JSON.stringify({ error: 'No eventId provided in URL parameters' }));
+                    return;
+                }
+
+                console.log('🔄 Fetching live data from Supabase for event:', eventId);
+                
+                // Fetch directly from Supabase
+                const response = await fetch(`https://huqijhevmtgardkyeowa.supabase.co/rest/v1/run_of_show_data?event_id=eq.${eventId}`, {
+                    headers: {
+                        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1cWlqaGV2bXRnYXJka3llb3dhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNDgyNTQsImV4cCI6MjA3MjgyNDI1NH0.1G81Zif1YWQwISEGJw4XMzY89Rlvh6Jda1-j-roPZBk',
+                        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1cWlqaGV2bXRnYXJka3llb3dhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNDgyNTQsImV4cCI6MjA3MjgyNDI1NH0.1G81Zif1YWQwISEGJw4XMzY89Rlvh6Jda1-j-roPZBk'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                if (!data || data.length === 0 || !data[0].schedule_items) {
+                    document.write(JSON.stringify({ error: 'No schedule data found for event: ' + eventId }));
+                    return;
+                }
+
+                const runOfShowData = data[0];
+                const schedule = runOfShowData.schedule_items;
+                const masterStartTime = runOfShowData.settings?.masterStartTime || '';
+                const customColumns = runOfShowData.custom_columns || [];
+
+                // Generate data
+                const jsonData = generateCustomGraphicsJSON(schedule, masterStartTime, customColumns);
+                
+                // Return raw JSON data
+                document.write(JSON.stringify(jsonData, null, 2));
+
+            } catch (error) {
+                console.error('❌ Error fetching live data:', error);
+                document.write(JSON.stringify({ error: 'Failed to fetch data: ' + error.message }));
+            }
+        }
+        
+        // Load data on page load
+        loadData();
+        
+        // Poll Supabase every 60 seconds for live updates (reduced from 10s to minimize data transfer)
+        setInterval(function() {
+            console.log('🔄 60-second Supabase poll triggered...');
+            loadData();
+        }, 60000);
+    </script>
+</body>
+</html>

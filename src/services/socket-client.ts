@@ -23,6 +23,7 @@ interface SocketCallbacks {
   onOvertimeUpdate?: (data: any) => void; // NEW! For overtime sync
   onOvertimeReset?: (data: any) => void; // NEW! For overtime reset
   onShowStartOvertimeUpdate?: (data: any) => void; // NEW! For show start overtime
+  onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
 }
 
 class SocketClient {
@@ -122,6 +123,10 @@ class SocketClient {
         case 'showStartOvertimeUpdate': // NEW! For show start overtime
           console.log('📡 SocketClient: Received showStartOvertimeUpdate event:', message.data);
           this.callbacks.onShowStartOvertimeUpdate?.(message.data);
+          break;
+        case 'startCueSelectionUpdate': // NEW! For start cue selection
+          console.log('📡 SocketClient: Received startCueSelectionUpdate event:', message.data);
+          this.callbacks.onStartCueSelectionUpdate?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);

@@ -4568,6 +4568,13 @@ const RunOfShowPage: React.FC = () => {
             showStartOvertime: showStartOvertimeData.overtimeMinutes,
             willApplyToRowsAfter: true
           });
+        } else {
+          // If no show start overtime, still check for START cue selection
+          const startCueSelectionData = await DatabaseService.getStartCueSelection(event.id);
+          if (startCueSelectionData) {
+            setStartCueId(startCueSelectionData.itemId);
+            console.log('⭐ START cue selection restored (no overtime):', startCueSelectionData);
+          }
         }
         
         // Update change tracking - store updated_at for comparison
@@ -5086,6 +5093,13 @@ const RunOfShowPage: React.FC = () => {
           setShowStartOvertime(data.showStartOvertime);
           setStartCueId(data.item_id); // Also update which cue is marked as START
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
+        }
+      },
+      onStartCueSelectionUpdate: (data: { event_id: string; item_id: number }) => {
+        console.log('📡 Received start cue selection update:', data);
+        if (data.event_id === event?.id) {
+          setStartCueId(data.item_id);
+          console.log(`✅ Start cue selection updated: item ${data.item_id}`);
         }
       }
     };
@@ -9123,9 +9137,37 @@ const RunOfShowPage: React.FC = () => {
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
                      <button
-                       onClick={() => {
+                       onClick={async () => {
                          // Toggle: if this cue is already the START cue, unset it; otherwise set it
-                         setStartCueId(startCueId === item.id ? null : item.id);
+                         const newStartCueId = startCueId === item.id ? null : item.id;
+                         setStartCueId(newStartCueId);
+                         
+                         // Save to database
+                         if (event?.id) {
+                           if (newStartCueId) {
+                             // Save the new START cue selection
+                             try {
+                               await DatabaseService.saveStartCueSelection(event.id, newStartCueId);
+                               console.log(`✅ START cue selection saved: item ${newStartCueId}`);
+                               
+                               // Broadcast via WebSocket
+                               const socket = socketClient.getSocket();
+                               if (socket) {
+                                 socket.emit('startCueSelectionUpdate', {
+                                   event_id: event.id,
+                                   item_id: newStartCueId
+                                 });
+                                 console.log(`✅ START cue selection broadcasted: item ${newStartCueId}`);
+                               }
+                             } catch (error) {
+                               console.error('❌ Failed to save START cue selection:', error);
+                             }
+                           } else {
+                             // Clear the START cue selection (unset star)
+                             console.log('⭐ START cue selection cleared');
+                             // Note: We could add a DELETE endpoint for clearing, but for now just update local state
+                           }
+                         }
                        }}
                        className={`w-7 h-7 flex items-center justify-center text-xl rounded transition-colors bg-slate-700 hover:bg-slate-600 ${
                          startCueId === item.id 
