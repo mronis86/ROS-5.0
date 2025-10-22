@@ -610,6 +610,7 @@ const RunOfShowPage: React.FC = () => {
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
   const [completedCues, setCompletedCues] = useState<Record<number, boolean>>({});
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
+  const [startCueId, setStartCueId] = useState<number | null>(null);
   
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
@@ -773,10 +774,6 @@ const RunOfShowPage: React.FC = () => {
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
   const [timeDifference, setTimeDifference] = useState(0);
   
-  // START cue tracking for show start time overtime
-  const [startCueId, setStartCueId] = useState<number | null>(null);
-  const [showStartOvertime, setShowStartOvertime] = useState<number>(0); // Show-level overtime from START cue
-  
   // Skip next sync when user makes a change
   const [skipNextSync, setSkipNextSync] = useState(false);
   
@@ -876,40 +873,6 @@ const RunOfShowPage: React.FC = () => {
     setCountdown(20);
     setIsSyncing(false);
   }, []);
-
-  // Helper function to parse time string from Start column
-  const parseTimeString = (timeStr: string, baseDateStr: string, dayStartTimeStr?: string): Date | null => {
-    try {
-      // Use day-specific start time if available, otherwise use master start time
-      const baseTime = dayStartTimeStr || baseDateStr;
-      
-      if (!baseTime || !timeStr) return null;
-      
-      // Create a date object for today
-      const today = new Date();
-      
-      // Parse the time string (e.g., "1:00 PM", "13:00", "1:00")
-      const timeParts = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i);
-      if (!timeParts) return null;
-      
-      let hours = parseInt(timeParts[1]);
-      const minutes = parseInt(timeParts[2]);
-      const meridiem = timeParts[3]?.toUpperCase();
-      
-      // Convert to 24-hour format if PM/AM specified
-      if (meridiem === 'PM' && hours < 12) hours += 12;
-      if (meridiem === 'AM' && hours === 12) hours = 0;
-      
-      // Set the time on today's date
-      const result = new Date(today);
-      result.setHours(hours, minutes, 0, 0);
-      
-      return result;
-    } catch (error) {
-      console.error('❌ Error parsing time string:', timeStr, error);
-      return null;
-    }
-  };
 
   // Function to resume editing when modal closes
   const handleModalClosed = () => {
@@ -2240,8 +2203,7 @@ const RunOfShowPage: React.FC = () => {
         settings: {
           eventName,
           masterStartTime,
-          dayStartTimes,
-          startCueId
+          dayStartTimes
         }
       });
       console.log('✅ Schedule data backed up with settings');
@@ -4467,7 +4429,6 @@ const RunOfShowPage: React.FC = () => {
             eventName,
             masterStartTime,
             dayStartTimes,
-            startCueId,
             lastSaved: new Date().toISOString()
           }
         };
@@ -4556,7 +4517,6 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
-        if (data.settings?.startCueId) setStartCueId(data.settings.startCueId);
         
         // Load overtime minutes from dedicated table (like completed_cues)
         const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
@@ -6257,31 +6217,6 @@ const RunOfShowPage: React.FC = () => {
           }
         } catch (error) {
           console.error('❌ Start timer error:', error);
-        }
-        
-        // Calculate show start overtime if this is the START cue
-        if (startCueId === itemId) {
-          console.log('⭐ START cue timer started - calculating show start overtime');
-          
-          // Get the START cue's scheduled "Start" column time
-          const startCueScheduledTime = item.customFields?.start || '';
-          
-          if (startCueScheduledTime) {
-            // Parse the scheduled time (format: "1:00 PM" or "13:00")
-            const scheduledTime = parseTimeString(startCueScheduledTime, masterStartTime, dayStartTimes[item.day || selectedDay]);
-            const actualTime = now;
-            
-            if (scheduledTime) {
-              // Calculate difference in minutes
-              const diffMs = actualTime.getTime() - scheduledTime.getTime();
-              const diffMinutes = Math.floor(diffMs / 60000);
-              
-              setShowStartOvertime(diffMinutes);
-              console.log(`⭐ Show start overtime: ${diffMinutes > 0 ? '+' : ''}${diffMinutes}m (scheduled: ${startCueScheduledTime}, actual: ${now.toLocaleTimeString()})`);
-            }
-          } else {
-            console.warn('⚠️ START cue has no scheduled start time in Start column');
-          }
         }
         
         // Try to save last loaded CUE as running (will fail gracefully if migration not run)
@@ -9052,39 +8987,33 @@ const RunOfShowPage: React.FC = () => {
                      }`}
                      style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                    >
-                    <div className="flex items-center gap-1">
-                      {/* START Cue Marker Button */}
-                      <button
-                        onClick={() => {
-                          handleUserEditing();
-                          if (startCueId === item.id) {
-                            // Unmark as START
-                            setStartCueId(null);
-                            showToast('⭐ START cue unmarked');
-                          } else {
-                            // Mark as START (only one at a time)
-                            setStartCueId(item.id);
-                            showToast(`⭐ CUE ${item.customFields.cue || item.id} marked as SHOW START`);
-                          }
-                        }}
-                        className={`w-7 h-7 flex items-center justify-center text-base rounded font-bold transition-all flex-shrink-0 ${
-                          startCueId === item.id
-                            ? 'bg-yellow-500 hover:bg-yellow-400 text-white shadow-lg'
-                            : 'bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-yellow-400'
-                        }`}
-                        title={startCueId === item.id ? 'SHOW START - Click to unmark' : 'Mark as SHOW START'}
-                      >
-                        {startCueId === item.id ? '⭐' : '☆'}
-                      </button>
-                      <div className={`flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
-                        lastLoadedCueId === item.id ? 'bg-purple-600' : 'bg-slate-600'
-                      }`}>
-                        CUE
-                      </div>
-                    <input
-                      type="text"
-                        value={item.customFields.cue ? item.customFields.cue.replace(/^CUE\s*/, '') : ''}
-                      onChange={(e) => {
+                   <div className="flex items-center gap-1">
+                     {/* Star button for marking START cue */}
+                     <button
+                       onClick={() => {
+                         // Toggle: if this cue is already the START cue, unset it; otherwise set it
+                         setStartCueId(startCueId === item.id ? null : item.id);
+                       }}
+                       className={`w-7 h-7 flex items-center justify-center text-xl rounded transition-colors bg-slate-700 hover:bg-slate-600 ${
+                         startCueId === item.id 
+                           ? 'text-yellow-400' // Gold star when selected
+                           : 'text-slate-400 hover:text-yellow-400'
+                       }`}
+                       title={startCueId === item.id ? "Unmark as SHOW START" : "Mark as SHOW START"}
+                     >
+                       {startCueId === item.id ? '⭐' : '☆'}
+                     </button>
+                     
+                     <div className="flex">
+                       <div className={`flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
+                         lastLoadedCueId === item.id ? 'bg-purple-600' : 'bg-slate-600'
+                       }`}>
+                         CUE
+                       </div>
+                     <input
+                       type="text"
+                         value={item.customFields.cue ? item.customFields.cue.replace(/^CUE\s*/, '') : ''}
+                       onChange={(e) => {
                         // Detect user editing
                         handleUserEditing();
                         
@@ -9127,11 +9056,12 @@ const RunOfShowPage: React.FC = () => {
                       }}
                       disabled={currentUserRole === 'VIEWER'}
                       className="w-14 px-1 py-1 border border-slate-600 rounded-r text-center text-lg transition-colors bg-slate-700 text-white focus:outline-none focus:border-blue-500"
-                      title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit cue names' : 'Edit cue number'}
-                      maxLength={4}
-                    />
-                    </div>
-                    <div className="flex gap-1">
+                     title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit cue names' : 'Edit cue number'}
+                     maxLength={4}
+                   />
+                     </div>
+                   </div>
+                   <div className="flex gap-1">
                       <button
                         onClick={() => {
                           // Detect user editing
@@ -11945,48 +11875,44 @@ const RunOfShowPage: React.FC = () => {
         </div>
       )}
 
-      {/* Time Status Toast - Dual Overtime Display */}
-      {showTimeToast && timeToastEnabled && Object.keys(activeTimers).length > 0 && (() => {
-        const runningItemId = parseInt(Object.keys(activeTimers)[0]);
-        const runningItem = schedule.find(item => item.id === runningItemId);
-        const cueOvertime = overtimeMinutes[runningItemId] || 0;
-        const cueName = runningItem?.customFields?.cue || `CUE ${runningItemId}`;
-        
-        // Determine color based on show start overtime (cumulative)
-        const showStatus = showStartOvertime < 0 ? 'early' : showStartOvertime > 0 ? 'late' : 'on-time';
-        
-        return (
-          <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
-            <div className={`px-6 py-4 rounded-lg shadow-lg border-2 flex items-center gap-3 ${
-              showStatus === 'early' 
-                ? 'bg-yellow-600 border-yellow-500 text-yellow-100' 
-                : showStatus === 'late'
-                ? 'bg-red-600 border-red-500 text-red-100'
-                : 'bg-green-600 border-green-500 text-green-100'
-            }`}>
-              <div className="text-3xl flex-shrink-0">
-                {showStatus === 'early' ? '⏰' : showStatus === 'late' ? '⚠️' : '✅'}
-              </div>
-              <div className="flex-1">
-                {/* Cue-Specific Overtime */}
-                <div className="font-bold text-base mb-1">
-                  {cueName}: {cueOvertime === 0 ? 'On time' : `${cueOvertime > 0 ? '+' : ''}${cueOvertime}m ${cueOvertime > 0 ? 'over' : 'under'}`}
-                </div>
-                {/* Show Cumulative Overtime */}
-                <div className="font-bold text-lg">
-                  SHOW: {showStartOvertime === 0 ? 'On time' : `${showStartOvertime > 0 ? '+' : ''}${showStartOvertime}m ${showStartOvertime > 0 ? 'late' : 'early'}`}
-                </div>
-              </div>
-              <button
-                onClick={() => setShowTimeToast(false)}
-                className="ml-4 text-xl hover:opacity-70 transition-opacity"
-              >
-                ×
-              </button>
+      {/* Time Status Toast */}
+      {showTimeToast && timeToastEnabled && (
+        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
+          <div className={`px-6 py-4 rounded-lg shadow-lg border-2 flex items-center gap-3 ${
+            timeStatus === 'early' 
+              ? 'bg-yellow-600 border-yellow-500 text-yellow-100' 
+              : timeStatus === 'late'
+              ? 'bg-red-600 border-red-500 text-red-100'
+              : 'bg-green-600 border-green-500 text-green-100'
+          }`}>
+            <div className="text-3xl flex-shrink-0">
+              {timeStatus === 'early' ? '⏰' : timeStatus === 'late' ? '⚠️' : '✅'}
             </div>
+            <div className="flex-1">
+              <div className="font-bold text-lg mb-1">
+                {timeStatus === 'early' ? 'EARLY' : timeStatus === 'late' ? 'RUNNING LATE' : 'ON TIME'}
+              </div>
+              <div className="text-base font-medium">
+                <span className="text-2xl font-bold">
+                  {timeDifference >= 60 ? `${Math.floor(timeDifference / 60)}h ${timeDifference % 60}m` : `${timeDifference}m`}
+                </span>
+                {timeStatus === 'early' 
+                  ? ` before CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
+                  : timeStatus === 'late'
+                  ? ` after CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
+                  : ' - Timing is on track'
+                }
+              </div>
+            </div>
+            <button
+              onClick={() => setShowTimeToast(false)}
+              className="ml-4 text-xl hover:opacity-70 transition-opacity"
+            >
+              ×
+            </button>
           </div>
-        );
-      })()}
+        </div>
+      )}
 
 
       {/* OSC Control Modal */}
