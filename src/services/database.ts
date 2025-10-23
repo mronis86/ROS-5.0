@@ -1606,9 +1606,28 @@ export class DatabaseService {
     try {
       console.log('🔄 Getting last loaded CUE via API:', eventId);
       
-      // API-based implementation - placeholder
-      console.log('🔄 Getting last loaded CUE via API:', eventId);
-      return { data: null, error: null };
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${eventId}`);
+      
+      if (!response.ok) {
+        console.log('ℹ️ No active timer found in database');
+        return { data: null, error: null };
+      }
+      
+      const data = await response.json();
+      
+      // Check if there's a last loaded cue in the active timer
+      if (data && data.length > 0 && data[0].last_loaded_cue_id) {
+        const lastLoadedCue = {
+          item_id: data[0].last_loaded_cue_id,
+          timer_state: data[0].timer_state,
+          is_active: data[0].is_active
+        };
+        console.log('✅ Last loaded cue retrieved from active timer:', lastLoadedCue);
+        return { data: lastLoadedCue, error: null };
+      } else {
+        console.log('ℹ️ No last loaded cue found in active timer');
+        return { data: null, error: null };
+      }
     } catch (error) {
       console.error('❌ Error getting last loaded CUE:', error);
       return { data: null, error };

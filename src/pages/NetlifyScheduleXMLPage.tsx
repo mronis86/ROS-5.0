@@ -84,8 +84,30 @@ const NetlifyScheduleXMLPage: React.FC = () => {
       const scheduleItems = runOfShowData.schedule_items;
       const scheduleData: ScheduleItem[] = [];
       
-      // Calculate start times
-      const masterStartTime = runOfShowData.settings?.masterStartTime || '09:00';
+      // Calculate start times - check multiple sources for master start time
+      let masterStartTime = '';
+      
+      // Check for master start time in different locations (same as ReportsPage)
+      if (runOfShowData.settings?.masterStartTime) {
+        masterStartTime = runOfShowData.settings.masterStartTime;
+      } else if (runOfShowData.settings?.dayStartTimes?.['1']) {
+        masterStartTime = runOfShowData.settings.dayStartTimes['1'];
+      } else if (runOfShowData.schedule_items && runOfShowData.schedule_items.length > 0) {
+        // Check if the first item has a start time that might be the master start time
+        const firstItem = runOfShowData.schedule_items[0];
+        if (firstItem.startTime) {
+          masterStartTime = firstItem.startTime;
+        }
+      }
+      
+      // Fallback to 09:00 if no master start time found
+      if (!masterStartTime) {
+        masterStartTime = '09:00';
+        console.log('⚠️ NetlifyScheduleXML: No master start time found, using fallback 09:00');
+      } else {
+        console.log('✅ NetlifyScheduleXML: Master start time from API:', masterStartTime);
+      }
+      
       const [hours, minutes] = masterStartTime.split(':').map(Number);
       
       scheduleItems.forEach((item: any, index: number) => {
