@@ -799,18 +799,7 @@ const RunOfShowPage: React.FC = () => {
     
     try {
       // Convert the date to the event's timezone
-      const timeStr = date.toLocaleString("en-US", { 
-        timeZone: eventTimezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-      });
-      
-      const timeInEventTz = new Date(timeStr);
+      const timeInEventTz = new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
       return timeInEventTz;
     } catch (error) {
       console.warn('Error converting to event timezone:', error);
@@ -824,32 +813,7 @@ const RunOfShowPage: React.FC = () => {
     try {
       // Get current time in the event's timezone
       const now = new Date();
-      
-      // Create a date in the event timezone by using toLocaleString to get the time components
-      const timeStr = now.toLocaleString("en-US", { 
-        timeZone: eventTimezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-      });
-      
-      // Parse the time string back to a Date object
-      const timeInEventTz = new Date(timeStr);
-      
-      // DEBUG: Log the conversion details
-      console.log('🕐 Timezone Debug:', {
-        eventTimezone,
-        utcTime: now.toISOString(),
-        utcLocalTime: now.toLocaleString(),
-        timeStr,
-        convertedTime: timeInEventTz.toISOString(),
-        convertedLocalTime: timeInEventTz.toLocaleString()
-      });
-      
+      const timeInEventTz = new Date(now.toLocaleString("en-US", { timeZone: eventTimezone }));
       return timeInEventTz;
     } catch (error) {
       console.warn('Error getting current time in event timezone:', error);
@@ -2487,7 +2451,7 @@ const RunOfShowPage: React.FC = () => {
     
     if (activeItem) {
       try {
-        const now = getCurrentTimeInEventTimezone();
+        const now = new Date();
         const itemIndex = schedule.findIndex(item => item.id === activeItem.id);
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
@@ -2499,8 +2463,8 @@ const RunOfShowPage: React.FC = () => {
           if (period === 'PM' && hours !== 12) hour24 += 12;
           if (period === 'AM' && hours === 12) hour24 = 0;
           
-          // Create a date object for today with the calculated time in event timezone
-          const today = getCurrentTimeInEventTimezone();
+          // Create a date object for today with the calculated time
+          const today = new Date();
           const itemStartTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour24, minutes);
           
           const differenceMs = now.getTime() - itemStartTime.getTime();
@@ -6338,19 +6302,6 @@ const RunOfShowPage: React.FC = () => {
             const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event's timezone
             
             if (scheduledStart) {
-              // DEBUG: Detailed logging for STAR CUE calculation
-              console.log('🔍 STAR CUE Debug Details:', {
-                scheduledStartStr,
-                scheduledStart: scheduledStart.toISOString(),
-                scheduledStartLocal: scheduledStart.toLocaleString(),
-                actualStart: actualStart.toISOString(),
-                actualStartLocal: actualStart.toLocaleString(),
-                eventTimezone,
-                scheduledTimeMs: scheduledStart.getTime(),
-                actualTimeMs: actualStart.getTime(),
-                timeDifferenceMs: actualStart.getTime() - scheduledStart.getTime()
-              });
-              
               // Calculate difference in minutes
               const diffMs = actualStart.getTime() - scheduledStart.getTime();
               const diffMinutes = Math.round(diffMs / (60 * 1000));
@@ -10454,9 +10405,6 @@ const RunOfShowPage: React.FC = () => {
                                 booleanChange: true
                               }
                             });
-                            
-                            // Save to API
-                            saveToAPI();
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
                             currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
