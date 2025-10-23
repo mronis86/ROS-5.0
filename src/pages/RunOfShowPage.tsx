@@ -4526,6 +4526,9 @@ const RunOfShowPage: React.FC = () => {
           });
         }
         
+        // Always log master start time for debugging
+        console.log('💾 Saving master start time to database:', masterStartTime);
+        
         const result = await DatabaseService.saveRunOfShowData(dataToSave, {
           userId: user?.id || 'unknown',
           userName: user?.full_name || user?.email || 'Unknown User',
@@ -10406,7 +10409,7 @@ const RunOfShowPage: React.FC = () => {
                               }
                             });
                             
-                            // Save to API
+                            // Save to API immediately (don't wait for debounce)
                             saveToAPI();
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
