@@ -2451,7 +2451,7 @@ const RunOfShowPage: React.FC = () => {
     
     if (activeItem) {
       try {
-        const now = new Date();
+        const now = getCurrentTimeInEventTimezone();
         const itemIndex = schedule.findIndex(item => item.id === activeItem.id);
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
@@ -2463,8 +2463,8 @@ const RunOfShowPage: React.FC = () => {
           if (period === 'PM' && hours !== 12) hour24 += 12;
           if (period === 'AM' && hours === 12) hour24 = 0;
           
-          // Create a date object for today with the calculated time
-          const today = new Date();
+          // Create a date object for today with the calculated time in event timezone
+          const today = getCurrentTimeInEventTimezone();
           const itemStartTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour24, minutes);
           
           const differenceMs = now.getTime() - itemStartTime.getTime();
