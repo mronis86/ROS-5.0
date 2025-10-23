@@ -438,15 +438,12 @@ const EventListPage: React.FC = () => {
   };
 
   const formatDate = (dateString: string) => {
-    // Parse the date string directly without timezone conversion
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day); // month is 0-indexed
+    const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
-      day: 'numeric',
-      timeZone: 'America/New_York' // EST/EDT timezone
+      day: 'numeric'
     });
   };
 
@@ -464,9 +461,7 @@ const EventListPage: React.FC = () => {
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Start of today
     
     const filtered = events.filter(event => {
-      // Parse date without timezone conversion
-      const [year, month, day] = event.date.split('-').map(Number);
-      const eventDate = new Date(year, month - 1, day); // month is 0-indexed
+      const eventDate = new Date(event.date);
       
       const dateMatch = activeTab === 'upcoming' 
         ? eventDate >= today 
