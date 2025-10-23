@@ -580,6 +580,7 @@ const RunOfShowPage: React.FC = () => {
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
   const [selectedDay, setSelectedDay] = useState<number>(1);
+  const [eventTimezone, setEventTimezone] = useState('America/New_York');
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -790,6 +791,34 @@ const RunOfShowPage: React.FC = () => {
     }
     
     return null;
+  };
+
+  // Timezone utility functions
+  const convertToEventTimezone = (date: Date): Date => {
+    if (!eventTimezone) return date;
+    
+    try {
+      // Convert the date to the event's timezone
+      const timeInEventTz = new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
+      return timeInEventTz;
+    } catch (error) {
+      console.warn('Error converting to event timezone:', error);
+      return date;
+    }
+  };
+
+  const getCurrentTimeInEventTimezone = (): Date => {
+    if (!eventTimezone) return new Date();
+    
+    try {
+      // Get current time in the event's timezone
+      const now = new Date();
+      const timeInEventTz = new Date(now.toLocaleString("en-US", { timeZone: eventTimezone }));
+      return timeInEventTz;
+    } catch (error) {
+      console.warn('Error getting current time in event timezone:', error);
+      return new Date();
+    }
   };
 
   // Track dependent rows for orange highlighting when CUE is loaded
