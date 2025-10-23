@@ -689,13 +689,14 @@ const EventListPage: React.FC = () => {
                     <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Date</th>
                     <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Location</th>
                     <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Duration</th>
+                    <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Timezone</th>
                     <th className="px-4 py-3 text-center text-slate-300 font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredEvents.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-12 text-center">
+                      <td colSpan={6} className="px-4 py-12 text-center">
                         <div className="text-6xl mb-4">
                           {activeTab === 'upcoming' ? '📅' : '📋'}
                         </div>
@@ -727,6 +728,14 @@ const EventListPage: React.FC = () => {
                         </td>
                         <td className="px-4 py-3 text-slate-300 border-r border-slate-600">
                           {event.numberOfDays} day{event.numberOfDays > 1 ? 's' : ''}
+                        </td>
+                        <td className="px-4 py-3 text-slate-300 border-r border-slate-600">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs">🌍</span>
+                            <span className="text-xs font-mono">
+                              {event.timezone || 'America/New_York'}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex gap-2 justify-center">
