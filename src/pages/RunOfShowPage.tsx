@@ -839,6 +839,17 @@ const RunOfShowPage: React.FC = () => {
       
       // Parse the time string back to a Date object
       const timeInEventTz = new Date(timeStr);
+      
+      // DEBUG: Log the conversion details
+      console.log('🕐 Timezone Debug:', {
+        eventTimezone,
+        utcTime: now.toISOString(),
+        utcLocalTime: now.toLocaleString(),
+        timeStr,
+        convertedTime: timeInEventTz.toISOString(),
+        convertedLocalTime: timeInEventTz.toLocaleString()
+      });
+      
       return timeInEventTz;
     } catch (error) {
       console.warn('Error getting current time in event timezone:', error);
@@ -6327,6 +6338,19 @@ const RunOfShowPage: React.FC = () => {
             const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event's timezone
             
             if (scheduledStart) {
+              // DEBUG: Detailed logging for STAR CUE calculation
+              console.log('🔍 STAR CUE Debug Details:', {
+                scheduledStartStr,
+                scheduledStart: scheduledStart.toISOString(),
+                scheduledStartLocal: scheduledStart.toLocaleString(),
+                actualStart: actualStart.toISOString(),
+                actualStartLocal: actualStart.toLocaleString(),
+                eventTimezone,
+                scheduledTimeMs: scheduledStart.getTime(),
+                actualTimeMs: actualStart.getTime(),
+                timeDifferenceMs: actualStart.getTime() - scheduledStart.getTime()
+              });
+              
               // Calculate difference in minutes
               const diffMs = actualStart.getTime() - scheduledStart.getTime();
               const diffMinutes = Math.round(diffMs / (60 * 1000));
