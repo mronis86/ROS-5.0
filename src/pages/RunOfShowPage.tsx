@@ -10405,6 +10405,9 @@ const RunOfShowPage: React.FC = () => {
                                 booleanChange: true
                               }
                             });
+                            
+                            // Save to API
+                            saveToAPI();
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
                             currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
