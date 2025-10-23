@@ -1869,7 +1869,7 @@ const RunOfShowPage: React.FC = () => {
         // Set up sub-cue timer state
         const itemId = parseInt(subCueTimerData.item_id);
         const startedAt = new Date(subCueTimerData.started_at);
-        const now = new Date();
+        const now = getCurrentTimeInEventTimezone();
         const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000) + 2; // Add 2 second offset for Browser B (1 second more elapsed)
         
         setSubCueTimerProgress(prev => ({
@@ -2097,7 +2097,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔄 Found active timer in database:', activeTimer);
       
       // Get current global time
-      const now = new Date();
+      const now = getCurrentTimeInEventTimezone();
       const currentTime = Math.floor(now.getTime() / 1000); // Current time in seconds
       
       // Get start time from database (convert to seconds)
@@ -6299,7 +6299,7 @@ const RunOfShowPage: React.FC = () => {
           
           if (scheduledStartStr && scheduledStartStr !== '') {
             const scheduledStart = parseTimeString(scheduledStartStr);
-            const actualStart = new Date(); // Use current local time
+            const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event's timezone
             
             if (scheduledStart) {
               // Calculate difference in minutes
@@ -6353,7 +6353,7 @@ const RunOfShowPage: React.FC = () => {
         
         // OPTIMISTIC UI UPDATE - Show running state immediately
         console.log('⚡ Optimistic UI update - showing running state immediately');
-        const now = new Date();
+        const now = getCurrentTimeInEventTimezone();
         setTimerProgress(prev => ({
           ...prev,
           [itemId]: {
@@ -6572,7 +6572,7 @@ const RunOfShowPage: React.FC = () => {
         [itemId]: {
           elapsed: 0,
           total: totalSeconds,
-          startedAt: new Date()
+          startedAt: getCurrentTimeInEventTimezone()
         }
       }));
       
@@ -6667,7 +6667,7 @@ const RunOfShowPage: React.FC = () => {
         remaining: totalSeconds,
         duration: totalSeconds,
         isActive: true,
-        startedAt: new Date(),
+        startedAt: getCurrentTimeInEventTimezone(),
         timerState: 'running'
       });
       
@@ -8368,7 +8368,7 @@ const RunOfShowPage: React.FC = () => {
                                               `CUE ${hybridTimerData.secondaryTimer.item_id}`;
                             
                             // Calculate remaining time for sub-cue
-                            const now = new Date();
+                            const now = getCurrentTimeInEventTimezone();
                             const startedAt = new Date(hybridTimerData.secondaryTimer.started_at || hybridTimerData.secondaryTimer.created_at);
                             const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
                             const total = hybridTimerData.secondaryTimer.duration_seconds || hybridTimerData.secondaryTimer.duration || 60;
@@ -9766,8 +9766,8 @@ const RunOfShowPage: React.FC = () => {
                                     const currentIndex = schedule.findIndex(s => s.id === item.id);
                                     if (startCueIndex !== -1 && currentIndex > startCueIndex) {
                                       totalOvertime += showStartOvertime;
-                                    }
-                                  }
+                                     }
+                                   }
                                    return totalOvertime > 0 ? `+${totalOvertime}m` : `${totalOvertime}m`;
                                  })()}
                                </span>
