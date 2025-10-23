@@ -799,7 +799,18 @@ const RunOfShowPage: React.FC = () => {
     
     try {
       // Convert the date to the event's timezone
-      const timeInEventTz = new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
+      const timeStr = date.toLocaleString("en-US", { 
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      const timeInEventTz = new Date(timeStr);
       return timeInEventTz;
     } catch (error) {
       console.warn('Error converting to event timezone:', error);
@@ -813,7 +824,21 @@ const RunOfShowPage: React.FC = () => {
     try {
       // Get current time in the event's timezone
       const now = new Date();
-      const timeInEventTz = new Date(now.toLocaleString("en-US", { timeZone: eventTimezone }));
+      
+      // Create a date in the event timezone by using toLocaleString to get the time components
+      const timeStr = now.toLocaleString("en-US", { 
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      // Parse the time string back to a Date object
+      const timeInEventTz = new Date(timeStr);
       return timeInEventTz;
     } catch (error) {
       console.warn('Error getting current time in event timezone:', error);

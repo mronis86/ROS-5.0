@@ -60,11 +60,48 @@ const GreenRoomPage: React.FC = () => {
 
   // Timezone utility functions (same as RunOfShowPage)
   const convertToEventTimezone = (date: Date) => {
-    return new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
+    if (!eventTimezone) return date;
+    
+    try {
+      const timeStr = date.toLocaleString("en-US", { 
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      return new Date(timeStr);
+    } catch (error) {
+      console.warn('Error converting to event timezone:', error);
+      return date;
+    }
   };
 
   const getCurrentTimeInEventTimezone = () => {
-    return convertToEventTimezone(new Date());
+    if (!eventTimezone) return new Date();
+    
+    try {
+      const now = new Date();
+      const timeStr = now.toLocaleString("en-US", { 
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      return new Date(timeStr);
+    } catch (error) {
+      console.warn('Error getting current time in event timezone:', error);
+      return new Date();
+    }
   };
   
   // Track last loaded cue to keep it visible when timer stops
