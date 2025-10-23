@@ -2451,7 +2451,7 @@ const RunOfShowPage: React.FC = () => {
     
     if (activeItem) {
       try {
-        const now = new Date();
+        const now = getCurrentTimeInEventTimezone();
         const itemIndex = schedule.findIndex(item => item.id === activeItem.id);
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
@@ -2463,8 +2463,8 @@ const RunOfShowPage: React.FC = () => {
           if (period === 'PM' && hours !== 12) hour24 += 12;
           if (period === 'AM' && hours === 12) hour24 = 0;
           
-          // Create a date object for today with the calculated time
-          const today = new Date();
+          // Create a date object for today with the calculated time in event timezone
+          const today = getCurrentTimeInEventTimezone();
           const itemStartTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour24, minutes);
           
           const differenceMs = now.getTime() - itemStartTime.getTime();
@@ -4494,11 +4494,29 @@ const RunOfShowPage: React.FC = () => {
       if (!event?.id) return;
       
       try {
+        // Convert duration fields to duration_seconds for database storage
+        const scheduleWithDurationSeconds = schedule.map(item => ({
+          ...item,
+          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
+        }));
+
+        // Debug logging for duration conversion
+        if (schedule.length > 0) {
+          console.log('🔄 RunOfShow: Converting duration fields to duration_seconds:', {
+            firstItem: {
+              durationHours: schedule[0].durationHours,
+              durationMinutes: schedule[0].durationMinutes,
+              durationSeconds: schedule[0].durationSeconds,
+              calculatedDurationSeconds: scheduleWithDurationSeconds[0].duration_seconds
+            }
+          });
+        }
+
         const dataToSave = {
           event_id: event.id,
           event_name: event.name,
           event_date: event.date,
-          schedule_items: schedule,
+          schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
           settings: {
             eventName,
@@ -5812,6 +5830,7 @@ const RunOfShowPage: React.FC = () => {
       }
     }
   }, [dayStartTimes, event?.id, saveToAPI, isUserEditing]);
+
 
   // Sync timer data with full-screen timer window
   useEffect(() => {
@@ -10405,6 +10424,9 @@ const RunOfShowPage: React.FC = () => {
                                 booleanChange: true
                               }
                             });
+                            
+                            // Save to API
+                            saveToAPI();
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
                             currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
