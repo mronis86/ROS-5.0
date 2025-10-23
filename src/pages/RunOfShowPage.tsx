@@ -4504,6 +4504,7 @@ const RunOfShowPage: React.FC = () => {
             eventName,
             masterStartTime,
             dayStartTimes,
+            timezone: eventTimezone,
             lastSaved: new Date().toISOString()
           }
         };
@@ -4539,7 +4540,7 @@ const RunOfShowPage: React.FC = () => {
         console.error('❌ Error auto-saving to API:', error);
       }
     }, 30000), // Debounce for 30 seconds
-    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes]
+    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, eventTimezone]
   );
 
   // Debounce utility function
@@ -4594,16 +4595,12 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         
-        // Debug: Check what timezone data is available
-        console.log('🔍 Timezone Debug:');
-        console.log('  - data.settings?.timezone:', data.settings?.timezone);
-        console.log('  - data.timezone:', data.timezone);
-        console.log('  - Current eventTimezone state:', eventTimezone);
-        
-        // Also check if timezone is in the event data itself
-        if (data.timezone && !data.settings?.timezone) {
-          setEventTimezone(data.timezone);
-          console.log('🌍 Loaded timezone from event data:', data.timezone);
+        // Load timezone from settings if available
+        if (data.settings?.timezone) {
+          setEventTimezone(data.settings.timezone);
+          console.log('🌍 Loaded timezone from settings:', data.settings.timezone);
+        } else {
+          console.log('🌍 No timezone found in settings, using default:', eventTimezone);
         }
         
         // FIRST: Always load star selection from main schedule (this is the source of truth)
@@ -5749,7 +5746,7 @@ const RunOfShowPage: React.FC = () => {
     const graphicsInterval = setInterval(updateGraphicsData, 30 * 1000);
     
     return () => clearInterval(graphicsInterval);
-  }, [event?.id, schedule, customColumns, eventName, masterStartTime, dayStartTimes]);
+  }, [event?.id, schedule, customColumns, eventName, masterStartTime, dayStartTimes, eventTimezone]);
 
   useEffect(() => {
     if (event?.id) {
