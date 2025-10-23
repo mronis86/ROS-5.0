@@ -6272,11 +6272,22 @@ const RunOfShowPage: React.FC = () => {
             const actualStart = getCurrentTimeUTC(); // Use current UTC time
             
             if (scheduledStart) {
+              // Since we're using UTC throughout, we need to treat the scheduled time as UTC
+              // The scheduledStart was created in local timezone, but we need to compare with UTC
+              // We'll create a UTC version of the scheduled time
+              
+              // Get the current date in UTC
+              const now = new Date();
+              const utcDate = new Date(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+              
+              // Create scheduled time in UTC using the same time but UTC date
+              const scheduledStartUTC = new Date(utcDate.getTime() + (scheduledStart.getHours() * 60 + scheduledStart.getMinutes()) * 60 * 1000);
+              
               // Calculate difference in minutes
-              const diffMs = actualStart.getTime() - scheduledStart.getTime();
+              const diffMs = actualStart.getTime() - scheduledStartUTC.getTime();
               const diffMinutes = Math.round(diffMs / (60 * 1000));
               
-              console.log(`⏰ Show Start Overtime: Scheduled=${scheduledStart.toLocaleTimeString()}, Actual=${actualStart.toLocaleTimeString()}, Diff=${diffMinutes}m`);
+              console.log(`⏰ Show Start Overtime: Scheduled=${scheduledStart.toLocaleTimeString()} (local), ScheduledUTC=${scheduledStartUTC.toISOString()}, Actual=${actualStart.toISOString()}, Diff=${diffMinutes}m`);
               
               // Update local state (keep separate from duration overtime)
               setShowStartOvertime(diffMinutes);
