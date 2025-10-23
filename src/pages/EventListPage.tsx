@@ -438,7 +438,9 @@ const EventListPage: React.FC = () => {
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    // Parse the date string directly without timezone conversion
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-indexed
     return date.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
@@ -461,7 +463,9 @@ const EventListPage: React.FC = () => {
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Start of today
     
     const filtered = events.filter(event => {
-      const eventDate = new Date(event.date);
+      // Parse date without timezone conversion
+      const [year, month, day] = event.date.split('-').map(Number);
+      const eventDate = new Date(year, month - 1, day); // month is 0-indexed
       
       const dateMatch = activeTab === 'upcoming' 
         ? eventDate >= today 
