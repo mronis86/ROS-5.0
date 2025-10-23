@@ -7,7 +7,6 @@ let config = {};
 let currentEvent = null;
 let schedule = [];
 let selectedDay = 1;
-let currentEventTimezone = 'America/New_York'; // Store the current event's timezone
 let activeItemId = null;
 let timerProgress = {};
 let activeTimers = {};
@@ -19,19 +18,14 @@ let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
 let disconnectTimer = null; // Timer for auto-disconnect
 let disconnectTimeoutMinutes = 0; // 0 = never disconnect
-// Removed eventTimezone - using computer's local timezone for all date operations
+// Detect user's local timezone
+let eventTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 let allEvents = []; // Global events array
 
 // Initialize
 async function init() {
   console.log('🚀 Initializing ROS OSC Control...');
-  
-  // Debug timezone information
-  const appDefaultTimezone = 'America/New_York'; // App's default timezone
-  const computerTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  console.log('🌍 App default timezone:', appDefaultTimezone);
-  console.log('🌍 Computer timezone:', computerTimezone);
-  console.log('🌍 App will use computer timezone for all date operations');
+  console.log('🌍 Detected local timezone:', eventTimezone);
   
   try {
     // Get config from main process
@@ -50,6 +44,9 @@ async function init() {
     // Setup event listeners
     console.log('🎯 Setting up event listeners...');
     setupEventListeners();
+    
+    // Setup timezone selector
+    setupTimezoneSelector();
     
     // Load events
     console.log('📥 Loading events...');
@@ -155,6 +152,44 @@ function stopDisconnectTimer() {
     clearTimeout(disconnectTimer);
     disconnectTimer = null;
     console.log('🛑 Disconnect timer stopped');
+  }
+}
+
+// Setup timezone selector
+function setupTimezoneSelector() {
+  const timezoneSelect = document.getElementById('timezoneSelect');
+  
+  if (timezoneSelect) {
+    // Set initial value to detected local timezone
+    timezoneSelect.value = eventTimezone;
+    console.log('🌍 Timezone selector initialized with detected timezone:', eventTimezone);
+    
+    // Add change listener
+    timezoneSelect.addEventListener('change', (e) => {
+      const selectedTimezone = e.target.value;
+      eventTimezone = selectedTimezone;
+      console.log('🌍 Timezone override changed to:', selectedTimezone);
+      
+      // Reload events with new timezone
+      loadEvents();
+    });
+  }
+}
+
+// Update timezone selector value
+function updateTimezoneSelector() {
+  const timezoneSelect = document.getElementById('timezoneSelect');
+  if (timezoneSelect) {
+    console.log('🌍 Updating timezone selector...');
+    console.log('🌍 Current eventTimezone:', eventTimezone);
+    console.log('🌍 Selector current value:', timezoneSelect.value);
+    
+    timezoneSelect.value = eventTimezone;
+    
+    console.log('🌍 Selector new value:', timezoneSelect.value);
+    console.log('🌍 Timezone selector updated to:', eventTimezone);
+  } else {
+    console.log('🌍 ❌ Timezone selector element not found');
   }
 }
 
@@ -360,33 +395,44 @@ async function loadEvents(filter = 'upcoming') {
     console.log('✅ Events loaded:', allEvents.length);
     console.log('📋 Events data:', allEvents);
     
-    // Using computer's local timezone for all date operations
+    // Each event uses its own timezone from NEON database
+    console.log('🌍 Each event will use its own timezone from schedule_data.timezone');
     
     if (allEvents.length === 0) {
       eventList.innerHTML = '<div class="loading">No events found</div>';
       return;
     }
     
-    // Simple date filtering using computer's timezone
+    // Filter events by upcoming/past - each event uses its own timezone
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    // Debug timezone information for filtering
-    const filterTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    console.log(`🌍 Date filtering using timezone: ${filterTimezone}`);
-    console.log(`🌍 Today's date for filtering: ${today.toISOString().split('T')[0]}`);
+    console.log('🌍 Date filtering debug - each event uses its own timezone from NEON');
     
     const filteredEvents = allEvents.filter(event => {
-      // Parse the date and use UTC methods to avoid timezone issues
-      const eventDate = new Date(event.date);
-      const eventDateUTC = new Date(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
+      // Parse the event date (YYYY-MM-DD format)
+      const [year, month, day] = event.date.split('-').map(Number);
+      const eventDate = new Date(year, month - 1, day); // month is 0-indexed
       
-      console.log(`🌍 Event "${event.name}" date: ${eventDateUTC.toISOString().split('T')[0]} (${event.date})`);
+      // Get event's timezone from NEON database
+      const eventTimezone = event.schedule_data?.timezone || 'America/New_York';
+      
+      // Simple approach: compare dates directly without timezone conversion
+      // The event date is already in the correct format for comparison
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      eventDate.setHours(0, 0, 0, 0);
+      
+      console.log(`🌍 Event "${event.name}" date comparison:`, {
+        eventDate: event.date,
+        eventTimezone: eventTimezone,
+        eventDateObj: eventDate.toISOString(),
+        todayObj: today.toISOString(),
+        isUpcoming: eventDate >= today
+      });
       
       if (filter === 'upcoming') {
-        return eventDateUTC >= today;
+        return eventDate >= today;
       } else {
-        return eventDateUTC < today;
+        return eventDate < today;
       }
     });
     
@@ -406,30 +452,37 @@ async function loadEvents(filter = 'upcoming') {
       
       // Extract numberOfDays from schedule_data (it's stored as JSON)
       let numberOfDays = 1;
-      let timezone = 'America/New_York';
-      let location = '';
-      
       if (event.schedule_data) {
         const scheduleData = typeof event.schedule_data === 'string' 
           ? JSON.parse(event.schedule_data) 
           : event.schedule_data;
         numberOfDays = scheduleData.numberOfDays || 1;
-        timezone = scheduleData.timezone || 'America/New_York';
-        location = scheduleData.location || '';
       }
       
-      console.log(`  → Number of days: ${numberOfDays}, Timezone: ${timezone}, Location: ${location}`);
+      console.log(`  → Number of days: ${numberOfDays}`);
       const dayIndicator = numberOfDays > 1 ? `<div class="event-days">📅 ${numberOfDays} Days</div>` : '';
-      const timezoneDisplay = timezone ? `<div class="event-timezone">🌍 ${timezone}</div>` : '';
-      const locationDisplay = location ? `<div class="event-location">📍 ${escapeHtml(location)}</div>` : '';
+      
+      // Use the event's timezone from NEON database
+      const displayTimezone = event.schedule_data?.timezone || 'America/New_York';
+      
+      // Debug logging for timezone
+      console.log(`🌍 Event "${event.name}" timezone debug:`, {
+        rawScheduleData: event.schedule_data,
+        timezoneFromData: event.schedule_data?.timezone,
+        finalTimezone: displayTimezone,
+        eventDate: event.date
+      });
+      
+      // Get location from event data
+      const eventLocation = event.schedule_data?.location || 'Great Hall';
       
       return `
         <div class="event-card" data-event-index="${index}">
           <h3>${escapeHtml(event.name)}</h3>
-          <div class="event-date">📅 ${formatDate(event.date)}</div>
+          <div class="event-date">📅 ${formatDate(event.date, displayTimezone)}</div>
+          <div class="event-location">📍 ${eventLocation}</div>
+          <div class="event-timezone">🌍 ${displayTimezone}</div>
           ${dayIndicator}
-          ${timezoneDisplay}
-          ${locationDisplay}
           <div class="event-id">ID: ${event.id}</div>
         </div>
       `;
@@ -465,37 +518,51 @@ async function loadEvents(filter = 'upcoming') {
   }
 }
 
-// Removed loadEventTimezone function - using computer's local timezone
+// Determine timezone for event list filtering
+function determineEventListTimezone(events) {
+  console.log('🌍 Determining timezone for event list filtering...');
+  console.log('🌍 Current eventTimezone state (dropdown selection):', eventTimezone);
+  console.log('🌍 Events available:', events?.length || 0);
+  
+  // Use the dropdown selection as the override - don't auto-change it
+  console.log('🌍 Using dropdown selection as timezone override:', eventTimezone);
+  return eventTimezone;
+}
+
+// Load event timezone from calendar events API
+async function loadEventTimezone(eventId) {
+  try {
+    const response = await axios.get(`${config.apiUrl}/api/calendar-events`);
+    const events = response.data;
+    
+    // Find the event with matching ID
+    const event = events.find(e => e.id === eventId);
+    
+    if (event && event.schedule_data?.timezone) {
+      eventTimezone = event.schedule_data.timezone;
+      console.log('🌍 Event timezone loaded from calendar events:', eventTimezone);
+    } else {
+      console.log('🌍 No timezone found in calendar events, using default:', eventTimezone);
+    }
+  } catch (error) {
+    console.warn('⚠️ Could not load event timezone from calendar events:', error.message);
+    console.log('🌍 Using default timezone:', eventTimezone);
+  }
+}
 
 // Select an event
 async function selectEvent(eventId, eventName, eventDate, numberOfDays = 1) {
   console.log('🎬 Event selected:', eventId, eventName, eventDate, 'days:', numberOfDays);
   
   try {
-    // Load event timezone from the selected event
-    let eventTimezone = 'America/New_York'; // Default fallback
-    const selectedEvent = allEvents.find(e => e.id === eventId);
-    if (selectedEvent && selectedEvent.schedule_data) {
-      const scheduleData = typeof selectedEvent.schedule_data === 'string' 
-        ? JSON.parse(selectedEvent.schedule_data) 
-        : selectedEvent.schedule_data;
-      eventTimezone = scheduleData.timezone || 'America/New_York';
-    }
+    currentEvent = { id: eventId, name: eventName, date: eventDate, numberOfDays: numberOfDays };
     
-    console.log('🌍 Event timezone:', eventTimezone);
-    console.log('🌍 Computer timezone:', Intl.DateTimeFormat().resolvedOptions().timeZone);
-    
-    currentEvent = { 
-      id: eventId, 
-      name: eventName, 
-      date: eventDate, 
-      numberOfDays: numberOfDays,
-      timezone: eventTimezone 
-    };
+    // Load specific event timezone for this event
+    await loadEventTimezone(eventId);
     
     // Update UI
     document.getElementById('currentEventName').textContent = eventName;
-    document.getElementById('currentEventDate').textContent = formatDate(eventDate, eventTimezone);
+    document.getElementById('currentEventDate').textContent = formatDate(eventDate);
     
     // Show/hide day selector based on number of days
     const daySelector = document.querySelector('.day-selector');
@@ -521,7 +588,7 @@ async function selectEvent(eventId, eventName, eventDate, numberOfDays = 1) {
     connectToSocketIO(eventId);
     
     // Load schedule for selected day
-    await loadEventSchedule(eventId, selectedDay, eventTimezone);
+    await loadEventSchedule(eventId, selectedDay);
     
     // Show Run of Show page
     showPage('runOfShowPage');
@@ -534,8 +601,8 @@ async function selectEvent(eventId, eventName, eventDate, numberOfDays = 1) {
 }
 
 // Load event schedule
-async function loadEventSchedule(eventId, day = 1, timezone = 'America/New_York') {
-  console.log('📥 Loading schedule for event:', eventId, 'day:', day, 'timezone:', timezone);
+async function loadEventSchedule(eventId, day = 1) {
+  console.log('📥 Loading schedule for event:', eventId, 'day:', day);
   const tableBody = document.getElementById('scheduleTableBody');
   tableBody.innerHTML = '<tr><td colspan="4" class="loading">Loading schedule...</td></tr>';
   
@@ -574,9 +641,7 @@ async function loadEventSchedule(eventId, day = 1, timezone = 'America/New_York'
     }
     
     schedule = scheduleItems;
-    currentEventTimezone = timezone; // Store the event's timezone
     console.log('✅ Schedule loaded:', schedule.length, 'items');
-    console.log('🌍 Event timezone set to:', currentEventTimezone);
     
     // Render schedule table
     renderSchedule();
@@ -689,9 +754,9 @@ async function syncTimerStatus() {
           // Timer is RUNNING
           activeTimers[itemId] = true;
           
-          // Calculate elapsed time using event's timezone
+          // Calculate elapsed time
           const startedAt = new Date(timerRecord.started_at);
-          const now = getCurrentTimeInEventTimezone();
+          const now = new Date();
           const elapsedSeconds = Math.floor((now - startedAt) / 1000);
           
           timerProgress[itemId] = {
@@ -844,7 +909,7 @@ async function startCue() {
     // Update local state
     activeTimers[activeItemId] = true;
     if (timerProgress[activeItemId]) {
-      timerProgress[activeItemId].startedAt = getCurrentTimeInEventTimezone().toISOString();
+      timerProgress[activeItemId].startedAt = new Date().toISOString();
     }
     
     // Update display
@@ -1097,7 +1162,7 @@ async function startSubTimer(cueNumber) {
       timer_id: timerId,
       is_active: true,
       is_running: true,
-      started_at: getCurrentTimeInEventTimezone().toISOString()
+      started_at: new Date().toISOString()
     });
     
     console.log('✅ Sub-cue timer started in database:', item.id);
@@ -1323,7 +1388,7 @@ function startTimerUpdates() {
     Object.keys(activeTimers).forEach(itemId => {
       if (activeTimers[itemId] && timerProgress[itemId] && timerProgress[itemId].startedAt) {
         const startedAt = new Date(timerProgress[itemId].startedAt);
-        const syncedNow = getCurrentTimeInEventTimezone();
+        const syncedNow = new Date(Date.now() + clockOffset);
         const elapsedSeconds = Math.floor((syncedNow - startedAt) / 1000);
         timerProgress[itemId].elapsed = elapsedSeconds;
       }
@@ -1402,52 +1467,28 @@ function formatTime(seconds) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-// Helper function to get current time in the event's timezone
-function getCurrentTimeInEventTimezone() {
-  if (!currentEventTimezone) {
-    return new Date();
-  }
-  
-  const now = new Date();
-  // Convert to the event's timezone
-  const eventTime = new Date(now.toLocaleString("en-US", { timeZone: currentEventTimezone }));
-  return eventTime;
-}
-
-function formatDate(dateString, timezone = null) {
-  const date = new Date(dateString);
-  
-  // If timezone is provided (from selected event), use it for formatting
-  if (timezone && currentEvent && currentEvent.timezone) {
-    const formattedDate = date.toLocaleDateString('en-US', { 
+function formatDate(dateString, timezone = 'America/New_York') {
+  try {
+    // Parse the date string (YYYY-MM-DD format)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-indexed
+    
+    // Validate the date
+    if (isNaN(date.getTime())) {
+      console.error('Invalid date:', dateString);
+      return dateString; // Return original string if invalid
+    }
+    
+    return date.toLocaleDateString('en-US', { 
       year: 'numeric', 
       month: 'long', 
       day: 'numeric',
       timeZone: timezone
     });
-    
-    console.log(`🌍 formatDate: "${dateString}" → "${formattedDate}" (using event timezone: ${timezone})`);
-    return formattedDate;
+  } catch (error) {
+    console.error('Error formatting date:', dateString, error);
+    return dateString; // Return original string on error
   }
-  
-  // Otherwise use UTC methods to get the correct date regardless of timezone
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const day = date.getUTCDate();
-  
-  // Create a new date in local timezone with the UTC date values
-  const localDate = new Date(year, month, day);
-  const formattedDate = localDate.toLocaleDateString('en-US', { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric'
-  });
-  
-  // Debug timezone information
-  const usedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  console.log(`🌍 formatDate: "${dateString}" → "${formattedDate}" (using timezone: ${usedTimezone})`);
-  
-  return formattedDate;
 }
 
 function escapeHtml(text) {
@@ -1551,7 +1592,7 @@ function handleTimerUpdate(timerData) {
     activeTimers[itemId] = true;
     
     const startedAt = new Date(timerData.started_at);
-    const now = getCurrentTimeInEventTimezone();
+    const now = new Date();
     const elapsedSeconds = Math.floor((now - startedAt) / 1000);
     
     timerProgress[itemId] = {

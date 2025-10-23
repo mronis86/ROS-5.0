@@ -98,6 +98,12 @@ const EventListPage: React.FC = () => {
             updated_at: calEvent.updated_at || new Date().toISOString()
           };
           
+          console.log(`🌍 Event "${calEvent.name}" timezone:`, {
+            rawTimezone: calEvent.schedule_data?.timezone,
+            finalTimezone: transformedEvent.timezone,
+            scheduleData: calEvent.schedule_data
+          });
+          
           console.log(`✅ Transformed event ${index}:`, transformedEvent);
           return transformedEvent;
         });
