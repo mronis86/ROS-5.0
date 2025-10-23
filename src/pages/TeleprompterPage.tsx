@@ -76,6 +76,8 @@ const TeleprompterPage: React.FC = () => {
   const [scrollerScale, setScrollerScale] = useState<number>(0.6);
   const [viewerScale, setViewerScale] = useState<number>(0.6);
   const [guideLinePosition, setGuideLinePosition] = useState<number>(50); // Percentage from top (50% = center)
+  const [commentSize, setCommentSize] = useState<number>(1); // Comment text size multiplier (1 = normal, 1.5 = larger, etc.)
+  const [preserveScrollPosition, setPreserveScrollPosition] = useState<boolean>(false);
   const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -557,6 +559,20 @@ const TeleprompterPage: React.FC = () => {
     }
   };
   
+  // Preserve scroll position when comment size changes
+  useEffect(() => {
+    if (preserveScrollPosition && scriptRef.current) {
+      const currentScrollTop = scriptRef.current.scrollTop;
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        if (scriptRef.current) {
+          scriptRef.current.scrollTop = currentScrollTop;
+        }
+      });
+      setPreserveScrollPosition(false);
+    }
+  }, [commentSize, preserveScrollPosition]);
+  
   // Handle manual scroll - broadcast position to viewers
   const handleManualScroll = () => {
     if (userRole !== 'SCROLLER' || !scriptRef.current) return;
@@ -974,6 +990,28 @@ const TeleprompterPage: React.FC = () => {
                     </div>
                   </div>
                   
+                  {/* Comment Size */}
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">
+                      Comment Size: {commentSize}x
+                    </label>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="4.0"
+                      step="0.1"
+                      value={commentSize}
+                      onChange={(e) => {
+                        setPreserveScrollPosition(true);
+                        setCommentSize(Number(e.target.value));
+                      }}
+                      className="w-full"
+                    />
+                    <div className="text-xs text-slate-400 mt-1">
+                      Text size multiplier
+                    </div>
+                  </div>
+                  
                   {/* Font Size */}
                   <div>
                     <label className="block text-xs text-slate-300 mb-1">
@@ -1276,12 +1314,17 @@ const TeleprompterPage: React.FC = () => {
                                   }}
                                 >
                                   <div className="flex items-start gap-2">
-                                    <span className="text-2xl">{commentConfig.icon}</span>
+                                    <span className="text-3xl">{commentConfig.icon}</span>
                                     <div className="flex-1">
-                                      <div className={`font-bold ${commentConfig.color} text-sm`}>
+                                      <div className={`font-bold ${commentConfig.color} text-base`}>
                                         {commentConfig.label}
                                       </div>
-                                      <div className="text-white mt-1">{comment.text}</div>
+                                      <div 
+                                        className="text-white mt-1" 
+                                        style={{ fontSize: `${commentSize}em` }}
+                                      >
+                                        {comment.text}
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -1463,12 +1506,17 @@ const TeleprompterPage: React.FC = () => {
                           }}
                         >
                           <div className="flex items-start gap-2">
-                            <span className="text-2xl">{commentConfig.icon}</span>
+                            <span className="text-3xl">{commentConfig.icon}</span>
                             <div className="flex-1">
-                              <div className={`font-bold ${commentConfig.color} text-sm`}>
+                              <div className={`font-bold ${commentConfig.color} text-base`}>
                                 {commentConfig.label}
                               </div>
-                              <div className="text-white mt-1">{comment.text}</div>
+                              <div 
+                                className="text-white mt-1" 
+                                style={{ fontSize: `${commentSize}em` }}
+                              >
+                                {comment.text}
+                              </div>
                             </div>
                           </div>
                         </div>
