@@ -4596,11 +4596,13 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         
         // Load timezone from settings if available
+        console.log('🔍 Full settings object:', data.settings);
         if (data.settings?.timezone) {
           setEventTimezone(data.settings.timezone);
           console.log('🌍 Loaded timezone from settings:', data.settings.timezone);
         } else {
           console.log('🌍 No timezone found in settings, using default:', eventTimezone);
+          console.log('🔍 Available settings keys:', Object.keys(data.settings || {}));
         }
         
         // FIRST: Always load star selection from main schedule (this is the source of truth)

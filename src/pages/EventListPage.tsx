@@ -204,6 +204,7 @@ const EventListPage: React.FC = () => {
         settings: {
           eventName: newEvent.name,
           masterStartTime: '',
+          timezone: newEvent.timezone || 'America/New_York',
           lastSaved: new Date().toISOString()
         }
       }, {
