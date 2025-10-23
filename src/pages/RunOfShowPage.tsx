@@ -5133,13 +5133,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onOvertimeUpdate: (data: any) => {
-          received_data: data,
-          expected_event_id: event?.id,
-          event_id_match: data?.event_id === event?.id,
-          has_item_id: !!data?.item_id,
-          overtimeMinutes_type: typeof data?.overtimeMinutes,
-          overtimeMinutes_value: data?.overtimeMinutes
-        });
         
         if (data && data.event_id === event?.id && data.item_id && typeof data.overtimeMinutes === 'number') {
           console.log(`✅ Overtime update validation passed - updating item ${data.item_id} to ${data.overtimeMinutes} minutes`);
