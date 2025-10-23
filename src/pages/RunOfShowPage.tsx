@@ -4565,6 +4565,18 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         
+        // Debug: Check what timezone data is available
+        console.log('🔍 Timezone Debug:');
+        console.log('  - data.settings?.timezone:', data.settings?.timezone);
+        console.log('  - data.timezone:', data.timezone);
+        console.log('  - Current eventTimezone state:', eventTimezone);
+        
+        // Also check if timezone is in the event data itself
+        if (data.timezone && !data.settings?.timezone) {
+          setEventTimezone(data.timezone);
+          console.log('🌍 Loaded timezone from event data:', data.timezone);
+        }
+        
         // FIRST: Always load star selection from main schedule (this is the source of truth)
         const startCueItem = newSchedule.find(item => item.isStartCue === true);
         if (startCueItem) {
@@ -6259,7 +6271,7 @@ const RunOfShowPage: React.FC = () => {
           
           if (scheduledStartStr && scheduledStartStr !== '') {
             const scheduledStart = parseTimeString(scheduledStartStr);
-            const actualStart = new Date(); // Now
+            const actualStart = new Date(); // Use current local time
             
             if (scheduledStart) {
               // Calculate difference in minutes
@@ -9232,16 +9244,16 @@ const RunOfShowPage: React.FC = () => {
                        {startCueId === item.id ? '⭐' : '☆'}
                      </button>
                      
-                     <div className="flex">
-                       <div className={`flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
-                         lastLoadedCueId === item.id ? 'bg-purple-600' : 'bg-slate-600'
-                       }`}>
-                         CUE
-                       </div>
-                     <input
-                       type="text"
-                         value={item.customFields.cue ? item.customFields.cue.replace(/^CUE\s*/, '') : ''}
-                       onChange={(e) => {
+                    <div className="flex">
+                      <div className={`flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
+                        lastLoadedCueId === item.id ? 'bg-purple-600' : 'bg-slate-600'
+                      }`}>
+                        CUE
+                      </div>
+                    <input
+                      type="text"
+                        value={item.customFields.cue ? item.customFields.cue.replace(/^CUE\s*/, '') : ''}
+                      onChange={(e) => {
                         // Detect user editing
                         handleUserEditing();
                         
@@ -9284,12 +9296,12 @@ const RunOfShowPage: React.FC = () => {
                       }}
                       disabled={currentUserRole === 'VIEWER'}
                       className="w-14 px-1 py-1 border border-slate-600 rounded-r text-center text-lg transition-colors bg-slate-700 text-white focus:outline-none focus:border-blue-500"
-                     title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit cue names' : 'Edit cue number'}
-                     maxLength={4}
-                   />
+                      title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit cue names' : 'Edit cue number'}
+                      maxLength={4}
+                    />
                      </div>
-                   </div>
-                   <div className="flex gap-1">
+                    </div>
+                    <div className="flex gap-1">
                       <button
                         onClick={() => {
                           // Detect user editing
@@ -9669,23 +9681,23 @@ const RunOfShowPage: React.FC = () => {
                                {indentedCues[item.id] ? '↘' : calculateStartTimeWithOvertime(index)}
                            </span>
                              {!indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(index) !== calculateStartTimeWithOvertime(index)) && (
-                              <span className={`text-sm font-bold px-2 py-1 rounded ${
-                                (() => {
+                               <span className={`text-sm font-bold px-2 py-1 rounded ${
+                                 (() => {
                                   // For START cue: use show start overtime only for color
                                   if (item.id === startCueId) {
                                     return showStartOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
                                   }
                                   
                                   // For other rows: calculate total cumulative overtime for color
-                                  let totalOvertime = 0;
-                                  for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
-                                    const prevItem = schedule[i];
-                                    const prevItemDay = prevItem.day || 1;
-                                    const currentItemDay = item.day || 1;
-                                    if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
-                                      totalOvertime += overtimeMinutes[prevItem.id] || 0;
-                                    }
-                                  }
+                                   let totalOvertime = 0;
+                                   for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
+                                     const prevItem = schedule[i];
+                                     const prevItemDay = prevItem.day || 1;
+                                     const currentItemDay = item.day || 1;
+                                     if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                       totalOvertime += overtimeMinutes[prevItem.id] || 0;
+                                     }
+                                   }
                                   // Add show start overtime for rows after START
                                   if (showStartOvertime !== 0 && startCueId !== null) {
                                     const startCueIndex = schedule.findIndex(s => s.id === startCueId);
@@ -9696,8 +9708,8 @@ const RunOfShowPage: React.FC = () => {
                                   }
                                   return totalOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
                                 })()
-                              }`} title="Time adjusted due to overtime">
-                                {(() => {
+                               }`} title="Time adjusted due to overtime">
+                                 {(() => {
                                   // For START cue row: show ONLY show start overtime (not duration)
                                   if (item.id === startCueId) {
                                     const showStartOT = showStartOvertime || 0;
@@ -9711,15 +9723,15 @@ const RunOfShowPage: React.FC = () => {
                                   }
                                   
                                   // For other rows: calculate total cumulative overtime (includes show start + all duration)
-                                  let totalOvertime = 0;
-                                  for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
-                                    const prevItem = schedule[i];
-                                    const prevItemDay = prevItem.day || 1;
-                                    const currentItemDay = item.day || 1;
-                                    if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
-                                      totalOvertime += overtimeMinutes[prevItem.id] || 0;
-                                    }
-                                  }
+                                   let totalOvertime = 0;
+                                   for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
+                                     const prevItem = schedule[i];
+                                     const prevItemDay = prevItem.day || 1;
+                                     const currentItemDay = item.day || 1;
+                                     if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                       totalOvertime += overtimeMinutes[prevItem.id] || 0;
+                                     }
+                                   }
                                   // Add show start overtime for rows after START cue
                                   if (showStartOvertime !== 0 && startCueId !== null) {
                                     const startCueIndex = schedule.findIndex(s => s.id === startCueId);
@@ -9728,9 +9740,9 @@ const RunOfShowPage: React.FC = () => {
                                       totalOvertime += showStartOvertime;
                                     }
                                   }
-                                  return totalOvertime > 0 ? `+${totalOvertime}m` : `${totalOvertime}m`;
-                                })()}
-                              </span>
+                                   return totalOvertime > 0 ? `+${totalOvertime}m` : `${totalOvertime}m`;
+                                 })()}
+                               </span>
                              )}
                            </div>
                          </div>
