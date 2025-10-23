@@ -579,22 +579,8 @@ const RunOfShowPage: React.FC = () => {
   const [eventName, setEventName] = useState(event?.name || '');
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
-  const [eventTimezone, setEventTimezone] = useState('America/New_York'); // Default to Eastern
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [eventTimezone, setEventTimezone] = useState('America/New_York');
-  
-  // Timezone utility functions
-  const convertToEventTimezone = (date: Date): Date => {
-    // Convert a date to the event's timezone
-    const eventTime = new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
-    return eventTime;
-  };
-  
-  const getCurrentTimeInEventTimezone = (): Date => {
-    // Get current time in the event's timezone
-    const now = new Date();
-    return convertToEventTimezone(now);
-  };
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -4540,9 +4526,6 @@ const RunOfShowPage: React.FC = () => {
           });
         }
         
-        // Always log master start time for debugging
-        console.log('💾 Saving master start time to database:', masterStartTime);
-        
         const result = await DatabaseService.saveRunOfShowData(dataToSave, {
           userId: user?.id || 'unknown',
           userName: user?.full_name || user?.email || 'Unknown User',
@@ -4611,7 +4594,6 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
-        if (data.settings?.timezone) setEventTimezone(data.settings.timezone);
         
         // Load timezone from settings if available
         console.log('🔍 Full settings object:', data.settings);
@@ -4859,10 +4841,6 @@ const RunOfShowPage: React.FC = () => {
             if (data.settings.dayStartTimes !== undefined) {
               setDayStartTimes(data.settings.dayStartTimes);
               console.log('✅ Real-time: Day start times updated');
-            }
-            if (data.settings.timezone !== undefined) {
-              setEventTimezone(data.settings.timezone);
-              console.log('✅ Real-time: Event timezone updated');
             }
           }
           
@@ -6328,7 +6306,7 @@ const RunOfShowPage: React.FC = () => {
               const diffMs = actualStart.getTime() - scheduledStart.getTime();
               const diffMinutes = Math.round(diffMs / (60 * 1000));
               
-              console.log(`⏰ Show Start Overtime (${eventTimezone}): Scheduled=${scheduledStart.toLocaleTimeString()}, Actual=${actualStart.toLocaleTimeString()}, Diff=${diffMinutes}m`);
+              console.log(`⏰ Show Start Overtime: Scheduled=${scheduledStart.toLocaleTimeString()}, Actual=${actualStart.toLocaleTimeString()}, Diff=${diffMinutes}m`);
               
               // Update local state (keep separate from duration overtime)
               setShowStartOvertime(diffMinutes);
@@ -10428,7 +10406,7 @@ const RunOfShowPage: React.FC = () => {
                               }
                             });
                             
-                            // Save to API immediately (don't wait for debounce)
+                            // Save to API
                             saveToAPI();
                           }}
                           className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
