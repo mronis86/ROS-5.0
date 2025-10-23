@@ -527,9 +527,20 @@ const TeleprompterPage: React.FC = () => {
     }
     setIsAutoScrolling(false);
     setIsPaused(false);
-    if (scriptRef.current) {
+    
+    // Reset scroll position based on user role
+    if (userRole === 'VIEWER' && viewerScrollRef.current) {
+      viewerScrollRef.current.scrollTop = 0;
+    } else if (userRole === 'SCROLLER' && scriptRef.current) {
       scriptRef.current.scrollTop = 0;
     }
+    
+    // Also clear any pending scroll animations
+    if (viewerAnimationFrameRef.current) {
+      cancelAnimationFrame(viewerAnimationFrameRef.current);
+      viewerAnimationFrameRef.current = null;
+    }
+    targetScrollPositionRef.current = null;
   };
   
   /**
