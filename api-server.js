@@ -2462,6 +2462,19 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle teleprompter guide line position updates
+  socket.on('teleprompterGuideLineUpdate', (data) => {
+    const { eventId, guideLinePosition } = data;
+    console.log(`📏 Teleprompter guide line update for event:${eventId}, position:${guideLinePosition}%`);
+    
+    // Broadcast to all other clients in the event room (except sender)
+    socket.to(`event:${eventId}`).emit('teleprompterGuideLineUpdated', {
+      eventId,
+      guideLinePosition,
+      timestamp: Date.now()
+    });
+  });
+
   // Handle overtime update event
   socket.on('overtimeUpdate', (data) => {
     const { event_id, item_id, overtimeMinutes } = data;

@@ -66,9 +66,16 @@ const TeleprompterPage: React.FC = () => {
   const [currentScriptId, setCurrentScriptId] = useState<string | null>(scriptIdFromState);
   const [currentScriptName, setCurrentScriptName] = useState<string>(scriptNameFromState);
   const [userRole, setUserRole] = useState<UserRole>('VIEWER');
-  const [isAutoScrolling, setIsAutoScrolling] = useState<boolean>(false);
   const [isManualMode, setIsManualMode] = useState<boolean>(true); // Manual mode by default
+  const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [zoomCompensation, setZoomCompensation] = useState<number>(1);
+  const [viewerZoomCompensation, setViewerZoomCompensation] = useState<number>(1);
+  const [hideViewerScrollbar, setHideViewerScrollbar] = useState<boolean>(false);
+  const [showViewerSettings, setShowViewerSettings] = useState<boolean>(false);
+  const [scrollerScale, setScrollerScale] = useState<number>(0.6);
+  const [viewerScale, setViewerScale] = useState<number>(0.6);
+  const [guideLinePosition, setGuideLinePosition] = useState<number>(50); // Percentage from top (50% = center)
   const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -99,12 +106,13 @@ const TeleprompterPage: React.FC = () => {
   const scriptRef = useRef<HTMLDivElement>(null);
   const lastScrollBroadcastRef = useRef<number>(0);
   const lastTimestampRef = useRef<number>(0);
-  const animationFrameIdRef = useRef<number | null>(null);
-  const isAutoScrollingRef = useRef<boolean>(false);
-  const targetScrollPositionRef = useRef<number>(0);
+  const targetScrollPositionRef = useRef<number | null>(null);
   const viewerAnimationFrameRef = useRef<number | null>(null);
+  const autoPlayAnimationRef = useRef<number | null>(null);
+  const lastAutoPlayTimestampRef = useRef<number>(0);
   const lineRefsMap = useRef<Map<number, HTMLDivElement>>(new Map());
   const viewerScrollRef = useRef<HTMLDivElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
   
 
   // Handle disconnect timer confirmation
@@ -126,7 +134,7 @@ const TeleprompterPage: React.FC = () => {
     // Set new timer
     const timeout = setTimeout(() => {
       console.log('⏰ Teleprompter: Auto-disconnecting after timer');
-      socketClient.disconnect(eventId);
+      socketClient.disconnect(eventId || '');
       setIsWebSocketConnected(false);
       setShowDisconnectNotification(true);
     }, totalMinutes * 60 * 1000);
@@ -150,8 +158,77 @@ const TeleprompterPage: React.FC = () => {
   const handleReconnect = () => {
     setShowDisconnectNotification(false);
     console.log('🔄 Teleprompter: Reconnecting...');
-    socketClient.connect(eventId, {});
+    socketClient.connect(eventId || '', {});
   };
+  
+  // Calculate zoom compensation based on device pixel ratio
+  useEffect(() => {
+    const calculateZoomCompensation = () => {
+      const devicePixelRatio = window.devicePixelRatio || 1;
+      console.log('🖥️ Device pixel ratio:', devicePixelRatio);
+      
+      // Base compensation for different DPI settings
+      let compensation = 1;
+      
+      if (devicePixelRatio >= 2) {
+        // High DPI displays (Retina, 4K, etc.)
+        compensation = 0.8;
+      } else if (devicePixelRatio >= 1.5) {
+        // Medium DPI displays
+        compensation = 0.9;
+      } else if (devicePixelRatio < 1) {
+        // Low DPI displays or zoomed out
+        compensation = 1.2;
+      }
+      
+      console.log('🔍 Zoom compensation:', compensation);
+      setZoomCompensation(compensation);
+      setViewerZoomCompensation(compensation); // Set viewer zoom to same initial value
+    };
+    
+    calculateZoomCompensation();
+    
+    // Recalculate on window resize (user might change zoom)
+    window.addEventListener('resize', calculateZoomCompensation);
+    
+    return () => {
+      window.removeEventListener('resize', calculateZoomCompensation);
+    };
+  }, []);
+  
+  // Calculate scroller scale based on window size (responds to browser zoom)
+  useEffect(() => {
+    const calculateScrollerScale = () => {
+      const scale = Math.min((window.innerWidth * 0.9) / 1920, (window.innerHeight * 0.8) / 1080);
+      setScrollerScale(scale);
+      console.log('📏 Scroller scale:', scale);
+    };
+    
+    calculateScrollerScale();
+    window.addEventListener('resize', calculateScrollerScale);
+    
+    return () => {
+      window.removeEventListener('resize', calculateScrollerScale);
+    };
+  }, []);
+  
+  // Calculate viewer scale based on window size (responds to browser zoom)
+  useEffect(() => {
+    const calculateViewerScale = () => {
+      const scale = !isFullscreen 
+        ? Math.min((window.innerWidth * 0.9) / 1920, (window.innerHeight * 0.8) / 1080)
+        : Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+      setViewerScale(scale);
+      console.log('📏 Viewer scale:', scale);
+    };
+    
+    calculateViewerScale();
+    window.addEventListener('resize', calculateViewerScale);
+    
+    return () => {
+      window.removeEventListener('resize', calculateViewerScale);
+    };
+  }, [isFullscreen]);
   
   // Load script from database if not in state
   useEffect(() => {
@@ -172,7 +249,7 @@ const TeleprompterPage: React.FC = () => {
     if (!eventId) return;
     
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/scripts/${eventId}`);
+      const response = await fetch(`${(import.meta as any).env?.VITE_API_URL || 'http://localhost:3001'}/api/scripts/${eventId}`);
       if (response.ok) {
         const data = await response.json();
         if (data.script_text) {
@@ -247,35 +324,39 @@ const TeleprompterPage: React.FC = () => {
         updateSettings({ fontSize: data.fontSize });
       }
       
-      // Set target scroll position for smooth animation
-      const targetScroll = data.scrollPosition;
-      targetScrollPositionRef.current = targetScroll;
-      
-      console.log('📜 Setting target scroll position:', targetScroll);
-      
-      // If we're not already animating, start the smooth scroll
-      if (!viewerAnimationFrameRef.current) {
-        const smoothScroll = () => {
-          // Get the correct scroll container based on user role
-          const scrollContainer = userRole === 'VIEWER' ? viewerScrollRef.current : scriptRef.current;
-          if (scrollContainer && targetScrollPositionRef.current !== null) {
-            const current = scrollContainer.scrollTop;
-            const target = targetScrollPositionRef.current;
-            const diff = target - current;
-            
-            if (Math.abs(diff) > 2) {
-              scrollContainer.scrollTop = current + (diff * 0.6);
-              viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+      // Only handle scroll sync for VIEWER mode
+      if (userRole === 'VIEWER') {
+        // Set target scroll position for smooth animation
+        const targetScroll = data.scrollPosition;
+        targetScrollPositionRef.current = targetScroll;
+        
+        console.log('📜 Setting target scroll position for viewer:', targetScroll);
+        
+        // If we're not already animating, start the smooth scroll
+        if (!viewerAnimationFrameRef.current) {
+          const smoothScroll = () => {
+            // Only use viewerScrollRef for viewers
+            if (viewerScrollRef.current && targetScrollPositionRef.current !== null) {
+              const current = viewerScrollRef.current.scrollTop;
+              const target = targetScrollPositionRef.current;
+              const diff = target - current;
+              
+              if (Math.abs(diff) > 2) {
+                viewerScrollRef.current.scrollTop = current + (diff * 0.6);
+                viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+              } else {
+                viewerScrollRef.current.scrollTop = target;
+                viewerAnimationFrameRef.current = null;
+                targetScrollPositionRef.current = null;
+              }
             } else {
-              scrollContainer.scrollTop = target;
               viewerAnimationFrameRef.current = null;
-              targetScrollPositionRef.current = null;
             }
-          } else {
-            viewerAnimationFrameRef.current = null;
-          }
-        };
-        viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+          };
+          viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+        }
+      } else {
+        console.log('📜 Scroll sync ignored for scroller mode');
       }
     };
     
@@ -294,25 +375,32 @@ const TeleprompterPage: React.FC = () => {
         cancelAnimationFrame(viewerAnimationFrameRef.current);
         viewerAnimationFrameRef.current = null;
       }
+      // Clear any target position for non-viewers
+      targetScrollPositionRef.current = null;
       return;
     }
     
     const smoothScroll = () => {
-      // Get the correct scroll container based on user role
-      const scrollContainer = userRole === 'VIEWER' ? viewerScrollRef.current : scriptRef.current;
-      if (scrollContainer && targetScrollPositionRef.current !== null) {
-        const current = scrollContainer.scrollTop;
+      // Only run smooth scroll for viewers
+      if (viewerScrollRef.current && targetScrollPositionRef.current !== null) {
+        const current = viewerScrollRef.current.scrollTop;
         const target = targetScrollPositionRef.current;
         const diff = target - current;
         
+        console.log('🔄 Viewer scroll sync:', {
+          current,
+          target,
+          diff
+        });
+        
         // Use faster interpolation - move 60% of the distance each frame for more responsive sync
         if (Math.abs(diff) > 2) {
-          scrollContainer.scrollTop = current + (diff * 0.6);
+          viewerScrollRef.current.scrollTop = current + (diff * 0.6);
           // Continue animation if still moving
           viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
         } else {
           // Close enough - stop animation and set exact position
-          scrollContainer.scrollTop = target;
+          viewerScrollRef.current.scrollTop = target;
           viewerAnimationFrameRef.current = null;
           targetScrollPositionRef.current = null; // Clear target after reaching it
         }
@@ -353,62 +441,88 @@ const TeleprompterPage: React.FC = () => {
       setSettings(data.settings);
     };
     
+    const handleGuideLineSync = (data: { guideLinePosition: number; eventId?: string }) => {
+      console.log('📏 Teleprompter: Received guide line sync:', data);
+      
+      if (data.eventId && data.eventId !== eventId) {
+        console.log('📏 Skipping guide line sync - different event');
+        return;
+      }
+      
+      setGuideLinePosition(data.guideLinePosition);
+    };
+    
     socket.on('teleprompterSettingsUpdated', handleSettingsSync);
+    socket.on('teleprompterGuideLineUpdated', handleGuideLineSync);
     
     return () => {
       socket.off('teleprompterSettingsUpdated', handleSettingsSync);
+      socket.off('teleprompterGuideLineUpdated', handleGuideLineSync);
     };
   }, [userRole, eventId]);
   
-  // Auto-scroll engine (only works when NOT in manual mode)
+  // Auto-play functionality
   useEffect(() => {
-    if (isManualMode || !isAutoScrolling || userRole !== 'SCROLLER') {
-      if (animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current);
-        animationFrameIdRef.current = null;
+    console.log('🎬 Auto-play useEffect triggered:', { isAutoPlaying, isPaused, isManualMode, userRole });
+    
+    if (!isAutoPlaying || isPaused || isManualMode || userRole !== 'SCROLLER') {
+      // Stop auto-play
+      if (autoPlayAnimationRef.current) {
+        console.log('🎬 Stopping auto-play animation');
+        cancelAnimationFrame(autoPlayAnimationRef.current);
+        autoPlayAnimationRef.current = null;
       }
-      isAutoScrollingRef.current = false;
       return;
     }
+
+    console.log('🎬 Starting auto-play');
     
-    isAutoScrollingRef.current = true; // Mark that we're auto-scrolling
-    
-    const scroll = (timestamp: number) => {
-      if (lastTimestampRef.current) {
-        const delta = (timestamp - lastTimestampRef.current) / 1000; // seconds
-        const scrollAmount = settings.scrollSpeed * delta;
+    const autoScroll = (timestamp: number) => {
+      if (lastAutoPlayTimestampRef.current) {
+        const deltaTime = (timestamp - lastAutoPlayTimestampRef.current) / 1000; // seconds
+        const scrollAmount = settings.scrollSpeed * deltaTime;
         
-        if (scriptRef.current) {
-          scriptRef.current.scrollTop += scrollAmount;
-          
-            // Broadcast position via WebSocket (throttled)
-            const now = Date.now();
-            if (now - lastScrollBroadcastRef.current >= 50) { // 20 updates per second for smoother sync
-              const lineHeight = settings.fontSize * settings.lineHeight;
-              const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
-              
-              socketClient.emitScriptScroll(
-                scriptRef.current.scrollTop,
-                currentLine,
-                settings.fontSize
-              );
-              lastScrollBroadcastRef.current = now;
-            }
+        if (previewScrollRef.current) {
+          previewScrollRef.current.scrollTop += scrollAmount;
+        }
+        
+        // Also sync the main script container
+        if (scriptRef.current && previewScrollRef.current) {
+          scriptRef.current.scrollTop = previewScrollRef.current.scrollTop;
+        }
+        
+        // Broadcast scroll position to viewers
+        if (eventId && previewScrollRef.current) {
+          const now = Date.now();
+          if (now - lastScrollBroadcastRef.current >= 50) { // 20 updates per second
+            const lineHeight = settings.fontSize * settings.lineHeight;
+            const currentLine = Math.floor(previewScrollRef.current.scrollTop / lineHeight);
+            
+            socketClient.emitScriptScroll(
+              previewScrollRef.current.scrollTop,
+              currentLine,
+              settings.fontSize
+            );
+            lastScrollBroadcastRef.current = now;
+          }
         }
       }
-      lastTimestampRef.current = timestamp;
-      animationFrameIdRef.current = requestAnimationFrame(scroll);
+      
+      lastAutoPlayTimestampRef.current = timestamp;
+      autoPlayAnimationRef.current = requestAnimationFrame(autoScroll);
     };
     
-    animationFrameIdRef.current = requestAnimationFrame(scroll);
+    autoPlayAnimationRef.current = requestAnimationFrame(autoScroll);
     
     return () => {
-      if (animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current);
-        animationFrameIdRef.current = null;
+      if (autoPlayAnimationRef.current) {
+        cancelAnimationFrame(autoPlayAnimationRef.current);
+        autoPlayAnimationRef.current = null;
       }
     };
-  }, [isManualMode, isAutoScrolling, settings.scrollSpeed, settings.fontSize, settings.lineHeight, userRole, eventId]);
+  }, [isAutoPlaying, isPaused, isManualMode, userRole, settings.scrollSpeed, settings.fontSize, settings.lineHeight, eventId]);
+
+  // Manual scroll handling - simplified without auto-scroll
   
   // Broadcast settings changes
   const updateSettings = (newSettings: Partial<TeleprompterSettings>) => {
@@ -427,39 +541,46 @@ const TeleprompterPage: React.FC = () => {
     }
   };
   
-  // Handle manual scroll (pauses auto-scroll for SCROLLER and switches to manual mode)
+  // Broadcast guide line position changes to viewers
+  const updateGuideLinePosition = (position: number) => {
+    setGuideLinePosition(position);
+    
+    if (userRole === 'SCROLLER' && eventId) {
+      // Broadcast guide line position to viewers
+      const socket = socketClient.getSocket();
+      if (socket) {
+        socket.emit('teleprompterGuideLineUpdate', {
+          eventId,
+          guideLinePosition: position
+        });
+      }
+    }
+  };
+  
+  // Handle manual scroll - broadcast position to viewers
   const handleManualScroll = () => {
     if (userRole !== 'SCROLLER' || !scriptRef.current) return;
+    
+    // Don't broadcast if auto-play is running (it handles its own broadcasting)
+    if (isAutoPlaying && !isPaused) return;
     
     // Broadcast scroll position if we're the scroller
     if (eventId) {
       const now = Date.now();
-        const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
+      const timeSinceLastBroadcast = now - lastScrollBroadcastRef.current;
+      
+      // Throttle to 20 updates per second for smoother sync
+      if (timeSinceLastBroadcast >= 50) {
+        const lineHeight = settings.fontSize * settings.lineHeight;
+        const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
         
-        // Throttle to 20 updates per second for smoother sync
-        if (timeSinceLastBroadcast >= 50) {
-          const lineHeight = settings.fontSize * settings.lineHeight;
-          const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
-          
-          socketClient.emitScriptScroll(
-            scriptRef.current.scrollTop,
-            currentLine,
-            settings.fontSize
-          );
-          lastScrollBroadcastRef.current = now;
+        socketClient.emitScriptScroll(
+          scriptRef.current.scrollTop,
+          currentLine,
+          settings.fontSize
+        );
+        lastScrollBroadcastRef.current = now;
       }
-    }
-    
-    // If auto-scrolling, switch to manual mode
-    if (isAutoScrolling && !isManualMode && !isAutoScrollingRef.current) {
-      console.log('📜 Manual scroll detected - switching to Manual Mode');
-      if (animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current);
-        animationFrameIdRef.current = null;
-      }
-      setIsAutoScrolling(false);
-      setIsManualMode(true);
-      setIsPaused(false);
     }
   };
   
@@ -475,67 +596,77 @@ const TeleprompterPage: React.FC = () => {
     const newManualMode = !isManualMode;
     console.log(`✋ Manual mode: ${newManualMode ? 'ON' : 'OFF'}`);
     setIsManualMode(newManualMode);
-    
-    // If enabling manual mode, stop auto-scroll
-    if (newManualMode && isAutoScrolling) {
-      if (animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current);
-        animationFrameIdRef.current = null;
-      }
-      setIsAutoScrolling(false);
-      setIsPaused(false);
-    }
   };
 
+  // Auto-play control functions
   const handlePlay = () => {
-    if (!isManualMode) {
-      console.log('▶️ Play auto-scroll');
-      setIsAutoScrolling(true);
-      setIsPaused(false);
+    if (!isManualMode && userRole === 'SCROLLER') {
+      if (isAutoPlaying && isPaused) {
+        console.log('▶️ Resuming auto-play');
+        setIsPaused(false);
+      } else if (!isAutoPlaying) {
+        console.log('▶️ Starting auto-play');
+        setIsAutoPlaying(true);
+        setIsPaused(false);
+        lastAutoPlayTimestampRef.current = 0; // Reset timestamp
+      }
     }
   };
 
   const handlePause = () => {
-    if (!isManualMode && isAutoScrolling) {
-      console.log('⏸️ Pause auto-scroll');
-      if (animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current);
-        animationFrameIdRef.current = null;
-      }
-      setIsAutoScrolling(false);
+    if (isAutoPlaying) {
+      console.log('⏸️ Pausing auto-play');
+      console.log('⏸️ Preview scroll position:', previewScrollRef.current?.scrollTop);
+      console.log('⏸️ Script scroll position:', scriptRef.current?.scrollTop);
       setIsPaused(true);
+      // Don't reset scroll position or timestamp - just pause
     }
   };
 
   const handleStop = () => {
-    if (!isManualMode) {
-      console.log('⏹️ Stop auto-scroll');
-      if (animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current);
-        animationFrameIdRef.current = null;
-      }
-      setIsAutoScrolling(false);
-      setIsPaused(false);
+    console.log('⏹️ Stopping auto-play at position:', previewScrollRef.current?.scrollTop);
+    setIsAutoPlaying(false);
+    setIsPaused(false);
+    if (autoPlayAnimationRef.current) {
+      cancelAnimationFrame(autoPlayAnimationRef.current);
+      autoPlayAnimationRef.current = null;
     }
+    // Don't reset scroll position - just stop auto-play
   };
 
   const handleReset = () => {
     console.log('🔄 Reset - scrolling to top');
-    if (animationFrameIdRef.current) {
-      cancelAnimationFrame(animationFrameIdRef.current);
-      animationFrameIdRef.current = null;
-    }
-    setIsAutoScrolling(false);
+    console.log('🔄 Current user role:', userRole);
+    console.log('🔄 scriptRef.current:', scriptRef.current);
+    console.log('🔄 viewerScrollRef.current:', viewerScrollRef.current);
+    console.log('🔄 previewScrollRef.current:', previewScrollRef.current);
+    
+    // Stop auto-play if running (without calling handleStop)
+    setIsAutoPlaying(false);
     setIsPaused(false);
+    if (autoPlayAnimationRef.current) {
+      cancelAnimationFrame(autoPlayAnimationRef.current);
+      autoPlayAnimationRef.current = null;
+    }
     
     // Reset scroll position based on user role
     if (userRole === 'VIEWER' && viewerScrollRef.current) {
+      console.log('🔄 Resetting viewer scroll to top');
       viewerScrollRef.current.scrollTop = 0;
-    } else if (userRole === 'SCROLLER' && scriptRef.current) {
-      scriptRef.current.scrollTop = 0;
+    } else if (userRole === 'SCROLLER') {
+      console.log('🔄 Resetting scroller scroll to top');
+      // Reset both the main script container and the 16:9 preview container
+      if (scriptRef.current) {
+        scriptRef.current.scrollTop = 0;
+      }
+      if (previewScrollRef.current) {
+        previewScrollRef.current.scrollTop = 0;
+      }
+    } else {
+      console.log('🔄 No valid scroll container found for reset');
     }
     
-    // Also clear any pending scroll animations
+    // Clear any pending scroll animations
     if (viewerAnimationFrameRef.current) {
       cancelAnimationFrame(viewerAnimationFrameRef.current);
       viewerAnimationFrameRef.current = null;
@@ -604,23 +735,36 @@ const TeleprompterPage: React.FC = () => {
     };
   }, []);
 
-  // Sync scroll positions for scroller (always in 16:9 preview mode now)
-  useEffect(() => {
-    if (userRole === 'SCROLLER') {
-      // Force sync after a small delay to ensure DOM is ready
-      setTimeout(() => {
-        const mainScrollTop = scriptRef.current?.scrollTop || 0;
-        // Force sync by setting scroll position directly
-        if (scriptRef.current) {
-          scriptRef.current.scrollTop = mainScrollTop;
-        }
-        console.log('🔄 Scroller mode initialized, syncing scroll position:', mainScrollTop);
-      }, 50);
-    }
-  }, [userRole]);
+  // Sync scroll positions for scroller - DISABLED to prevent scroll position reset
+  // useEffect(() => {
+  //   if (userRole === 'SCROLLER') {
+  //     // Force sync after a small delay to ensure DOM is ready
+  //     setTimeout(() => {
+  //       const mainScrollTop = scriptRef.current?.scrollTop || 0;
+  //       // Force sync by setting scroll position directly
+  //       if (scriptRef.current) {
+  //         scriptRef.current.scrollTop = mainScrollTop;
+  //       }
+  //       console.log('🔄 Scroller mode initialized, syncing scroll position:', mainScrollTop);
+  //     }, 50);
+  //   }
+  // }, [userRole]);
   
   return (
-    <div className="min-h-screen" style={{ backgroundColor: settings.backgroundColor }}>
+    <>
+      {/* CSS for hiding scrollbars */}
+      <style>
+        {`
+          .scrollbar-hide {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+          }
+          .scrollbar-hide::-webkit-scrollbar {
+            display: none;  /* Chrome, Safari and Opera */
+          }
+        `}
+      </style>
+      <div className="min-h-screen" style={{ backgroundColor: settings.backgroundColor }}>
       {/* Header - Hidden in fullscreen mode */}
       <div className="bg-slate-800 border-b border-slate-700 p-4" style={{ display: isFullscreen ? 'none' : 'block' }}>
         <div className="flex items-center justify-between">
@@ -740,10 +884,12 @@ const TeleprompterPage: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={handlePlay}
-                        disabled={isManualMode || isAutoScrolling}
+                        disabled={isManualMode || userRole !== 'SCROLLER'}
                         className={`px-3 py-2 rounded text-xs font-bold transition-colors ${
-                          isManualMode || isAutoScrolling
+                          isManualMode || userRole !== 'SCROLLER'
                             ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
+                            : isAutoPlaying && !isPaused
+                            ? 'bg-green-600 text-white animate-pulse'
                             : 'bg-green-600 text-white hover:bg-green-500'
                         }`}
                       >
@@ -752,33 +898,24 @@ const TeleprompterPage: React.FC = () => {
                       
                       <button
                         onClick={handlePause}
-                        disabled={isManualMode || !isAutoScrolling}
+                        disabled={!isAutoPlaying}
                         className={`px-3 py-2 rounded text-xs font-bold transition-colors ${
-                          isManualMode || !isAutoScrolling
+                          !isAutoPlaying
                             ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
                             : 'bg-yellow-600 text-white hover:bg-yellow-500'
                         }`}
                       >
                         ⏸️ Pause
                       </button>
-                      
-                      <button
-                        onClick={handleStop}
-                        disabled={isManualMode}
-                        className={`px-3 py-2 rounded text-xs font-bold transition-colors ${
-                          isManualMode
-                            ? 'bg-slate-600 text-slate-400 cursor-not-allowed opacity-50'
-                            : 'bg-red-600 text-white hover:bg-red-500'
-                        }`}
-                      >
-                        ⏹️ Stop
-                      </button>
-                      
+                    </div>
+                    
+                    {/* Reset Button - Larger and more descriptive */}
+                    <div className="mt-3">
                       <button
                         onClick={handleReset}
-                        className="px-3 py-2 rounded text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 transition-colors"
+                        className="w-full px-3 py-2 rounded text-sm font-bold bg-purple-600 text-white hover:bg-purple-500 transition-colors"
                       >
-                        🔄 Reset
+                        🔄 Reset to Top
                       </button>
                     </div>
                   </div>
@@ -797,6 +934,44 @@ const TeleprompterPage: React.FC = () => {
                       onChange={(e) => updateSettings({ scrollSpeed: Number(e.target.value) })}
                       className="w-full"
                     />
+                  </div>
+                  
+                  {/* Zoom Compensation */}
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">
+                      Zoom: {(zoomCompensation * 100).toFixed(0)}%
+                    </label>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="1.5"
+                      step="0.1"
+                      value={zoomCompensation}
+                      onChange={(e) => setZoomCompensation(Number(e.target.value))}
+                      className="w-full"
+                    />
+                    <div className="text-xs text-slate-400 mt-1">
+                      Auto: {window.devicePixelRatio?.toFixed(1)}x DPI
+                    </div>
+                  </div>
+                  
+                  {/* Guide Line Position */}
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">
+                      Guide Line: {guideLinePosition}%
+                    </label>
+                    <input
+                      type="range"
+                      min="20"
+                      max="80"
+                      step="5"
+                      value={guideLinePosition}
+                      onChange={(e) => updateGuideLinePosition(Number(e.target.value))}
+                      className="w-full"
+                    />
+                    <div className="text-xs text-slate-400 mt-1">
+                      Position from top
+                    </div>
                   </div>
                   
                   {/* Font Size */}
@@ -989,7 +1164,7 @@ const TeleprompterPage: React.FC = () => {
                 borderRadius: '12px',
                 overflow: 'hidden',
                 position: 'relative',
-                transform: 'scale(0.6)', // Adjusted scale for better sizing
+                transform: `scale(${scrollerScale * zoomCompensation})`, // Apply calculated scale + compensation
                 transformOrigin: 'center center',
                 border: '3px solid #333',
                 boxShadow: '0 0 20px rgba(0,0,0,0.5)',
@@ -1005,8 +1180,12 @@ const TeleprompterPage: React.FC = () => {
                   position: 'relative'
                 }}
                 ref={(el) => {
-                  // Sync this preview scroll with the main script scroll
-                  if (el && scriptRef.current) {
+                  // Store the preview scroll container ref
+                  if (el) {
+                    previewScrollRef.current = el;
+                  }
+                  // Only sync if we're not in auto-play mode (to prevent position reset)
+                  if (el && scriptRef.current && !isAutoPlaying) {
                     // Force immediate sync without any delay
                     el.scrollTop = scriptRef.current.scrollTop;
                     // Also ensure the main container scroll is synced back
@@ -1042,8 +1221,9 @@ const TeleprompterPage: React.FC = () => {
                   }
                 }}
                 onWheel={(e) => {
-                  // Handle wheel events on preview
-                  e.preventDefault();
+                  // Handle wheel events for manual scrolling
+                  // Note: preventDefault() removed to avoid passive event listener error
+                  // The scrolling will still work without it
                   if (scriptRef.current) {
                     scriptRef.current.scrollTop += e.deltaY;
                   }
@@ -1126,7 +1306,7 @@ const TeleprompterPage: React.FC = () => {
                   style={{
                     left: '0',
                     right: '0',
-                    top: '50%',
+                    top: `${guideLinePosition}%`,
                     transform: 'translateY(-50%)',
                     zIndex: 50,
                     width: '100%',
@@ -1206,9 +1386,7 @@ const TeleprompterPage: React.FC = () => {
                 backgroundColor: settings.backgroundColor,
                 overflow: 'hidden',
                 position: 'relative',
-                transform: !isFullscreen 
-                  ? `scale(${Math.min((window.innerWidth * 0.9) / 1920, (window.innerHeight * 0.8) / 1080)})` // Smaller scale when not fullscreen
-                  : `scale(${Math.min(window.innerWidth / 1920, window.innerHeight / 1080)})`, // Full scale in fullscreen
+                transform: `scale(${viewerScale * viewerZoomCompensation})`, // Apply calculated scale + compensation
                 transformOrigin: 'center center',
                 flexShrink: 0,
                 border: !isFullscreen ? '3px solid #333' : 'none', // Border when not fullscreen
@@ -1228,14 +1406,17 @@ const TeleprompterPage: React.FC = () => {
                   width: '100%',
                   height: '100%',
                   overflow: 'auto', // Allow scrolling to sync with scroller
-                  position: 'relative'
+                  position: 'relative',
+                  scrollbarWidth: hideViewerScrollbar ? 'none' : 'auto', // Firefox
+                  msOverflowStyle: hideViewerScrollbar ? 'none' : 'auto' // IE/Edge
                 }}
+                className={hideViewerScrollbar ? 'scrollbar-hide' : ''} // Tailwind class for webkit browsers
               >
                 <div
                   style={{
                     minHeight: '100%',
-                    paddingTop: 'calc(50vh + 100px)', // Adjusted to better align with reading guide
-                    paddingBottom: 'calc(50vh + 100px)',
+                    paddingTop: '540px', // 50% of 1080px container height - same as scroller
+                    paddingBottom: '540px',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'center'
@@ -1312,7 +1493,7 @@ const TeleprompterPage: React.FC = () => {
                     position: 'absolute',
                     left: '0',
                     right: '0',
-                    top: '50%',
+                    top: `${guideLinePosition}%`,
                     transform: 'translateY(-50%)',
                     width: '100%',
                     height: '60px',
@@ -1376,6 +1557,73 @@ const TeleprompterPage: React.FC = () => {
         )}
       </div>
       
+      {/* Viewer Settings Cog - Only show for VIEWER role */}
+      {userRole === 'VIEWER' && (
+        <div className="fixed top-4 right-4 z-50">
+          <button
+            onClick={() => setShowViewerSettings(!showViewerSettings)}
+            className="p-3 bg-slate-800 hover:bg-slate-700 rounded-full shadow-lg transition-colors"
+            title="Viewer Settings"
+          >
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+          
+          {/* Viewer Settings Panel */}
+          {showViewerSettings && (
+            <div className="absolute top-14 right-0 bg-slate-800 rounded-lg shadow-xl border border-slate-700 p-4 w-64">
+              <h3 className="text-white text-sm font-semibold mb-3">Viewer Settings</h3>
+              
+              {/* Zoom Control */}
+              <div className="mb-4">
+                <label className="block text-xs text-slate-300 mb-2">
+                  Zoom: {(viewerZoomCompensation * 100).toFixed(0)}%
+                </label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="1.5"
+                  step="0.1"
+                  value={viewerZoomCompensation}
+                  onChange={(e) => setViewerZoomCompensation(Number(e.target.value))}
+                  className="w-full"
+                />
+                <div className="text-xs text-slate-400 mt-1">
+                  Auto: {window.devicePixelRatio?.toFixed(1)}x DPI
+                </div>
+              </div>
+              
+              {/* Hide Scrollbar Toggle */}
+              <div className="mb-4">
+                <label className="flex items-center justify-between text-xs text-slate-300">
+                  <span>Hide Scrollbar</span>
+                  <button
+                    onClick={() => setHideViewerScrollbar(!hideViewerScrollbar)}
+                    className={`relative h-6 w-12 items-center rounded-full transition-colors flex ${
+                      hideViewerScrollbar ? 'bg-blue-600' : 'bg-slate-500'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 ml-1 transform rounded-full bg-white transition-transform ${
+                        hideViewerScrollbar ? 'translate-x-6' : ''
+                      }`}
+                    />
+                  </button>
+                </label>
+              </div>
+              
+              {/* Close Button */}
+              <button
+                onClick={() => setShowViewerSettings(false)}
+                className="w-full px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium text-white transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Disconnect Timer Modal */}
       {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
@@ -1384,7 +1632,8 @@ const TeleprompterPage: React.FC = () => {
       {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
       
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 
