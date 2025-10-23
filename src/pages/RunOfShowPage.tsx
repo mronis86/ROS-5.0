@@ -283,22 +283,14 @@ const RunOfShowPage: React.FC = () => {
             segmentName: pendingChange?.details?.itemName || pendingChange?.details?.segmentName
           };
           
-          console.log('🔄 Adding change to service:', changeData);
           changeLogService.addChange(changeData);
           
           // Update local state for immediate UI feedback
           const localChanges = changeLogService.getLocalChanges();
-          console.log('🔄 Local changes after adding to service:', localChanges.length);
-          console.log('🔄 Latest change:', localChanges[localChanges.length - 1]);
-          console.log('🔄 Current changeLog state length:', changeLog.length);
           setChangeLog(localChanges.slice(0, 100));
-          console.log('🔄 Set changeLog to:', localChanges.slice(0, 100).length, 'changes');
-          
-          console.log('✅ Debounced change logged to change log service:', pendingChange?.description || 'unknown');
-          console.log('🔄 Removed pending change from queue:', changeKey);
           
           // ✅ AUTO-SYNC AFTER SAVING THE CHANGE (with additional 2s delay)
-          console.log('🔄 Auto-syncing changes after timeout... (with 3s additional delay)');
+          ');
           setTimeout(() => {
             syncChanges().then(() => {
               console.log('✅ Auto-sync completed after timeout + 3s delay');
@@ -316,8 +308,7 @@ const RunOfShowPage: React.FC = () => {
           // Return updated pending changes without this key
           const newMap = new Map(prev);
           newMap.delete(changeKey);
-          console.log('🔄 Pending changes after removal:', newMap.size);
-          console.log('🔄 Remaining pending keys:', Array.from(newMap.keys()));
+          ));
           return newMap;
         } else {
           // ✅ Change was already processed or doesn't exist, just clean up timeout
@@ -420,8 +411,6 @@ const RunOfShowPage: React.FC = () => {
 
   // Force finalize all pending changes (call this when user saves or navigates away)
   const finalizeAllPendingChanges = async () => {
-    console.log('🔄 Finalizing all pending changes...');
-    
     // Get current pending changes snapshot FIRST
     const pendingEntries = Array.from(pendingChanges.entries());
     
@@ -496,7 +485,6 @@ const RunOfShowPage: React.FC = () => {
     console.log(`✅ All ${processedIds.size} pending changes processed immediately`);
     
     // ✅ AUTO-SYNC AFTER MANUAL FINALIZATION
-    console.log('🔄 Auto-syncing changes after manual finalization...');
     try {
       await syncChanges();
       console.log('✅ Auto-sync completed after manual finalization');
@@ -906,14 +894,12 @@ const RunOfShowPage: React.FC = () => {
       setCountdown(prev => {
         if (prev <= 1) {
           // Trigger WebSocket sync when countdown reaches zero
-          console.log('🔄 Countdown sync: Triggering WebSocket sync request');
           setIsSyncing(true);
           
           // Request fresh data via WebSocket
           if (socketClient && event?.id) {
             socketClient.emitSyncRequest();
-            console.log('📡 Countdown sync: Emitted sync request via WebSocket');
-          }
+            }
           
           setTimeout(() => {
             setIsSyncing(false);
@@ -1098,8 +1084,6 @@ const RunOfShowPage: React.FC = () => {
   // Load change log data and sync status
   useEffect(() => {
     if (event?.id) {
-      console.log('🔄 Loading change log data for event:', event.id);
-      
       // Force reload local changes from localStorage
       changeLogService.reloadLocalChanges();
       const localChanges = changeLogService.getLocalChanges();
@@ -1147,7 +1131,6 @@ const RunOfShowPage: React.FC = () => {
   // Only check once on initial load, not when schedule changes
   useEffect(() => {
     if (event?.id && schedule.length > 0 && !hasCheckedRunningTimers) {
-      console.log('🔄 Schedule loaded, checking for running timers for event:', event.id);
       checkForRunningTimers();
       setHasCheckedRunningTimers(true);
     }
@@ -1328,13 +1311,9 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     if (!event?.id || !user) return;
     
-    console.log('🔄 Setting up real-time WebSocket sync with 5-second reliability check');
-    
     // 5-second reliability check to ensure WebSocket updates are processed
     const reliabilityInterval = setInterval(() => {
       // This doesn't make API calls - just ensures WebSocket updates are processed
-      console.log('🔄 5s reliability: Ensuring WebSocket updates are processed');
-      
       // Force a re-render to catch any missed WebSocket updates
       // This is very lightweight and doesn't add egress
       setLastChangeAt(prev => prev); // Trigger a state update
@@ -1349,7 +1328,6 @@ const RunOfShowPage: React.FC = () => {
   // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
     return () => {
-      console.log('🔄 Cleaning up on component unmount');
       // Drift detector removed - using WebSocket-only approach
     };
   }, []);
@@ -1528,8 +1506,6 @@ const RunOfShowPage: React.FC = () => {
   const startCountdownSync = useCallback(() => {
     if (!event?.id) return;
     
-    console.log('🔄 Starting countdown sync for Browser B');
-    
     const syncInterval = setInterval(async () => {
       try {
         const activeTimer = await DatabaseService.getActiveTimer(event.id);
@@ -1561,8 +1537,7 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id || !user?.id) return;
     
     // DISABLED: Polling causes excessive API calls
-    // console.log('🔄 Starting countdown sync for Browser B');
-    return;
+    // return;
     
     const syncInterval = setInterval(async () => {
       try {
@@ -1618,7 +1593,6 @@ const RunOfShowPage: React.FC = () => {
           }
         } else {
           // No active timer, clear any existing timer progress
-          console.log('🔄 No active timer, clearing timer progress');
           setTimerProgress({});
         }
       } catch (error) {
@@ -1627,7 +1601,6 @@ const RunOfShowPage: React.FC = () => {
     }, 1000);
     
     return () => {
-      console.log('🔄 Cleaning up countdown sync');
       clearInterval(syncInterval);
     };
   }, [event?.id, user?.id]);
@@ -1637,23 +1610,17 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
 
     try {
-      console.log('🔄 Checking for active timer in API for event:', event.id);
       const activeTimer = await DatabaseService.getActiveTimer(event.id);
-      console.log('🔄 API response:', activeTimer);
-      
       // Always sync timer state regardless of who initiated it
       // This ensures all browsers show the same "LOADED" or "RUNNING" state
       
       if (activeTimer) {
-        console.log('🔄 Loading timer from API:', activeTimer);
-        
         // Set the active item
         setActiveItemId(activeTimer.item_id);
         setLoadedItems(prev => ({ ...prev, [activeTimer.item_id]: true }));
         
         if (activeTimer.timer_state === 'running') {
           // Timer is running - set up with server timing
-          console.log('🔄 Timer is running, setting up with server timing');
           setTimerProgress(prev => ({
             ...prev,
             [activeTimer.item_id]: {
@@ -1685,7 +1652,6 @@ const RunOfShowPage: React.FC = () => {
           setActiveTimerIntervals(prev => ({ ...prev, [activeTimer.item_id]: timer }));
         } else if (activeTimer.timer_state === 'loaded') {
           // Timer is loaded but not started
-          console.log('🔄 Timer is loaded but not started');
           setTimerProgress(prev => ({
             ...prev,
             [activeTimer.item_id]: {
@@ -1733,16 +1699,12 @@ const RunOfShowPage: React.FC = () => {
           // getRecentTimerActions removed - focusing on local functionality first
           const recentActions: any[] = [];
           if (recentActions && recentActions.length > 0) {
-            console.log('🔄 Found recent timer actions:', recentActions);
-            
             // Check if there was a recent LOAD_CUE action before clearing
             // This prevents clearing a cue that was just loaded locally but not yet synced to database
             const recentLoadActions = recentActions.filter(action => 
               action.action_type === 'LOAD_CUE' && 
               new Date(action.action_timestamp).getTime() > (Date.now() - 5000) // Last 5 seconds
             );
-            
-            console.log('🔄 Recent LOAD_CUE actions found:', recentLoadActions.length, recentLoadActions);
             
             if (recentLoadActions.length > 0) {
               console.log('ℹ️ Recent LOAD_CUE action found, keeping local state');
@@ -1756,8 +1718,6 @@ const RunOfShowPage: React.FC = () => {
             );
             
             if (recentStopActions.length > 0) {
-              console.log('🔄 Found recent stop actions, updating completed cues:', recentStopActions);
-              
               // Mark the stopped items as completed
               recentStopActions.forEach(action => {
                 if (action.item_id) {
@@ -1961,9 +1921,6 @@ const RunOfShowPage: React.FC = () => {
       }
 
       if (subCueTimers && subCueTimers.length > 0) {
-        console.log('🔄 Loaded sub-cue timers from API:', subCueTimers);
-        console.log('🔄 Setting up sub-cue timer states...');
-        
         subCueTimers.forEach(timer => {
           const itemId = timer.item_id;
           const totalSeconds = timer.duration_seconds || 0;
@@ -2038,8 +1995,7 @@ const RunOfShowPage: React.FC = () => {
         console.log('📋 Please check your Neon database setup');
       } else {
         console.log('✅ Database connection test passed');
-        console.log('📊 Test data received:', testData);
-      }
+        }
     } catch (error) {
       console.error('❌ Database connection test error:', error);
     }
@@ -2052,16 +2008,12 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
 
-    console.log('🔄 Checking for running timers for event:', event.id);
-
     // Since getActiveTimer is not working, let's use a simple approach
     // Check if there's any timer data in the real-time subscription
     // We'll look for any timer that has started_at (indicating it's active)
     try {
       // For now, let's just show a popup if we detect any timer activity
       // This is a temporary solution until we fix the database function
-      console.log('🔄 Using fallback timer detection...');
-      
       // Check if there are any active timers by looking at the real-time data
       // Since we can see timer data in the console, let's create a simple popup
       setRunningTimerInfo({
@@ -2078,8 +2030,6 @@ const RunOfShowPage: React.FC = () => {
 
   // Master sync CUE time - syncs countdown for the last loaded CUE
   const masterSyncCueTime = async () => {
-    console.log('🔄 Master sync: Getting active timer from database...');
-    
     if (!event?.id) {
       console.warn('⚠️ No event selected for sync');
       return;
@@ -2093,8 +2043,6 @@ const RunOfShowPage: React.FC = () => {
         console.log('ℹ️ No active timer found in database');
         return;
       }
-      
-      console.log('🔄 Found active timer in database:', activeTimer);
       
       // Get current global time
       const now = getCurrentTimeInEventTimezone();
@@ -2219,8 +2167,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
 
     try {
-      console.log('🔄 Loading CUE state from API:', { itemId, totalSeconds });
-      
       // Set the active item
       setActiveItemId(itemId);
       setLoadedItems(prev => ({ ...prev, [itemId]: true }));
@@ -2254,8 +2200,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id || !user?.id) return;
     
     try {
-      console.log('🔄 Backing up schedule data...');
-      
       // Include current settings to prevent data loss
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
@@ -2283,11 +2227,8 @@ const RunOfShowPage: React.FC = () => {
     }
     
     try {
-      console.log('🔄 Loading master change log for event:', event.id);
       const masterChanges = await changeLogService.getMasterChangeLog(event.id, 100);
       setMasterChangeLog(masterChanges);
-      console.log('📊 Loaded master change log:', masterChanges.length, 'changes');
-      
       if (masterChanges.length === 0) {
         console.log('ℹ️ No master changes found - this might be normal for new events');
       }
@@ -2324,7 +2265,6 @@ const RunOfShowPage: React.FC = () => {
     }
 
     try {
-      console.log('🔄 Syncing schedule data to database...');
       const dataToSave = {
         event_id: event.id,
         event_name: event.name,
@@ -2348,8 +2288,7 @@ const RunOfShowPage: React.FC = () => {
         console.log('✅ Schedule data synced to database successfully');
         // Refresh master log using existing function
         await loadMasterChangeLog();
-        console.log('🔄 Master change log refreshed after sync');
-      } else {
+        } else {
         console.log('❌ Failed to sync schedule data to database');
       }
     } catch (error) {
@@ -2378,11 +2317,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Clear master changes with detailed error handling
       if (event?.id) {
-        console.log('🔄 Attempting to clear master change log for event:', event.id);
-        
         // Get current user info for debugging
-        console.log('🔄 Current user:', user?.id, user?.email);
-        
         if (!user) {
           console.error('❌ No user found');
           alert('❌ Authentication error. Please refresh and try again.');
@@ -2390,17 +2325,13 @@ const RunOfShowPage: React.FC = () => {
         }
         
         const result = await changeLogService.clearMasterChangeLog(event.id);
-        console.log('🔄 Clear master result:', result);
-        
         if (result.success) {
           setMasterChangeLog([]);
           console.log('✅ Master change log cleared successfully');
           alert(`✅ Successfully cleared ${result.deletedCount} master change log entries`);
           
           // Force reload to verify
-          console.log('🔄 Verifying master change log is cleared...');
           const reloadedMasterLog = await changeLogService.getMasterChangeLog(event.id);
-          console.log('🔄 Master change log after clearing:', reloadedMasterLog.length, 'records');
           setMasterChangeLog(reloadedMasterLog);
           
           if (reloadedMasterLog.length === 0) {
@@ -2433,22 +2364,17 @@ const RunOfShowPage: React.FC = () => {
     });
     
     if (Object.keys(activeTimers).length === 0) {
-      console.log('🍞 Toast: No active timers, hiding toast');
       setShowTimeToast(false);
       return;
     }
     
     // Only show toast if it's enabled
     if (!timeToastEnabled) {
-      console.log('🍞 Toast: Toast disabled by user');
       return;
     }
     
     const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
-    console.log('🍞 Toast: Active timer ID:', activeTimerId);
     const activeItem = schedule.find(item => item.id === activeTimerId);
-    console.log('🍞 Toast: Found active item:', activeItem ? activeItem.segmentName : 'NOT FOUND');
-    
     if (activeItem) {
       try {
         const now = getCurrentTimeInEventTimezone();
@@ -2474,24 +2400,18 @@ const RunOfShowPage: React.FC = () => {
           
           // Show toast for all timers when enabled
           if (differenceMinutes < -1) {
-            console.log('🍞 Toast: Setting status to EARLY, difference:', differenceMinutes);
             setTimeStatus('early');
             setShowTimeToast(true);
           } else if (differenceMinutes > 1) {
-            console.log('🍞 Toast: Setting status to LATE, difference:', differenceMinutes);
             setTimeStatus('late');
             setShowTimeToast(true);
           } else {
-            console.log('🍞 Toast: Setting status to ON-TIME, difference:', differenceMinutes);
             setTimeStatus('on-time');
             setShowTimeToast(true); // Show even if on-time when timer starts
           }
           
-          console.log('🍞 Toast: Should be visible now - showTimeToast set to true');
-          
           // Auto-close toast after 10 seconds
           const toastTimeout = setTimeout(() => {
-            console.log('🍞 Toast: Auto-closing after 10 seconds');
             setShowTimeToast(false);
           }, 10000);
           
@@ -3748,8 +3668,6 @@ const RunOfShowPage: React.FC = () => {
     
     // Update the timer progress if it exists
     if (timerProgress[numericActiveItemId]) {
-      console.log('🔄 Updating timer duration for item:', numericActiveItemId, 'new duration:', newDurationSeconds);
-      
       // Always update the timer progress total duration
       setTimerProgress(prev => ({
         ...prev,
@@ -3761,7 +3679,6 @@ const RunOfShowPage: React.FC = () => {
       
       // If timer is currently running, update it in the database immediately for real-time sync
       if (activeTimers[numericActiveItemId]) {
-        console.log('🔄 Updating running timer duration in database for real-time sync');
         await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
       }
     }
@@ -3815,15 +3732,12 @@ const RunOfShowPage: React.FC = () => {
     setActiveTimers({});
     
     // Stop all timers via API
-    console.log('🔄 Stopping all timers in API for event:', event.id, 'user:', user.id);
     const stopResult = await DatabaseService.stopAllTimersForEvent(
       event.id, 
       user.id, 
       user.full_name || user.email || 'Unknown User',
       currentUserRole || 'VIEWER'
     );
-    console.log('🔄 Stop all timers result:', stopResult);
-    
     // Stop any running sub-cue timer when loading a new cue
     if (secondaryTimer) {
       console.log('🛑 Stopping sub-cue timer because new cue is being loaded');
@@ -3927,8 +3841,6 @@ const RunOfShowPage: React.FC = () => {
     // Initialize timer progress for the loaded CUE
     const item = schedule.find(s => s.id === itemId);
     if (item) {
-      console.log('🔄 Item found:', item);
-      console.log('🔄 Item ID type:', typeof item.id, 'Value:', item.id);
       console.log('🔄 Item duration values:', {
         durationHours: item.durationHours,
         durationMinutes: item.durationMinutes,
@@ -3936,7 +3848,6 @@ const RunOfShowPage: React.FC = () => {
       });
       
       const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
-      console.log('🔄 Calculated total seconds:', totalSeconds);
       console.log('🔄 Item duration breakdown:', {
         durationHours: item.durationHours,
         durationMinutes: item.durationMinutes,
@@ -3946,8 +3857,6 @@ const RunOfShowPage: React.FC = () => {
       
       // Convert itemId to integer if it's a string
       const numericItemId = typeof itemId === 'string' ? parseInt(itemId) : itemId;
-      console.log('🔄 Numeric item ID:', numericItemId);
-      
       // OPTIMISTIC UI UPDATE - Show loaded state immediately
       console.log('⚡ Optimistic UI update - showing loaded state immediately');
       setTimerProgress(prev => ({
@@ -3970,24 +3879,15 @@ const RunOfShowPage: React.FC = () => {
       const timerId = item.timerId;
       
       // Update active_timers table in API
-      console.log('🔄 Loading CUE in API:', { eventId: event.id, itemId: numericItemId, userId: user.id, totalSeconds, rowNumber, cueDisplay, timerId });
-      console.log('🔄 About to call DatabaseService.loadCue...');
-      console.log('🔄 DatabaseService object:', typeof DatabaseService);
-      console.log('🔄 DatabaseService.loadCue function:', typeof DatabaseService.loadCue);
-      
       // Test API configuration
-      console.log('🔄 Testing API configuration...');
       try {
         await apiClient.healthCheck();
-        console.log('🔄 API server is running');
-      } catch (error) {
+        } catch (error) {
         console.error('❌ Error connecting to API server:', error);
       }
       
       try {
-        console.log('🔄 Calling DatabaseService.loadCue now...');
         const loadResult = await DatabaseService.loadCue(event.id, numericItemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId);
-        console.log('🔄 Load CUE result:', loadResult);
         if (!loadResult) {
           console.error('❌ Load CUE failed - check database connection and functions');
         } else {
@@ -3998,9 +3898,7 @@ const RunOfShowPage: React.FC = () => {
         console.error('❌ Error stack:', error.stack);
       }
       
-      console.log('🔄 Finished loadCue database call');
-      
-    // Set visual indicator
+      // Set visual indicator
     setLastLoadedCueId(numericItemId);
     
     // Try to save last loaded CUE (will fail gracefully if migration not run)
@@ -4059,7 +3957,6 @@ const RunOfShowPage: React.FC = () => {
 
       // Sync with database
       try {
-        console.log('🔄 Stopping sub-cue timer in database:', { eventId: event.id, itemId });
         const result = await DatabaseService.stopSubCueTimer(event.id, itemId);
         console.log('✅ Sub-cue timer stopped in database:', result);
       } catch (error) {
@@ -4111,7 +4008,6 @@ const RunOfShowPage: React.FC = () => {
         const cueDisplay = item ? formatCueDisplay(item.customFields.cue) : `CUE ${itemId}`;
         const timerId = item?.timerId || `SUB${itemId}`;
         
-        console.log('🔄 Starting sub-cue timer in database:', { eventId: event.id, itemId, userId: user.id, durationSeconds: totalSeconds, rowNumber, cueDisplay, timerId });
         try {
           const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
           console.log('✅ Sub-cue timer synced to database:', result);
@@ -4188,7 +4084,6 @@ const RunOfShowPage: React.FC = () => {
     // The reset should only clear completed cues and timer states, not modify schedule structure
     
     // Emit reset event to other connected pages (like PhotoViewPage)
-    console.log('📡 RunOfShow: Emitting reset all states event to other pages');
     socketClient.emitResetAllStates();
     console.log('✅ RunOfShow: Reset all states event emitted');
   };
@@ -4574,8 +4469,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
     
     try {
-      console.log('🔄 Loading from API for event:', event.id);
-      
       // Add timeout to prevent hanging
       const dataPromise = DatabaseService.getRunOfShowData(event.id);
       const timeoutPromise = new Promise((_, reject) => 
@@ -4657,7 +4550,6 @@ const RunOfShowPage: React.FC = () => {
         }
         
         // CRITICAL: Combine show start overtime with duration overtime for total calculation
-        console.log('🔄 Combining overtime calculations:');
         console.log('  - Show start overtime:', showStartOvertime);
         console.log('  - Duration overtime:', overtimeMinutes);
         console.log('  - START cue ID:', startCueId);
@@ -4739,7 +4631,6 @@ const RunOfShowPage: React.FC = () => {
         eventId: event?.id
       });
       // Fallback to localStorage on error
-      console.log('🔄 Falling back to localStorage due to error');
       const savedSchedule = localStorage.getItem(`runOfShowSchedule_${event.id}`);
       if (savedSchedule) {
         try {
@@ -4766,7 +4657,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
 
     try {
-      console.log('🔄 Loading changes dynamically for event:', event.id);
       const data = await DatabaseService.loadChangesDynamically(event.id);
       
       if (data) {
@@ -4799,9 +4689,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Load data from API when component mounts
   useEffect(() => {
-    console.log('🔄 useEffect triggered for event ID:', event?.id);
     if (event?.id) {
-      console.log('🔄 Calling loadFromAPI for event:', event.id);
       loadFromAPI();
     } else {
       console.log('❌ No event ID available for loading data');
@@ -4816,8 +4704,6 @@ const RunOfShowPage: React.FC = () => {
     
     const callbacks = {
       onRunOfShowDataUpdated: (data: any) => {
-        console.log('📡 Real-time: Run of show data updated via WebSocket');
-        
         // Skip if this update was made by the current user (prevent save loops)
         if (data && data.last_modified_by === user?.id) {
           console.log('⏭️ Skipping WebSocket update - change made by current user');
@@ -4829,8 +4715,6 @@ const RunOfShowPage: React.FC = () => {
           console.log('⏭️ Skipping WebSocket update - user is actively editing');
           return;
         }
-        
-        console.log('🔄 Real-time: Updating local data with remote changes');
         
         // Add small delay to ensure WebSocket updates are processed consistently
         setTimeout(() => {
@@ -4875,11 +4759,9 @@ const RunOfShowPage: React.FC = () => {
         }, 100); // 100ms delay for consistency
       },
       onCompletedCuesUpdated: (data: any) => {
-        console.log('📡 Real-time: Completed cues updated via WebSocket');
         // Update completed cues state directly from WebSocket data - no API polling needed!
         if (data && data.cleared) {
           // All completed cues cleared (from reset button)
-          console.log('📡 Real-time: All completed cues cleared via WebSocket');
           setCompletedCues({});
         } else if (data && data.removed && data.item_id) {
           // Remove completed cue
@@ -4904,7 +4786,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onResetAllStates: (data: any) => {
-        console.log('📡 Real-time: Reset all states received via WebSocket');
         // Clear all states when reset is triggered from another browser
         setActiveTimers({});
         setSubCueTimers({});
@@ -4924,15 +4805,12 @@ const RunOfShowPage: React.FC = () => {
         console.log('✅ RunOfShow: All states reset via WebSocket');
       },
       onOvertimeReset: (data: any) => {
-        console.log('📡 Real-time: Overtime reset received via WebSocket');
         if (data && data.event_id === event?.id) {
           setOvertimeMinutes({});
           console.log('✅ Overtime data cleared from WebSocket reset');
         }
       },
       onTimerUpdated: (data: any) => {
-        console.log('📡 Real-time: Timer updated via WebSocket');
-        console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
         if (data && data.event_id === event?.id) {
           // Update hybrid timer data directly from WebSocket (ClockPage style)
           setHybridTimerData(prev => ({
@@ -4993,7 +4871,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimerStopped: (data: any) => {
-        console.log('📡 Real-time: Timer stopped via WebSocket');
         if (data && data.event_id === event?.id) {
           // Clear hybrid timer data when stopped (ClockPage style)
           setHybridTimerData(prev => ({
@@ -5004,7 +4881,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimersStopped: (data: any) => {
-        console.log('📡 Real-time: All timers stopped via WebSocket');
         if (data && data.event_id === event?.id) {
           // Clear hybrid timer data when all stopped (ClockPage style)
           setHybridTimerData(prev => ({
@@ -5018,7 +4894,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimerStarted: (data: any) => {
-        console.log('📡 Real-time: Timer started via WebSocket');
         // Update timer state when started
         if (data && data.item_id) {
           setActiveTimers(prev => ({
@@ -5028,7 +4903,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onSubCueTimerStarted: (data: any) => {
-        console.log('📡 Real-time: Sub-cue timer started via WebSocket');
         if (data && data.event_id === event?.id) {
           // Update hybrid timer data with sub-cue timer (ClockPage style)
           setHybridTimerData(prev => ({
@@ -5039,7 +4913,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onSubCueTimerStopped: (data: any) => {
-        console.log('📡 Real-time: Sub-cue timer stopped via WebSocket');
         if (data && data.event_id === event?.id) {
           // Clear hybrid timer data sub-cue timer (ClockPage style)
           setHybridTimerData(prev => ({
@@ -5063,16 +4936,12 @@ const RunOfShowPage: React.FC = () => {
         });
       },
       onActiveTimersUpdated: (data: any) => {
-        console.log('📡 Real-time: Active timers updated via WebSocket');
-        
         // Handle array format (from server broadcast) - ClockPage style
         let timerData = data;
         if (Array.isArray(data) && data.length > 0) {
           timerData = data[0]; // Take first timer from array
-          console.log('📡 RunOfShow: Processing first timer from array:', timerData);
-        }
+          }
         
-        console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: timerData?.event_id === event?.id });
         if (timerData && timerData.event_id === event?.id) {
           // Debounce: Only update if timer data has actually changed
           const currentTimer = hybridTimerData?.activeTimer;
@@ -5119,8 +4988,6 @@ const RunOfShowPage: React.FC = () => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
       },
       onInitialSync: async () => {
-        console.log('🔄 WebSocket initial sync triggered - loading current state');
-        
         // NOTE: loadActiveTimerFromAPI() is now called AFTER schedule is loaded
         // in loadFromAPI() to prevent race condition where cue display text is missing
         
@@ -5129,8 +4996,6 @@ const RunOfShowPage: React.FC = () => {
           const completedCuesResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues/${event?.id}`);
           if (completedCuesResponse.ok) {
             const completedCuesArray = await completedCuesResponse.json();
-            console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);
-            
             // Convert array to object format for consistency
             const completedCuesObject = completedCuesArray.reduce((acc, cue) => {
               acc[cue.item_id] = true;
@@ -5163,7 +5028,6 @@ const RunOfShowPage: React.FC = () => {
               ...prev,
               [data.item_id]: data.overtimeMinutes
             };
-            console.log('📊 Overtime state after update:', updated);
             return updated;
           });
           
@@ -5185,7 +5049,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onShowStartOvertimeUpdate: (data: { event_id: string; item_id: number; showStartOvertime: number }) => {
-        console.log('📡 Received show start overtime update:', data);
         if (data.event_id === event?.id) {
           setShowStartOvertime(data.showStartOvertime);
           setStartCueId(data.item_id); // Also update which cue is marked as START
@@ -5193,7 +5056,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onStartCueSelectionUpdate: (data: { event_id: string; item_id: number }) => {
-        console.log('📡 Received start cue selection update:', data);
         if (data.event_id === event?.id) {
           setStartCueId(data.item_id);
           console.log(`✅ Start cue selection updated: item ${data.item_id}`);
@@ -5294,7 +5156,6 @@ const RunOfShowPage: React.FC = () => {
 
   // Debug function to manually reload data
   const debugReloadData = () => {
-    console.log('🔄 Manual data reload triggered');
     if (event?.id) {
       loadFromAPI();
     } else {
@@ -5310,8 +5171,6 @@ const RunOfShowPage: React.FC = () => {
     }
 
     console.log('🔍 CHECKING DATA SOURCE:');
-    console.log('📊 Current schedule length:', schedule.length);
-    
     try {
       // Check API directly
       console.log('🔍 Checking API...');
@@ -5336,9 +5195,7 @@ const RunOfShowPage: React.FC = () => {
       // Check if real-time sync is working
       console.log('🔍 Checking real-time sync status...');
       const changeInfo = await DatabaseService.checkForChanges(event.id, lastChangeAt ?? undefined);
-      console.log('🔄 Change detection result:', changeInfo);
-
-    } catch (error) {
+      } catch (error) {
       console.error('❌ Error checking data source:', error);
     }
   };
@@ -5352,9 +5209,6 @@ const RunOfShowPage: React.FC = () => {
     }
     
     try {
-      console.log('🔄 Loading backups for event:', event.id);
-      console.log('🔄 Event details:', { id: event.id, name: event.name });
-      
       // Test if backup table is accessible
       const tableAccessible = await NeonBackupService.testBackupTable();
       // if (!tableAccessible) {
@@ -5362,14 +5216,10 @@ const RunOfShowPage: React.FC = () => {
       // }
       
       const backupsData = await NeonBackupService.getBackupsForEvent(event.id);
-      console.log('📊 Raw backup data received:', backupsData);
-      
       setBackups(backupsData);
       
       // Load backup stats
-      console.log('🔄 Loading backup stats...');
       const stats = await NeonBackupService.getBackupStats(event.id);
-      console.log('📊 Backup stats:', stats);
       setBackupStats(stats);
       
       console.log(`✅ Loaded ${backupsData.length} backups successfully`);
@@ -5396,8 +5246,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
     
     try {
-      console.log('🔄 Creating manual backup for event:', event.id);
-      
       const timestamp = new Date().toLocaleString('en-US', {
         year: 'numeric',
         month: '2-digit',
@@ -5446,8 +5294,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id || !selectedBackup) return;
     
     try {
-      console.log('🔄 Restoring from backup:', selectedBackup.id);
-      
       const restoredData = await NeonBackupService.restoreFromBackup(selectedBackup.id);
       
       // Update the schedule and custom columns
@@ -5503,8 +5349,6 @@ const RunOfShowPage: React.FC = () => {
     if (!confirm('Are you sure you want to delete this backup?')) return;
     
     try {
-      console.log('🔄 Deleting backup:', backupId);
-      
       await NeonBackupService.deleteBackup(backupId);
       
       console.log('✅ Backup deleted successfully');
@@ -5527,8 +5371,6 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
 
-    console.log('🔄 Starting change detection for event:', event.id);
-    
     // Start the countdown timer
     startCountdownTimer();
 
@@ -5549,11 +5391,9 @@ const RunOfShowPage: React.FC = () => {
           return;
         }
         
-        console.log('🔄 Running change check...');
         const changeInfo = await DatabaseService.checkForChanges(event.id, lastChangeAt ?? undefined);
         
         if (changeInfo.hasChanges) {
-          console.log('🔄 Changes detected:', changeInfo);
           setHasChanges(true);
           setChangeNotification({
             show: true,
@@ -5563,7 +5403,6 @@ const RunOfShowPage: React.FC = () => {
           
           // Only load changes if page is visible (don't apply changes when page is hidden)
           if (isPageVisible) {
-            console.log('🔄 Loading changes automatically...');
             await loadChangesDynamically();
           } else {
             console.log('👁️ Changes detected but page not visible - will load when page becomes visible');
@@ -5604,8 +5443,6 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     if (!event?.id) return;
 
-    console.log('🔄 Starting automatic backup for event:', event.id);
-
     const createAutoBackup = async () => {
       try {
         // Skip if user is actively editing
@@ -5614,8 +5451,6 @@ const RunOfShowPage: React.FC = () => {
           return;
         }
 
-        console.log('🔄 Creating automatic backup...');
-        
         await NeonBackupService.createBackup(
           event.id,
           schedule,
@@ -5665,13 +5500,11 @@ const RunOfShowPage: React.FC = () => {
       
       if (isVisible) {
         // Page became visible - check for changes
-        console.log('🔄 Page became visible, checking for changes...');
         checkForChangesOnReturn();
       } else {
         // Page became hidden - record last sync time
         setLastSyncTime(new Date());
-        console.log('🔄 Page became hidden, recording last sync time');
-      }
+        }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -5681,24 +5514,16 @@ const RunOfShowPage: React.FC = () => {
   // Check for changes when returning to the page
   const checkForChangesOnReturn = async () => {
     if (!event?.id || !lastSyncTime) {
-      console.log('🔄 No event ID or last sync time, skipping change check');
       return;
     }
 
     try {
-      console.log('🔄 Checking for changes since last sync...');
-      
       // Get the latest data from API
       const latestData = await DatabaseService.getRunOfShowData(event.id);
       
       if (latestData) {
         const latestChangeTime = new Date(latestData.last_change_at || new Date());
-        console.log('🔄 Latest change time:', latestChangeTime);
-        console.log('🔄 Last sync time:', lastSyncTime);
-        
         if (latestChangeTime > lastSyncTime) {
-          console.log('🔄 Changes detected since last sync, updating local data...');
-          
           // Update local state with latest data
           setSchedule(latestData.schedule_items || []);
           setCustomColumns(latestData.custom_columns || []);
@@ -5745,7 +5570,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
 
     const updateGraphicsData = () => {
-      console.log('🔄 Updating graphics data for live JSON files...');
       // Force update localStorage with current data
       localStorage.setItem(`runOfShowSchedule_${event.id}`, JSON.stringify(schedule));
       localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(customColumns));
@@ -6125,7 +5949,6 @@ const RunOfShowPage: React.FC = () => {
       
       setCompletedCues(prev => {
         const newCompleted = { ...prev, [itemId]: true };
-        console.log('🔄 ToggleTimer: Updated completedCues for main item:', itemId, 'new state:', newCompleted);
         return newCompleted;
       });
       // Add to stopped items for inactive styling
@@ -6168,7 +5991,6 @@ const RunOfShowPage: React.FC = () => {
                 item_id: itemId,
                 overtimeMinutes: overtimeMinutes
               };
-              console.log('📡 Broadcasting overtime update via WebSocket:', overtimePayload);
               socket.emit('overtimeUpdate', overtimePayload);
               console.log(`✅ Overtime update broadcasted: ${overtimeMinutes} minutes for item ${itemId}`);
             } else {
@@ -6207,18 +6029,12 @@ const RunOfShowPage: React.FC = () => {
       
       // Also complete any indented items that are part of this CUE group
       const currentIndex = schedule.findIndex(item => item.id === itemId);
-      console.log('🔄 ToggleTimer: Current index for item', itemId, ':', currentIndex);
-      
       if (currentIndex !== -1) {
-        console.log('🔄 ToggleTimer: Looking for indented items after index', currentIndex);
         // Find all indented items that follow this CUE until the next non-indented item
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', schedule[i].isIndented);
           if (schedule[i].isIndented) {
-            console.log('🔄 ToggleTimer: Marking indented item as completed:', schedule[i].id, schedule[i].segmentName);
             setCompletedCues(prev => {
               const newCompleted = { ...prev, [schedule[i].id]: true };
-              console.log('🔄 ToggleTimer: Updated completedCues for indented item:', schedule[i].id, 'new state:', newCompleted);
               return newCompleted;
             });
             setStoppedItems(prev => new Set([...prev, schedule[i].id]));
@@ -6238,7 +6054,6 @@ const RunOfShowPage: React.FC = () => {
             }
           } else {
             // Stop when we hit a non-indented item (next CUE group)
-            console.log('🔄 ToggleTimer: Hit non-indented item, stopping search at index', i);
             break;
           }
         }
@@ -6273,7 +6088,6 @@ const RunOfShowPage: React.FC = () => {
       }
 
       // Update active_timers table in API
-      console.log('🔄 Stopping timer in API for item:', itemId);
       await DatabaseService.stopTimer(
         event.id, 
         itemId, 
@@ -6445,7 +6259,7 @@ const RunOfShowPage: React.FC = () => {
         const timerId = item.timerId;
         
         // Update active_timers table in API
-        console.log('🔄 Starting timer in API for item:', itemId, 'at:', now.toISOString(), 'row:', rowNumber, 'cue:', cueDisplay, 'timerId:', timerId);
+        , 'row:', rowNumber, 'cue:', cueDisplay, 'timerId:', timerId);
         try {
           const startResult = await DatabaseService.startTimer(event.id, itemId, user.id, totalSeconds, now, rowNumber, cueDisplay, timerId);
           console.log('✅ Timer started in API:', startResult);
@@ -6500,8 +6314,6 @@ const RunOfShowPage: React.FC = () => {
   // Reset timer - stop and clear currently running timer
   const resetTimer = async (itemId: number) => {
     if (!user || !event?.id) return;
-
-    console.log('🔄 Reset timer for item:', itemId);
 
     // Stop the timer if it's running
     if (activeTimers[itemId]) {
@@ -6701,7 +6513,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Start sub-cue timer (SQL function will handle stopping existing ones)
         try {
-          console.log('🔄 Starting sub-cue timer for item:', itemId, '(will auto-stop any existing timers)');
+          ');
           const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
           console.log('✅ Secondary timer started in Supabase for item:', itemId, 'Result:', result);
           if (result?.error) {
@@ -6812,8 +6624,6 @@ const RunOfShowPage: React.FC = () => {
   // Handle Excel import
   const handleExcelImport = async (importedData: any[]) => {
     try {
-      console.log('📊 Processing Excel import:', importedData);
-      
       // Confirm with user before adding data
       const confirmMessage = `This will add ${importedData.length} new items to your schedule. Continue?`;
       if (!window.confirm(confirmMessage)) {
@@ -6879,7 +6689,7 @@ const RunOfShowPage: React.FC = () => {
       setSchedule(prev => [...prev, ...newScheduleItems]);
       
       // Debug: Check if assets are being imported
-      console.log('📊 Imported items with assets:', newScheduleItems.filter(item => item.assets).map(item => ({
+      .map(item => ({
         id: item.id,
         segmentName: item.segmentName,
         assets: item.assets
@@ -7542,14 +7352,11 @@ const RunOfShowPage: React.FC = () => {
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
-                        console.log('🔄 Sync button clicked - starting sync...');
                         await syncChanges();
                         // Force refresh of local change log display
                         const localChanges = changeLogService.getLocalChanges();
-                        console.log('🔄 Local changes after sync:', localChanges.length);
                         setChangeLog(localChanges);
-                        console.log('🔄 Local change log refreshed after sync');
-                      }}
+                        }}
                       className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-sm rounded transition-colors"
                       title="Sync changes to Supabase"
                     >
@@ -7560,8 +7367,7 @@ const RunOfShowPage: React.FC = () => {
                         changeLogService.reloadLocalChanges();
                         const localChanges = changeLogService.getLocalChanges();
                         setChangeLog(localChanges.slice(0, 100));
-                        console.log('🔄 Manually reloaded local changes:', localChanges.length);
-                      }}
+                        }}
                       className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                       title="Reload local changes"
                     >
@@ -7572,13 +7378,9 @@ const RunOfShowPage: React.FC = () => {
                 {showMasterChangeLog && (
                   <button
                     onClick={async () => {
-                      console.log('🔄 Manual reload button clicked...');
                       const beforeCount = masterChangeLog.length;
-                      console.log('📊 Master log entries before reload:', beforeCount);
                       await loadMasterChangeLog();
-                      console.log('🔄 Master change log reloaded');
-                      console.log('📊 Master log entries after reload:', masterChangeLog.length);
-                    }}
+                      }}
                     className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                     title="Reload master change log"
                   >
