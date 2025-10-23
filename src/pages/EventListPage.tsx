@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS } from '../types/Event';
+import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
@@ -20,13 +20,15 @@ const EventListPage: React.FC = () => {
     name: '',
     date: '',
     location: 'Great Hall',
-    numberOfDays: 1
+    numberOfDays: 1,
+    timezone: 'America/New_York'
   });
   const [formData, setFormData] = useState<EventFormData>({
     name: '',
     date: '',
     location: 'Great Hall',
-    numberOfDays: 1
+    numberOfDays: 1,
+    timezone: 'America/New_York'
   });
   
   // Role selection state
@@ -91,6 +93,7 @@ const EventListPage: React.FC = () => {
             originalDate: calEvent.date, // Keep original for reference
             location: calEvent.schedule_data?.location || 'Great Hall',
             numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+            timezone: calEvent.schedule_data?.timezone || 'America/New_York',
             created_at: calEvent.created_at || new Date().toISOString(),
             updated_at: calEvent.updated_at || new Date().toISOString()
           };
@@ -237,6 +240,7 @@ const EventListPage: React.FC = () => {
       date: editFormData.date,
       location: editFormData.location,
       numberOfDays: editFormData.numberOfDays,
+      timezone: editFormData.timezone,
       updated_at: new Date().toISOString()
     };
 
@@ -253,7 +257,7 @@ const EventListPage: React.FC = () => {
 
     // Close modal first
     setEditingEvent(null);
-    setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1 });
+    setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York' });
     
     // Update local list immediately for instant feedback
     setEvents(prev => prev.map(event => 
@@ -293,7 +297,8 @@ const EventListPage: React.FC = () => {
             ...matchingCalendarEvent.schedule_data, // Preserve existing schedule_data FIRST
             location: updatedEvent.location,         // Then override with new values
             numberOfDays: updatedEvent.numberOfDays,
-            eventId: updatedEvent.id
+            eventId: updatedEvent.id,
+            timezone: updatedEvent.timezone
           }
         };
         
@@ -326,6 +331,7 @@ const EventListPage: React.FC = () => {
               eventDate: updatedEvent.date,
               location: updatedEvent.location,
               numberOfDays: updatedEvent.numberOfDays,
+              timezone: updatedEvent.timezone,
               lastSaved: new Date().toISOString()
             },
             last_modified_by: user?.id,
@@ -395,7 +401,8 @@ const EventListPage: React.FC = () => {
       name: event.name,
       date: event.date,
       location: event.location,
-      numberOfDays: event.numberOfDays
+      numberOfDays: event.numberOfDays,
+      timezone: event.timezone || 'America/New_York'
     });
   };
 
@@ -445,7 +452,8 @@ const EventListPage: React.FC = () => {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
-      day: 'numeric'
+      day: 'numeric',
+      timeZone: 'America/New_York' // EST/EDT timezone
     });
   };
 
@@ -890,12 +898,26 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">Timezone</label>
+                <select
+                  value={editFormData.timezone || 'America/New_York'}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, timezone: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                >
+                  {TIMEZONE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => {
                   setEditingEvent(null);
-                  setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1 });
+                  setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York' });
                 }}
                 className="flex-1 px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm font-medium"
               >
