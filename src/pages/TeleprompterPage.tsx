@@ -104,6 +104,7 @@ const TeleprompterPage: React.FC = () => {
   const targetScrollPositionRef = useRef<number>(0);
   const viewerAnimationFrameRef = useRef<number | null>(null);
   const lineRefsMap = useRef<Map<number, HTMLDivElement>>(new Map());
+  const viewerScrollRef = useRef<HTMLDivElement | null>(null);
   
 
   // Handle disconnect timer confirmation
@@ -246,17 +247,35 @@ const TeleprompterPage: React.FC = () => {
         updateSettings({ fontSize: data.fontSize });
       }
       
-      // Use line-based scrolling for better alignment
-      // Find which line should be at the reading guide (50% viewport)
-      if (scriptRef.current) {
-        const containerHeight = scriptRef.current.clientHeight;
-        const targetLineAtGuide = Math.floor(data.scrollPosition / (data.fontSize * settings.lineHeight));
-        
-        // Scroll so that line is at 50% of viewport
-        const targetScroll = data.scrollPosition;
-        targetScrollPositionRef.current = targetScroll;
-        
-        console.log('📜 Target line at guide:', targetLineAtGuide, 'Target scroll:', targetScroll);
+      // Set target scroll position for smooth animation
+      const targetScroll = data.scrollPosition;
+      targetScrollPositionRef.current = targetScroll;
+      
+      console.log('📜 Setting target scroll position:', targetScroll);
+      
+      // If we're not already animating, start the smooth scroll
+      if (!viewerAnimationFrameRef.current) {
+        const smoothScroll = () => {
+          // Get the correct scroll container based on user role
+          const scrollContainer = userRole === 'VIEWER' ? viewerScrollRef.current : scriptRef.current;
+          if (scrollContainer && targetScrollPositionRef.current !== null) {
+            const current = scrollContainer.scrollTop;
+            const target = targetScrollPositionRef.current;
+            const diff = target - current;
+            
+            if (Math.abs(diff) > 2) {
+              scrollContainer.scrollTop = current + (diff * 0.6);
+              viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
+            } else {
+              scrollContainer.scrollTop = target;
+              viewerAnimationFrameRef.current = null;
+              targetScrollPositionRef.current = null;
+            }
+          } else {
+            viewerAnimationFrameRef.current = null;
+          }
+        };
+        viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
       }
     };
     
@@ -279,20 +298,23 @@ const TeleprompterPage: React.FC = () => {
     }
     
     const smoothScroll = () => {
-      if (scriptRef.current && targetScrollPositionRef.current !== null) {
-        const current = scriptRef.current.scrollTop;
+      // Get the correct scroll container based on user role
+      const scrollContainer = userRole === 'VIEWER' ? viewerScrollRef.current : scriptRef.current;
+      if (scrollContainer && targetScrollPositionRef.current !== null) {
+        const current = scrollContainer.scrollTop;
         const target = targetScrollPositionRef.current;
         const diff = target - current;
         
-        // Use faster interpolation - move 40% of the distance each frame for more responsive sync
-        if (Math.abs(diff) > 1) {
-          scriptRef.current.scrollTop = current + (diff * 0.4);
+        // Use faster interpolation - move 60% of the distance each frame for more responsive sync
+        if (Math.abs(diff) > 2) {
+          scrollContainer.scrollTop = current + (diff * 0.6);
           // Continue animation if still moving
           viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
         } else {
           // Close enough - stop animation and set exact position
-          scriptRef.current.scrollTop = target;
+          scrollContainer.scrollTop = target;
           viewerAnimationFrameRef.current = null;
+          targetScrollPositionRef.current = null; // Clear target after reaching it
         }
       } else {
         // No target or ref - stop animation
@@ -300,8 +322,8 @@ const TeleprompterPage: React.FC = () => {
       }
     };
     
-    // Only start animation if there's a target position
-    if (targetScrollPositionRef.current !== null) {
+    // Only start animation if there's a target position and we're not already animating
+    if (targetScrollPositionRef.current !== null && !viewerAnimationFrameRef.current) {
       viewerAnimationFrameRef.current = requestAnimationFrame(smoothScroll);
     }
     
@@ -1186,10 +1208,9 @@ const TeleprompterPage: React.FC = () => {
               {/* Scrollable viewer content at fixed 1920x1080 */}
               <div
                 ref={(el) => {
-                  // For VIEWER mode, we need to store a ref to this div for scroll sync
+                  // Store the viewer scroll container ref
                   if (el && userRole === 'VIEWER') {
-                    // Replace scriptRef for viewers in this mode
-                    (scriptRef as any).current = el;
+                    viewerScrollRef.current = el;
                   }
                 }}
                 style={{

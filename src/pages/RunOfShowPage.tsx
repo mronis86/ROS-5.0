@@ -580,7 +580,7 @@ const RunOfShowPage: React.FC = () => {
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
   const [selectedDay, setSelectedDay] = useState<number>(1);
-  // Removed eventTimezone - using UTC throughout
+  const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -793,9 +793,47 @@ const RunOfShowPage: React.FC = () => {
     return null;
   };
 
-  // UTC utility functions - simplified approach
+  // UTC utility functions with proper timezone conversion
   const getCurrentTimeUTC = (): Date => {
     return new Date(); // JavaScript Date objects are already UTC internally
+  };
+
+  // Convert a local time to UTC using the event timezone
+  const convertLocalTimeToUTC = (localTime: Date, timezone: string): Date => {
+    try {
+      // The localTime from parseTimeString is already correctly representing the scheduled time
+      // We just need to return it as-is since it's already in the correct timezone
+      
+      console.log(`🔍 convertLocalTimeToUTC: Input time: ${localTime.toISOString()}, Timezone: ${timezone}`);
+      console.log(`🔍 convertLocalTimeToUTC: Returning input as-is: ${localTime.toISOString()}`);
+      
+      return localTime; // Return the input directly since it's already correct
+    } catch (error) {
+      console.warn('Error converting local time to UTC:', error);
+      return localTime; // Fallback to original time
+    }
+  };
+
+  // Get current time in the event timezone
+  const getCurrentTimeInEventTimezone = (): Date => {
+    if (!eventTimezone) return new Date();
+    try {
+      const now = new Date();
+      const timeStr = now.toLocaleString("en-US", {
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      return new Date(timeStr);
+    } catch (error) {
+      console.warn('Error getting current time in event timezone:', error);
+      return new Date();
+    }
   };
 
   // Track dependent rows for orange highlighting when CUE is loaded
@@ -4481,10 +4519,11 @@ const RunOfShowPage: React.FC = () => {
             eventName,
             masterStartTime,
             dayStartTimes,
-            // timezone removed - using UTC throughout
+            timezone: eventTimezone,
             lastSaved: new Date().toISOString()
           }
         };
+        
         
         // Reduce logging frequency
         if (Math.random() < 0.05) { // Only log 5% of the time
@@ -4516,7 +4555,7 @@ const RunOfShowPage: React.FC = () => {
       } catch (error) {
         console.error('❌ Error auto-saving to API:', error);
       }
-    }, 30000), // Debounce for 30 seconds
+    }, 2000), // Debounce for 2 seconds
     [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes]
   );
 
@@ -4571,8 +4610,7 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
-        
-        // Timezone handling removed - using UTC throughout
+        if (data.settings?.timezone) setEventTimezone(data.settings.timezone);
         console.log('🔍 Full settings object:', data.settings);
         
         // FIRST: Always load star selection from main schedule (this is the source of truth)
@@ -4759,6 +4797,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('❌ No event ID available for loading data');
     }
   }, [event?.id]);
+
 
   // Setup WebSocket-only real-time connections (no SSE, no polling)
   useEffect(() => {
@@ -6272,22 +6311,14 @@ const RunOfShowPage: React.FC = () => {
             const actualStart = getCurrentTimeUTC(); // Use current UTC time
             
             if (scheduledStart) {
-              // Since we're using UTC throughout, we need to treat the scheduled time as UTC
-              // The scheduledStart was created in local timezone, but we need to compare with UTC
-              // We'll create a UTC version of the scheduled time
-              
-              // Get the current date in UTC
-              const now = new Date();
-              const utcDate = new Date(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-              
-              // Create scheduled time in UTC using the same time but UTC date
-              const scheduledStartUTC = new Date(utcDate.getTime() + (scheduledStart.getHours() * 60 + scheduledStart.getMinutes()) * 60 * 1000);
+              // Convert the scheduled start time from event timezone to UTC
+              const scheduledStartUTC = convertLocalTimeToUTC(scheduledStart, eventTimezone);
               
               // Calculate difference in minutes
               const diffMs = actualStart.getTime() - scheduledStartUTC.getTime();
               const diffMinutes = Math.round(diffMs / (60 * 1000));
               
-              console.log(`⏰ Show Start Overtime: Scheduled=${scheduledStart.toLocaleTimeString()} (local), ScheduledUTC=${scheduledStartUTC.toISOString()}, Actual=${actualStart.toISOString()}, Diff=${diffMinutes}m`);
+              console.log(`⏰ Show Start Overtime: Scheduled=${scheduledStart.toLocaleTimeString()} (${eventTimezone}), ScheduledUTC=${scheduledStartUTC.toISOString()}, Actual=${actualStart.toISOString()}, Diff=${diffMinutes}m`);
               
               // Update local state (keep separate from duration overtime)
               setShowStartOvertime(diffMinutes);
@@ -9690,7 +9721,7 @@ const RunOfShowPage: React.FC = () => {
                                {indentedCues[item.id] ? '↘' : calculateStartTimeWithOvertime(index)}
                            </span>
                              {!indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(index) !== calculateStartTimeWithOvertime(index)) && (
-                               <span className={`text-sm font-bold px-2 py-1 rounded ${
+                               <span className={`text-sm font-bold px-2 py-1 rounded text-center leading-tight ${
                                  (() => {
                                   // For START cue: use show start overtime only for color
                                   if (item.id === startCueId) {
@@ -9724,9 +9755,15 @@ const RunOfShowPage: React.FC = () => {
                                     const showStartOT = showStartOvertime || 0;
                                     
                                     if (showStartOT > 0) {
-                                      return `+${showStartOT}m late`;
+                                      const hours = Math.floor(showStartOT / 60);
+                                      const minutes = showStartOT % 60;
+                                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                      return `+${timeDisplay} late`;
                                     } else if (showStartOT < 0) {
-                                      return `-${Math.abs(showStartOT)}m early`;
+                                      const hours = Math.floor(Math.abs(showStartOT) / 60);
+                                      const minutes = Math.abs(showStartOT) % 60;
+                                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                      return `-${timeDisplay} early`;
                                     }
                                     return 'On time';
                                   }
@@ -9749,7 +9786,18 @@ const RunOfShowPage: React.FC = () => {
                                       totalOvertime += showStartOvertime;
                                      }
                                    }
-                                   return totalOvertime > 0 ? `+${totalOvertime}m` : `${totalOvertime}m`;
+                                   if (totalOvertime > 0) {
+                                     const hours = Math.floor(totalOvertime / 60);
+                                     const minutes = totalOvertime % 60;
+                                     const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                     return `+${timeDisplay}`;
+                                   } else if (totalOvertime < 0) {
+                                     const hours = Math.floor(Math.abs(totalOvertime) / 60);
+                                     const minutes = Math.abs(totalOvertime) % 60;
+                                     const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                     return `-${timeDisplay}`;
+                                   }
+                                   return '0m';
                                  })()}
                                </span>
                              )}
@@ -10386,6 +10434,10 @@ const RunOfShowPage: React.FC = () => {
                                 booleanChange: true
                               }
                             });
+                            
+                            // Mark user as editing to trigger auto-save
+                            handleUserEditing();
+                            
                             
                             // Save to API
                             saveToAPI();

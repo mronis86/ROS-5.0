@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
+import { DatabaseService } from '../services/database';
 
 interface ScheduleItem {
   id: number;
@@ -54,6 +55,59 @@ const ReportsPage: React.FC = () => {
   const [reportType, setReportType] = useState('showfile');
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('landscape');
+  const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
+
+  // UTC conversion functions (same as other pages)
+  const getCurrentTimeUTC = (): Date => {
+    return new Date();
+  };
+
+  const convertLocalTimeToUTC = (localTime: Date, timezone: string): Date => {
+    try {
+      // Create a date that represents the local time in the event timezone
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const day = now.getDate();
+      
+      // Create a date object for the scheduled time in the event timezone
+      const scheduledDate = new Date(year, month, day, localTime.getHours(), localTime.getMinutes(), 0);
+      
+      // Get the timezone offset for the event timezone
+      const eventTime = new Date(scheduledDate.toLocaleString("en-US", { timeZone: timezone }));
+      const utcTime = new Date(scheduledDate.toLocaleString("en-US", { timeZone: 'UTC' }));
+      const offsetMs = eventTime.getTime() - utcTime.getTime();
+      
+      // Apply the offset to get the correct UTC time
+      const result = new Date(scheduledDate.getTime() + offsetMs);
+      
+      return result;
+    } catch (error) {
+      console.warn('Error converting local time to UTC:', error);
+      return localTime; // Fallback to original time
+    }
+  };
+
+  const getCurrentTimeInEventTimezone = (): Date => {
+    if (!eventTimezone) return new Date();
+    try {
+      const now = new Date();
+      const timeStr = now.toLocaleString("en-US", {
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      return new Date(timeStr);
+    } catch (error) {
+      console.warn('Error getting current time in event timezone:', error);
+      return new Date();
+    }
+  };
 
   // Load schedule data
   useEffect(() => {
@@ -98,34 +152,92 @@ const ReportsPage: React.FC = () => {
       }
     }
     
-    // Load master start time
-    const keys = Object.keys(localStorage);
-    const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
-    console.log('Master time keys found:', masterTimeKeys);
+    // Load master start time from API data instead of localStorage
+    const loadMasterStartTime = async () => {
+      if (event?.id) {
+        try {
+          const data = await DatabaseService.getRunOfShowData(event.id);
+          
+          // Check for master start time in different locations
+          let masterTime = null;
+          if (data?.settings?.masterStartTime) {
+            masterTime = data.settings.masterStartTime;
+          } else if (data?.settings?.dayStartTimes?.['1']) {
+            masterTime = data.settings.dayStartTimes['1'];
+          } else if (data?.schedule_items && data.schedule_items.length > 0) {
+            // Check if the first item has a start time that might be the master start time
+            const firstItem = data.schedule_items[0];
+            if (firstItem.startTime) {
+              masterTime = firstItem.startTime;
+            }
+          }
+          
+          if (masterTime) {
+            setMasterStartTime(masterTime);
+            
+            // Also load timezone if available
+            if (data.settings.timezone) {
+              setEventTimezone(data.settings.timezone);
+            }
+          } else {
+            console.log('📥 No master start time found in API data, checking localStorage...');
+            
+            // Fallback to localStorage
+            const keys = Object.keys(localStorage);
+            const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
+            console.log('Master time keys found:', masterTimeKeys);
+            
+            // Try to get master start time for the specific event first
+            let savedMasterTime = null;
+            if (event?.id) {
+              savedMasterTime = localStorage.getItem(`masterStartTime_${event.id}`);
+              console.log(`Master time for event ${event.id}:`, savedMasterTime);
+            }
+            
+            // If not found for specific event, try the latest one
+            if (!savedMasterTime && masterTimeKeys.length > 0) {
+              const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
+              savedMasterTime = localStorage.getItem(latestMasterKey);
+              console.log('Latest master time key:', latestMasterKey, 'Value:', savedMasterTime);
+            }
+            
+            if (savedMasterTime) {
+              setMasterStartTime(savedMasterTime);
+              console.log('Master start time set to:', savedMasterTime);
+            } else {
+              console.log('No master start time found in localStorage');
+              // Set a default time for testing
+              setMasterStartTime('09:00');
+              console.log('Set default master start time to 09:00');
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error loading master start time from API:', error);
+          // Fallback to localStorage
+          const keys = Object.keys(localStorage);
+          const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
+          
+          let savedMasterTime = null;
+          if (event?.id) {
+            savedMasterTime = localStorage.getItem(`masterStartTime_${event.id}`);
+          }
+          
+          if (!savedMasterTime && masterTimeKeys.length > 0) {
+            const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
+            savedMasterTime = localStorage.getItem(latestMasterKey);
+          }
+          
+          if (savedMasterTime) {
+            setMasterStartTime(savedMasterTime);
+          } else {
+            setMasterStartTime('09:00');
+          }
+        }
+      }
+    };
     
-    // Try to get master start time for the specific event first
-    let savedMasterTime = null;
-    if (event?.id) {
-      savedMasterTime = localStorage.getItem(`masterStartTime_${event.id}`);
-      console.log(`Master time for event ${event.id}:`, savedMasterTime);
-    }
-    
-    // If not found for specific event, try the latest one
-    if (!savedMasterTime && masterTimeKeys.length > 0) {
-      const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
-      savedMasterTime = localStorage.getItem(latestMasterKey);
-      console.log('Latest master time key:', latestMasterKey, 'Value:', savedMasterTime);
-    }
-    
-    if (savedMasterTime) {
-      setMasterStartTime(savedMasterTime);
-      console.log('Master start time set to:', savedMasterTime);
-    } else {
-      console.log('No master start time found in localStorage');
-      // Set a default time for testing
-      setMasterStartTime('09:00');
-      console.log('Set default master start time to 09:00');
-    }
+    loadMasterStartTime();
+
   }, [event?.id, eventId]);
 
   // Format master start time to 12-hour format
@@ -246,7 +358,7 @@ const ReportsPage: React.FC = () => {
     };
   };
 
-  // Calculate start time function (same as RunOfShowPage)
+  // Calculate start time function (simple - no overtime adjustments for print reports)
   const calculateStartTime = (index: number) => {
     console.log(`calculateStartTime called with index: ${index}, masterStartTime: ${masterStartTime}`);
     

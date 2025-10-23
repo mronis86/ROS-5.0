@@ -4,6 +4,7 @@ import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
+import { apiClient } from '../services/api-client';
 
 interface ScheduleItem {
   id: number;
@@ -48,7 +49,7 @@ const GreenRoomPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
-  // Removed eventTimezone - using UTC throughout
+  const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
@@ -57,10 +58,60 @@ const GreenRoomPage: React.FC = () => {
   const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
+  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
 
-  // UTC utility functions - simplified approach
+  // UTC utility functions with proper timezone conversion
   const getCurrentTimeUTC = (): Date => {
     return new Date(); // JavaScript Date objects are already UTC internally
+  };
+
+  // Convert a local time to UTC using the event timezone
+  const convertLocalTimeToUTC = (localTime: Date, timezone: string): Date => {
+    try {
+      // Create a date that represents the local time in the event timezone
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const day = now.getDate();
+      
+      // Create a date object for the scheduled time in the event timezone
+      const scheduledDate = new Date(year, month, day, localTime.getHours(), localTime.getMinutes(), 0);
+      
+      // Get the timezone offset for the event timezone
+      const eventTime = new Date(scheduledDate.toLocaleString("en-US", { timeZone: timezone }));
+      const utcTime = new Date(scheduledDate.toLocaleString("en-US", { timeZone: 'UTC' }));
+      const offsetMs = eventTime.getTime() - utcTime.getTime();
+      
+      // Apply the offset to get the correct UTC time
+      const result = new Date(scheduledDate.getTime() - offsetMs);
+      
+      return result;
+    } catch (error) {
+      console.warn('Error converting local time to UTC:', error);
+      return localTime; // Fallback to original time
+    }
+  };
+
+  // Get current time in the event timezone
+  const getCurrentTimeInEventTimezone = (): Date => {
+    if (!eventTimezone) return new Date();
+    try {
+      const now = new Date();
+      const timeStr = now.toLocaleString("en-US", {
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      return new Date(timeStr);
+    } catch (error) {
+      console.warn('Error getting current time in event timezone:', error);
+      return new Date();
+    }
   };
   
   // Track last loaded cue to keep it visible when timer stops
@@ -78,6 +129,17 @@ const GreenRoomPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   // Calculate start time function (same as RunOfShowPage)
   const calculateStartTime = (index: number, scheduleData?: any[], masterStartTimeOverride?: string) => {
@@ -139,7 +201,7 @@ const GreenRoomPage: React.FC = () => {
   };
 
   // Calculate start time with automatic overtime adjustments (same as RunOfShowPage)
-  const calculateStartTimeWithOvertime = (index: number, scheduleData?: any[], masterStartTimeOverride?: string) => {
+  const calculateStartTimeWithOvertime = (index: number, scheduleData?: any[], masterStartTimeOverride?: string, overtimeData?: Record<number, number>, showStartOvertimeData?: number | null, startCueIdData?: number | null, indentedCuesData?: Record<number, any>) => {
     const currentSchedule = scheduleData || schedule;
     const currentItem = currentSchedule[index];
     if (!currentItem) {
@@ -154,27 +216,35 @@ const GreenRoomPage: React.FC = () => {
       return '';
     }
     
-    console.log(`🔄 calculateStartTimeWithOvertime for index ${index}:`, {
-      baseStartTime,
-      overtimeMinutes,
-      showStartOvertime,
-      startCueId,
-      currentItemId: currentItem.id
-    });
+    // Use passed parameters or fall back to state
+    const currentOvertimeMinutes = overtimeData || overtimeMinutes;
+    const currentShowStartOvertime = showStartOvertimeData !== undefined ? (showStartOvertimeData || 0) : showStartOvertime;
+    const currentStartCueId = startCueIdData !== undefined ? startCueIdData : startCueId;
+    const currentIndentedCues = indentedCuesData || indentedCues;
+    
+    // Only log if there's significant overtime data
+    if (Object.keys(currentOvertimeMinutes).length > 0 || currentShowStartOvertime !== 0) {
+      console.log(`🔄 Overtime calculation for ${currentItem.segmentName}:`, {
+        baseStartTime,
+        showStartOvertime: currentShowStartOvertime,
+        currentItemId: currentItem.id
+      });
+    }
     
     // Calculate total overtime from previous cues, but ignore rows ABOVE the STAR
     let totalOvertimeMinutes = 0;
     
     // Find the START cue index to know where to start counting overtime
-    const startCueIndex = startCueId ? currentSchedule.findIndex(s => s.id === startCueId) : -1;
+    const startCueIndex = currentStartCueId ? currentSchedule.findIndex(s => s.id === currentStartCueId) : -1;
     const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
     
-    console.log(`🔄 Overtime calculation:`, {
-      startCueIndex,
-      startCountingFrom,
-      index,
-      scheduleLength: currentSchedule.length
-    });
+    // Only log if there's significant overtime
+    if (Math.abs(currentShowStartOvertime) > 60 || Object.keys(currentOvertimeMinutes).length > 0) {
+      console.log(`🔄 Overtime calculation for ${currentItem.segmentName}:`, {
+        startCueIndex,
+        totalOvertimeMinutes: 0 // Will be calculated below
+      });
+    }
     
     // Only count overtime from START cue onwards (ignore rows above STAR)
     for (let i = startCountingFrom; i < index; i++) {
@@ -182,25 +252,32 @@ const GreenRoomPage: React.FC = () => {
       const itemDay = item.day || 1;
       const currentItemDay = currentItem.day || 1;
       
-      // Only count overtime from the same day
-      if (itemDay === currentItemDay) {
-        const itemOvertime = overtimeMinutes[item.id] || 0;
+      // Only count overtime from the same day and non-indented items
+      if (itemDay === currentItemDay && !currentIndentedCues[item.id]) {
+        const itemOvertime = currentOvertimeMinutes[item.id] || 0;
         totalOvertimeMinutes += itemOvertime;
-        console.log(`  Item ${i} (${item.segmentName}): ${itemOvertime} minutes overtime`);
+        // Only log significant overtime
+        if (Math.abs(itemOvertime) > 5) {
+          console.log(`  ${item.segmentName}: ${itemOvertime} minutes overtime`);
+        }
       }
     }
     
     // Add show start overtime for START cue and all rows after it
-    if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
-      totalOvertimeMinutes += showStartOvertime;
-      console.log(`  Added show start overtime: ${showStartOvertime} minutes`);
+    if (currentShowStartOvertime !== 0 && currentStartCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+      totalOvertimeMinutes += currentShowStartOvertime;
+      if (Math.abs(currentShowStartOvertime) > 60) {
+        console.log(`  Show start overtime: ${currentShowStartOvertime} minutes`);
+      }
     }
     
-    console.log(`🔄 Total overtime: ${totalOvertimeMinutes} minutes`);
+    // Only log significant total overtime
+    if (Math.abs(totalOvertimeMinutes) > 5) {
+      console.log(`🔄 Total overtime: ${totalOvertimeMinutes} minutes`);
+    }
     
     // If no overtime, return the base start time
     if (totalOvertimeMinutes === 0) {
-      console.log(`🔄 No overtime, returning base start time: ${baseStartTime}`);
       return baseStartTime;
     }
     
@@ -226,36 +303,26 @@ const GreenRoomPage: React.FC = () => {
       hour12: true 
     });
     
-    console.log(`🔄 Final result: ${result}`);
+    // Only log final result if there's significant overtime
+    if (Math.abs(totalOvertimeMinutes) > 30) {
+      console.log(`🔄 Final result: ${result} (${totalOvertimeMinutes} min adjustment)`);
+    }
     return result;
   };
 
   // Load master start time and day start times from localStorage
   useEffect(() => {
     if (event?.id) {
-      console.log('🔍 Loading master start time for event ID:', event.id);
       const savedMasterTime = localStorage.getItem(`masterStartTime_${event.id}`);
       const savedDayTimes = localStorage.getItem(`dayStartTimes_${event.id}`);
       
-      console.log('🔍 Raw localStorage values:', {
-        masterStartTime: savedMasterTime,
-        dayStartTimes: savedDayTimes,
-        eventId: event.id
-      });
-      
       if (savedMasterTime) {
         setMasterStartTime(savedMasterTime);
-        console.log('📥 Loaded master start time from localStorage:', savedMasterTime);
       } else {
-        console.log('❌ No master start time found in localStorage for event:', event.id);
-        console.log('🔍 Available localStorage keys:', Object.keys(localStorage).filter(key => key.includes('masterStartTime')));
-        console.log('🔍 All localStorage keys:', Object.keys(localStorage));
-        
         // Try to find any master start time in localStorage
         const allMasterTimes = Object.keys(localStorage)
           .filter(key => key.includes('masterStartTime'))
           .map(key => ({ key, value: localStorage.getItem(key) }));
-        console.log('🔍 All master start times in localStorage:', allMasterTimes);
         
         // Look for the most recent or most likely master start time
         // Priority: 1) Any time that's not 09:00, 2) Any time that looks like PM, 3) First available
@@ -265,29 +332,157 @@ const GreenRoomPage: React.FC = () => {
         const nonDefaultTime = allMasterTimes.find(t => t.value && t.value !== '09:00');
         if (nonDefaultTime) {
           selectedTime = nonDefaultTime;
-          console.log('📥 Found non-default master start time:', nonDefaultTime.value);
         } else {
           // If no non-default time, use the first available
           selectedTime = allMasterTimes.find(t => t.value);
-          console.log('📥 Using first available master start time:', selectedTime?.value);
         }
         
         if (selectedTime && selectedTime.value) {
-          console.log('📥 Setting master start time to:', selectedTime.value);
           setMasterStartTime(selectedTime.value);
-        } else {
-          console.log('❌ No suitable master start time found in localStorage');
-          console.log('🔍 Will try to get master start time from API data...');
         }
       }
+      
       if (savedDayTimes) {
         setDayStartTimes(JSON.parse(savedDayTimes));
-        console.log('📥 Loaded day start times from localStorage:', JSON.parse(savedDayTimes));
-      } else {
-        console.log('❌ No day start times found in localStorage for event:', event.id);
       }
     }
   }, [event?.id]);
+
+  // Lightweight periodic refresh for Green Room (similar to PhotoViewPage)
+  useEffect(() => {
+    if (!event?.id) {
+      return;
+    }
+
+    console.log('🔄 GreenRoom: Setting up 20-second refresh timer for event:', event.id);
+    
+    // 20-second lightweight refresh to ensure data stays current
+    const refreshInterval = setInterval(async () => {
+      console.log('🔄 GreenRoom: 20s refresh - ensuring data is current');
+
+      try {
+        // Reload schedule data and overtime adjustments
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        if (data?.schedule_items) {
+          console.log('🔄 GreenRoom: 20s refresh - reloaded schedule data');
+
+          // Update master start time if it changed
+          const masterStartTimeFromDB = data.settings?.masterStartTime || data.settings?.dayStartTimes?.['1'] || '09:00';
+          if (masterStartTimeFromDB !== masterStartTime) {
+            console.log('🔄 GreenRoom: 20s refresh - updated master start time to:', masterStartTimeFromDB);
+            setMasterStartTime(masterStartTimeFromDB);
+          }
+          
+          // Reload overtime data
+          try {
+            const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
+            const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
+            const indentedCuesData = await DatabaseService.getIndentedCues(event.id);
+            
+            if (overtimeData) {
+              setOvertimeMinutes(overtimeData);
+            }
+            
+            if (showStartOvertimeData !== null) {
+              const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
+              const startCueIdValue = (showStartOvertimeData as any).item_id || showStartOvertimeData.startCueId;
+              setShowStartOvertime(overtimeValue);
+              if (startCueIdValue) {
+                setStartCueId(startCueIdValue);
+              }
+            }
+            
+            if (indentedCuesData && indentedCuesData.length > 0) {
+              const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
+              indentedCuesData.forEach((cue: any) => {
+                indentedCuesMap[cue.item_id] = {
+                  parentId: cue.parent_id,
+                  userId: cue.user_id,
+                  userName: cue.user_name
+                };
+              });
+              setIndentedCues(indentedCuesMap);
+            }
+            
+            // Recalculate schedule with fresh overtime data
+            const formattedSchedule = data.schedule_items.map((item: any) => ({
+              ...item,
+              isPublic: item.isPublic === true || item.isPublic === 'true',
+              // Convert duration_seconds to separate fields
+              durationHours: Math.floor((item.duration_seconds || 0) / 3600),
+              durationMinutes: Math.floor(((item.duration_seconds || 0) % 3600) / 60),
+              durationSeconds: (item.duration_seconds || 0) % 60
+            }));
+            
+            // Recalculate times with overtime adjustments
+            const recalculatedSchedule = formattedSchedule.map((item: any, index: number) => {
+              if (!item) return null;
+              
+              const durationHours = item.durationHours || 0;
+              const durationMinutes = item.durationMinutes || 0;
+              const durationSeconds = item.durationSeconds || 0;
+              const totalMinutes = (durationHours * 60) + durationMinutes + (durationSeconds / 60);
+              const duration = totalMinutes > 0 ? `${Math.round(totalMinutes)} min` : '0 min';
+              
+              const startTime = calculateStartTimeWithOvertime(index, formattedSchedule, masterStartTimeFromDB, overtimeData, overtimeValue, startCueIdValue, indentedCuesMap);
+              let endTime = null;
+              
+              if (startTime && startTime !== '') {
+                let nextItemIndex = index + 1;
+                while (nextItemIndex < formattedSchedule.length) {
+                  const nextItem = formattedSchedule[nextItemIndex];
+                  if (nextItem && !indentedCuesMap[nextItem.id]) {
+                    const nextStartTime = calculateStartTimeWithOvertime(nextItemIndex, formattedSchedule, masterStartTimeFromDB, overtimeData, overtimeValue, startCueIdValue, indentedCuesMap);
+                    if (nextStartTime && nextStartTime !== '') {
+                      endTime = nextStartTime;
+                      break;
+                    }
+                  }
+                  nextItemIndex++;
+                }
+                
+                if (!endTime && totalMinutes > 0) {
+                  const startDate = new Date(`1970-01-01 ${startTime}`);
+                  const endDate = new Date(startDate.getTime() + totalMinutes * 60000);
+                  endTime = endDate.toLocaleTimeString('en-US', { 
+                    hour: 'numeric', 
+                    minute: '2-digit', 
+                    second: '2-digit',
+                    hour12: true 
+                  });
+                } else if (!endTime) {
+                  endTime = 'TBD';
+                }
+              } else {
+                endTime = 'TBD';
+              }
+              
+              return {
+                ...item,
+                startTime,
+                endTime,
+                duration
+              };
+            });
+            
+            setSchedule(recalculatedSchedule);
+            console.log('✅ GreenRoom: 20s refresh - schedule recalculated with overtime adjustments');
+          } catch (error) {
+            console.error('❌ GreenRoom: 20s refresh - error loading overtime data:', error);
+          }
+        }
+      } catch (error) {
+        console.error('❌ GreenRoom: 20s refresh failed:', error);
+      }
+    }, 20000); // 20 seconds
+
+    console.log('🔄 GreenRoom: 20-second refresh interval created');
+
+    return () => {
+      console.log('🧹 GreenRoom: Cleaning up 20-second refresh timer');
+      clearInterval(refreshInterval);
+    };
+  }, [event?.id, masterStartTime]);
 
   // Update current time every second
   useEffect(() => {
@@ -303,26 +498,15 @@ const GreenRoomPage: React.FC = () => {
     if (!event?.id) return;
 
     try {
-      console.log('🔄 Loading active timer for Green Room...');
       const activeTimer = await DatabaseService.getActiveTimer(event.id);
       
       if (activeTimer) {
-        console.log('🔄 Active timer found:', activeTimer);
-        console.log('🔄 Timer state:', activeTimer.timer_state);
-        console.log('🔄 Item ID:', activeTimer.item_id);
-        
         setActiveItemId(parseInt(activeTimer.item_id));
         setTimerState(activeTimer.timer_state); // 'loaded' or 'running'
         setLastLoadedCueId(parseInt(activeTimer.item_id)); // Track last loaded cue
         
         // Mark this item as loaded
         setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
-        console.log('🔄 Set loaded items:', { [parseInt(activeTimer.item_id)]: true });
-        
-        // Drift detection removed - WebSocket handles all timer synchronization
-        if (activeTimer.timer_state === 'running' && activeTimer.started_at) {
-          console.log(`🔄 Green Room: Timer ${activeTimer.item_id} is running - WebSocket will handle updates`);
-        }
         
         // Use elapsed_seconds from database (already calculated)
         setTimerProgress({
@@ -333,7 +517,6 @@ const GreenRoomPage: React.FC = () => {
           }
         });
       } else {
-        console.log('🔄 No active timer found');
         setActiveItemId(null);
         setTimerState(null);
         setLoadedItems({}); // Clear all loaded items
@@ -488,24 +671,14 @@ const GreenRoomPage: React.FC = () => {
         console.log('✅ Green Room: All states cleared via reset');
       },
       onScheduleUpdated: (data: any) => {
-        console.log('📡 Green Room: Schedule updated via WebSocket - checking if reload needed');
-        // Only reload if the update affects public items visibility
-        if (data && (data.publicItemsChanged || data.isPublicChanged)) {
-          console.log('📡 Green Room: Public items changed, reloading schedule');
-          loadSchedule();
-        } else {
-          console.log('📡 Green Room: Schedule update does not affect public items, skipping reload');
-        }
+        console.log('📡 Green Room: Schedule updated via WebSocket - reloading schedule');
+        // Always reload on schedule updates to catch public status changes
+        loadSchedule();
       },
       onRunOfShowDataUpdated: (data: any) => {
-        console.log('📡 Green Room: Run of show data updated via WebSocket - checking if reload needed');
-        // Only reload if the update affects public items visibility
-        if (data && (data.publicItemsChanged || data.isPublicChanged)) {
-          console.log('📡 Green Room: Public items changed, reloading schedule');
-          loadSchedule();
-        } else {
-          console.log('📡 Green Room: Schedule update does not affect public items, skipping reload');
-        }
+        console.log('📡 Green Room: Run of show data updated via WebSocket - reloading schedule');
+        // Always reload on schedule updates to catch public status changes
+        loadSchedule();
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 Green Room WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
@@ -639,28 +812,65 @@ const GreenRoomPage: React.FC = () => {
 
   // Load schedule data
   const loadSchedule = async () => {
-    console.log('🔄 Green Room loadSchedule called');
-    console.log('🔄 Event object:', event);
-    console.log('🔄 Event ID from URL params:', eventId);
-    console.log('🔄 Event ID from event object:', event?.id);
-    
     // Try to get event ID from event object or URL params
     const currentEventId = event?.id || eventId;
     
     if (!currentEventId) {
-      console.log('❌ No event ID found in event object or URL params');
       setError('No event selected');
       setIsLoading(false);
       return;
     }
-    
-    console.log('🔄 Using event ID:', currentEventId);
 
     try {
-      console.log('🔄 Loading schedule for Green Room...');
-      console.log('🔄 Event details:', { id: currentEventId, name: event.name, location: event.location });
+      // Clear cache to ensure fresh data
+      apiClient.cache.delete(`runOfShowData_${currentEventId}`);
+      console.log('🔄 Cleared cache for run of show data');
+      
       const data = await DatabaseService.getRunOfShowData(currentEventId);
-      console.log('🔄 Raw data received:', data);
+      
+      // Load overtime data FIRST before processing schedule
+      let freshOvertimeData: Record<number, number> = {};
+      let freshShowStartOvertime = 0;
+      let freshStartCueId: number | null = null;
+      let freshIndentedCues: Record<number, any> = {};
+      
+      try {
+        console.log('⏰ GreenRoom: Loading overtime data from dedicated endpoints...');
+        const overtimeData = await DatabaseService.getOvertimeMinutes(currentEventId);
+        const showStartOvertimeData = await DatabaseService.getShowStartOvertime(currentEventId);
+        const indentedCuesData = await DatabaseService.getIndentedCues(currentEventId);
+        
+        if (overtimeData) {
+          freshOvertimeData = overtimeData;
+          setOvertimeMinutes(overtimeData);
+          console.log('✅ GreenRoom: Loaded overtime data:', overtimeData);
+        }
+        
+        if (showStartOvertimeData !== null) {
+          const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
+          freshShowStartOvertime = overtimeValue;
+          setShowStartOvertime(overtimeValue);
+          if (overtimeValue !== 0) {
+            console.log('✅ GreenRoom: Loaded show start overtime:', overtimeValue);
+          }
+        }
+        
+        if (indentedCuesData && indentedCuesData.length > 0) {
+          const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
+          indentedCuesData.forEach((cue: any) => {
+            indentedCuesMap[cue.item_id] = {
+              parentId: cue.parent_id,
+              userId: cue.user_id,
+              userName: cue.user_name
+            };
+          });
+          freshIndentedCues = indentedCuesMap;
+          setIndentedCues(indentedCuesMap);
+          console.log('✅ GreenRoom: Loaded indented cues:', indentedCuesData.length);
+        }
+      } catch (error) {
+        console.error('❌ Error loading overtime data from dedicated endpoints:', error);
+      }
       
       // Load master start time from API data (prioritize database over localStorage)
       let effectiveMasterStartTime = masterStartTime; // Default to current state
@@ -680,7 +890,13 @@ const GreenRoomPage: React.FC = () => {
         // Keep the localStorage value if no database value found
       }
       
-      // Timezone handling removed - using UTC throughout
+      // Load timezone from settings
+      if (data.settings?.timezone) {
+        setEventTimezone(data.settings.timezone);
+        console.log('🌍 GreenRoom: Loaded timezone from settings:', data.settings.timezone);
+      } else {
+        console.log('🌍 GreenRoom: No timezone found in settings, using default:', eventTimezone);
+      }
       
       // Load day start times from API data
       if (data && data.settings && data.settings.dayStartTimes) {
@@ -694,6 +910,12 @@ const GreenRoomPage: React.FC = () => {
         setOvertimeMinutes(data.overtime_minutes);
       }
       
+      // Load indented cues data
+      if (data && data.indented_cues) {
+        console.log('🟠 Loaded indented cues:', data.indented_cues);
+        setIndentedCues(data.indented_cues);
+      }
+      
       // Load show start overtime and start cue ID
       if (data && data.show_start_overtime !== undefined) {
         console.log('⭐ Loaded show start overtime:', data.show_start_overtime);
@@ -705,8 +927,10 @@ const GreenRoomPage: React.FC = () => {
         setStartCueId(data.start_cue_id);
       }
       
+      
       if (data?.schedule_items) {
         console.log('🔄 Total schedule items found:', data.schedule_items.length);
+        
         
         // Determine number of days from schedule data OR dayStartTimes
         const days = data.schedule_items.map((item: any) => item.day || 1);
@@ -736,6 +960,34 @@ const GreenRoomPage: React.FC = () => {
         // Set the schedule first so it's available for time calculations
         setSchedule(data.schedule_items);
         
+        // Load START CUE ID from schedule items (same as PhotoViewPage)
+        const startCueItem = data.schedule_items.find((item: any) => item.isStartCue === true);
+        if (startCueItem) {
+          freshStartCueId = startCueItem.id;
+          setStartCueId(startCueItem.id);
+          console.log('⭐ GreenRoom: START cue marker found in schedule:', startCueItem.id);
+        } else {
+          freshStartCueId = null;
+          setStartCueId(null);
+          console.log('⭐ GreenRoom: No START cue marker found in schedule');
+        }
+        
+        // Load last loaded cue from database (when no active timer)
+        try {
+          console.log('📜 GreenRoom: Loading last loaded cue from database...');
+          const lastLoadedCueData = await DatabaseService.getLastLoadedCue(currentEventId);
+          if (lastLoadedCueData?.data && lastLoadedCueData.data.item_id) {
+            setLastLoadedCueId(lastLoadedCueData.data.item_id);
+            setActiveItemId(lastLoadedCueData.data.item_id);
+            setLoadedItems({ [lastLoadedCueData.data.item_id]: true });
+            console.log('📜 GreenRoom: Last loaded cue restored from database:', lastLoadedCueData.data.item_id);
+          } else {
+            console.log('📜 GreenRoom: No last loaded cue found in database');
+          }
+        } catch (error) {
+          console.error('❌ GreenRoom: Error loading last loaded cue:', error);
+        }
+        
         // First, calculate all start times for the complete schedule (not just public items)
         // This ensures all times are recalculated when any duration changes
         const allItemsWithTimes = data.schedule_items.map((item: any, index: number) => {
@@ -753,7 +1005,8 @@ const GreenRoomPage: React.FC = () => {
           const duration = totalMinutes > 0 ? `${Math.round(totalMinutes)} min` : '0 min';
           
           // Calculate start time using the same logic as RunOfShowPage (with overtime)
-          const startTime = calculateStartTimeWithOvertime(index, data.schedule_items, effectiveMasterStartTime);
+          // Use the freshly loaded overtime data directly
+          const startTime = calculateStartTimeWithOvertime(index, data.schedule_items, effectiveMasterStartTime, freshOvertimeData, freshShowStartOvertime, freshStartCueId, freshIndentedCues);
           let endTime = null;
           
           console.log(`🔄 Calculated start time for ${item.segmentName} (index ${index}):`, {
@@ -772,8 +1025,8 @@ const GreenRoomPage: React.FC = () => {
             let nextItemIndex = index + 1;
             while (nextItemIndex < data.schedule_items.length) {
               const nextItem = data.schedule_items[nextItemIndex];
-              if (nextItem && !nextItem.isIndented) {
-                    const nextStartTime = calculateStartTimeWithOvertime(nextItemIndex, data.schedule_items, effectiveMasterStartTime);
+              if (nextItem && !freshIndentedCues[nextItem.id]) {
+                    const nextStartTime = calculateStartTimeWithOvertime(nextItemIndex, data.schedule_items, effectiveMasterStartTime, freshOvertimeData, freshShowStartOvertime, freshStartCueId, freshIndentedCues);
                 if (nextStartTime && nextStartTime !== '') {
                   endTime = nextStartTime;
                   break;
@@ -806,10 +1059,11 @@ const GreenRoomPage: React.FC = () => {
             startTime,
             endTime,
             duration,
-            isPublic: item.isPublic || false
+            isPublic: item.isPublic === true || item.isPublic === 'true'
           };
         }).filter(item => item !== null); // Remove null items
 
+        
         // Now filter to only show public items, but with correct times already calculated
         const formattedSchedule = allItemsWithTimes.filter((item: any) => item && item.isPublic === true);
         console.log('🔄 Public items found after time calculation:', formattedSchedule.length);
@@ -855,6 +1109,78 @@ const GreenRoomPage: React.FC = () => {
     loadSchedule();
   }, [event?.id]);
 
+  // Recalculate schedule when overtime changes
+  useEffect(() => {
+    if (schedule.length > 0) {
+      console.log('🔄 Recalculating schedule due to overtime changes:', {
+        overtimeMinutes,
+        showStartOvertime,
+        startCueId,
+        indentedCues
+      });
+      
+      // Recalculate all start and end times
+      const recalculatedSchedule = schedule.map((item: any, index: number) => {
+        if (!item) return null;
+        
+        // Calculate duration in minutes with safe defaults
+        const durationHours = item.durationHours || 0;
+        const durationMinutes = item.durationMinutes || 0;
+        const durationSeconds = item.durationSeconds || 0;
+        const totalMinutes = (durationHours * 60) + durationMinutes + (durationSeconds / 60);
+        const duration = totalMinutes > 0 ? `${Math.round(totalMinutes)} min` : '0 min';
+        
+        // Calculate start time using the same logic as RunOfShowPage (with overtime)
+        const startTime = calculateStartTimeWithOvertime(index, schedule, masterStartTime);
+        let endTime = null;
+        
+        // Calculate end time as the start time of the next row
+        if (startTime && startTime !== '') {
+          // Find the next non-indented item
+          let nextItemIndex = index + 1;
+          while (nextItemIndex < schedule.length) {
+            const nextItem = schedule[nextItemIndex];
+            if (nextItem && !indentedCues[nextItem.id]) {
+              const nextStartTime = calculateStartTimeWithOvertime(nextItemIndex, schedule, masterStartTime);
+              if (nextStartTime && nextStartTime !== '') {
+                endTime = nextStartTime;
+                break;
+              }
+            }
+            nextItemIndex++;
+          }
+          
+          // If no next item found, calculate based on duration
+          if (!endTime && totalMinutes > 0) {
+            // Parse the start time and add duration
+            const startDate = new Date(`1970-01-01 ${startTime}`);
+            const endDate = new Date(startDate.getTime() + totalMinutes * 60000);
+            endTime = endDate.toLocaleTimeString('en-US', { 
+              hour: 'numeric', 
+              minute: '2-digit', 
+              second: '2-digit',
+              hour12: true 
+            });
+          } else if (!endTime) {
+            endTime = 'TBD';
+          }
+        } else {
+          // No start time available
+          endTime = 'TBD';
+        }
+        
+        return {
+          ...item,
+          startTime,
+          endTime,
+          duration
+        };
+      });
+      
+      setSchedule(recalculatedSchedule);
+    }
+  }, [overtimeMinutes, showStartOvertime, startCueId, indentedCues, masterStartTime]);
+
   // WebSocket connection for schedule changes
   useEffect(() => {
     if (!event?.id) return;
@@ -877,6 +1203,10 @@ const GreenRoomPage: React.FC = () => {
         if (data && data.overtime_minutes) {
           console.log('⏰ Green Room: Updating overtime minutes via WebSocket:', data.overtime_minutes);
           setOvertimeMinutes(data.overtime_minutes);
+        }
+        if (data && data.indented_cues) {
+          console.log('🟠 Green Room: Updating indented cues via WebSocket:', data.indented_cues);
+          setIndentedCues(data.indented_cues);
         }
         if (data && data.show_start_overtime !== undefined) {
           console.log('⭐ Green Room: Updating show start overtime via WebSocket:', data.show_start_overtime);
@@ -1068,8 +1398,7 @@ const GreenRoomPage: React.FC = () => {
     const finishTime = new Date(progress.startedAt.getTime() + progress.total * 1000);
     return finishTime.toLocaleTimeString('en-US', { 
       hour: 'numeric', 
-      minute: '2-digit', 
-      second: '2-digit',
+      minute: '2-digit',
       hour12: true 
     });
   };
@@ -1259,27 +1588,41 @@ const GreenRoomPage: React.FC = () => {
       
       {/* Content Overlay */}
       <div className="relative z-10">
-        {/* Day Selector for Multiday Events */}
-        {numberOfDays > 1 && (
-          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3">
-            <select
-              value={selectedDay}
-              onChange={(e) => {
-                const day = parseInt(e.target.value);
-                setSelectedDay(day);
-                // Update master start time for selected day
-                if (dayStartTimes[day]) {
-                  setMasterStartTime(dayStartTimes[day]);
-                }
+        {/* Fullscreen Button and Day Selector Stacked - Hidden in Fullscreen */}
+        {!isFullscreen && (
+          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2">
+            {/* Fullscreen Button */}
+            <button
+              onClick={() => {
+                document.documentElement.requestFullscreen();
               }}
-              className="bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-lg"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded border border-blue-500 text-lg transition-colors w-full"
+              title="Enter Fullscreen"
             >
-              {Array.from({ length: numberOfDays }, (_, i) => i + 1).map(day => (
-                <option key={day} value={day}>
-                  Day {day}
-                </option>
-              ))}
-            </select>
+              Fullscreen
+            </button>
+
+            {/* Day Selector for Multiday Events */}
+            {numberOfDays > 1 && (
+              <select
+                value={selectedDay}
+                onChange={(e) => {
+                  const day = parseInt(e.target.value);
+                  setSelectedDay(day);
+                  // Update master start time for selected day
+                  if (dayStartTimes[day]) {
+                    setMasterStartTime(dayStartTimes[day]);
+                  }
+                }}
+                className="bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-lg"
+              >
+                {Array.from({ length: numberOfDays }, (_, i) => i + 1).map(day => (
+                  <option key={day} value={day}>
+                    Day {day}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         )}
         {/* Drift Status Indicator - Top Left Corner */}
@@ -1350,7 +1693,7 @@ const GreenRoomPage: React.FC = () => {
                 isLoaded
                   ? isRunning
                     ? 'bg-red-600 text-white'
-                    : 'bg-green-600 text-white'
+                    : 'bg-gray-300 text-gray-700' // Remove green highlight for loaded but not running cues
                   : 'bg-gray-300 text-gray-700'
               }`}
             >

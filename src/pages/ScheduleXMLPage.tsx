@@ -131,9 +131,23 @@ const ScheduleXMLPage: React.FC = () => {
 
       const scheduleItemsData: ScheduleItem[] = [];
       const items = data.schedule_items;
-      const masterStartTime = data.settings?.masterStartTime || '';
-
+      
+      // Check for master start time in different locations (same as ReportsPage)
+      let masterStartTime = '';
+      if (data.settings?.masterStartTime) {
+        masterStartTime = data.settings.masterStartTime;
+      } else if (data.settings?.dayStartTimes?.['1']) {
+        masterStartTime = data.settings.dayStartTimes['1'];
+      } else if (data.schedule_items && data.schedule_items.length > 0) {
+        // Check if the first item has a start time that might be the master start time
+        const firstItem = data.schedule_items[0];
+        if (firstItem.startTime) {
+          masterStartTime = firstItem.startTime;
+        }
+      }
+      
       console.log('📊 Total schedule items:', items.length);
+      console.log('✅ ScheduleXML: Master start time from API:', masterStartTime);
 
       // Process all items (like Lower Thirds page does)
       items.forEach((item: any, index: number) => {
@@ -187,7 +201,20 @@ const ScheduleXMLPage: React.FC = () => {
           // Process the updated data
           const scheduleItemsData: ScheduleItem[] = [];
           const items = data.schedule_items;
-          const masterStartTime = data.settings?.masterStartTime || '';
+          
+          // Check for master start time in different locations (same as ReportsPage)
+          let masterStartTime = '';
+          if (data.settings?.masterStartTime) {
+            masterStartTime = data.settings.masterStartTime;
+          } else if (data.settings?.dayStartTimes?.['1']) {
+            masterStartTime = data.settings.dayStartTimes['1'];
+          } else if (data.schedule_items && data.schedule_items.length > 0) {
+            // Check if the first item has a start time that might be the master start time
+            const firstItem = data.schedule_items[0];
+            if (firstItem.startTime) {
+              masterStartTime = firstItem.startTime;
+            }
+          }
 
           // Process all items (like Lower Thirds page does)
           items.forEach((item: any, index: number) => {

@@ -48,12 +48,61 @@ const PhotoViewPage: React.FC = () => {
 
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
-  // Removed eventTimezone - using UTC throughout
+  const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
   const [isLoading, setIsLoading] = useState(true);
   
-  // UTC utility functions - simplified approach
+  // UTC utility functions with proper timezone conversion
   const getCurrentTimeUTC = (): Date => {
     return new Date(); // JavaScript Date objects are already UTC internally
+  };
+
+  // Convert a local time to UTC using the event timezone
+  const convertLocalTimeToUTC = (localTime: Date, timezone: string): Date => {
+    try {
+      // Create a date that represents the local time in the event timezone
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const day = now.getDate();
+      
+      // Create a date object for the scheduled time in the event timezone
+      const scheduledDate = new Date(year, month, day, localTime.getHours(), localTime.getMinutes(), 0);
+      
+      // Get the timezone offset for the event timezone
+      const eventTime = new Date(scheduledDate.toLocaleString("en-US", { timeZone: timezone }));
+      const utcTime = new Date(scheduledDate.toLocaleString("en-US", { timeZone: 'UTC' }));
+      const offsetMs = eventTime.getTime() - utcTime.getTime();
+      
+      // Apply the offset to get the correct UTC time
+      const result = new Date(scheduledDate.getTime() - offsetMs);
+      
+      return result;
+    } catch (error) {
+      console.warn('Error converting local time to UTC:', error);
+      return localTime; // Fallback to original time
+    }
+  };
+
+  // Get current time in the event timezone
+  const getCurrentTimeInEventTimezone = (): Date => {
+    if (!eventTimezone) return new Date();
+    try {
+      const now = new Date();
+      const timeStr = now.toLocaleString("en-US", {
+        timeZone: eventTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      return new Date(timeStr);
+    } catch (error) {
+      console.warn('Error getting current time in event timezone:', error);
+      return new Date();
+    }
   };
 
   // Calculate base start time for an item
@@ -1349,8 +1398,13 @@ const PhotoViewPage: React.FC = () => {
           if (data?.schedule_items) {
             console.log('✅ Loaded from API:', data);
             
-            // Timezone handling removed - using UTC throughout
-            console.log('🌍 PhotoView: Using UTC throughout');
+            // Load timezone from settings
+            if (data.settings?.timezone) {
+              setEventTimezone(data.settings.timezone);
+              console.log('🌍 PhotoView: Loaded timezone from settings:', data.settings.timezone);
+            } else {
+              console.log('🌍 PhotoView: No timezone found in settings, using default:', eventTimezone);
+            }
             
             // Load master start time from database settings
             const masterStartTimeFromDB = data.settings?.masterStartTime || data.settings?.dayStartTimes?.['1'] || '09:00';
@@ -1872,9 +1926,15 @@ const PhotoViewPage: React.FC = () => {
                                 const showStartOT = showStartOvertime || 0;
                                 
                                 if (showStartOT > 0) {
-                                  return `+${showStartOT}m late`;
+                                  const hours = Math.floor(showStartOT / 60);
+                                  const minutes = showStartOT % 60;
+                                  const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                  return `+${timeDisplay} late`;
                                 } else if (showStartOT < 0) {
-                                  return `-${Math.abs(showStartOT)}m early`;
+                                  const hours = Math.floor(Math.abs(showStartOT) / 60);
+                                  const minutes = Math.abs(showStartOT) % 60;
+                                  const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                  return `-${timeDisplay} early`;
                                 }
                                 return 'On time';
                               }
@@ -1897,7 +1957,18 @@ const PhotoViewPage: React.FC = () => {
                                   totalOvertime += showStartOvertime;
                                 }
                               }
-                              return totalOvertime > 0 ? `+${totalOvertime}m` : `${totalOvertime}m`;
+                              if (totalOvertime > 0) {
+                                const hours = Math.floor(totalOvertime / 60);
+                                const minutes = totalOvertime % 60;
+                                const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                return `+${timeDisplay}`;
+                              } else if (totalOvertime < 0) {
+                                const hours = Math.floor(Math.abs(totalOvertime) / 60);
+                                const minutes = Math.abs(totalOvertime) % 60;
+                                const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                                return `-${timeDisplay}`;
+                              }
+                              return '0m';
                             })()}
                           </div>
                         )}

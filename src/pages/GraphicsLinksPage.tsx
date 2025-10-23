@@ -359,16 +359,40 @@ const GraphicsLinksPage: React.FC = () => {
     console.log('🔍 Current schedule data:', currentSchedule);
     console.log('🔍 Schedule length:', currentSchedule.length);
     
-    // Get master start time from localStorage
+    // Get master start time from API data (same as ReportsPage)
     let masterStartTime = '';
-    const keys = Object.keys(localStorage);
-    const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
-    
-    if (masterTimeKeys.length > 0) {
-      const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
-      const savedMasterTime = localStorage.getItem(latestMasterKey);
-      if (savedMasterTime) {
-        masterStartTime = savedMasterTime;
+    try {
+      if (event?.id) {
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        
+        // Check for master start time in different locations
+        if (data?.settings?.masterStartTime) {
+          masterStartTime = data.settings.masterStartTime;
+        } else if (data?.settings?.dayStartTimes?.['1']) {
+          masterStartTime = data.settings.dayStartTimes['1'];
+        } else if (data?.schedule_items && data.schedule_items.length > 0) {
+          // Check if the first item has a start time that might be the master start time
+          const firstItem = data.schedule_items[0];
+          if (firstItem.startTime) {
+            masterStartTime = firstItem.startTime;
+          }
+        }
+        
+        console.log('📥 GraphicsLinks: Master start time from API:', masterStartTime);
+      }
+    } catch (error) {
+      console.log('⚠️ GraphicsLinks: Error loading master start time from API, falling back to localStorage:', error);
+      
+      // Fallback to localStorage
+      const keys = Object.keys(localStorage);
+      const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
+      
+      if (masterTimeKeys.length > 0) {
+        const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
+        const savedMasterTime = localStorage.getItem(latestMasterKey);
+        if (savedMasterTime) {
+          masterStartTime = savedMasterTime;
+        }
       }
     }
     
