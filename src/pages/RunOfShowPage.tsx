@@ -2425,17 +2425,22 @@ const RunOfShowPage: React.FC = () => {
   
   // Show toast when a timer starts and auto-close after 20 seconds
   useEffect(() => {
-    // Toast useEffect triggered
+    console.log('🍞 Toast useEffect triggered:', {
+      activeTimersCount: Object.keys(activeTimers).length,
+      activeTimers,
+      timeToastEnabled,
+      scheduleLength: schedule.length
+    });
     
     if (Object.keys(activeTimers).length === 0) {
-      // No active timers, hiding toast
+      console.log('🍞 Toast: No active timers, hiding toast');
       setShowTimeToast(false);
       return;
     }
     
     // Only show toast if it's enabled
     if (!timeToastEnabled) {
-      // Toast disabled by user
+      console.log('🍞 Toast: Toast disabled by user');
       return;
     }
     
@@ -4811,7 +4816,6 @@ const RunOfShowPage: React.FC = () => {
     
     const callbacks = {
       onRunOfShowDataUpdated: (data: any) => {
-        console.log('📡 Real-time: Run of show data updated via WebSocket');
         
         // Skip if this update was made by the current user (prevent save loops)
         if (data && data.last_modified_by === user?.id) {
@@ -4870,11 +4874,9 @@ const RunOfShowPage: React.FC = () => {
         }, 100); // 100ms delay for consistency
       },
       onCompletedCuesUpdated: (data: any) => {
-        console.log('📡 Real-time: Completed cues updated via WebSocket');
         // Update completed cues state directly from WebSocket data - no API polling needed!
         if (data && data.cleared) {
           // All completed cues cleared (from reset button)
-          console.log('📡 Real-time: All completed cues cleared via WebSocket');
           setCompletedCues({});
         } else if (data && data.removed && data.item_id) {
           // Remove completed cue
@@ -4899,7 +4901,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onResetAllStates: (data: any) => {
-        console.log('📡 Real-time: Reset all states received via WebSocket');
         // Clear all states when reset is triggered from another browser
         setActiveTimers({});
         setSubCueTimers({});
@@ -4919,14 +4920,12 @@ const RunOfShowPage: React.FC = () => {
         console.log('✅ RunOfShow: All states reset via WebSocket');
       },
       onOvertimeReset: (data: any) => {
-        console.log('📡 Real-time: Overtime reset received via WebSocket');
         if (data && data.event_id === event?.id) {
           setOvertimeMinutes({});
           console.log('✅ Overtime data cleared from WebSocket reset');
         }
       },
       onTimerUpdated: (data: any) => {
-        console.log('📡 Real-time: Timer updated via WebSocket');
         console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
         if (data && data.event_id === event?.id) {
           // Update hybrid timer data directly from WebSocket (ClockPage style)
@@ -4988,7 +4987,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimerStopped: (data: any) => {
-        console.log('📡 Real-time: Timer stopped via WebSocket');
         if (data && data.event_id === event?.id) {
           // Clear hybrid timer data when stopped (ClockPage style)
           setHybridTimerData(prev => ({
@@ -4999,7 +4997,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimersStopped: (data: any) => {
-        console.log('📡 Real-time: All timers stopped via WebSocket');
         if (data && data.event_id === event?.id) {
           // Clear hybrid timer data when all stopped (ClockPage style)
           setHybridTimerData(prev => ({
@@ -5013,7 +5010,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimerStarted: (data: any) => {
-        console.log('📡 Real-time: Timer started via WebSocket');
         // Update timer state when started
         if (data && data.item_id) {
           setActiveTimers(prev => ({
@@ -5023,7 +5019,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onSubCueTimerStarted: (data: any) => {
-        console.log('📡 Real-time: Sub-cue timer started via WebSocket');
         if (data && data.event_id === event?.id) {
           // Update hybrid timer data with sub-cue timer (ClockPage style)
           setHybridTimerData(prev => ({
@@ -5034,7 +5029,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onSubCueTimerStopped: (data: any) => {
-        console.log('📡 Real-time: Sub-cue timer stopped via WebSocket');
         if (data && data.event_id === event?.id) {
           // Clear hybrid timer data sub-cue timer (ClockPage style)
           setHybridTimerData(prev => ({
@@ -5058,7 +5052,6 @@ const RunOfShowPage: React.FC = () => {
         });
       },
       onActiveTimersUpdated: (data: any) => {
-        console.log('📡 Real-time: Active timers updated via WebSocket');
         
         // Handle array format (from server broadcast) - ClockPage style
         let timerData = data;
@@ -5140,7 +5133,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onOvertimeUpdate: (data: any) => {
-        console.log('📡 Real-time: Overtime update received via WebSocket', {
           received_data: data,
           expected_event_id: event?.id,
           event_id_match: data?.event_id === event?.id,
