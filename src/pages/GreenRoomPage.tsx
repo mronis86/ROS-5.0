@@ -872,6 +872,7 @@ const GreenRoomPage: React.FC = () => {
     const callbacks = {
       onRunOfShowDataUpdated: (data: any) => {
         console.log('📡 Green Room: Run of show data updated via WebSocket');
+        console.log('📡 Green Room: Full WebSocket data received:', data);
         // Update schedule data directly from WebSocket
         if (data && data.schedule_items) {
           setSchedule(data.schedule_items);
@@ -879,6 +880,50 @@ const GreenRoomPage: React.FC = () => {
         // Update master start time if provided
         if (data && data.settings && data.settings.masterStartTime) {
           setMasterStartTime(data.settings.masterStartTime);
+        }
+        // Update overtime data if provided
+        if (data && data.overtime_minutes) {
+          console.log('⏰ Green Room: Updating overtime minutes via WebSocket:', data.overtime_minutes);
+          setOvertimeMinutes(data.overtime_minutes);
+        }
+        if (data && data.show_start_overtime !== undefined) {
+          console.log('⭐ Green Room: Updating show start overtime via WebSocket:', data.show_start_overtime);
+          setShowStartOvertime(data.show_start_overtime);
+        }
+        if (data && data.start_cue_id !== undefined) {
+          console.log('🎯 Green Room: Updating start cue ID via WebSocket:', data.start_cue_id);
+          setStartCueId(data.start_cue_id);
+        }
+        // Debug: Log what overtime data we have after update
+        console.log('📡 Green Room: Current overtime state after WebSocket update:', {
+          overtimeMinutes: data?.overtime_minutes,
+          showStartOvertime: data?.show_start_overtime,
+          startCueId: data?.start_cue_id
+        });
+      },
+      onOvertimeUpdate: (data: any) => {
+        console.log('⏰ Green Room: Overtime update received via WebSocket:', data);
+        if (data && data.item_id && data.overtimeMinutes !== undefined) {
+          setOvertimeMinutes(prev => {
+            const updated = {
+              ...prev,
+              [data.item_id]: data.overtimeMinutes
+            };
+            console.log('⏰ Green Room: Updated overtime state:', updated);
+            return updated;
+          });
+          console.log(`✅ Green Room: Updated overtime for item ${data.item_id} to ${data.overtimeMinutes} minutes`);
+        }
+      },
+      onShowStartOvertimeUpdate: (data: any) => {
+        console.log('⭐ Green Room: Show start overtime update received via WebSocket:', data);
+        if (data && data.showStartOvertime !== undefined) {
+          setShowStartOvertime(data.showStartOvertime);
+          console.log(`✅ Green Room: Updated show start overtime to ${data.showStartOvertime} minutes`);
+        }
+        if (data && data.item_id) {
+          setStartCueId(data.item_id);
+          console.log(`✅ Green Room: Updated start cue ID to ${data.item_id}`);
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -937,6 +982,14 @@ const GreenRoomPage: React.FC = () => {
 
   // Dynamically modify isPublic to hide items above the current one
   const publicSchedule = useMemo(() => {
+    console.log('🔄 publicSchedule useMemo triggered with dependencies:', {
+      scheduleLength: schedule.length,
+      selectedDay,
+      activeItemId,
+      overtimeMinutesKeys: Object.keys(overtimeMinutes),
+      showStartOvertime,
+      startCueId
+    });
     // First filter by selected day
     const dayFilteredSchedule = schedule.filter(item => item.day === selectedDay);
     
@@ -957,10 +1010,22 @@ const GreenRoomPage: React.FC = () => {
     
     // If we have an active item, show only from that item onwards
     if (currentIndex >= 0) {
-      const visibleItems = dayFilteredSchedule.slice(currentIndex).map(item => ({
-        ...item,
-        isPublic: true // Force all items from current onwards to be visible
-      }));
+      const visibleItems = dayFilteredSchedule.slice(currentIndex).map((item, index) => {
+        // Recalculate start time with current overtime data
+        const originalIndex = schedule.findIndex(s => s.id === item.id);
+        console.log(`🔄 Recalculating start time for ${item.segmentName} (index ${originalIndex}) with overtime:`, {
+          overtimeMinutes,
+          showStartOvertime,
+          startCueId
+        });
+        const startTime = calculateStartTimeWithOvertime(originalIndex, schedule);
+        
+        return {
+          ...item,
+          isPublic: true, // Force all items from current onwards to be visible
+          startTime: startTime // Update with recalculated start time
+        };
+      });
       
       console.log('🔄 Showing items from current onwards:', {
         currentIndex,
@@ -971,14 +1036,28 @@ const GreenRoomPage: React.FC = () => {
     }
     
     // If no active item, show all public items (fallback behavior)
-    const visibleItems = dayFilteredSchedule.filter(item => item.isPublic === true);
+    const visibleItems = dayFilteredSchedule.filter(item => item.isPublic === true).map(item => {
+      // Recalculate start time with current overtime data
+      const originalIndex = schedule.findIndex(s => s.id === item.id);
+      console.log(`🔄 Recalculating start time for ${item.segmentName} (index ${originalIndex}) with overtime:`, {
+        overtimeMinutes,
+        showStartOvertime,
+        startCueId
+      });
+      const startTime = calculateStartTimeWithOvertime(originalIndex, schedule);
+      
+      return {
+        ...item,
+        startTime: startTime // Update with recalculated start time
+      };
+    });
     
     console.log('🔄 No active item, showing all public items:', {
       visibleItems: visibleItems.map(item => ({ id: item.id, name: item.segmentName }))
     });
     
     return visibleItems;
-  }, [schedule, selectedDay, activeItemId]);
+  }, [schedule, selectedDay, activeItemId, overtimeMinutes, showStartOvertime, startCueId]);
 
   // Calculate expected finish time from active timer
   const getExpectedFinishTime = () => {
