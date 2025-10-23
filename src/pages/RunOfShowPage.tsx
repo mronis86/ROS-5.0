@@ -580,7 +580,7 @@ const RunOfShowPage: React.FC = () => {
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
   const [selectedDay, setSelectedDay] = useState<number>(1);
-  const [eventTimezone, setEventTimezone] = useState('America/New_York');
+  // Removed eventTimezone - using UTC throughout
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -793,32 +793,9 @@ const RunOfShowPage: React.FC = () => {
     return null;
   };
 
-  // Timezone utility functions
-  const convertToEventTimezone = (date: Date): Date => {
-    if (!eventTimezone) return date;
-    
-    try {
-      // Convert the date to the event's timezone
-      const timeInEventTz = new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
-      return timeInEventTz;
-    } catch (error) {
-      console.warn('Error converting to event timezone:', error);
-      return date;
-    }
-  };
-
-  const getCurrentTimeInEventTimezone = (): Date => {
-    if (!eventTimezone) return new Date();
-    
-    try {
-      // Get current time in the event's timezone
-      const now = new Date();
-      const timeInEventTz = new Date(now.toLocaleString("en-US", { timeZone: eventTimezone }));
-      return timeInEventTz;
-    } catch (error) {
-      console.warn('Error getting current time in event timezone:', error);
-      return new Date();
-    }
+  // UTC utility functions - simplified approach
+  const getCurrentTimeUTC = (): Date => {
+    return new Date(); // JavaScript Date objects are already UTC internally
   };
 
   // Track dependent rows for orange highlighting when CUE is loaded
@@ -1869,7 +1846,7 @@ const RunOfShowPage: React.FC = () => {
         // Set up sub-cue timer state
         const itemId = parseInt(subCueTimerData.item_id);
         const startedAt = new Date(subCueTimerData.started_at);
-        const now = getCurrentTimeInEventTimezone();
+        const now = getCurrentTimeUTC();
         const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000) + 2; // Add 2 second offset for Browser B (1 second more elapsed)
         
         setSubCueTimerProgress(prev => ({
@@ -2097,7 +2074,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔄 Found active timer in database:', activeTimer);
       
       // Get current global time
-      const now = getCurrentTimeInEventTimezone();
+      const now = getCurrentTimeUTC();
       const currentTime = Math.floor(now.getTime() / 1000); // Current time in seconds
       
       // Get start time from database (convert to seconds)
@@ -2451,7 +2428,7 @@ const RunOfShowPage: React.FC = () => {
     
     if (activeItem) {
       try {
-        const now = getCurrentTimeInEventTimezone();
+        const now = getCurrentTimeUTC();
         const itemIndex = schedule.findIndex(item => item.id === activeItem.id);
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
@@ -2464,7 +2441,7 @@ const RunOfShowPage: React.FC = () => {
           if (period === 'AM' && hours === 12) hour24 = 0;
           
           // Create a date object for today with the calculated time in event timezone
-          const today = getCurrentTimeInEventTimezone();
+          const today = getCurrentTimeUTC();
           const itemStartTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour24, minutes);
           
           const differenceMs = now.getTime() - itemStartTime.getTime();
@@ -4504,7 +4481,7 @@ const RunOfShowPage: React.FC = () => {
             eventName,
             masterStartTime,
             dayStartTimes,
-            timezone: eventTimezone,
+            // timezone removed - using UTC throughout
             lastSaved: new Date().toISOString()
           }
         };
@@ -4540,7 +4517,7 @@ const RunOfShowPage: React.FC = () => {
         console.error('❌ Error auto-saving to API:', error);
       }
     }, 30000), // Debounce for 30 seconds
-    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, eventTimezone]
+    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes]
   );
 
   // Debounce utility function
@@ -4595,15 +4572,8 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         
-        // Load timezone from settings if available
+        // Timezone handling removed - using UTC throughout
         console.log('🔍 Full settings object:', data.settings);
-        if (data.settings?.timezone) {
-          setEventTimezone(data.settings.timezone);
-          console.log('🌍 Loaded timezone from settings:', data.settings.timezone);
-        } else {
-          console.log('🌍 No timezone found in settings, using default:', eventTimezone);
-          console.log('🔍 Available settings keys:', Object.keys(data.settings || {}));
-        }
         
         // FIRST: Always load star selection from main schedule (this is the source of truth)
         const startCueItem = newSchedule.find(item => item.isStartCue === true);
@@ -5748,7 +5718,7 @@ const RunOfShowPage: React.FC = () => {
     const graphicsInterval = setInterval(updateGraphicsData, 30 * 1000);
     
     return () => clearInterval(graphicsInterval);
-  }, [event?.id, schedule, customColumns, eventName, masterStartTime, dayStartTimes, eventTimezone]);
+  }, [event?.id, schedule, customColumns, eventName, masterStartTime, dayStartTimes]);
 
   useEffect(() => {
     if (event?.id) {
@@ -6299,7 +6269,7 @@ const RunOfShowPage: React.FC = () => {
           
           if (scheduledStartStr && scheduledStartStr !== '') {
             const scheduledStart = parseTimeString(scheduledStartStr);
-            const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event's timezone
+            const actualStart = getCurrentTimeUTC(); // Use current UTC time
             
             if (scheduledStart) {
               // Calculate difference in minutes
@@ -6353,7 +6323,7 @@ const RunOfShowPage: React.FC = () => {
         
         // OPTIMISTIC UI UPDATE - Show running state immediately
         console.log('⚡ Optimistic UI update - showing running state immediately');
-        const now = getCurrentTimeInEventTimezone();
+        const now = getCurrentTimeUTC();
         setTimerProgress(prev => ({
           ...prev,
           [itemId]: {
@@ -6572,7 +6542,7 @@ const RunOfShowPage: React.FC = () => {
         [itemId]: {
           elapsed: 0,
           total: totalSeconds,
-          startedAt: getCurrentTimeInEventTimezone()
+          startedAt: getCurrentTimeUTC()
         }
       }));
       
@@ -6667,7 +6637,7 @@ const RunOfShowPage: React.FC = () => {
         remaining: totalSeconds,
         duration: totalSeconds,
         isActive: true,
-        startedAt: getCurrentTimeInEventTimezone(),
+        startedAt: getCurrentTimeUTC(),
         timerState: 'running'
       });
       
@@ -8368,7 +8338,7 @@ const RunOfShowPage: React.FC = () => {
                                               `CUE ${hybridTimerData.secondaryTimer.item_id}`;
                             
                             // Calculate remaining time for sub-cue
-                            const now = getCurrentTimeInEventTimezone();
+                            const now = getCurrentTimeUTC();
                             const startedAt = new Date(hybridTimerData.secondaryTimer.started_at || hybridTimerData.secondaryTimer.created_at);
                             const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
                             const total = hybridTimerData.secondaryTimer.duration_seconds || hybridTimerData.secondaryTimer.duration || 60;

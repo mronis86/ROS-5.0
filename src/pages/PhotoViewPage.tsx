@@ -48,7 +48,155 @@ const PhotoViewPage: React.FC = () => {
 
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
+  // Removed eventTimezone - using UTC throughout
   const [isLoading, setIsLoading] = useState(true);
+  
+  // UTC utility functions - simplified approach
+  const getCurrentTimeUTC = (): Date => {
+    return new Date(); // JavaScript Date objects are already UTC internally
+  };
+
+  // Calculate base start time for an item
+  const calculateStartTime = (index: number) => {
+    const currentItem = schedule[index];
+    if (!currentItem) return '';
+    
+    // If this item is indented, return empty string (no start time)
+    if (indentedCues[currentItem.id]) {
+      return '';
+    }
+    
+    // Get the appropriate start time for this day
+    const itemDay = currentItem.day || 1;
+    const startTime = dayStartTimes[itemDay] || masterStartTime;
+    
+    console.log('🔄 PhotoView: calculateStartTime for index', index, ':', {
+      itemDay,
+      dayStartTimes,
+      masterStartTime,
+      startTime
+    });
+    
+    // If no start time is set for this day, return blank
+    if (!startTime) {
+      console.log('❌ PhotoView: No start time found for day', itemDay);
+      return '';
+    }
+    
+    // Calculate total seconds from the beginning of this day up to this item
+    let totalSeconds = 0;
+    for (let i = 0; i < index; i++) {
+      const item = schedule[i];
+      // Only count items from the same day and non-indented items
+      if ((item.day || 1) === itemDay && !indentedCues[item.id]) {
+        totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
+      }
+    }
+    
+    const [hours, minutes] = startTime.split(':').map(Number);
+    const startSeconds = hours * 3600 + minutes * 60;
+    const totalStartSeconds = startSeconds + totalSeconds;
+    
+    const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
+    const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
+    
+    // Convert to 12-hour format
+    const date = new Date();
+    date.setHours(finalHours, finalMinutes, 0, 0);
+    const result = date.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    });
+    
+    console.log('🔄 PhotoView: calculateStartTime result for index', index, ':', {
+      finalHours,
+      finalMinutes,
+      result
+    });
+    
+    return result;
+  };
+
+  // Calculate start time with overtime adjustments
+  const calculateStartTimeWithOvertime = (index: number) => {
+    const currentItem = schedule[index];
+    if (!currentItem) return '';
+    
+    // If this item is indented, return empty string (no start time)
+    if (indentedCues[currentItem.id]) {
+      return '';
+    }
+    
+    // Get the base start time
+    const baseStartTime = calculateStartTime(index);
+    if (!baseStartTime) {
+      console.log('❌ PhotoView: No base start time for index', index, 'item:', currentItem);
+      return '';
+    }
+    
+    console.log('🔄 PhotoView: Base start time for index', index, ':', baseStartTime);
+    
+    // Calculate total overtime from previous cues, but ignore rows ABOVE the STAR
+    let totalOvertimeMinutes = 0;
+    
+    // Find the START cue index to know where to start counting overtime
+    const startCueIndex = startCueId ? schedule.findIndex(s => s.id === startCueId) : -1;
+    const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+    
+    // Only count overtime from START cue onwards (ignore rows above STAR)
+    for (let i = startCountingFrom; i < index; i++) {
+      const item = schedule[i];
+      const itemDay = item.day || 1;
+      const currentItemDay = currentItem.day || 1;
+      
+      // Only count overtime from the same day and non-indented items
+      if (itemDay === currentItemDay && !indentedCues[item.id]) {
+        totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
+      }
+    }
+    
+    // Add show start overtime for START cue and all rows after it
+    if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+      totalOvertimeMinutes += showStartOvertime;
+    }
+    
+    // If no overtime, return the base start time
+    if (totalOvertimeMinutes === 0) {
+      return baseStartTime;
+    }
+    
+    // Parse the base start time and add overtime
+    const [timePart, period] = baseStartTime.split(' ');
+    const [hours, minutes] = timePart.split(':').map(Number);
+    
+    let hour24 = hours;
+    if (period === 'PM' && hours !== 12) hour24 += 12;
+    if (period === 'AM' && hours === 12) hour24 = 0;
+    
+    // Add overtime minutes
+    const totalMinutes = hour24 * 60 + minutes + totalOvertimeMinutes;
+    const finalHours = Math.floor(totalMinutes / 60) % 24;
+    const finalMinutes = totalMinutes % 60;
+    
+    // Convert back to 12-hour format
+    const date = new Date();
+    date.setHours(finalHours, finalMinutes, 0, 0);
+    const result = date.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    });
+    
+    console.log('🔄 PhotoView: calculateStartTimeWithOvertime result for index', index, ':', {
+      totalOvertimeMinutes,
+      finalHours,
+      finalMinutes,
+      result
+    });
+    
+    return result;
+  };
   const [error, setError] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
@@ -79,6 +227,12 @@ const PhotoViewPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimerState, setDisconnectTimerState] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+  
+  // Overtime state variables
+  const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
+  const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
+  const [startCueId, setStartCueId] = useState<number | null>(null);
+  const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
 
   // Reset all states function (called from WebSocket events)
   const resetAllStates = async () => {
@@ -93,6 +247,11 @@ const PhotoViewPage: React.FC = () => {
     setSubCueTimers({});
     setSubCueTimerProgress({});
     setSecondaryTimer(null);
+    
+    // Clear overtime data (same as Run of Show page)
+    setOvertimeMinutes({});
+    setShowStartOvertime(0);
+    console.log('✅ PhotoView: Cleared overtime data from reset');
     
     // Clear indented state locally first
     setSchedule(prevSchedule => 
@@ -381,21 +540,21 @@ const PhotoViewPage: React.FC = () => {
     return '#10b981'; // Default green (matches progress bar)
   };
 
-  // Debug logging for status display
-  console.log('🔍 PhotoView Status Debug:', {
-    activeTimersKeys: Object.keys(activeTimers),
-    activeTimers,
-    activeItemId,
-    timerProgress: activeItemId ? timerProgress[activeItemId] : null,
-    scheduleLength: schedule.length,
-    runningItem: Object.keys(activeTimers).length > 0 ? schedule.find(item => activeTimers[item.id]) : null,
-    loadedItem: activeItemId ? schedule.find(item => item.id === activeItemId) : null,
-    loadedItemCue: activeItemId ? schedule.find(item => item.id === activeItemId)?.customFields?.cue : null,
-    allItemsCues: schedule.map(item => ({ id: item.id, cue: item.customFields?.cue })),
-    secondaryTimer: secondaryTimer,
-    secondaryTimerActive: secondaryTimer?.isActive,
-    secondaryTimerCue: secondaryTimer?.cue
-  });
+  // Debug logging for status display - commented out to reduce log spam
+  // console.log('🔍 PhotoView Status Debug:', {
+  //   activeTimersKeys: Object.keys(activeTimers),
+  //   activeTimers,
+  //   activeItemId,
+  //   timerProgress: activeItemId ? timerProgress[activeItemId] : null,
+  //   scheduleLength: schedule.length,
+  //   runningItem: Object.keys(activeTimers).length > 0 ? schedule.find(item => activeTimers[item.id]) : null,
+  //   loadedItem: activeItemId ? schedule.find(item => item.id === activeItemId) : null,
+  //   loadedItemCue: activeItemId ? schedule.find(item => item.id === activeItemId)?.customFields?.cue : null,
+  //   allItemsCues: schedule.map(item => ({ id: item.id, cue: item.customFields?.cue })),
+  //   secondaryTimer: secondaryTimer,
+  //   secondaryTimerActive: secondaryTimer?.isActive,
+  //   secondaryTimerCue: secondaryTimer?.cue
+  // });
 
   // Helper function to format time for sub-cue timers
   const formatSubCueTime = (seconds: number) => {
@@ -417,32 +576,6 @@ const PhotoViewPage: React.FC = () => {
     }
   };
 
-  // Calculate start time function
-  const calculateStartTime = (index: number) => {
-    if (!masterStartTime) return '';
-    
-    let totalMinutes = 0;
-    for (let i = 0; i < index; i++) {
-      const item = schedule[i];
-      const itemMinutes = (item.durationHours * 60) + item.durationMinutes;
-      totalMinutes += itemMinutes;
-    }
-    
-    const [startHours, startMinutes] = masterStartTime.split(':').map(Number);
-    const totalStartMinutes = startHours * 60 + startMinutes;
-    const finalMinutes = totalStartMinutes + totalMinutes;
-    
-    const hours = Math.floor(finalMinutes / 60);
-    const minutes = finalMinutes % 60;
-    
-    const period = hours >= 12 ? 'PM' : 'AM';
-    let displayHours = hours;
-    if (hours > 12) displayHours = hours - 12;
-    if (hours === 0) displayHours = 12;
-    
-    const result = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
-    return result;
-  };
 
   // Load master start time from localStorage
   useEffect(() => {
@@ -462,6 +595,67 @@ const PhotoViewPage: React.FC = () => {
 
     return () => clearInterval(timer);
   }, []);
+
+  // Lightweight periodic refresh for Photo page (similar to Run of Show 5s reliability check)
+  useEffect(() => {
+    if (!event?.id) {
+      console.log('🔄 PhotoView: No event ID, skipping 20-second refresh setup');
+      return;
+    }
+
+    console.log('🔄 PhotoView: Setting up lightweight periodic refresh (20 seconds) for event:', event.id);
+    
+    // 20-second lightweight refresh to ensure data stays current
+    const refreshInterval = setInterval(async () => {
+      console.log('🔄 PhotoView: 20s refresh - ensuring data is current');
+
+      // Lightweight refresh - reload schedule data directly
+      try {
+        const data = await DatabaseService.getRunOfShowData(event.id);
+        if (data?.schedule_items) {
+          console.log('🔄 PhotoView: 20s refresh - reloaded schedule data');
+
+          // Update master start time if it changed
+          const masterStartTimeFromDB = data.settings?.masterStartTime || data.settings?.dayStartTimes?.['1'] || '09:00';
+          if (masterStartTimeFromDB !== masterStartTime) {
+            console.log('🔄 PhotoView: 20s refresh - updated master start time to:', masterStartTimeFromDB);
+            setMasterStartTime(masterStartTimeFromDB);
+          }
+          
+          // Update schedule if it changed
+          const formattedSchedule = data.schedule_items.map((item: any) => ({
+            ...item,
+            isPublic: item.isPublic || false,
+            // Convert duration_seconds to separate fields
+            durationHours: Math.floor((item.duration_seconds || 0) / 3600),
+            durationMinutes: Math.floor(((item.duration_seconds || 0) % 3600) / 60),
+            durationSeconds: (item.duration_seconds || 0) % 60
+          }));
+          console.log('🔄 PhotoView: 20s refresh - updating schedule with', formattedSchedule.length, 'items');
+          console.log('🔄 PhotoView: 20s refresh - first item duration:', formattedSchedule[0]?.durationMinutes, 'minutes');
+          console.log('🔄 PhotoView: 20s refresh - first item raw data:', {
+            duration_seconds: formattedSchedule[0]?.duration_seconds,
+            durationMinutes: formattedSchedule[0]?.durationMinutes,
+            durationHours: formattedSchedule[0]?.durationHours,
+            durationSeconds: formattedSchedule[0]?.durationSeconds
+          });
+          console.log('🔄 PhotoView: 20s refresh - BEFORE conversion duration_seconds:', data.schedule_items[0]?.duration_seconds);
+          console.log('🔄 PhotoView: 20s refresh - first item should use durationMinutes:', formattedSchedule[0]?.durationMinutes, 'minutes');
+          
+          setSchedule(formattedSchedule);
+        }
+      } catch (error) {
+        console.error('❌ PhotoView: 20s refresh failed:', error);
+      }
+    }, 20000); // 20 seconds
+
+    console.log('🔄 PhotoView: 20-second refresh interval created, will start in 20 seconds');
+
+    return () => {
+      console.log('🧹 PhotoView: Cleaning up 20-second refresh timer');
+      clearInterval(refreshInterval);
+    };
+  }, [event?.id]);
 
   // Countdown timer logic
   useEffect(() => {
@@ -524,7 +718,7 @@ const PhotoViewPage: React.FC = () => {
             setTimerProgress({
               [parseInt(activeTimerData.item_id)]: {
                 elapsed: activeTimerData.elapsed_seconds || 0,
-                total: activeTimerData.duration_seconds || 300,
+                total: activeTimerData.duration_seconds || 0,
                 startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null
               }
             });
@@ -574,7 +768,7 @@ const PhotoViewPage: React.FC = () => {
             ...prev,
             [data.item_id]: {
               elapsed: data.elapsed_seconds || 0,
-              total: data.duration_seconds || 300,
+              total: data.duration_seconds || 0,
               startedAt: data.started_at ? new Date(data.started_at) : null
             }
           }));
@@ -630,7 +824,7 @@ const PhotoViewPage: React.FC = () => {
                         ...prev,
             [parseInt(data.item_id)]: {
               elapsed: 0,
-              total: data.duration_seconds || 300,
+              total: data.duration_seconds || 0,
               startedAt: data.started_at ? new Date(data.started_at) : new Date()
                         }
                       }));
@@ -691,7 +885,7 @@ const PhotoViewPage: React.FC = () => {
             setTimerProgress({
               [parseInt(data.item_id)]: {
                 elapsed: data.elapsed_seconds || 0,
-                total: data.duration_seconds || 300,
+                total: data.duration_seconds || 0,
                 startedAt: data.started_at ? new Date(data.started_at) : null
               }
             });
@@ -706,16 +900,87 @@ const PhotoViewPage: React.FC = () => {
       },
       onRunOfShowDataUpdated: (data: any) => {
         console.log('📡 PhotoView: Run of show data updated via WebSocket', data);
-        // Handle schedule updates
+        // Handle schedule updates - only if data actually changed
         if (data && data.schedule_items) {
           const formattedSchedule = data.schedule_items.map((item: any) => ({
             ...item,
             startTime: item.start_time || '09:00',
-            durationHours: Math.floor((item.duration_seconds || 300) / 3600),
-            durationMinutes: Math.floor(((item.duration_seconds || 300) % 3600) / 60),
-            durationSeconds: (item.duration_seconds || 300) % 60
+            durationHours: Math.floor((item.duration_seconds || 0) / 3600),
+            durationMinutes: Math.floor(((item.duration_seconds || 0) % 3600) / 60),
+            durationSeconds: (item.duration_seconds || 0) % 60
           }));
+          
           setSchedule(formattedSchedule);
+          
+          // Update START CUE ID from schedule items
+          const startCueItem = formattedSchedule.find(item => item.isStartCue === true);
+          if (startCueItem) {
+            setStartCueId(startCueItem.id);
+            console.log('⭐ PhotoView: START cue marker updated from WebSocket:', startCueItem.id);
+          } else {
+            setStartCueId(null);
+            console.log('⭐ PhotoView: No START cue marker found in WebSocket update');
+          }
+          
+          // Reload overtime data when schedule updates
+          if (event?.id) {
+            (async () => {
+              try {
+                console.log('⏰ PhotoView: Reloading overtime data after schedule update...');
+                const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
+                const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
+                
+                console.log('⏰ PhotoView: Reloaded overtime data:', { overtimeData, showStartOvertimeData });
+                setOvertimeMinutes(overtimeData);
+                if (showStartOvertimeData !== null) {
+                  const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
+                  setShowStartOvertime(overtimeValue);
+                  console.log('⏰ PhotoView: Reloaded show start overtime:', overtimeValue);
+                }
+              } catch (error) {
+                console.error('❌ PhotoView: Failed to reload overtime data:', error);
+              }
+            })();
+          }
+        }
+      },
+      onOvertimeUpdate: (data: any) => {
+        console.log('📡 PhotoView: Overtime update received via WebSocket', data);
+        if (data && data.event_id === event?.id && data.item_id && typeof data.overtimeMinutes === 'number') {
+          console.log(`✅ PhotoView: Updating overtime for item ${data.item_id} to ${data.overtimeMinutes} minutes`);
+          
+          // Update local overtime state
+          setOvertimeMinutes(prev => {
+            const updated = {
+              ...prev,
+              [data.item_id]: data.overtimeMinutes
+            };
+            console.log('✅ PhotoView: Overtime state updated from WebSocket:', updated);
+            console.log('✅ PhotoView: Previous overtime state:', prev);
+            console.log('✅ PhotoView: New overtime state:', updated);
+            return updated;
+          });
+          
+          // If this is the START cue, also update show start overtime
+          if (data.item_id === startCueId) {
+            setShowStartOvertime(data.overtimeMinutes);
+            console.log(`✅ PhotoView: Show start overtime also updated: ${data.overtimeMinutes} minutes`);
+          }
+        }
+      },
+      onShowStartOvertimeUpdate: (data: { event_id: string; item_id: number; showStartOvertime: number }) => {
+        console.log('📡 PhotoView: Show start overtime update received via WebSocket', data);
+        if (data.event_id === event?.id) {
+          setShowStartOvertime(data.showStartOvertime);
+          setStartCueId(data.item_id); // Also update which cue is marked as START
+          console.log(`✅ PhotoView: Show start overtime updated: ${data.showStartOvertime} minutes`);
+        }
+      },
+      onStartCueSelectionUpdate: (data: { event_id: string; item_id: number }) => {
+        console.log('📡 PhotoView: Start cue selection update received via WebSocket', data);
+        if (data.event_id === event?.id) {
+          setStartCueId(data.item_id);
+          console.log(`✅ PhotoView: Start cue selection updated: item ${data.item_id}`);
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -727,6 +992,27 @@ const PhotoViewPage: React.FC = () => {
         // Clear all states when RunOfShowPage resets
         resetAllStates();
         console.log('✅ PhotoView: resetAllStates function called');
+        
+        // After reset, reload overtime data to get current state
+        if (event?.id) {
+          setTimeout(async () => {
+            try {
+              console.log('⏰ PhotoView: Reloading overtime data after reset...');
+              const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
+              const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
+              
+              console.log('⏰ PhotoView: Reloaded overtime data after reset:', { overtimeData, showStartOvertimeData });
+              setOvertimeMinutes(overtimeData);
+              if (showStartOvertimeData !== null) {
+                const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
+                setShowStartOvertime(overtimeValue);
+                console.log('⏰ PhotoView: Reloaded show start overtime after reset:', overtimeValue);
+              }
+            } catch (error) {
+              console.error('❌ PhotoView: Failed to reload overtime data after reset:', error);
+            }
+          }, 1000); // Wait 1 second for reset to complete
+        }
       },
       onInitialSync: async () => {
         console.log('🔄 PhotoView: WebSocket initial sync triggered - loading current state');
@@ -762,7 +1048,7 @@ const PhotoViewPage: React.FC = () => {
               setTimerProgress({
                 [parseInt(activeTimerData.item_id)]: {
                   elapsed: activeTimerData.elapsed_seconds || 0,
-                  total: activeTimerData.duration_seconds || 300,
+                  total: activeTimerData.duration_seconds || 0,
                   startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null
                 }
               });
@@ -905,7 +1191,7 @@ const PhotoViewPage: React.FC = () => {
         
         // Debug logging for first few seconds
         if (elapsed <= 10) {
-          console.log(`🕐 PhotoView Timer ${activeItemId}: Continuous elapsed=${elapsed}s, Start=${startedAt.toISOString()}, Now=${now.toISOString()}`);
+          console.log(`🕐 PhotoView Timer ${activeItemId}: Continuous elapsed=${elapsed}s, Start=${startedAt.toISOString()}, Now=${syncedNow.toISOString()}`);
         }
       }, 1000);
 
@@ -1062,13 +1348,61 @@ const PhotoViewPage: React.FC = () => {
           const data = await DatabaseService.getRunOfShowData(event?.id || eventId);
           if (data?.schedule_items) {
             console.log('✅ Loaded from API:', data);
+            
+            // Timezone handling removed - using UTC throughout
+            console.log('🌍 PhotoView: Using UTC throughout');
+            
+            // Load master start time from database settings
+            const masterStartTimeFromDB = data.settings?.masterStartTime || data.settings?.dayStartTimes?.['1'] || '09:00';
+            console.log('🕐 PhotoView: Master start time from database:', masterStartTimeFromDB);
+            setMasterStartTime(masterStartTimeFromDB);
             const formattedSchedule = data.schedule_items.map((item: any) => {
               return {
                 ...item,
-                isPublic: item.isPublic || false
+                isPublic: item.isPublic || false,
+                // Convert duration_seconds to separate fields
+                durationHours: Math.floor((item.duration_seconds || 0) / 3600),
+                durationMinutes: Math.floor(((item.duration_seconds || 0) % 3600) / 60),
+                durationSeconds: (item.duration_seconds || 0) % 60
               };
             });
+            console.log('📱 PhotoView: First item duration from API:', formattedSchedule[0]?.durationMinutes, 'minutes');
             setSchedule(formattedSchedule);
+            
+            // Load overtime data
+            try {
+              console.log('⏰ PhotoView: Loading overtime data...');
+              const overtimeData = await DatabaseService.getOvertimeMinutes(event?.id || eventId);
+              const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event?.id || eventId);
+              
+              console.log('⏰ PhotoView: Loaded overtime data:', { overtimeData, showStartOvertimeData });
+              setOvertimeMinutes(overtimeData);
+              console.log('⏰ PhotoView: Set overtime minutes to:', overtimeData);
+              if (showStartOvertimeData !== null) {
+                // Extract the actual overtime value from the response
+                const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
+                setShowStartOvertime(overtimeValue);
+                console.log('⏰ PhotoView: Set show start overtime to:', overtimeValue);
+              }
+              
+              // Load day start times from settings
+              if (data.settings?.dayStartTimes) {
+                setDayStartTimes(data.settings.dayStartTimes);
+              }
+              
+              // Load START CUE ID from schedule items (same as Run of Show page)
+              const startCueItem = formattedSchedule.find(item => item.isStartCue === true);
+              if (startCueItem) {
+                setStartCueId(startCueItem.id);
+                console.log('⭐ PhotoView: START cue marker found in schedule:', startCueItem.id);
+              } else {
+                setStartCueId(null);
+                console.log('⭐ PhotoView: No START cue marker found in schedule');
+              }
+            } catch (error) {
+              console.error('❌ PhotoView: Failed to load overtime data:', error);
+            }
+            
             setIsLoading(false);
             return;
           }
@@ -1095,9 +1429,11 @@ const PhotoViewPage: React.FC = () => {
         if (savedSchedule) {
           const parsedSchedule = JSON.parse(savedSchedule);
           console.log('📱 Loaded from localStorage:', parsedSchedule);
+          console.log('📱 First item duration from localStorage:', parsedSchedule[0]?.durationMinutes, 'minutes');
           setSchedule(parsedSchedule);
         } else {
           console.log('⚠️ No schedule data found, creating sample data for testing');
+          console.log('⚠️ This should not happen if API data was loaded successfully');
           // Create sample data for testing
           const sampleSchedule = [
             {
@@ -1175,36 +1511,36 @@ const PhotoViewPage: React.FC = () => {
 
   // Get the current item and next 2 items (same logic as Green Room)
   const getPreviewItems = () => {
-    console.log('🔍 getPreviewItems called');
-    console.log('Schedule length:', schedule.length);
-    console.log('Active item ID:', activeItemId);
-    console.log('Active item ID type:', typeof activeItemId);
+    // console.log('🔍 getPreviewItems called');
+    // console.log('Schedule length:', schedule.length);
+    // console.log('Active item ID:', activeItemId);
+    // console.log('Active item ID type:', typeof activeItemId);
     
     if (schedule.length === 0) {
-      console.log('No schedule items available');
+      // console.log('No schedule items available');
       return [];
     }
     
     // Convert both to strings for comparison since activeItemId might be a string
     const currentIndex = activeItemId ? schedule.findIndex(item => String(item.id) === String(activeItemId)) : -1;
-    console.log('Current index:', currentIndex);
+    // console.log('Current index:', currentIndex);
     
     if (currentIndex === -1) {
       // If no active item or active item not found, show first 3 items
-      console.log('No active item or not found, showing first 3 items');
+      // console.log('No active item or not found, showing first 3 items');
       return schedule.slice(0, 3);
     }
 
     // Show current item and next 2 items (up to 3 total)
     const endIndex = Math.min(currentIndex + 3, schedule.length);
     const result = schedule.slice(currentIndex, endIndex);
-    console.log('Showing items from index', currentIndex, 'to', endIndex - 1, ':', result.length, 'items');
-    console.log('Items:', result.map(item => ({ id: item.id, name: item.segmentName })));
+    // console.log('Showing items from index', currentIndex, 'to', endIndex - 1, ':', result.length, 'items');
+    // console.log('Items:', result.map(item => ({ id: item.id, name: item.segmentName })));
     return result;
   };
 
   const previewItems = getPreviewItems();
-  console.log('Preview items:', previewItems);
+  // console.log('Preview items:', previewItems);
 
   // Program type colors
   const programTypeColors: { [key: string]: string } = {
@@ -1428,9 +1764,21 @@ const PhotoViewPage: React.FC = () => {
                       shouldHighlightIndented = parentIsLoaded || parentIsRunning;
                     }
             
-            // Calculate start time
+            // Calculate start time with overtime adjustments
             const itemIndex = schedule.findIndex(s => s.id === item.id);
-            const startTime = calculateStartTime(itemIndex);
+            const startTime = calculateStartTimeWithOvertime(itemIndex);
+            
+            // Debug logging for overtime calculation
+            if (index === 0) { // Only log for first item to avoid spam
+              console.log('🔄 PhotoView: Calculating start time for first item:', {
+                itemId: item.id,
+                itemIndex,
+                startTime,
+                overtimeMinutes: overtimeMinutes[item.id] || 0,
+                showStartOvertime,
+                startCueId
+              });
+            }
             
             // Format duration
             const duration = `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
@@ -1485,7 +1833,74 @@ const PhotoViewPage: React.FC = () => {
                     <div className="text-center">
                       <div className="mb-4">
                         <div className="text-gray-400 text-xs mb-1">START TIME</div>
-                        <div className="text-lg font-bold text-white">{startTime || 'No Time'}</div>
+                        <div className="text-lg font-bold text-white">
+                          {indentedCues[item.id] ? '↘' : (startTime || 'No Time')}
+                        </div>
+                        {/* Overtime indicator */}
+                        {!indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(itemIndex) !== calculateStartTimeWithOvertime(itemIndex)) && (
+                          <div className={`text-xs font-bold px-2 py-1 rounded mt-1 ${
+                            (() => {
+                              // For START cue: use show start overtime only for color
+                              if (item.id === startCueId) {
+                                return showStartOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
+                              }
+                              
+                              // For other rows: calculate total cumulative overtime for color
+                              let totalOvertime = 0;
+                              for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
+                                const prevItem = schedule[i];
+                                const prevItemDay = prevItem.day || 1;
+                                const currentItemDay = item.day || 1;
+                                if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                  totalOvertime += overtimeMinutes[prevItem.id] || 0;
+                                }
+                              }
+                              // Add show start overtime for rows after START
+                              if (showStartOvertime !== 0 && startCueId !== null) {
+                                const startCueIndex = schedule.findIndex(s => s.id === startCueId);
+                                const currentIndex = schedule.findIndex(s => s.id === item.id);
+                                if (startCueIndex !== -1 && currentIndex > startCueIndex) {
+                                  totalOvertime += showStartOvertime;
+                                }
+                              }
+                              return totalOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
+                            })()
+                          }`} title="Time adjusted due to overtime">
+                            {(() => {
+                              // For START cue row: show ONLY show start overtime (not duration)
+                              if (item.id === startCueId) {
+                                const showStartOT = showStartOvertime || 0;
+                                
+                                if (showStartOT > 0) {
+                                  return `+${showStartOT}m late`;
+                                } else if (showStartOT < 0) {
+                                  return `-${Math.abs(showStartOT)}m early`;
+                                }
+                                return 'On time';
+                              }
+                              
+                              // For other rows: calculate total cumulative overtime (includes show start + all duration)
+                              let totalOvertime = 0;
+                              for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
+                                const prevItem = schedule[i];
+                                const prevItemDay = prevItem.day || 1;
+                                const currentItemDay = item.day || 1;
+                                if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                  totalOvertime += overtimeMinutes[prevItem.id] || 0;
+                                }
+                              }
+                              // Add show start overtime for rows after START
+                              if (showStartOvertime !== 0 && startCueId !== null) {
+                                const startCueIndex = schedule.findIndex(s => s.id === startCueId);
+                                const currentIndex = schedule.findIndex(s => s.id === item.id);
+                                if (startCueIndex !== -1 && currentIndex > startCueIndex) {
+                                  totalOvertime += showStartOvertime;
+                                }
+                              }
+                              return totalOvertime > 0 ? `+${totalOvertime}m` : `${totalOvertime}m`;
+                            })()}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <div className="text-gray-400 text-xs mb-1">DURATION</div>
@@ -1596,14 +2011,14 @@ const PhotoViewPage: React.FC = () => {
                           // Remove HTML tags first, then check for meaningful content
                           const cleanNotes = item.notes ? item.notes.replace(/<[^>]*>/g, '').trim() : '';
                           
-                          // Debug logging
-                          console.log('Notes debug for item:', {
-                            hasNotes: !!item.notes,
-                            notesValue: item.notes,
-                            cleanNotes: cleanNotes,
-                            cleanLength: cleanNotes.length,
-                            willShow: cleanNotes && cleanNotes.length > 0
-                          });
+                          // Debug logging - commented out to reduce log spam
+                          // console.log('Notes debug for item:', {
+                          //   hasNotes: !!item.notes,
+                          //   notesValue: item.notes,
+                          //   cleanNotes: cleanNotes,
+                          //   cleanLength: cleanNotes.length,
+                          //   willShow: cleanNotes && cleanNotes.length > 0
+                          // });
                           
                           const hasValidNotes = cleanNotes && 
                                                cleanNotes.length > 0 && 

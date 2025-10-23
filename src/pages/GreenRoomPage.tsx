@@ -48,7 +48,7 @@ const GreenRoomPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
-  const [eventTimezone, setEventTimezone] = useState('America/New_York');
+  // Removed eventTimezone - using UTC throughout
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
@@ -58,13 +58,9 @@ const GreenRoomPage: React.FC = () => {
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
 
-  // Timezone utility functions (same as RunOfShowPage)
-  const convertToEventTimezone = (date: Date) => {
-    return new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
-  };
-
-  const getCurrentTimeInEventTimezone = () => {
-    return convertToEventTimezone(new Date());
+  // UTC utility functions - simplified approach
+  const getCurrentTimeUTC = (): Date => {
+    return new Date(); // JavaScript Date objects are already UTC internally
   };
   
   // Track last loaded cue to keep it visible when timer stops
@@ -90,7 +86,7 @@ const GreenRoomPage: React.FC = () => {
     console.log(`🔄 calculateStartTime called for index ${index}:`, {
       masterStartTime: effectiveMasterStartTime,
       scheduleLength: currentSchedule.length,
-      eventTimezone
+      // eventTimezone removed - using UTC
     });
     
     if (!effectiveMasterStartTime) {
@@ -617,7 +613,7 @@ const GreenRoomPage: React.FC = () => {
         
         // Debug logging for first few seconds
         if (elapsed <= 10) {
-          console.log(`🕐 Green Room Timer ${activeItemId}: Continuous elapsed=${elapsed}s, Start=${startedAt.toISOString()}, Now=${now.toISOString()}`);
+          console.log(`🕐 Green Room Timer ${activeItemId}: Continuous elapsed=${elapsed}s, Start=${startedAt.toISOString()}, Now=${syncedNow.toISOString()}`);
         }
       }, 1000);
 
@@ -684,11 +680,7 @@ const GreenRoomPage: React.FC = () => {
         // Keep the localStorage value if no database value found
       }
       
-      // Load event timezone from API data
-      if (data && data.settings && data.settings.timezone) {
-        console.log('🌍 Loaded timezone from event data:', data.settings.timezone);
-        setEventTimezone(data.settings.timezone);
-      }
+      // Timezone handling removed - using UTC throughout
       
       // Load day start times from API data
       if (data && data.settings && data.settings.dayStartTimes) {
