@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
@@ -48,15 +48,32 @@ const GreenRoomPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  const [eventTimezone, setEventTimezone] = useState('America/New_York');
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
+  
+  // Overtime data (same as RunOfShowPage)
+  const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
+  const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
+  const [startCueId, setStartCueId] = useState<number | null>(null);
+
+  // Timezone utility functions (same as RunOfShowPage)
+  const convertToEventTimezone = (date: Date) => {
+    return new Date(date.toLocaleString("en-US", { timeZone: eventTimezone }));
+  };
+
+  const getCurrentTimeInEventTimezone = () => {
+    return convertToEventTimezone(new Date());
+  };
   
   // Track last loaded cue to keep it visible when timer stops
   const [lastLoadedCueId, setLastLoadedCueId] = useState<number | null>(null);
   
   const [masterStartTime, setMasterStartTime] = useState<string>('09:00');
   const [dayStartTimes, setDayStartTimes] = useState<{[key: number]: string}>({});
+  const [selectedDay, setSelectedDay] = useState<number>(1);
+  const [numberOfDays, setNumberOfDays] = useState<number>(1);
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
@@ -67,20 +84,23 @@ const GreenRoomPage: React.FC = () => {
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
 
   // Calculate start time function (same as RunOfShowPage)
-  const calculateStartTime = (index: number) => {
+  const calculateStartTime = (index: number, scheduleData?: any[], masterStartTimeOverride?: string) => {
+    const currentSchedule = scheduleData || schedule;
+    const effectiveMasterStartTime = masterStartTimeOverride || masterStartTime;
     console.log(`🔄 calculateStartTime called for index ${index}:`, {
-      masterStartTime,
-      scheduleLength: schedule.length
+      masterStartTime: effectiveMasterStartTime,
+      scheduleLength: currentSchedule.length,
+      eventTimezone
     });
     
-    if (!masterStartTime) {
+    if (!effectiveMasterStartTime) {
       console.log('❌ No master start time, returning empty string');
       return '';
     }
     
     let totalMinutes = 0;
     for (let i = 0; i < index; i++) {
-      const item = schedule[i];
+      const item = currentSchedule[i];
       if (!item) {
         console.log(`  Item ${i}: undefined/null item, skipping`);
         continue;
@@ -93,7 +113,7 @@ const GreenRoomPage: React.FC = () => {
       console.log(`  Item ${i} (${item.segmentName || 'Unknown'}): ${durationHours}h ${durationMinutes}m = ${itemMinutes} total minutes`);
     }
     
-    const [startHours, startMinutes] = masterStartTime.split(':').map(Number);
+    const [startHours, startMinutes] = effectiveMasterStartTime.split(':').map(Number);
     const totalStartMinutes = startHours * 60 + startMinutes;
     const finalMinutes = totalStartMinutes + totalMinutes;
     
@@ -108,7 +128,7 @@ const GreenRoomPage: React.FC = () => {
     const result = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
     
     console.log(`🔄 calculateStartTime result for index ${index}:`, {
-      masterStartTime,
+      masterStartTime: effectiveMasterStartTime,
       totalMinutes,
       totalStartMinutes,
       finalMinutes,
@@ -119,6 +139,98 @@ const GreenRoomPage: React.FC = () => {
       result
     });
     
+    return result;
+  };
+
+  // Calculate start time with automatic overtime adjustments (same as RunOfShowPage)
+  const calculateStartTimeWithOvertime = (index: number, scheduleData?: any[], masterStartTimeOverride?: string) => {
+    const currentSchedule = scheduleData || schedule;
+    const currentItem = currentSchedule[index];
+    if (!currentItem) {
+      console.log(`❌ No current item at index ${index}`);
+      return '';
+    }
+    
+    // Get the base start time
+    const baseStartTime = calculateStartTime(index, scheduleData, masterStartTimeOverride);
+    if (!baseStartTime) {
+      console.log(`❌ No base start time for index ${index}`);
+      return '';
+    }
+    
+    console.log(`🔄 calculateStartTimeWithOvertime for index ${index}:`, {
+      baseStartTime,
+      overtimeMinutes,
+      showStartOvertime,
+      startCueId,
+      currentItemId: currentItem.id
+    });
+    
+    // Calculate total overtime from previous cues, but ignore rows ABOVE the STAR
+    let totalOvertimeMinutes = 0;
+    
+    // Find the START cue index to know where to start counting overtime
+    const startCueIndex = startCueId ? currentSchedule.findIndex(s => s.id === startCueId) : -1;
+    const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+    
+    console.log(`🔄 Overtime calculation:`, {
+      startCueIndex,
+      startCountingFrom,
+      index,
+      scheduleLength: currentSchedule.length
+    });
+    
+    // Only count overtime from START cue onwards (ignore rows above STAR)
+    for (let i = startCountingFrom; i < index; i++) {
+      const item = currentSchedule[i];
+      const itemDay = item.day || 1;
+      const currentItemDay = currentItem.day || 1;
+      
+      // Only count overtime from the same day
+      if (itemDay === currentItemDay) {
+        const itemOvertime = overtimeMinutes[item.id] || 0;
+        totalOvertimeMinutes += itemOvertime;
+        console.log(`  Item ${i} (${item.segmentName}): ${itemOvertime} minutes overtime`);
+      }
+    }
+    
+    // Add show start overtime for START cue and all rows after it
+    if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+      totalOvertimeMinutes += showStartOvertime;
+      console.log(`  Added show start overtime: ${showStartOvertime} minutes`);
+    }
+    
+    console.log(`🔄 Total overtime: ${totalOvertimeMinutes} minutes`);
+    
+    // If no overtime, return the base start time
+    if (totalOvertimeMinutes === 0) {
+      console.log(`🔄 No overtime, returning base start time: ${baseStartTime}`);
+      return baseStartTime;
+    }
+    
+    // Parse the base start time and add overtime
+    const [timePart, period] = baseStartTime.split(' ');
+    const [hours, minutes] = timePart.split(':').map(Number);
+    
+    let hour24 = hours;
+    if (period === 'PM' && hours !== 12) hour24 += 12;
+    if (period === 'AM' && hours === 12) hour24 = 0;
+    
+    // Add overtime minutes
+    const totalMinutes = hour24 * 60 + minutes + totalOvertimeMinutes;
+    const finalHours = Math.floor(totalMinutes / 60) % 24;
+    const finalMinutes = totalMinutes % 60;
+    
+    // Convert back to 12-hour format
+    const date = new Date();
+    date.setHours(finalHours, finalMinutes, 0, 0);
+    const result = date.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    });
+    
+    console.log(`🔄 Final result: ${result}`);
     return result;
   };
 
@@ -554,14 +666,83 @@ const GreenRoomPage: React.FC = () => {
       const data = await DatabaseService.getRunOfShowData(currentEventId);
       console.log('🔄 Raw data received:', data);
       
-      // Try to get master start time from API data if not found in localStorage
-      if (data && data.settings && data.settings.masterStartTime && masterStartTime === '09:00') {
+      // Load master start time from API data (prioritize database over localStorage)
+      let effectiveMasterStartTime = masterStartTime; // Default to current state
+      
+      if (data && data.settings && data.settings.masterStartTime) {
         console.log('📥 Found master start time in API data:', data.settings.masterStartTime);
+        effectiveMasterStartTime = data.settings.masterStartTime;
         setMasterStartTime(data.settings.masterStartTime);
+      } else if (data && data.settings && data.settings.dayStartTimes && data.settings.dayStartTimes['1']) {
+        console.log('📥 Found day start time for Day 1 in API data:', data.settings.dayStartTimes['1']);
+        effectiveMasterStartTime = data.settings.dayStartTimes['1'];
+        setMasterStartTime(data.settings.dayStartTimes['1']);
+        // Also update localStorage to keep it in sync
+        localStorage.setItem(`masterStartTime_${currentEventId}`, data.settings.dayStartTimes['1']);
+      } else {
+        console.log('❌ No master start time found in API data, using localStorage value:', masterStartTime);
+        // Keep the localStorage value if no database value found
+      }
+      
+      // Load event timezone from API data
+      if (data && data.settings && data.settings.timezone) {
+        console.log('🌍 Loaded timezone from event data:', data.settings.timezone);
+        setEventTimezone(data.settings.timezone);
+      }
+      
+      // Load day start times from API data
+      if (data && data.settings && data.settings.dayStartTimes) {
+        console.log('📅 Loaded day start times from API data:', data.settings.dayStartTimes);
+        setDayStartTimes(data.settings.dayStartTimes);
+      }
+      
+      // Load overtime data from API
+      if (data && data.overtime_minutes) {
+        console.log('⏰ Loaded overtime minutes:', data.overtime_minutes);
+        setOvertimeMinutes(data.overtime_minutes);
+      }
+      
+      // Load show start overtime and start cue ID
+      if (data && data.show_start_overtime !== undefined) {
+        console.log('⭐ Loaded show start overtime:', data.show_start_overtime);
+        setShowStartOvertime(data.show_start_overtime);
+      }
+      
+      if (data && data.start_cue_id !== undefined) {
+        console.log('🎯 Loaded start cue ID:', data.start_cue_id);
+        setStartCueId(data.start_cue_id);
       }
       
       if (data?.schedule_items) {
         console.log('🔄 Total schedule items found:', data.schedule_items.length);
+        
+        // Determine number of days from schedule data OR dayStartTimes
+        const days = data.schedule_items.map((item: any) => item.day || 1);
+        console.log('🔍 All days in schedule:', days);
+        const maxDayFromSchedule = Math.max(...days);
+        console.log('🔍 Max day found in schedule:', maxDayFromSchedule);
+        
+        // Also check dayStartTimes to see if there are multiple day start times
+        const dayStartTimesKeys = data.settings?.dayStartTimes ? Object.keys(data.settings.dayStartTimes).map(Number) : [];
+        const maxDayFromSettings = dayStartTimesKeys.length > 0 ? Math.max(...dayStartTimesKeys) : 1;
+        console.log('🔍 Day start times keys:', dayStartTimesKeys);
+        console.log('🔍 Max day from settings:', maxDayFromSettings);
+        
+        // Use the higher of the two values
+        const maxDay = Math.max(maxDayFromSchedule, maxDayFromSettings);
+        console.log('🔍 Final max day:', maxDay);
+        console.log('🔍 Schedule items with days:', data.schedule_items.map((item: any) => ({ id: item.id, name: item.segmentName, day: item.day })));
+        
+        // Update numberOfDays state
+        setNumberOfDays(maxDay);
+        if (maxDay > 1) {
+          console.log('📅 Multiday event detected, numberOfDays set to:', maxDay);
+        } else {
+          console.log('📅 Single day event detected, numberOfDays set to:', maxDay);
+        }
+        
+        // Set the schedule first so it's available for time calculations
+        setSchedule(data.schedule_items);
         
         // First, calculate all start times for the complete schedule (not just public items)
         // This ensures all times are recalculated when any duration changes
@@ -579,8 +760,8 @@ const GreenRoomPage: React.FC = () => {
           const totalMinutes = (durationHours * 60) + durationMinutes + (durationSeconds / 60);
           const duration = totalMinutes > 0 ? `${Math.round(totalMinutes)} min` : '0 min';
           
-          // Calculate start time using the same logic as RunOfShowPage
-          const startTime = calculateStartTime(index);
+          // Calculate start time using the same logic as RunOfShowPage (with overtime)
+          const startTime = calculateStartTimeWithOvertime(index, data.schedule_items, effectiveMasterStartTime);
           let endTime = null;
           
           console.log(`🔄 Calculated start time for ${item.segmentName} (index ${index}):`, {
@@ -593,17 +774,36 @@ const GreenRoomPage: React.FC = () => {
             itemDurationSeconds: item.durationSeconds
           });
           
-          // If we have a start time, calculate end time
-          if (startTime && totalMinutes > 0) {
-            // Parse the start time and add duration
-            const startDate = new Date(`1970-01-01 ${startTime}`);
-            const endDate = new Date(startDate.getTime() + totalMinutes * 60000);
-            endTime = endDate.toLocaleTimeString('en-US', { 
-              hour: 'numeric', 
-              minute: '2-digit', 
-              second: '2-digit',
-              hour12: true 
-            });
+          // Calculate end time as the start time of the next row
+          if (startTime && startTime !== '') {
+            // Find the next non-indented item
+            let nextItemIndex = index + 1;
+            while (nextItemIndex < data.schedule_items.length) {
+              const nextItem = data.schedule_items[nextItemIndex];
+              if (nextItem && !nextItem.isIndented) {
+                    const nextStartTime = calculateStartTimeWithOvertime(nextItemIndex, data.schedule_items, effectiveMasterStartTime);
+                if (nextStartTime && nextStartTime !== '') {
+                  endTime = nextStartTime;
+                  break;
+                }
+              }
+              nextItemIndex++;
+            }
+            
+            // If no next item found, calculate based on duration
+            if (!endTime && totalMinutes > 0) {
+              // Parse the start time and add duration
+              const startDate = new Date(`1970-01-01 ${startTime}`);
+              const endDate = new Date(startDate.getTime() + totalMinutes * 60000);
+              endTime = endDate.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit', 
+                second: '2-digit',
+                hour12: true 
+              });
+            } else if (!endTime) {
+              endTime = 'TBD';
+            }
           } else {
             // No start time available
             endTime = 'TBD';
@@ -736,23 +936,28 @@ const GreenRoomPage: React.FC = () => {
   // No need for scroll logic - we're filtering the data instead
 
   // Dynamically modify isPublic to hide items above the current one
-  const publicSchedule = (() => {
-    // Find the current item index in the original schedule
+  const publicSchedule = useMemo(() => {
+    // First filter by selected day
+    const dayFilteredSchedule = schedule.filter(item => item.day === selectedDay);
+    
+    // Find the current item index in the day-filtered schedule
     // Convert both to strings for comparison since activeItemId might be a string
-    const currentIndex = activeItemId ? schedule.findIndex(item => String(item.id) === String(activeItemId)) : -1;
+    const currentIndex = activeItemId ? dayFilteredSchedule.findIndex(item => String(item.id) === String(activeItemId)) : -1;
     
     console.log('🔄 Modifying schedule visibility:', {
       totalScheduleItems: schedule.length,
+      dayFilteredItems: dayFilteredSchedule.length,
+      selectedDay,
       currentIndex,
       activeItemId,
       activeItemIdType: typeof activeItemId,
-      scheduleItemIds: schedule.map(item => ({ id: item.id, idType: typeof item.id, name: item.segmentName })),
-      originalSchedule: schedule.map(item => ({ id: item.id, name: item.segmentName, isPublic: item.isPublic }))
+      scheduleItemIds: dayFilteredSchedule.map(item => ({ id: item.id, idType: typeof item.id, name: item.segmentName })),
+      originalSchedule: dayFilteredSchedule.map(item => ({ id: item.id, name: item.segmentName, isPublic: item.isPublic }))
     });
     
     // If we have an active item, show only from that item onwards
     if (currentIndex >= 0) {
-      const visibleItems = schedule.slice(currentIndex).map(item => ({
+      const visibleItems = dayFilteredSchedule.slice(currentIndex).map(item => ({
         ...item,
         isPublic: true // Force all items from current onwards to be visible
       }));
@@ -766,14 +971,14 @@ const GreenRoomPage: React.FC = () => {
     }
     
     // If no active item, show all public items (fallback behavior)
-    const visibleItems = schedule.filter(item => item.isPublic === true);
+    const visibleItems = dayFilteredSchedule.filter(item => item.isPublic === true);
     
     console.log('🔄 No active item, showing all public items:', {
       visibleItems: visibleItems.map(item => ({ id: item.id, name: item.segmentName }))
     });
     
     return visibleItems;
-  })();
+  }, [schedule, selectedDay, activeItemId]);
 
   // Calculate expected finish time from active timer
   const getExpectedFinishTime = () => {
@@ -983,6 +1188,29 @@ const GreenRoomPage: React.FC = () => {
       
       {/* Content Overlay */}
       <div className="relative z-10">
+        {/* Day Selector for Multiday Events */}
+        {numberOfDays > 1 && (
+          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3">
+            <select
+              value={selectedDay}
+              onChange={(e) => {
+                const day = parseInt(e.target.value);
+                setSelectedDay(day);
+                // Update master start time for selected day
+                if (dayStartTimes[day]) {
+                  setMasterStartTime(dayStartTimes[day]);
+                }
+              }}
+              className="bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-lg"
+            >
+              {Array.from({ length: numberOfDays }, (_, i) => i + 1).map(day => (
+                <option key={day} value={day}>
+                  Day {day}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {/* Drift Status Indicator - Top Left Corner */}
         
         {/* Header - Event Name and Timer */}
