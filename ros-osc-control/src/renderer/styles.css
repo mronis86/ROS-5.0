@@ -460,6 +460,15 @@ body {
   padding-left: 2rem;
 }
 
+.schedule-table tbody tr.start-cue {
+  background: rgba(251, 191, 36, 0.1);
+  border-left: 4px solid #fbbf24;
+}
+
+.schedule-table tbody tr.start-cue:hover {
+  background: rgba(251, 191, 36, 0.2);
+}
+
 .cue-badge {
   display: inline-block;
   padding: 0.25rem 0.75rem;

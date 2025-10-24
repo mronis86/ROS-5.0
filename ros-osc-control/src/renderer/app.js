@@ -18,6 +18,7 @@ let socket = null;
 let clockOffset = 0; // Offset between client and server clocks in ms
 let disconnectTimer = null; // Timer for auto-disconnect
 let disconnectTimeoutMinutes = 0; // 0 = never disconnect
+let startCueId = null; // Store the START cue ID for quick access
 // Detect user's local timezone
 let eventTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 let allEvents = []; // Global events array
@@ -408,31 +409,75 @@ async function loadEvents(filter = 'upcoming') {
     console.log('🌍 Date filtering debug - each event uses its own timezone from NEON');
     
     const filteredEvents = allEvents.filter(event => {
-      // Parse the event date (YYYY-MM-DD format)
-      const [year, month, day] = event.date.split('-').map(Number);
-      const eventDate = new Date(year, month - 1, day); // month is 0-indexed
-      
-      // Get event's timezone from NEON database
-      const eventTimezone = event.schedule_data?.timezone || 'America/New_York';
-      
-      // Simple approach: compare dates directly without timezone conversion
-      // The event date is already in the correct format for comparison
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      eventDate.setHours(0, 0, 0, 0);
-      
-      console.log(`🌍 Event "${event.name}" date comparison:`, {
-        eventDate: event.date,
-        eventTimezone: eventTimezone,
-        eventDateObj: eventDate.toISOString(),
-        todayObj: today.toISOString(),
-        isUpcoming: eventDate >= today
-      });
-      
-      if (filter === 'upcoming') {
-        return eventDate >= today;
-      } else {
-        return eventDate < today;
+      try {
+        // Check if event.date is valid
+        if (!event.date || typeof event.date !== 'string') {
+          console.error('Invalid event date:', event.date, 'for event:', event.name);
+          return false;
+        }
+        
+        // Debug: Log the actual date value
+        console.log('🔍 Debug event date for', event.name, ':', event.date, '(type:', typeof event.date, ')');
+        
+        // Handle both YYYY-MM-DD and ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
+        let dateString = event.date;
+        if (dateString.includes('T')) {
+          // ISO format - extract just the date part
+          dateString = dateString.split('T')[0];
+          console.log('🔍 Extracted date from ISO:', dateString);
+        }
+        
+        // Parse the event date (YYYY-MM-DD format)
+        const dateParts = dateString.split('-');
+        console.log('🔍 Debug date parts for', event.name, ':', dateParts, '(length:', dateParts.length, ')');
+        
+        if (dateParts.length !== 3) {
+          console.error('Invalid date format:', event.date, 'for event:', event.name);
+          return false;
+        }
+        
+        const [year, month, day] = dateParts.map(Number);
+        console.log('🔍 Debug parsed numbers for', event.name, ':', year, month, day, '(types:', typeof year, typeof month, typeof day, ')');
+        
+        // Validate the parsed numbers
+        if (isNaN(year) || isNaN(month) || isNaN(day)) {
+          console.error('Invalid date numbers:', { year, month, day, original: event.date }, 'for event:', event.name);
+          return false;
+        }
+        
+        const eventDate = new Date(year, month - 1, day); // month is 0-indexed
+        
+        // Validate the date
+        if (isNaN(eventDate.getTime())) {
+          console.error('Invalid date created:', { year, month, day, original: event.date }, 'for event:', event.name);
+          return false;
+        }
+        
+        // Get event's timezone from NEON database
+        const eventTimezone = event.schedule_data?.timezone || 'America/New_York';
+        
+        // Simple approach: compare dates directly without timezone conversion
+        // The event date is already in the correct format for comparison
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        eventDate.setHours(0, 0, 0, 0);
+        
+        console.log(`🌍 Event "${event.name}" date comparison:`, {
+          eventDate: event.date,
+          eventTimezone: eventTimezone,
+          eventDateObj: eventDate.toISOString(),
+          todayObj: today.toISOString(),
+          isUpcoming: eventDate >= today
+        });
+        
+        if (filter === 'upcoming') {
+          return eventDate >= today;
+        } else {
+          return eventDate < today;
+        }
+      } catch (error) {
+        console.error('Error processing event date:', event.name, event.date, error);
+        return false; // Skip this event if there's an error
       }
     });
     
@@ -649,6 +694,9 @@ async function loadEventSchedule(eventId, day = 1) {
     // Load active timer status from API
     await syncTimerStatus();
     
+    // Load START cue selection
+    await loadStartCueSelection();
+    
     // Start timer updates
     startTimerUpdates();
     
@@ -696,6 +744,9 @@ function renderSchedule() {
     const isRunning = activeTimers[item.id];
     const isIndented = item.isIndented;
     
+    // Check if this is the START cue (STAR cue)
+    const isStartCue = checkIfStartCueSync(item.id);
+    
     let statusClass = 'idle';
     let statusText = '—';
     
@@ -710,10 +761,14 @@ function renderSchedule() {
     let rowClass = '';
     if (isActive) rowClass += ' active';
     if (isIndented) rowClass += ' indented';
+    if (isStartCue) rowClass += ' start-cue';
+    
+    // Add START cue indicator to cue number
+    const cueDisplay = isStartCue ? `⭐ ${cueNumber}` : cueNumber;
     
     return `
       <tr class="${rowClass}" data-item-id="${item.id}">
-        <td><span class="cue-badge">${escapeHtml(cueNumber)}</span></td>
+        <td><span class="cue-badge">${escapeHtml(cueDisplay)}</span></td>
         <td>${escapeHtml(item.segmentName || '—')}</td>
         <td><span class="duration-badge">${duration}</span></td>
         <td><span class="status-badge ${statusClass}">${statusText}</span></td>
@@ -899,6 +954,15 @@ async function startCue() {
   }
   
   try {
+    // Check if this is the START cue (STAR cue)
+    const isStartCue = await checkIfStartCue(activeItemId);
+    if (isStartCue) {
+      console.log('⭐ Starting START CUE (STAR CUE) - calculating show start overtime');
+      
+      // Calculate show start overtime (like RunOfShowPage.tsx)
+      await calculateAndSaveStartCueOvertime(activeItemId);
+    }
+    
     // Call API to start timer - using correct endpoint
     await axios.post(`${config.apiUrl}/api/timers/start`, {
       event_id: currentEvent.id,
@@ -1455,6 +1519,224 @@ function showToast(message) {
   // Could implement a toast UI here
 }
 
+// Load START cue selection from schedule data (like RunOfShowPage.tsx)
+function loadStartCueSelection() {
+  try {
+    if (!schedule || schedule.length === 0) {
+      console.warn('⚠️ No schedule data to check for START cue');
+      return;
+    }
+    
+    // Look for START cue in schedule data (like RunOfShowPage.tsx)
+    const startCueItem = schedule.find(item => item.isStartCue === true);
+    
+    if (startCueItem) {
+      startCueId = startCueItem.id;
+      console.log(`⭐ START cue found in schedule: ${startCueId}`);
+      
+      // Re-render schedule to show START cue indicator
+      renderSchedule();
+    } else {
+      startCueId = null;
+      console.log('🔍 No START cue found in schedule');
+    }
+  } catch (error) {
+    console.error('❌ Error loading START cue selection:', error);
+    startCueId = null;
+  }
+}
+
+// Check if a cue is the START cue (STAR cue) - synchronous version for rendering
+function checkIfStartCueSync(itemId) {
+  return startCueId !== null && startCueId === itemId;
+}
+
+// Check if a cue is the START cue (STAR cue) - async version for API calls
+async function checkIfStartCue(itemId) {
+  try {
+    // First, make sure we have the latest START cue from schedule data
+    loadStartCueSelection();
+    
+    // Then check if this item is the START cue
+    const isStartCue = startCueId !== null && startCueId === itemId;
+    console.log(`🔍 START cue check: itemId ${itemId} vs START cue ${startCueId} = ${isStartCue}`);
+    
+    return isStartCue;
+  } catch (error) {
+    console.error('❌ Error checking START cue:', error);
+    return false;
+  }
+}
+
+// Parse time string from Start column (e.g., "8:00 PM", "20:00", "1:30 PM")
+function parseTimeString(timeStr) {
+  if (!timeStr || timeStr.trim() === '') return null;
+  
+  const now = new Date();
+  const trimmed = timeStr.trim();
+  
+  // Try parsing 12-hour format with AM/PM
+  const time12Match = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (time12Match) {
+    let hours = parseInt(time12Match[1]);
+    const minutes = parseInt(time12Match[2]);
+    const period = time12Match[3].toUpperCase();
+    
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+    
+    const result = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+    return result;
+  }
+  
+  // Try parsing 24-hour format
+  const time24Match = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (time24Match) {
+    const hours = parseInt(time24Match[1]);
+    const minutes = parseInt(time24Match[2]);
+    const result = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+    return result;
+  }
+  
+  return null;
+}
+
+// Calculate start time for a given index (like RunOfShowPage.tsx)
+function calculateStartTime(index) {
+  const currentItem = schedule[index];
+  if (!currentItem) return '';
+  
+  // Get the appropriate start time for this day
+  const itemDay = currentItem.day || 1;
+  const startTime = currentEvent.dayStartTimes?.[itemDay] || currentEvent.masterStartTime;
+  
+  // If no start time is set for this day, return blank
+  if (!startTime) return '';
+  
+  // Calculate total seconds from the beginning of this day up to this item
+  let totalSeconds = 0;
+  for (let i = 0; i < index; i++) {
+    const item = schedule[i];
+    // Only count items from the same day and non-indented items
+    if ((item.day || 1) === itemDay && !item.isIndented) {
+      totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
+    }
+  }
+  
+  const [hours, minutes] = startTime.split(':').map(Number);
+  const startSeconds = hours * 3600 + minutes * 60;
+  const totalStartSeconds = startSeconds + totalSeconds;
+  
+  const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
+  const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
+  
+  // Convert to 12-hour format
+  const date = new Date();
+  date.setHours(finalHours, finalMinutes, 0, 0);
+  return date.toLocaleTimeString('en-US', { 
+    hour: 'numeric', 
+    minute: '2-digit',
+    hour12: true 
+  });
+}
+
+// Convert a local time to UTC using the event timezone
+function convertLocalTimeToUTC(localTime, timezone) {
+  try {
+    // The localTime from parseTimeString is already correctly representing the scheduled time
+    // We just need to return it as-is since it's already in the correct timezone
+    
+    console.log(`🔍 convertLocalTimeToUTC: Input time: ${localTime.toISOString()}, Timezone: ${timezone}`);
+    console.log(`🔍 convertLocalTimeToUTC: Returning input as-is: ${localTime.toISOString()}`);
+    
+    return localTime; // Return the input directly since it's already correct
+  } catch (error) {
+    console.warn('Error converting local time to UTC:', error);
+    return localTime; // Fallback to original time
+  }
+}
+
+// Calculate and save START cue overtime (like RunOfShowPage.tsx)
+async function calculateAndSaveStartCueOvertime(itemId) {
+  try {
+    if (!currentEvent || !schedule) {
+      console.warn('⚠️ No event or schedule data for START cue overtime calculation');
+      return;
+    }
+    
+    // Find the item in schedule
+    const item = schedule.find(s => s.id === itemId);
+    if (!item) {
+      console.warn('⚠️ Item not found in schedule for START cue overtime calculation');
+      return;
+    }
+    
+    const currentIndex = schedule.findIndex(s => s.id === itemId);
+    console.log('🔍 START cue index:', currentIndex);
+    
+    // Get scheduled start time from Start column (calculated)
+    const scheduledStartStr = calculateStartTime(currentIndex);
+    console.log('🔍 Calculated start time:', scheduledStartStr);
+    
+    if (scheduledStartStr && scheduledStartStr !== '') {
+      const scheduledStart = parseTimeString(scheduledStartStr);
+      const actualStart = new Date(); // Use current UTC time
+      
+      if (scheduledStart) {
+        // Convert the scheduled start time from event timezone to UTC
+        const scheduledStartUTC = convertLocalTimeToUTC(scheduledStart, currentEvent.timezone || eventTimezone);
+        
+        // Calculate difference in minutes
+        const diffMs = actualStart.getTime() - scheduledStartUTC.getTime();
+        const diffMinutes = Math.round(diffMs / (60 * 1000));
+        
+        console.log(`⏰ Show Start Overtime: Scheduled=${scheduledStart.toLocaleTimeString()} (${currentEvent.timezone || eventTimezone}), ScheduledUTC=${scheduledStartUTC.toISOString()}, Actual=${actualStart.toISOString()}, Diff=${diffMinutes}m`);
+        
+        // Save show start overtime to database (same API endpoint as React app)
+        if (currentEvent.id) {
+          try {
+            const response = await axios.post(`${config.apiUrl}/api/show-start-overtime`, {
+              event_id: currentEvent.id,
+              item_id: itemId,
+              show_start_overtime: diffMinutes,
+              scheduled_time: scheduledStartStr,
+              actual_time: actualStart.toISOString()
+            });
+            console.log(`✅ Show start overtime saved to database: ${diffMinutes} minutes for item ${itemId}`);
+            console.log('📊 Database response:', response.data);
+          } catch (error) {
+            console.error('❌ Failed to save show start overtime:', error);
+            if (error.response) {
+              console.error('❌ API Error:', error.response.status, error.response.data);
+            }
+          }
+        }
+        
+        // Broadcast via WebSocket (if connected) - same event as React app
+        if (socket && socket.connected) {
+          socket.emit('showStartOvertimeUpdate', {
+            event_id: currentEvent.id,
+            item_id: itemId,
+            showStartOvertime: diffMinutes,
+            scheduledTime: scheduledStartStr,
+            actualTime: actualStart.toISOString()
+          });
+          console.log(`✅ Show start overtime broadcasted via WebSocket: ${diffMinutes} minutes`);
+        } else {
+          console.warn('⚠️ WebSocket not connected - cannot broadcast START cue overtime');
+        }
+      } else {
+        console.warn('⚠️ Could not parse scheduled start time:', scheduledStartStr);
+      }
+    } else {
+      console.warn('⚠️ No scheduled start time found for START cue. Make sure Master Start Time or Day Start Time is set.');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error calculating START cue overtime:', error);
+  }
+}
+
 // Utility functions
 function formatDuration(hours, minutes, seconds) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
@@ -1469,22 +1751,49 @@ function formatTime(seconds) {
 
 function formatDate(dateString, timezone = 'America/New_York') {
   try {
+    // Check if dateString is valid
+    if (!dateString || typeof dateString !== 'string') {
+      console.error('Invalid date string:', dateString);
+      return 'Invalid Date';
+    }
+    
+    // Handle both YYYY-MM-DD and ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
+    let cleanDateString = dateString;
+    if (cleanDateString.includes('T')) {
+      // ISO format - extract just the date part
+      cleanDateString = cleanDateString.split('T')[0];
+    }
+    
     // Parse the date string (YYYY-MM-DD format)
-    const [year, month, day] = dateString.split('-').map(Number);
+    const dateParts = cleanDateString.split('-');
+    if (dateParts.length !== 3) {
+      console.error('Invalid date format:', dateString);
+      return dateString;
+    }
+    
+    const [year, month, day] = dateParts.map(Number);
+    
+    // Validate the parsed numbers
+    if (isNaN(year) || isNaN(month) || isNaN(day)) {
+      console.error('Invalid date numbers:', { year, month, day, original: dateString });
+      return dateString;
+    }
+    
     const date = new Date(year, month - 1, day); // month is 0-indexed
     
     // Validate the date
     if (isNaN(date.getTime())) {
-      console.error('Invalid date:', dateString);
+      console.error('Invalid date created:', { year, month, day, original: dateString });
       return dateString; // Return original string if invalid
     }
     
+    // Format as "OCT 24, 2025"
     return date.toLocaleDateString('en-US', { 
       year: 'numeric', 
-      month: 'long', 
+      month: 'short', 
       day: 'numeric',
       timeZone: timezone
-    });
+    }).toUpperCase();
   } catch (error) {
     console.error('Error formatting date:', dateString, error);
     return dateString; // Return original string on error
