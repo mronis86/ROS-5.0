@@ -8179,33 +8179,53 @@ const RunOfShowPage: React.FC = () => {
                             const calculatedStartTime = calculateStartTime(originalIndex);
                             const duration = `${item.durationHours}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
                             
-                            // Calculate end time from next row's start time
-                            const endTime = (() => {
-                              // Find the next row in the filtered schedule
-                              const nextItem = filteredSchedule[index + 1];
+                            // Handle indented items - blank start and end times
+                            let startTime = '';
+                            let endTime = '';
+                            
+                            if (!item.isIndented) {
+                              // For non-indented items, use calculated start time
+                              startTime = calculatedStartTime || '';
                               
-                              if (nextItem) {
-                                // Get the next item's start time
-                                const nextOriginalIndex = schedule.findIndex(s => s.id === nextItem.id);
-                                const nextStartTime = calculateStartTime(nextOriginalIndex);
-                                return nextStartTime || '';
-                              } else {
-                                // For the last row, calculate end time from duration as fallback
-                                if (!calculatedStartTime) return '';
+                              // Calculate end time from next non-indented row's start time
+                              endTime = (() => {
+                                // Find the next non-indented item in the filtered schedule
+                                let nextNonIndentedItem: ScheduleItem | null = null;
+                                let nextIndex = index + 1;
                                 
-                                const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
-                                const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
+                                while (nextIndex < filteredSchedule.length) {
+                                  const nextItem = filteredSchedule[nextIndex];
+                                  if (!nextItem.isIndented) {
+                                    nextNonIndentedItem = nextItem;
+                                    break;
+                                  }
+                                  nextIndex++;
+                                }
                                 
-                                let totalSeconds = (hours * 3600 + minutes * 60 + seconds) + 
-                                                 (durHours * 3600 + durMinutes * 60 + durSeconds);
-                                
-                                const endHours = Math.floor(totalSeconds / 3600);
-                                const endMinutes = Math.floor((totalSeconds % 3600) / 60);
-                                const endSecs = totalSeconds % 60;
-                                
-                                return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
-                              }
-                            })();
+                                if (nextNonIndentedItem) {
+                                  // Get the next non-indented item's start time
+                                  const nextOriginalIndex = schedule.findIndex(s => s.id === nextNonIndentedItem!.id);
+                                  const nextStartTime = calculateStartTime(nextOriginalIndex);
+                                  return nextStartTime || '';
+                                } else {
+                                  // For the last non-indented row, calculate end time from duration as fallback
+                                  if (!calculatedStartTime) return '';
+                                  
+                                  const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
+                                  const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
+                                  
+                                  let totalSeconds = (hours * 3600 + minutes * 60 + seconds) + 
+                                                   (durHours * 3600 + durMinutes * 60 + durSeconds);
+                                  
+                                  const endHours = Math.floor(totalSeconds / 3600);
+                                  const endMinutes = Math.floor((totalSeconds % 3600) / 60);
+                                  const endSecs = totalSeconds % 60;
+                                  
+                                  return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
+                                }
+                              })();
+                            }
+                            // For indented items, startTime and endTime remain empty strings
 
                             const baseRow = [
                               index + 1, // ROW number
@@ -8214,7 +8234,7 @@ const RunOfShowPage: React.FC = () => {
                               item.shotType || '',
                               item.segmentName || '',
                               duration,
-                              calculatedStartTime || '',
+                              startTime,
                               endTime,
                               cleanNotesForCSV(item.notes) || '',
                               item.assets || '',
