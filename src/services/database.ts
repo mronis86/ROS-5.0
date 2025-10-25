@@ -452,11 +452,15 @@ export class DatabaseService {
         
         // Debug logging for isIndented property
         if (data.schedule_items && Array.isArray(data.schedule_items)) {
-          console.log('🔍 Database service - Raw schedule data from API:', data.schedule_items.map(item => ({
-            id: item.id,
-            cue: item.customFields?.cue,
-            isIndented: item.isIndented
-          })));
+          console.log('🔍 Database service - Raw schedule data from API:');
+          data.schedule_items.forEach((item, index) => {
+            console.log(`  Item ${index}:`, {
+              id: item.id,
+              cue: item.customFields?.cue,
+              isIndented: item.isIndented,
+              segmentName: item.segmentName
+            });
+          });
         }
       }
       return data;
