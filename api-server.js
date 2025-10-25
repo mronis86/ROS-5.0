@@ -465,10 +465,20 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
     
     const data = result.rows[0];
     
+    console.log('🔍 Database query result for event:', eventId);
+    console.log('🔍 event_timezone from calendar_events:', data.event_timezone);
+    console.log('🔍 existing settings:', data.settings);
+    
     // Add event timezone to settings if it exists
-    if (data.event_timezone && data.settings) {
+    if (data.event_timezone) {
+      // Ensure settings object exists
+      if (!data.settings) {
+        data.settings = {};
+      }
       data.settings.timezone = data.event_timezone;
       console.log('🌍 Added event timezone to settings:', data.event_timezone);
+    } else {
+      console.log('⚠️ No event_timezone found in database for event:', eventId);
     }
     
     res.json(data);
