@@ -8183,6 +8183,9 @@ const RunOfShowPage: React.FC = () => {
                             let startTime = '';
                             let endTime = '';
                             
+                            // Debug logging
+                            console.log(`CSV Export - Item ${item.customFields?.cue || index + 1}: isIndented=${item.isIndented}, calculatedStartTime=${calculatedStartTime}`);
+                            
                             if (!item.isIndented) {
                               // For non-indented items, use calculated start time
                               startTime = calculatedStartTime || '';
@@ -8195,6 +8198,7 @@ const RunOfShowPage: React.FC = () => {
                                 
                                 while (nextIndex < filteredSchedule.length) {
                                   const nextItem = filteredSchedule[nextIndex];
+                                  console.log(`  Checking next item ${nextIndex}: ${nextItem.customFields?.cue || nextIndex + 1}, isIndented=${nextItem.isIndented}`);
                                   if (!nextItem.isIndented) {
                                     nextNonIndentedItem = nextItem;
                                     break;
@@ -8206,6 +8210,7 @@ const RunOfShowPage: React.FC = () => {
                                   // Get the next non-indented item's start time
                                   const nextOriginalIndex = schedule.findIndex(s => s.id === nextNonIndentedItem!.id);
                                   const nextStartTime = calculateStartTime(nextOriginalIndex);
+                                  console.log(`  Found next non-indented item: ${nextNonIndentedItem.customFields?.cue}, startTime=${nextStartTime}`);
                                   return nextStartTime || '';
                                 } else {
                                   // For the last non-indented row, calculate end time from duration as fallback
@@ -8224,6 +8229,8 @@ const RunOfShowPage: React.FC = () => {
                                   return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
                                 }
                               })();
+                            } else {
+                              console.log(`  Indented item - keeping startTime and endTime blank`);
                             }
                             // For indented items, startTime and endTime remain empty strings
 
