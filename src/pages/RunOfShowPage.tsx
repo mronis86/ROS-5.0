@@ -4554,9 +4554,11 @@ const RunOfShowPage: React.FC = () => {
       
       try {
         // Convert duration fields to duration_seconds for database storage
+        // Also set isIndented property based on indentedCues state
         const scheduleWithDurationSeconds = schedule.map(item => ({
           ...item,
-          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
+          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+          isIndented: indentedCues[item.id] ? true : false
         }));
 
         // Debug logging for duration conversion
@@ -4618,7 +4620,7 @@ const RunOfShowPage: React.FC = () => {
         console.error('❌ Error auto-saving to API:', error);
       }
     }, 2000), // Debounce for 2 seconds
-    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes]
+    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, indentedCues]
   );
 
   // Debounce utility function
