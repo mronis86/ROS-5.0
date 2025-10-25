@@ -760,6 +760,50 @@ const RunOfShowPage: React.FC = () => {
     return `CUE ${cue}`;
   };
 
+  // Helper function to convert HTML to plain text with basic markdown-style formatting
+  const cleanNotesForCSV = (htmlString: string): string => {
+    if (!htmlString) return '';
+    
+    let cleaned = htmlString;
+    
+    // Convert bold tags to **text**
+    cleaned = cleaned.replace(/<b>(.*?)<\/b>/gi, '**$1**');
+    cleaned = cleaned.replace(/<strong>(.*?)<\/strong>/gi, '**$1**');
+    
+    // Convert italic tags to *text*
+    cleaned = cleaned.replace(/<i>(.*?)<\/i>/gi, '*$1*');
+    cleaned = cleaned.replace(/<em>(.*?)<\/em>/gi, '*$1*');
+    
+    // Convert underline tags to _text_
+    cleaned = cleaned.replace(/<u>(.*?)<\/u>/gi, '_$1_');
+    
+    // Convert line breaks and paragraphs to actual newlines
+    cleaned = cleaned.replace(/<br\s*\/?>/gi, '\n');
+    cleaned = cleaned.replace(/<\/p>/gi, '\n');
+    cleaned = cleaned.replace(/<p>/gi, '');
+    
+    // Convert list items to bullet points
+    cleaned = cleaned.replace(/<li>(.*?)<\/li>/gi, '• $1\n');
+    cleaned = cleaned.replace(/<\/?ul>/gi, '');
+    cleaned = cleaned.replace(/<\/?ol>/gi, '');
+    
+    // Remove any remaining HTML tags
+    cleaned = cleaned.replace(/<[^>]*>/g, '');
+    
+    // Decode HTML entities
+    cleaned = cleaned.replace(/&nbsp;/g, ' ');
+    cleaned = cleaned.replace(/&amp;/g, '&');
+    cleaned = cleaned.replace(/&lt;/g, '<');
+    cleaned = cleaned.replace(/&gt;/g, '>');
+    cleaned = cleaned.replace(/&quot;/g, '"');
+    
+    // Clean up extra whitespace but preserve intentional line breaks
+    cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n'); // Max 2 consecutive newlines
+    cleaned = cleaned.trim();
+    
+    return cleaned;
+  };
+
   // Parse time string from Start column (e.g., "8:00 PM", "20:00", "1:30 PM")
   const parseTimeString = (timeStr: string): Date | null => {
     if (!timeStr || timeStr.trim() === '') return null;
@@ -4917,6 +4961,7 @@ const RunOfShowPage: React.FC = () => {
         setSubCueTimerProgress({});
         setCompletedCues({});
         setOvertimeMinutes({}); // Clear overtime data
+        setShowStartOvertime(0); // Clear show start overtime (FIXED!)
         setActiveItemId(null);
         setStoppedItems(new Set());
         setLoadedCueDependents(new Set());
@@ -4926,7 +4971,7 @@ const RunOfShowPage: React.FC = () => {
         // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
         // The reset should only clear completed cues and timer states, not modify schedule structure
         
-        console.log('✅ RunOfShow: All states reset via WebSocket');
+        console.log('✅ RunOfShow: All states reset via WebSocket (including show start overtime)');
       },
       onOvertimeReset: (data: any) => {
         if (data && data.event_id === event?.id) {
@@ -5179,6 +5224,13 @@ const RunOfShowPage: React.FC = () => {
           setShowStartOvertime(data.showStartOvertime);
           setStartCueId(data.item_id); // Also update which cue is marked as START
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
+        }
+      },
+      onShowStartOvertimeReset: (data: { event_id: string }) => {
+        console.log('📡 Received show start overtime reset:', data);
+        if (data.event_id === event?.id) {
+          setShowStartOvertime(0);
+          console.log('✅ Show start overtime reset to 0');
         }
       },
       onStartCueSelectionUpdate: (data: { event_id: string; item_id: number }) => {
@@ -8151,7 +8203,7 @@ const RunOfShowPage: React.FC = () => {
                               duration,
                               calculatedStartTime || '',
                               endTime,
-                              item.notes || '',
+                              cleanNotesForCSV(item.notes) || '',
                               item.assets || '',
                               item.speakersText || '',
                               item.hasPPT ? 'Yes' : 'No',
