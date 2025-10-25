@@ -8179,20 +8179,33 @@ const RunOfShowPage: React.FC = () => {
                             const calculatedStartTime = calculateStartTime(originalIndex);
                             const duration = `${item.durationHours}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
                             
-                            // Calculate end time
-                            const endTime = calculatedStartTime ? (() => {
-                              const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
-                              const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
+                            // Calculate end time from next row's start time
+                            const endTime = (() => {
+                              // Find the next row in the filtered schedule
+                              const nextItem = filteredSchedule[index + 1];
                               
-                              let totalSeconds = (hours * 3600 + minutes * 60 + seconds) + 
-                                               (durHours * 3600 + durMinutes * 60 + durSeconds);
-                              
-                              const endHours = Math.floor(totalSeconds / 3600);
-                              const endMinutes = Math.floor((totalSeconds % 3600) / 60);
-                              const endSecs = totalSeconds % 60;
-                              
-                              return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
-                            })() : '';
+                              if (nextItem) {
+                                // Get the next item's start time
+                                const nextOriginalIndex = schedule.findIndex(s => s.id === nextItem.id);
+                                const nextStartTime = calculateStartTime(nextOriginalIndex);
+                                return nextStartTime || '';
+                              } else {
+                                // For the last row, calculate end time from duration as fallback
+                                if (!calculatedStartTime) return '';
+                                
+                                const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
+                                const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
+                                
+                                let totalSeconds = (hours * 3600 + minutes * 60 + seconds) + 
+                                                 (durHours * 3600 + durMinutes * 60 + durSeconds);
+                                
+                                const endHours = Math.floor(totalSeconds / 3600);
+                                const endMinutes = Math.floor((totalSeconds % 3600) / 60);
+                                const endSecs = totalSeconds % 60;
+                                
+                                return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
+                              }
+                            })();
 
                             const baseRow = [
                               index + 1, // ROW number
