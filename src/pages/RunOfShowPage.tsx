@@ -4888,6 +4888,11 @@ const RunOfShowPage: React.FC = () => {
         setTimeout(() => {
           // Update schedule items
           if (data.schedule_items && Array.isArray(data.schedule_items)) {
+            console.log('🔍 Raw schedule data from API:', data.schedule_items.map(item => ({
+              id: item.id,
+              cue: item.customFields?.cue,
+              isIndented: item.isIndented
+            })));
             setSchedule(data.schedule_items);
             console.log('✅ Real-time: Schedule items updated');
           }
@@ -8172,6 +8177,13 @@ const RunOfShowPage: React.FC = () => {
                           
                           // Filter schedule to only include items for the currently selected day
                           const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
+                          
+                          // Debug: Log the filtered schedule data
+                          console.log('🔍 Filtered schedule for CSV:', filteredSchedule.map(item => ({
+                            id: item.id,
+                            cue: item.customFields?.cue,
+                            isIndented: item.isIndented
+                          })));
                           
                           const csvRows = filteredSchedule.map((item, index) => {
                             // Find the original index in the full schedule for accurate start time calculation
