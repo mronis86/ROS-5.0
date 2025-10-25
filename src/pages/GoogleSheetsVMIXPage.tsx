@@ -40,6 +40,7 @@ const GoogleSheetsVMIXPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [eventId, setEventId] = useState<string>('');
+  const [showAllItems, setShowAllItems] = useState<boolean>(false);
 
   // Load event ID from URL or localStorage
   useEffect(() => {
@@ -71,14 +72,39 @@ const GoogleSheetsVMIXPage: React.FC = () => {
         const runOfShowData = await DatabaseService.getRunOfShowData(eventId);
         if (!runOfShowData || !runOfShowData.schedule_items) return;
 
-        const publicItems = runOfShowData.schedule_items.filter((item: any) => item.isPublic === true);
+        // Filter items based on toggle setting
+        const filteredItems = showAllItems 
+          ? runOfShowData.schedule_items 
+          : runOfShowData.schedule_items.filter((item: any) => item.isPublic === true);
+        
+        // Debug logging to help troubleshoot missing rows
+        console.log('🔍 GoogleSheetsVMIX: Total schedule items:', runOfShowData.schedule_items.length);
+        console.log('🔍 GoogleSheetsVMIX: Show all items toggle:', showAllItems);
+        console.log('🔍 GoogleSheetsVMIX: Filtered items found:', filteredItems.length);
+        
+        if (!showAllItems) {
+          console.log('🔍 GoogleSheetsVMIX: Public items found:', filteredItems.length);
+          console.log('🔍 GoogleSheetsVMIX: Non-public items:', runOfShowData.schedule_items.filter((item: any) => item.isPublic !== true).length);
+          
+          // Log some examples of non-public items for debugging
+          const nonPublicItems = runOfShowData.schedule_items.filter((item: any) => item.isPublic !== true);
+          if (nonPublicItems.length > 0) {
+            console.log('🔍 GoogleSheetsVMIX: Examples of non-public items:', nonPublicItems.slice(0, 3).map(item => ({
+              id: item.id,
+              segmentName: item.segmentName,
+              isPublic: item.isPublic,
+              cue: item.customFields?.cue
+            })));
+          }
+        }
+        
         let data: any[][] = [];
         let headers: string[] = [];
 
         if (dataType === 'lower-thirds') {
           const lowerThirdsData: VMIXLowerThird[] = [];
           
-          publicItems.forEach((item: any) => {
+          filteredItems.forEach((item: any) => {
             const speakers: Array<{ name: string; title: string; photo: string }> = [];
             
             if (item.speakersText) {
@@ -174,7 +200,7 @@ const GoogleSheetsVMIXPage: React.FC = () => {
           
           const [hours, minutes] = masterStartTime.split(':').map(Number);
           
-          publicItems.forEach((item: any, index: number) => {
+          filteredItems.forEach((item: any, index: number) => {
             // Calculate total minutes from start
             let totalMinutes = 0;
             for (let i = 0; i < index; i++) {
@@ -211,7 +237,7 @@ const GoogleSheetsVMIXPage: React.FC = () => {
         } else if (dataType === 'custom-columns') {
           const customColumnsData: VMIXCustomColumn[] = [];
           
-          publicItems.forEach((item: any, index: number) => {
+          filteredItems.forEach((item: any, index: number) => {
             customColumnsData.push({
               id: String(item.id),
               cue: item.customFields?.cue || '',
@@ -283,12 +309,36 @@ const GoogleSheetsVMIXPage: React.FC = () => {
         throw new Error('No schedule items found');
       }
 
-      const publicItems = runOfShowData.schedule_items.filter((item: any) => item.isPublic === true);
+      // Filter items based on toggle setting
+      const filteredItems = showAllItems 
+        ? runOfShowData.schedule_items 
+        : runOfShowData.schedule_items.filter((item: any) => item.isPublic === true);
+      
+      // Debug logging to help troubleshoot missing rows
+      console.log('🔍 GoogleSheetsVMIX (Manual Load): Total schedule items:', runOfShowData.schedule_items.length);
+      console.log('🔍 GoogleSheetsVMIX (Manual Load): Show all items toggle:', showAllItems);
+      console.log('🔍 GoogleSheetsVMIX (Manual Load): Filtered items found:', filteredItems.length);
+      
+      if (!showAllItems) {
+        console.log('🔍 GoogleSheetsVMIX (Manual Load): Public items found:', filteredItems.length);
+        console.log('🔍 GoogleSheetsVMIX (Manual Load): Non-public items:', runOfShowData.schedule_items.filter((item: any) => item.isPublic !== true).length);
+        
+        // Log some examples of non-public items for debugging
+        const nonPublicItems = runOfShowData.schedule_items.filter((item: any) => item.isPublic !== true);
+        if (nonPublicItems.length > 0) {
+          console.log('🔍 GoogleSheetsVMIX (Manual Load): Examples of non-public items:', nonPublicItems.slice(0, 3).map(item => ({
+            id: item.id,
+            segmentName: item.segmentName,
+            isPublic: item.isPublic,
+            cue: item.customFields?.cue
+          })));
+        }
+      }
 
       if (dataType === 'lower-thirds') {
         const lowerThirdsData: VMIXLowerThird[] = [];
         
-        publicItems.forEach((item: any) => {
+        filteredItems.forEach((item: any) => {
           const speakers: Array<{ name: string; title: string; photo: string }> = [];
           
           if (item.speakersText) {
@@ -328,7 +378,7 @@ const GoogleSheetsVMIXPage: React.FC = () => {
         const masterStartTime = runOfShowData.settings?.masterStartTime || '09:00';
         const [hours, minutes] = masterStartTime.split(':').map(Number);
         
-        publicItems.forEach((item: any, index: number) => {
+        filteredItems.forEach((item: any, index: number) => {
           // Calculate total minutes from start
           let totalMinutes = 0;
           for (let i = 0; i < index; i++) {
@@ -355,7 +405,7 @@ const GoogleSheetsVMIXPage: React.FC = () => {
       } else if (dataType === 'custom-columns') {
         const customColumnsData: VMIXCustomColumn[] = [];
         
-        publicItems.forEach((item: any) => {
+        filteredItems.forEach((item: any) => {
           customColumnsData.push({
             id: String(item.id),
             cue: item.customFields?.cue || '',
@@ -646,6 +696,30 @@ const GoogleSheetsVMIXPage: React.FC = () => {
               />
               <p className="text-xs text-gray-400 mt-1">
                 📝 Name of the sheet to write data to (will be created if it doesn't exist)
+              </p>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Show All Items</label>
+                  <p className="text-xs text-gray-400">Include all schedule items, not just public ones</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showAllItems}
+                    onChange={(e) => setShowAllItems(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+              <p className="text-xs text-gray-400">
+                {showAllItems 
+                  ? '✅ Will export ALL schedule items (public and private)' 
+                  : '🔒 Will export only PUBLIC items (default behavior)'
+                }
               </p>
             </div>
 
