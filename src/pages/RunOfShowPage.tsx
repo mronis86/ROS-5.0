@@ -848,7 +848,6 @@ const RunOfShowPage: React.FC = () => {
       // The localTime from parseTimeString is already correctly representing the scheduled time
       // We just need to return it as-is since it's already in the correct timezone
       
-      console.log(`🔍 convertLocalTimeToUTC: Input time: ${localTime.toISOString()}, Timezone: ${timezone}`);
       
       return localTime; // Return the input directly since it's already correct
     } catch (error) {
@@ -4674,10 +4673,7 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         if (data.settings?.timezone) {
-          console.log('🌍 EVENT TIMEZONE SET FROM API:', data.settings.timezone);
           setEventTimezone(data.settings.timezone);
-        } else {
-          console.log('⚠️ NO TIMEZONE IN SETTINGS - using default:', eventTimezone);
         }
         console.log('🔍 Full settings object:', data.settings);
         

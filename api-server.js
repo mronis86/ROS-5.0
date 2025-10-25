@@ -451,51 +451,19 @@ app.delete('/api/calendar-events/:id', async (req, res) => {
 app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
-    console.log('🔍 Fetching run-of-show data for event:', eventId);
-    
     const result = await pool.query(
-      `SELECT ros.*, ce.timezone as event_timezone 
-       FROM run_of_show_data ros 
-       LEFT JOIN calendar_events ce ON ros.event_id = ce.id 
-       WHERE ros.event_id = $1`,
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
       [eventId]
     );
     
-    console.log('🔍 Query executed successfully, rows found:', result.rows.length);
-    
     if (result.rows.length === 0) {
-      console.log('⚠️ No run-of-show data found for event:', eventId);
       return res.status(404).json({ error: 'Event not found' });
     }
     
-    const data = result.rows[0];
-    
-    console.log('🔍 Database query result for event:', eventId);
-    console.log('🔍 event_timezone from calendar_events:', data.event_timezone);
-    console.log('🔍 existing settings:', data.settings);
-    
-    // Add event timezone to settings if it exists
-    if (data.event_timezone) {
-      // Ensure settings object exists
-      if (!data.settings) {
-        data.settings = {};
-      }
-      data.settings.timezone = data.event_timezone;
-      console.log('🌍 Added event timezone to settings:', data.event_timezone);
-    } else {
-      console.log('⚠️ No event_timezone found in database for event:', eventId);
-    }
-    
-    res.json(data);
+    res.json(result.rows[0]);
   } catch (error) {
-    console.error('❌ Error fetching run of show data:', error);
-    console.error('❌ Error details:', {
-      message: error.message,
-      code: error.code,
-      detail: error.detail,
-      hint: error.hint
-    });
-    res.status(500).json({ error: 'Failed to fetch run of show data', details: error.message });
+    console.error('Error fetching run of show data:', error);
+    res.status(500).json({ error: 'Failed to fetch run of show data' });
   }
 });
 
