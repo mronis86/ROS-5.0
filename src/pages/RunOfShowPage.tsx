@@ -5746,6 +5746,11 @@ const RunOfShowPage: React.FC = () => {
           console.log('🔄 Changes detected since last sync, updating local data...');
           
           // Update local state with latest data
+          console.log('🔍 Initial schedule data from API:', latestData.schedule_items?.map(item => ({
+            id: item.id,
+            cue: item.customFields?.cue,
+            isIndented: item.isIndented
+          })));
           setSchedule(latestData.schedule_items || []);
           setCustomColumns(latestData.custom_columns || []);
           
