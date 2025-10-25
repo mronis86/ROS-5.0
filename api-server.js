@@ -452,7 +452,10 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
     const result = await pool.query(
-      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      `SELECT ros.*, ce.timezone as event_timezone 
+       FROM run_of_show_data ros 
+       LEFT JOIN calendar_events ce ON ros.event_id = ce.id 
+       WHERE ros.event_id = $1`,
       [eventId]
     );
     
@@ -460,7 +463,15 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
       return res.status(404).json({ error: 'Event not found' });
     }
     
-    res.json(result.rows[0]);
+    const data = result.rows[0];
+    
+    // Add event timezone to settings if it exists
+    if (data.event_timezone && data.settings) {
+      data.settings.timezone = data.event_timezone;
+      console.log('🌍 Added event timezone to settings:', data.event_timezone);
+    }
+    
+    res.json(data);
   } catch (error) {
     console.error('Error fetching run of show data:', error);
     res.status(500).json({ error: 'Failed to fetch run of show data' });

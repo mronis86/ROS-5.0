@@ -849,8 +849,6 @@ const RunOfShowPage: React.FC = () => {
       // We just need to return it as-is since it's already in the correct timezone
       
       console.log(`🔍 convertLocalTimeToUTC: Input time: ${localTime.toISOString()}, Timezone: ${timezone}`);
-      console.log(`🔍 Current eventTimezone state: ${eventTimezone}`);
-      console.log(`🔍 convertLocalTimeToUTC: Returning input as-is: ${localTime.toISOString()}`);
       
       return localTime; // Return the input directly since it's already correct
     } catch (error) {
@@ -861,11 +859,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Get current time in the event timezone
   const getCurrentTimeInEventTimezone = (): Date => {
-    console.log('🕐 getCurrentTimeInEventTimezone called with timezone:', eventTimezone);
-    if (!eventTimezone) {
-      console.log('⚠️ No event timezone set, using local time');
-      return new Date();
-    }
+    if (!eventTimezone) return new Date();
     try {
       const now = new Date();
       const timeStr = now.toLocaleString("en-US", {
@@ -4680,10 +4674,10 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
         if (data.settings?.timezone) {
-          console.log('🌍 Setting event timezone from API:', data.settings.timezone);
+          console.log('🌍 EVENT TIMEZONE SET FROM API:', data.settings.timezone);
           setEventTimezone(data.settings.timezone);
         } else {
-          console.log('⚠️ No timezone found in settings, keeping default:', eventTimezone);
+          console.log('⚠️ NO TIMEZONE IN SETTINGS - using default:', eventTimezone);
         }
         console.log('🔍 Full settings object:', data.settings);
         
@@ -7100,8 +7094,6 @@ const RunOfShowPage: React.FC = () => {
   const calculateStartTime = (index: number) => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
-    
-    console.log(`🕐 calculateStartTime for item ${index} (${currentItem.cue}): eventTimezone = ${eventTimezone}`);
     
     // If this item is indented, return empty string (no start time)
     if (indentedCues[currentItem.id]) {
