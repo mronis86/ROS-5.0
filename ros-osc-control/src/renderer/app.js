@@ -23,6 +23,12 @@ let startCueId = null; // Store the START cue ID for quick access
 let eventTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 let allEvents = []; // Global events array
 
+// OSC Log Entry function
+function addOSCLogEntry(message, type = 'info') {
+  console.log(`📝 OSC Log [${type.toUpperCase()}]: ${message}`);
+  // You can add more logging functionality here if needed
+}
+
 // Initialize
 async function init() {
   console.log('🚀 Initializing ROS OSC Control...');
@@ -688,6 +694,19 @@ async function loadEventSchedule(eventId, day = 1) {
     schedule = scheduleItems;
     console.log('✅ Schedule loaded:', schedule.length, 'items');
     
+    // Load settings (masterStartTime, dayStartTimes) from API response
+    if (data.settings) {
+      console.log('🔍 Loading event settings from API:', data.settings);
+      currentEvent.masterStartTime = data.settings.masterStartTime;
+      currentEvent.dayStartTimes = data.settings.dayStartTimes;
+      currentEvent.timezone = data.settings.timezone;
+      console.log('🔍 Master start time:', currentEvent.masterStartTime);
+      console.log('🔍 Day start times:', currentEvent.dayStartTimes);
+      console.log('🔍 Timezone:', currentEvent.timezone);
+    } else {
+      console.warn('⚠️ No settings found in API response');
+    }
+    
     // Render schedule table
     renderSchedule();
     
@@ -947,6 +966,8 @@ async function loadCueByCueNumber(cueNumber) {
 // Start cue (called from OSC)
 async function startCue() {
   console.log('🟢 Starting cue');
+  console.log('🔍 Active item ID:', activeItemId);
+  console.log('🔍 Current event:', currentEvent?.id);
   
   if (!activeItemId) {
     console.warn('⚠️ No cue loaded to start');
@@ -955,35 +976,63 @@ async function startCue() {
   
   try {
     // Check if this is the START cue (STAR cue)
+    console.log('🔍 Checking if this is a START cue...');
     const isStartCue = await checkIfStartCue(activeItemId);
+    console.log('🔍 Is START cue?', isStartCue);
+    
     if (isStartCue) {
       console.log('⭐ Starting START CUE (STAR CUE) - calculating show start overtime');
       
       // Calculate show start overtime (like RunOfShowPage.tsx)
+      console.log('🔍 Calling calculateAndSaveStartCueOvertime...');
       await calculateAndSaveStartCueOvertime(activeItemId);
+      console.log('✅ calculateAndSaveStartCueOvertime completed');
+    } else {
+      console.log('📝 Regular cue - no START cue overtime calculation needed');
     }
     
-    // Call API to start timer - using correct endpoint
-    await axios.post(`${config.apiUrl}/api/timers/start`, {
+    // ALWAYS call API to start timer - this is the regular timer start (for both START and regular cues)
+    console.log('🔍 Starting regular timer via API...');
+    console.log('🔍 API URL:', `${config.apiUrl}/api/timers/start`);
+    console.log('🔍 Request payload:', {
       event_id: currentEvent.id,
       item_id: activeItemId,
       user_id: 'osc-electron-app'
     });
     
+    const timerResponse = await axios.post(`${config.apiUrl}/api/timers/start`, {
+      event_id: currentEvent.id,
+      item_id: activeItemId,
+      user_id: 'osc-electron-app'
+    });
+    
+    console.log('✅ Timer API response:', timerResponse.data);
+    
     // Update local state
+    console.log('🔍 Updating local state...');
     activeTimers[activeItemId] = true;
     if (timerProgress[activeItemId]) {
       timerProgress[activeItemId].startedAt = new Date().toISOString();
+      console.log('🔍 Updated timer progress startedAt:', timerProgress[activeItemId].startedAt);
     }
     
     // Update display
+    console.log('🔍 Updating display...');
     updateCurrentCueDisplay();
     renderSchedule();
     
-    console.log('✅ Cue started:', activeItemId);
+    console.log('✅ Cue started successfully:', activeItemId);
+    console.log('🔍 Final activeTimers state:', activeTimers);
+    console.log('🔍 Final timerProgress state:', timerProgress);
     
   } catch (error) {
     console.error('❌ Error starting cue:', error);
+    if (error.response) {
+      console.error('❌ API Error Response:', error.response.status, error.response.data);
+    }
+    if (error.request) {
+      console.error('❌ API Request Error:', error.request);
+    }
   }
 }
 
@@ -1155,22 +1204,61 @@ async function resetTimer() {
   }
   
   try {
-    // Call API to reset - clears active_timers, completed_cues, sub_cue_timers tables
-    await axios.post(`${config.apiUrl}/api/timers/reset`, {
-      event_id: currentEvent.id
-    });
+    // STEP 1: Clear all local state (like React app reset button)
+    console.log('🔍 Step 1: Clearing all local state...');
     
-    // Clear local state
+    // Clear all timer-related local state
     activeItemId = null;
     activeTimers = {};
     timerProgress = {};
     
-    // Update display
+    // Clear any additional state variables that might exist
+    // (These would be equivalent to React app's state clearing)
+    console.log('✅ Local state cleared');
+    
+    // STEP 2: Clear database tables (like React app reset button)
+    console.log('🔍 Step 2: Clearing database tables...');
+    
+    // Call API to reset - clears active_timers, completed_cues, sub_cue_timers tables
+    await axios.post(`${config.apiUrl}/api/timers/reset`, {
+      event_id: currentEvent.id
+    });
+    console.log('✅ Cleared active_timers, completed_cues, sub_cue_timers tables');
+    
+    // Clear show start overtime data (like React app reset button)
+    try {
+      await axios.delete(`${config.apiUrl}/api/show-start-overtime/${currentEvent.id}`);
+      console.log('✅ Show start overtime cleared from database');
+    } catch (error) {
+      console.warn('⚠️ Failed to clear show start overtime:', error);
+    }
+    
+    // Clear overtime minutes data (like React app reset button)
+    try {
+      await axios.delete(`${config.apiUrl}/api/overtime-minutes/${currentEvent.id}`);
+      console.log('✅ Overtime minutes cleared from database');
+    } catch (error) {
+      console.warn('⚠️ Failed to clear overtime minutes:', error);
+    }
+    
+    // STEP 3: Update display (like React app reset button)
+    console.log('🔍 Step 3: Updating display...');
     updateCurrentCueDisplay();
     renderSchedule();
+    console.log('✅ Display updated');
+    
+    // STEP 4: Broadcast reset event via WebSocket (like React app reset button)
+    console.log('🔍 Step 4: Broadcasting reset event...');
+    if (socket && socket.connected) {
+      console.log('📡 Broadcasting reset all states event via WebSocket');
+      socket.emit('resetAllStates', { eventId: currentEvent.id });
+      console.log('✅ Reset all states event broadcasted via WebSocket');
+    } else {
+      console.warn('⚠️ WebSocket not connected - cannot broadcast reset event');
+    }
     
     console.log('✅ Timer reset successful - all timer tables cleared');
-    addOSCLogEntry('All timers reset (active_timers, completed_cues, sub_cue_timers cleared)', 'success');
+    addOSCLogEntry('All timers reset (active_timers, completed_cues, sub_cue_timers, show_start_overtime cleared)', 'success');
     showToast('All timers reset via OSC');
   } catch (error) {
     console.error('❌ Error resetting timer:', error);
@@ -1603,15 +1691,25 @@ function parseTimeString(timeStr) {
 
 // Calculate start time for a given index (like RunOfShowPage.tsx)
 function calculateStartTime(index) {
+  console.log('🔍 calculateStartTime called with index:', index);
   const currentItem = schedule[index];
+  console.log('🔍 currentItem:', currentItem);
   if (!currentItem) return '';
   
   // Get the appropriate start time for this day
   const itemDay = currentItem.day || 1;
+  console.log('🔍 itemDay:', itemDay);
+  console.log('🔍 currentEvent.dayStartTimes:', currentEvent.dayStartTimes);
+  console.log('🔍 currentEvent.masterStartTime:', currentEvent.masterStartTime);
+  
   const startTime = currentEvent.dayStartTimes?.[itemDay] || currentEvent.masterStartTime;
+  console.log('🔍 calculated startTime:', startTime);
   
   // If no start time is set for this day, return blank
-  if (!startTime) return '';
+  if (!startTime) {
+    console.log('⚠️ No start time found - returning empty string');
+    return '';
+  }
   
   // Calculate total seconds from the beginning of this day up to this item
   let totalSeconds = 0;
@@ -1658,14 +1756,23 @@ function convertLocalTimeToUTC(localTime, timezone) {
 
 // Calculate and save START cue overtime (like RunOfShowPage.tsx)
 async function calculateAndSaveStartCueOvertime(itemId) {
+  console.log('🔍 calculateAndSaveStartCueOvertime called for itemId:', itemId);
+  
   try {
+    console.log('🔍 Checking currentEvent and schedule...');
+    console.log('🔍 currentEvent:', currentEvent);
+    console.log('🔍 schedule length:', schedule?.length);
+    
     if (!currentEvent || !schedule) {
       console.warn('⚠️ No event or schedule data for START cue overtime calculation');
       return;
     }
     
     // Find the item in schedule
+    console.log('🔍 Finding item in schedule...');
     const item = schedule.find(s => s.id === itemId);
+    console.log('🔍 Found item:', item);
+    
     if (!item) {
       console.warn('⚠️ Item not found in schedule for START cue overtime calculation');
       return;
@@ -1675,16 +1782,23 @@ async function calculateAndSaveStartCueOvertime(itemId) {
     console.log('🔍 START cue index:', currentIndex);
     
     // Get scheduled start time from Start column (calculated)
+    console.log('🔍 Calling calculateStartTime...');
     const scheduledStartStr = calculateStartTime(currentIndex);
     console.log('🔍 Calculated start time:', scheduledStartStr);
     
     if (scheduledStartStr && scheduledStartStr !== '') {
+      console.log('🔍 Parsing scheduled start time...');
       const scheduledStart = parseTimeString(scheduledStartStr);
+      console.log('🔍 Parsed scheduled start:', scheduledStart);
+      
       const actualStart = new Date(); // Use current UTC time
+      console.log('🔍 Actual start time (current UTC):', actualStart.toISOString());
       
       if (scheduledStart) {
+        console.log('🔍 Converting scheduled time to UTC...');
         // Convert the scheduled start time from event timezone to UTC
         const scheduledStartUTC = convertLocalTimeToUTC(scheduledStart, currentEvent.timezone || eventTimezone);
+        console.log('🔍 Scheduled start UTC:', scheduledStartUTC.toISOString());
         
         // Calculate difference in minutes
         const diffMs = actualStart.getTime() - scheduledStartUTC.getTime();
@@ -1694,6 +1808,16 @@ async function calculateAndSaveStartCueOvertime(itemId) {
         
         // Save show start overtime to database (same API endpoint as React app)
         if (currentEvent.id) {
+          console.log('🔍 Saving to database...');
+          console.log('🔍 API URL:', `${config.apiUrl}/api/show-start-overtime`);
+          console.log('🔍 Request payload:', {
+            event_id: currentEvent.id,
+            item_id: itemId,
+            show_start_overtime: diffMinutes,
+            scheduled_time: scheduledStartStr,
+            actual_time: actualStart.toISOString()
+          });
+          
           try {
             const response = await axios.post(`${config.apiUrl}/api/show-start-overtime`, {
               event_id: currentEvent.id,
@@ -1710,10 +1834,17 @@ async function calculateAndSaveStartCueOvertime(itemId) {
               console.error('❌ API Error:', error.response.status, error.response.data);
             }
           }
+        } else {
+          console.warn('⚠️ No currentEvent.id for database save');
         }
         
         // Broadcast via WebSocket (if connected) - same event as React app
+        console.log('🔍 Checking WebSocket connection...');
+        console.log('🔍 Socket exists:', !!socket);
+        console.log('🔍 Socket connected:', socket?.connected);
+        
         if (socket && socket.connected) {
+          console.log('🔍 Broadcasting via WebSocket...');
           socket.emit('showStartOvertimeUpdate', {
             event_id: currentEvent.id,
             item_id: itemId,
