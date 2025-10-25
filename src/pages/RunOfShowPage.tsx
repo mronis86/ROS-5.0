@@ -856,6 +856,43 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  // Debug popup to show event and timezone info
+  const showEventDebugPopup = () => {
+    const eventData = location.state?.event;
+    const popupContent = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px;">
+        <h2>🔍 Event Debug Information</h2>
+        <h3>Event Details:</h3>
+        <ul>
+          <li><strong>Event ID:</strong> ${eventData?.id || 'Not found'}</li>
+          <li><strong>Event Name:</strong> ${eventData?.name || 'Not found'}</li>
+          <li><strong>Event Date:</strong> ${eventData?.date || 'Not found'}</li>
+          <li><strong>Event Location:</strong> ${eventData?.location || 'Not found'}</li>
+        </ul>
+        
+        <h3>Timezone Information:</h3>
+        <ul>
+          <li><strong>Current eventTimezone State:</strong> ${eventTimezone || 'Not set'}</li>
+          <li><strong>Event Timezone (from location.state):</strong> ${eventData?.timezone || 'Not found'}</li>
+          <li><strong>Browser Timezone:</strong> ${Intl.DateTimeFormat().resolvedOptions().timeZone}</li>
+          <li><strong>Current Time (Browser):</strong> ${new Date().toLocaleString()}</li>
+          <li><strong>Current Time (Event TZ):</strong> ${eventTimezone ? new Date().toLocaleString('en-US', { timeZone: eventTimezone }) : 'N/A'}</li>
+        </ul>
+        
+        <h3>API Data Check:</h3>
+        <p>Check browser console for API response data and timezone loading logs.</p>
+        
+        <button onclick="window.close()" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Close</button>
+      </div>
+    `;
+    
+    const popup = window.open('', 'eventDebug', 'width=700,height=500,scrollbars=yes,resizable=yes');
+    if (popup) {
+      popup.document.write(popupContent);
+      popup.document.title = 'Event Debug Information';
+    }
+  };
+
   // Get current time in the event timezone
   const getCurrentTimeInEventTimezone = (): Date => {
     if (!eventTimezone) return new Date();
@@ -4862,6 +4899,17 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [event?.id]);
 
+  // Show debug popup automatically on page load
+  useEffect(() => {
+    if (event?.id) {
+      // Show debug popup after a short delay to ensure all data is loaded
+      const timer = setTimeout(() => {
+        showEventDebugPopup();
+      }, 2000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [event?.id, eventTimezone]);
 
   // Setup WebSocket-only real-time connections (no SSE, no polling)
   useEffect(() => {
