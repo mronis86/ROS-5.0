@@ -4921,6 +4921,7 @@ const RunOfShowPage: React.FC = () => {
             }
           }
           
+          
           // Skip change detection to prevent delays
           setSkipNextSync(true);
           console.log('⏭️ Real-time: Skipping change detection to prevent delays');
@@ -5192,6 +5193,33 @@ const RunOfShowPage: React.FC = () => {
         } catch (error) {
           console.error('❌ Initial sync failed to load completed cues:', error);
         }
+        
+        // NEW: Reload overtime data when WebSocket reconnects (e.g., returning to page)
+        // This matches the same loading order as initial page load
+        if (event?.id) {
+          try {
+            console.log('🔄 Initial sync: Reloading overtime data on page return...');
+            
+            // Load regular overtime minutes from dedicated table (same as initial load)
+            const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
+            setOvertimeMinutes(overtimeData);
+            console.log('✅ Initial sync: Overtime minutes reloaded on page return:', overtimeData);
+            
+            // Load START cue overtime from separate table (same as initial load)
+            const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
+            if (showStartOvertimeData) {
+              const overtimeMinutes = showStartOvertimeData.show_start_overtime || showStartOvertimeData.overtimeMinutes;
+              setShowStartOvertime(overtimeMinutes);
+              console.log('✅ Initial sync: Show start overtime reloaded on page return:', overtimeMinutes);
+            } else {
+              setShowStartOvertime(0);
+              console.log('✅ Initial sync: No show start overtime found on page return');
+            }
+          } catch (overtimeError) {
+            console.error('❌ Initial sync: Error reloading overtime data on page return:', overtimeError);
+          }
+        }
+        
       },
       onOvertimeUpdate: (data: any) => {
         
@@ -5710,65 +5738,11 @@ const RunOfShowPage: React.FC = () => {
       const isVisible = !document.hidden;
       console.log(`🔄 Page visibility changed: ${isVisible ? 'visible' : 'hidden'}`);
       setIsPageVisible(isVisible);
-      
-      if (isVisible) {
-        // Page became visible - check for changes
-        console.log('🔄 Page became visible, checking for changes...');
-        checkForChangesOnReturn();
-      } else {
-        // Page became hidden - record last sync time
-        setLastSyncTime(new Date());
-        console.log('🔄 Page became hidden, recording last sync time');
-      }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
-
-  // Check for changes when returning to the page
-  const checkForChangesOnReturn = async () => {
-    if (!event?.id || !lastSyncTime) {
-      console.log('🔄 No event ID or last sync time, skipping change check');
-      return;
-    }
-
-    try {
-      console.log('🔄 Checking for changes since last sync...');
-      
-      // Get the latest data from API
-      const latestData = await DatabaseService.getRunOfShowData(event.id);
-      
-      if (latestData) {
-        const latestChangeTime = new Date(latestData.last_change_at || new Date());
-        console.log('🔄 Latest change time:', latestChangeTime);
-        console.log('🔄 Last sync time:', lastSyncTime);
-        
-        if (latestChangeTime > lastSyncTime) {
-          console.log('🔄 Changes detected since last sync, updating local data...');
-          
-          // Update local state with latest data
-          console.log('🔍 Initial schedule data from API:', latestData.schedule_items?.map(item => ({
-            id: item.id,
-            cue: item.customFields?.cue,
-            isIndented: item.isIndented
-          })));
-          setSchedule(latestData.schedule_items || []);
-          setCustomColumns(latestData.custom_columns || []);
-          
-          // Update localStorage
-          localStorage.setItem(`runOfShowSchedule_${event.id}`, JSON.stringify(latestData.schedule_items || []));
-          localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(latestData.custom_columns || []));
-          
-          console.log('✅ Local data updated with latest changes');
-        } else {
-          console.log('✅ No changes detected since last sync');
-        }
-      }
-    } catch (error) {
-      console.error('❌ Error checking for changes on return:', error);
-    }
-  };
 
   // Save data to localStorage whenever it changes
   useEffect(() => {
