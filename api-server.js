@@ -451,6 +451,8 @@ app.delete('/api/calendar-events/:id', async (req, res) => {
 app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    console.log('🔍 Fetching run-of-show data for event:', eventId);
+    
     const result = await pool.query(
       `SELECT ros.*, ce.timezone as event_timezone 
        FROM run_of_show_data ros 
@@ -459,7 +461,10 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
       [eventId]
     );
     
+    console.log('🔍 Query executed successfully, rows found:', result.rows.length);
+    
     if (result.rows.length === 0) {
+      console.log('⚠️ No run-of-show data found for event:', eventId);
       return res.status(404).json({ error: 'Event not found' });
     }
     
@@ -483,8 +488,14 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
     
     res.json(data);
   } catch (error) {
-    console.error('Error fetching run of show data:', error);
-    res.status(500).json({ error: 'Failed to fetch run of show data' });
+    console.error('❌ Error fetching run of show data:', error);
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint
+    });
+    res.status(500).json({ error: 'Failed to fetch run of show data', details: error.message });
   }
 });
 
