@@ -1738,6 +1738,36 @@ function calculateStartTime(index) {
   });
 }
 
+// Get current time in the event timezone
+function getCurrentTimeInEventTimezone() {
+  if (!currentEvent?.timezone && !eventTimezone) return new Date();
+  
+  const timezone = currentEvent?.timezone || eventTimezone;
+  try {
+    const now = new Date();
+    const timeStr = now.toLocaleString("en-US", {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+    
+    // Parse the time string and create a new Date object
+    const [datePart, timePart] = timeStr.split(', ');
+    const [month, day, year] = datePart.split('/');
+    const [hour, minute, second] = timePart.split(':');
+    
+    return new Date(year, month - 1, day, hour, minute, second);
+  } catch (error) {
+    console.warn('Error getting current time in event timezone:', error);
+    return new Date(); // Fallback to current time
+  }
+}
+
 // Convert a local time to UTC using the event timezone
 function convertLocalTimeToUTC(localTime, timezone) {
   try {
@@ -1791,8 +1821,8 @@ async function calculateAndSaveStartCueOvertime(itemId) {
       const scheduledStart = parseTimeString(scheduledStartStr);
       console.log('🔍 Parsed scheduled start:', scheduledStart);
       
-      const actualStart = new Date(); // Use current UTC time
-      console.log('🔍 Actual start time (current UTC):', actualStart.toISOString());
+      const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event timezone
+      console.log('🔍 Actual start time (event timezone):', actualStart.toISOString());
       
       if (scheduledStart) {
         console.log('🔍 Converting scheduled time to UTC...');

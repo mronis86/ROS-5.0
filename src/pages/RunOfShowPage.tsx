@@ -845,11 +845,34 @@ const RunOfShowPage: React.FC = () => {
   // Convert a local time to UTC using the event timezone
   const convertLocalTimeToUTC = (localTime: Date, timezone: string): Date => {
     try {
-      // The localTime from parseTimeString is already correctly representing the scheduled time
-      // We just need to return it as-is since it's already in the correct timezone
+      // For START CUE overtime calculation, we need to convert the scheduled time
+      // from the event timezone to UTC for proper comparison
+      if (timezone && timezone !== 'America/New_York') {
+        // Create a date string in the event timezone
+        const year = localTime.getFullYear();
+        const month = localTime.getMonth();
+        const date = localTime.getDate();
+        const hours = localTime.getHours();
+        const minutes = localTime.getMinutes();
+        const seconds = localTime.getSeconds();
+        
+        // Format as ISO string and parse with timezone
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        
+        // Create a date object and adjust for timezone offset
+        const tempDate = new Date(dateStr);
+        const utcOffset = tempDate.getTimezoneOffset() * 60000;
+        
+        // Get the timezone offset for the event timezone
+        const eventTime = new Date(tempDate.toLocaleString("en-US", { timeZone: timezone }));
+        const localTime = new Date(tempDate.toLocaleString("en-US", { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }));
+        const timezoneOffset = eventTime.getTime() - localTime.getTime();
+        
+        return new Date(tempDate.getTime() - timezoneOffset);
+      }
       
-      
-      return localTime; // Return the input directly since it's already correct
+      // For regular overtime calculations, return as-is
+      return localTime;
     } catch (error) {
       console.warn('Error converting local time to UTC:', error);
       return localTime; // Fallback to original time
@@ -6354,7 +6377,7 @@ const RunOfShowPage: React.FC = () => {
           
           if (scheduledStartStr && scheduledStartStr !== '') {
             const scheduledStart = parseTimeString(scheduledStartStr);
-            const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event timezone
+            const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event timezone for START CUE only
             
             if (scheduledStart) {
               // Convert the scheduled start time from event timezone to UTC
