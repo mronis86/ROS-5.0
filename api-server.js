@@ -2199,9 +2199,14 @@ app.post('/api/cues/load', async (req, res) => {
 
 app.post('/api/timers/start', async (req, res) => {
   try {
-    const { event_id, item_id, user_id } = req.body;
+    const { event_id, item_id, user_id, started_at } = req.body;
     
-    console.log(`⏱️ OSC: Starting timer - Event: ${event_id}, Item: ${item_id}`);
+    console.log(`⏱️ OSC: Starting timer - Event: ${event_id}, Item: ${item_id}, Started_at: ${started_at}`);
+    
+    // Use provided started_at timestamp or NOW() as fallback
+    const startedAtValue = started_at || 'NOW()';
+    const startedAtParam = started_at ? '$3' : 'NOW()';
+    const params = started_at ? [event_id, parseInt(item_id), started_at] : [event_id, parseInt(item_id)];
     
     // ONLY update active_timers table (like Supabase RPC did)
     await pool.query(`
@@ -2210,10 +2215,10 @@ app.post('/api/timers/start', async (req, res) => {
         is_active = true,
         is_running = true,
         timer_state = 'running',
-        started_at = NOW(),
+        started_at = ${startedAtParam},
         updated_at = NOW()
       WHERE event_id = $1 AND item_id = $2
-    `, [event_id, parseInt(item_id)]);
+    `, params);
     
     console.log(`✅ OSC: Timer started for item ${item_id} in active_timers table`);
     

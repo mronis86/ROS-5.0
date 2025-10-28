@@ -1000,10 +1000,14 @@ async function startCue() {
       user_id: 'osc-electron-app'
     });
     
+    // Calculate server time using clockOffset for synchronization
+    const serverTime = new Date(Date.now() + clockOffset);
+    
     const timerResponse = await axios.post(`${config.apiUrl}/api/timers/start`, {
       event_id: currentEvent.id,
       item_id: activeItemId,
-      user_id: 'osc-electron-app'
+      user_id: 'osc-electron-app',
+      started_at: serverTime.toISOString() // Send pre-calculated server time!
     });
     
     console.log('✅ Timer API response:', timerResponse.data);

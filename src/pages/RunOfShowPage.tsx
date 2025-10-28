@@ -6506,10 +6506,13 @@ const RunOfShowPage: React.FC = () => {
         // Use the existing 5-character timer ID from the schedule item
         const timerId = item.timerId;
         
+        // Calculate server time using clockOffset for synchronization
+        const serverTime = new Date(Date.now() + clockOffset);
+        
         // Update active_timers table in API
-        console.log('🔄 Starting timer in API for item:', itemId, 'at:', now.toISOString(), 'row:', rowNumber, 'cue:', cueDisplay, 'timerId:', timerId);
+        console.log('🔄 Starting timer in API for item:', itemId, 'at:', serverTime.toISOString(), 'row:', rowNumber, 'cue:', cueDisplay, 'timerId:', timerId);
         try {
-          const startResult = await DatabaseService.startTimer(event.id, itemId, user.id, totalSeconds, now, rowNumber, cueDisplay, timerId);
+          const startResult = await DatabaseService.startTimer(event.id, itemId, user.id, totalSeconds, serverTime, rowNumber, cueDisplay, timerId);
           console.log('✅ Timer started in API:', startResult);
           if (!startResult) {
             console.error('❌ Start timer failed - check database connection and functions');
