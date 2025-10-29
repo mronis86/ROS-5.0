@@ -917,6 +917,11 @@ const RunOfShowPage: React.FC = () => {
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
   const [timeDifference, setTimeDifference] = useState(0);
+  const [scheduledTime, setScheduledTime] = useState<string>(''); // Store the scheduled start time
+  const [toastCountdown, setToastCountdown] = useState(20); // Countdown timer for toast
+  const toastShownForTimerRef = useRef<number | null>(null); // Track which timer has already shown its toast
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Track the auto-close timeout
+  const toastCountdownIntervalRef = useRef<NodeJS.Timeout | null>(null); // Track the countdown interval
   
   // Skip next sync when user makes a change
   const [skipNextSync, setSkipNextSync] = useState(false);
@@ -2510,12 +2515,25 @@ const RunOfShowPage: React.FC = () => {
       activeTimersCount: Object.keys(activeTimers).length,
       activeTimers,
       timeToastEnabled,
-      scheduleLength: schedule.length
+      scheduleLength: schedule.length,
+      toastShownForTimer: toastShownForTimerRef.current
     });
     
     if (Object.keys(activeTimers).length === 0) {
-      console.log('🍞 Toast: No active timers, hiding toast');
+      console.log('🍞 Toast: No active timers, hiding toast and resetting tracking');
+      // Clear any existing timeout and countdown interval
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+      if (toastCountdownIntervalRef.current) {
+        clearInterval(toastCountdownIntervalRef.current);
+        toastCountdownIntervalRef.current = null;
+      }
       setShowTimeToast(false);
+      setScheduledTime('');
+      setToastCountdown(20); // Reset countdown
+      toastShownForTimerRef.current = null; // Reset tracking when no timers
       return;
     }
     
@@ -2525,15 +2543,25 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
     
-    // Only show toast when a timer first starts (not on every update)
-    // Check if toast is already showing to prevent repeated displays
-    if (showTimeToast) {
-      console.log('🍞 Toast: Already showing, skipping');
-      return;
-    }
-    
     const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
     console.log('🍞 Toast: Active timer ID:', activeTimerId);
+    
+    // Only show toast if this is a NEW timer (not one we've already shown for)
+    if (toastShownForTimerRef.current === activeTimerId) {
+      console.log('🍞 Toast: Already shown for timer', activeTimerId, '- skipping (countdown should be running)');
+      return; // Don't clear the interval - let it continue counting down
+    }
+    
+    // Clear any existing timeout and countdown interval only when showing a NEW toast
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    if (toastCountdownIntervalRef.current) {
+      clearInterval(toastCountdownIntervalRef.current);
+      toastCountdownIntervalRef.current = null;
+    }
+    
     const activeItem = schedule.find(item => item.id === activeTimerId);
     console.log('🍞 Toast: Found active item:', activeItem ? activeItem.segmentName : 'NOT FOUND');
     
@@ -2544,6 +2572,9 @@ const RunOfShowPage: React.FC = () => {
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
         if (itemStartTimeStr) {
+          // Store the scheduled time for display
+          setScheduledTime(itemStartTimeStr);
+          
           // Parse the start time string (format: "1:30 PM")
           const [timePart, period] = itemStartTimeStr.split(' ');
           const [hours, minutes] = timePart.split(':').map(Number);
@@ -2559,6 +2590,9 @@ const RunOfShowPage: React.FC = () => {
           const differenceMinutes = Math.round(differenceMs / (1000 * 60));
 
           setTimeDifference(Math.abs(differenceMinutes));
+          
+          // Mark this timer as having shown its toast
+          toastShownForTimerRef.current = activeTimerId;
           
           // Show toast when timer starts
           if (differenceMinutes < -1) {
@@ -2577,20 +2611,44 @@ const RunOfShowPage: React.FC = () => {
           
           console.log('🍞 Toast: Should be visible now - showTimeToast set to true');
           
+          // Reset countdown to 20 seconds
+          setToastCountdown(20);
+          
+          // Start countdown interval (updates every second)
+          toastCountdownIntervalRef.current = setInterval(() => {
+            setToastCountdown(prev => {
+              if (prev <= 1) {
+                if (toastCountdownIntervalRef.current) {
+                  clearInterval(toastCountdownIntervalRef.current);
+                  toastCountdownIntervalRef.current = null;
+                }
+                return 0;
+              }
+              return prev - 1;
+            });
+          }, 1000);
+          
           // Auto-close toast after 20 seconds
-          const toastTimeout = setTimeout(() => {
+          toastTimeoutRef.current = setTimeout(() => {
             console.log('🍞 Toast: Auto-closing after 20 seconds');
             setShowTimeToast(false);
+            setToastCountdown(20); // Reset countdown
+            if (toastCountdownIntervalRef.current) {
+              clearInterval(toastCountdownIntervalRef.current);
+              toastCountdownIntervalRef.current = null;
+            }
+            toastTimeoutRef.current = null;
           }, 20000);
-          
-          return () => clearTimeout(toastTimeout);
         }
       } catch (error) {
         console.error('🍞 Toast: Error calculating time status:', error);
         setShowTimeToast(false);
       }
     }
-  }, [activeTimers, schedule, timeToastEnabled, showTimeToast]);
+    
+    // No cleanup needed here - we'll clear intervals/timeouts explicitly when needed
+    // This prevents the cleanup from running and clearing the countdown when the effect re-runs
+  }, [activeTimers, schedule, timeToastEnabled]); // Removed showTimeToast from dependencies to prevent re-triggering
   
   // Auto-scroll to active row function
   const scrollToActiveRow = () => {
@@ -2655,8 +2713,8 @@ const RunOfShowPage: React.FC = () => {
   }, [selectedDay]);
 
   const programTypes = [
-    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Sub Cue',
-    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED', 'Full-Stage/Ted-Talk'
+    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
+    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
   ];
 
   // Program Type color mapping
@@ -12340,50 +12398,77 @@ const RunOfShowPage: React.FC = () => {
       {/* Time Status Toast */}
       {showTimeToast && timeToastEnabled && (
         <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
-          <div className={`px-6 py-4 rounded-lg shadow-lg border-2 flex items-center gap-3 ${
-            timeStatus === 'early' 
-              ? 'bg-yellow-600 border-yellow-500 text-yellow-100' 
-              : timeStatus === 'late'
-              ? 'bg-red-600 border-red-500 text-red-100'
-              : 'bg-green-600 border-green-500 text-green-100'
-          }`}>
-            <div className="text-3xl flex-shrink-0">
-              {timeStatus === 'early' ? '⏰' : timeStatus === 'late' ? '⚠️' : '✅'}
-            </div>
-            <div className="flex-1">
-              <div className="font-bold text-lg mb-1">
-                {timeStatus === 'early' ? 'EARLY' : timeStatus === 'late' ? 'RUNNING LATE' : 'ON TIME'}
+          <div className="flex flex-col">
+            {/* Countdown Tab */}
+            <div className={`bg-slate-700 text-white px-4 py-2 rounded-t-lg flex items-center justify-between text-sm font-medium border-2 border-b-0 ${
+              timeStatus === 'early' 
+                ? 'border-yellow-500' 
+                : timeStatus === 'late'
+                ? 'border-red-500'
+                : 'border-green-500'
+            }`}>
+              <div className="flex-1 text-center">
+                Closes in: {toastCountdown}s
               </div>
-              <div className="text-base font-medium">
-                <div className="mb-2">
-                  <span className="text-lg font-semibold">Scheduled: </span>
-                  <span className="text-xl font-bold">
-                    {Object.keys(activeTimers).length > 0 && (() => {
-                      const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
-                      const currentIndex = schedule.findIndex(item => item.id === activeTimerId);
-                      return calculateStartTime(currentIndex);
-                    })()}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-2xl font-bold">
-                    {timeDifference >= 60 ? `${Math.floor(timeDifference / 60)}h ${timeDifference % 60}m` : `${timeDifference}m`}
-                  </span>
-                  {timeStatus === 'early' 
-                    ? ` before CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
-                    : timeStatus === 'late'
-                    ? ` after CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
-                    : ' - Timing is on track'
+              <button
+                onClick={() => {
+                  setShowTimeToast(false);
+                  setToastCountdown(20); // Reset countdown
+                  if (toastTimeoutRef.current) {
+                    clearTimeout(toastTimeoutRef.current);
+                    toastTimeoutRef.current = null;
                   }
+                  if (toastCountdownIntervalRef.current) {
+                    clearInterval(toastCountdownIntervalRef.current);
+                    toastCountdownIntervalRef.current = null;
+                  }
+                }}
+                className="text-xl hover:opacity-70 transition-opacity ml-2"
+              >
+                ×
+              </button>
+            </div>
+            
+            {/* Toast Content */}
+            <div className={`px-6 py-4 rounded-b-lg shadow-lg border-2 flex items-center gap-3 ${
+              timeStatus === 'early' 
+                ? 'bg-yellow-600 border-yellow-500 text-yellow-100' 
+                : timeStatus === 'late'
+                ? 'bg-red-600 border-red-500 text-red-100'
+                : 'bg-green-600 border-green-500 text-green-100'
+            }`}>
+              <div className="text-3xl flex-shrink-0">
+                {timeStatus === 'early' ? '⏰' : timeStatus === 'late' ? '⚠️' : '✅'}
+              </div>
+              <div className="flex-1">
+                <div className="font-bold text-lg mb-1">
+                  {timeStatus === 'early' ? 'EARLY' : timeStatus === 'late' ? 'RUNNING LATE' : 'ON TIME'}
+                </div>
+                <div className="text-base font-medium">
+                  <div className="mb-2">
+                    <span className="textelmäß font-semibold">Scheduled Start: </span>
+                    <span className="text-xl font-bold">
+                      {scheduledTime || (Object.keys(activeTimers).length > 0 && (() => {
+                        const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
+                        const currentIndex = schedule.findIndex(item => item.id === activeTimerId);
+                        return calculateStartTime(currentIndex);
+                      })())}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-2xl font-bold">
+                      {timeDifference >= 60 ? `${Math.floor(timeDifference / 60)}h ${timeDifference % 60}m` : `${timeDifference}m`}
+                    </span>
+                    {timeStatus === 'early' 
+                      ? ` before CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
+                      : timeStatus === 'late'
+                      ? ` after CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
+                      : ' - Timing is on track'
+                    }
+                  </div>
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => setShowTimeToast(false)}
-              className="ml-4 text-xl hover:opacity-70 transition-opacity"
-            >
-              ×
-            </button>
           </div>
         </div>
       )}
