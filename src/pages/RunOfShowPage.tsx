@@ -2525,6 +2525,13 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
     
+    // Only show toast when a timer first starts (not on every update)
+    // Check if toast is already showing to prevent repeated displays
+    if (showTimeToast) {
+      console.log('🍞 Toast: Already showing, skipping');
+      return;
+    }
+    
     const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
     console.log('🍞 Toast: Active timer ID:', activeTimerId);
     const activeItem = schedule.find(item => item.id === activeTimerId);
@@ -2553,7 +2560,7 @@ const RunOfShowPage: React.FC = () => {
 
           setTimeDifference(Math.abs(differenceMinutes));
           
-          // Show toast for all timers when enabled
+          // Show toast when timer starts
           if (differenceMinutes < -1) {
             console.log('🍞 Toast: Setting status to EARLY, difference:', differenceMinutes);
             setTimeStatus('early');
@@ -2570,11 +2577,11 @@ const RunOfShowPage: React.FC = () => {
           
           console.log('🍞 Toast: Should be visible now - showTimeToast set to true');
           
-          // Auto-close toast after 10 seconds
+          // Auto-close toast after 20 seconds
           const toastTimeout = setTimeout(() => {
-            console.log('🍞 Toast: Auto-closing after 10 seconds');
+            console.log('🍞 Toast: Auto-closing after 20 seconds');
             setShowTimeToast(false);
-          }, 10000);
+          }, 20000);
           
           return () => clearTimeout(toastTimeout);
         }
@@ -2583,7 +2590,7 @@ const RunOfShowPage: React.FC = () => {
         setShowTimeToast(false);
       }
     }
-  }, [activeTimers, schedule, timeToastEnabled]);
+  }, [activeTimers, schedule, timeToastEnabled, showTimeToast]);
   
   // Auto-scroll to active row function
   const scrollToActiveRow = () => {
@@ -2649,7 +2656,7 @@ const RunOfShowPage: React.FC = () => {
 
   const programTypes = [
     'PreShow/End', 'Podium Transition', 'Panel Transition', 'Sub Cue',
-    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
+    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED', 'Full-Stage/Ted-Talk'
   ];
 
   // Program Type color mapping
@@ -2664,7 +2671,8 @@ const RunOfShowPage: React.FC = () => {
     'Remote Only': '#60A5FA',        // Light Blue
     'Break': '#EC4899',              // Bright Pink
     'TBD': '#6B7280',                // Medium Gray
-    'KILLED': '#DC2626'              // Bright Red
+    'KILLED': '#DC2626',             // Bright Red
+    'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
   };
 
   // Function to get subtle row background color based on Program Type
@@ -12347,15 +12355,27 @@ const RunOfShowPage: React.FC = () => {
                 {timeStatus === 'early' ? 'EARLY' : timeStatus === 'late' ? 'RUNNING LATE' : 'ON TIME'}
               </div>
               <div className="text-base font-medium">
-                <span className="text-2xl font-bold">
-                  {timeDifference >= 60 ? `${Math.floor(timeDifference / 60)}h ${timeDifference % 60}m` : `${timeDifference}m`}
-                </span>
-                {timeStatus === 'early' 
-                  ? ` before CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
-                  : timeStatus === 'late'
-                  ? ` after CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
-                  : ' - Timing is on track'
-                }
+                <div className="mb-2">
+                  <span className="text-lg font-semibold">Scheduled: </span>
+                  <span className="text-xl font-bold">
+                    {Object.keys(activeTimers).length > 0 && (() => {
+                      const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
+                      const currentIndex = schedule.findIndex(item => item.id === activeTimerId);
+                      return calculateStartTime(currentIndex);
+                    })()}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-2xl font-bold">
+                    {timeDifference >= 60 ? `${Math.floor(timeDifference / 60)}h ${timeDifference % 60}m` : `${timeDifference}m`}
+                  </span>
+                  {timeStatus === 'early' 
+                    ? ` before CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
+                    : timeStatus === 'late'
+                    ? ` after CUE ${Object.keys(activeTimers).length > 0 ? (schedule.find(item => item.id === parseInt(Object.keys(activeTimers)[0]))?.customFields.cue || '0') : '0'} expected start`
+                    : ' - Timing is on track'
+                  }
+                </div>
               </div>
             </div>
             <button
