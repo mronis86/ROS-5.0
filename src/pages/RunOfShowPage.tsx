@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
@@ -7316,6 +7316,86 @@ const RunOfShowPage: React.FC = () => {
     return filtered;
   };
 
+  // Memoize filtered schedule to avoid recalculating on every render
+  const filteredSchedule = useMemo(() => getFilteredSchedule(), [schedule, selectedDay]);
+
+  // Precompute row class names to avoid recalculating during each render
+  const rowClassNames = useMemo(() => {
+    const classNames = new Map<number, string>();
+
+    filteredSchedule.forEach((item, index) => {
+      // Match item_id with both string and number comparison
+      const hybridItemId = hybridTimerData?.activeTimer?.item_id as any;
+      const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
+      const isHybridRunning = Boolean(isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
+      const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running);
+
+      // Use ONLY hybrid timer data for highlighting (no fallback to old logic for active states)
+      if (isHybridRunning) {
+        classNames.set(item.id, 'bg-green-950');
+        return;
+      }
+      if (isHybridLoaded) {
+        classNames.set(item.id, 'bg-blue-950');
+        return;
+      }
+
+      // Only use old logic for completed/stopped states (not active states)
+      if (completedCues[item.id]) {
+        classNames.set(item.id, 'bg-gray-900 opacity-40');
+        return;
+      }
+      if (stoppedItems.has(item.id)) {
+        classNames.set(item.id, 'bg-gray-900 opacity-40');
+        return;
+      }
+      if (loadedCueDependents.has(item.id)) {
+        classNames.set(item.id, 'bg-amber-950 border-amber-600');
+        return;
+      }
+
+      // INDENTED CUES: Highlight when parent is loaded OR running
+      if (indentedCues[item.id]) {
+        const parentId = indentedCues[item.id].parentId;
+        const currentlyLoadedItemId = (hybridTimerData?.activeTimer?.item_id as any) || activeItemId;
+
+        // Check if parent is currently loaded
+        const parentIsLoaded = Boolean(currentlyLoadedItemId && (
+          parseInt(String(currentlyLoadedItemId)) === parentId ||
+          currentlyLoadedItemId === parentId ||
+          String(currentlyLoadedItemId) === String(parentId)
+        ));
+
+        // Check if parent is running
+        const parentIsRunning = activeTimers[parentId] !== undefined;
+
+        if (parentIsLoaded || parentIsRunning) {
+          classNames.set(item.id, 'bg-amber-950 border-amber-600');
+          return;
+        }
+      }
+
+      if (lastLoadedCueId === item.id) {
+        classNames.set(item.id, 'bg-purple-950 border-purple-400');
+        return;
+      }
+
+      classNames.set(item.id, index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
+    });
+
+    return classNames;
+  }, [
+    filteredSchedule,
+    hybridTimerData?.activeTimer,
+    completedCues,
+    stoppedItems,
+    loadedCueDependents,
+    indentedCues,
+    activeItemId,
+    activeTimers,
+    lastLoadedCueId
+  ]);
+
   // Handle scroll for grid headers visibility
   useEffect(() => {
     const handleScroll = () => {
@@ -9842,58 +9922,16 @@ const RunOfShowPage: React.FC = () => {
 
 
                 {/* Schedule Rows */}
-                {getFilteredSchedule().length === 0 ? (
+                {filteredSchedule.length === 0 ? (
                   <div className="h-24 flex items-center justify-center text-slate-500 text-xl">
                     No schedule items for Day {selectedDay}. Click "Add Schedule Item" to start!
                   </div>
                 ) : (
-                                     getFilteredSchedule().map((item, index) => (
+                                    filteredSchedule.map((item, index) => (
                      <div 
                        key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                        data-item-id={item.id}
-                       className={`border-b-2 border-slate-600 flex ${
-                         // Use hybrid timer data for real-time highlighting (ClockPage style)
-                         (() => {
-                         // Match item_id with both string and number comparison
-                         const hybridItemId = hybridTimerData?.activeTimer?.item_id;
-                         const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
-                         const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                         const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
-                         
-                         // Debug logging removed to prevent console spam
-                         
-                         // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
-                         if (isHybridRunning) return 'bg-green-950';
-                         if (isHybridLoaded) return 'bg-blue-950';
-                         
-                         // Only use old logic for completed/stopped states (not active states)
-                         if (completedCues[item.id]) return 'bg-gray-900 opacity-40';
-                         if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
-                         if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
-                         
-                         // Debug logging removed to prevent console spam
-                         
-                         // INDENTED CUES: Highlight when parent is loaded OR running
-                         if (indentedCues[item.id]) {
-                           const parentId = indentedCues[item.id].parentId;
-                           const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
-                           
-                           // Check if parent is currently loaded
-                           const parentIsLoaded = currentlyLoadedItemId && (
-                             parseInt(String(currentlyLoadedItemId)) === parentId || 
-                             currentlyLoadedItemId === parentId || 
-                             String(currentlyLoadedItemId) === String(parentId)
-                           );
-                           
-                           // Check if parent is running
-                           const parentIsRunning = activeTimers[parentId] !== undefined;
-                           
-                           if (parentIsLoaded || parentIsRunning) return 'bg-amber-950 border-amber-600';
-                         }
-                         if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
-                         return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
-                         })()
-                       }`}
+                      className={`border-b-2 border-slate-600 flex ${rowClassNames.get(item.id) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900')}`}
                        style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                      >
                        {visibleColumns.start && (
