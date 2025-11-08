@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
@@ -17,6 +17,7 @@ import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal from '../components/DisplayModal';
 import ExcelImportModal from '../components/ExcelImportModal';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
+import ScheduleRow from './ScheduleRow';
 
 // Speaker interface/type definition
 interface Speaker {
@@ -92,13 +93,15 @@ const RunOfShowPage: React.FC = () => {
     // Add row information to the description
     let enhancedDescription = description;
     let rowNumber: number | undefined;
-    let cueNumber: string | undefined;
+    let cueNumber: number | undefined;
     
     if (details?.itemId) {
       rowNumber = schedule.findIndex(item => item.id === details.itemId) + 1;
       const item = schedule.find(item => item.id === details.itemId);
-      cueNumber = item?.customFields?.cue || 'CUE';
-      enhancedDescription = `ROW ${rowNumber} - ${formatCueDisplay(cueNumber)}: ${description}`;
+      const cueRaw = (item?.customFields?.cue ?? '').toString();
+      const parsedCue = parseInt(cueRaw.replace(/[^0-9-]/g, ''), 10);
+      cueNumber = Number.isFinite(parsedCue) ? parsedCue : undefined;
+      enhancedDescription = `ROW ${rowNumber} - ${formatCueDisplay(cueRaw || 'CUE')}: ${description}`;
     }
     
     // Add to local change buffer
@@ -107,6 +110,7 @@ const RunOfShowPage: React.FC = () => {
       userId: user.id,
       userName: user.full_name || user.email || 'Unknown',
       userRole: currentUserRole,
+      changeType: action,
       action,
       description: enhancedDescription,
       details,
@@ -161,12 +165,14 @@ const RunOfShowPage: React.FC = () => {
 
     // Add row information to the description and details
     let enhancedDescription = description;
-    let enhancedDetails = { ...details };
+    let enhancedDetails: any = { ...details };
     if (details?.itemId) {
       const rowNumber = schedule.findIndex(item => item.id === details.itemId) + 1;
       const item = schedule.find(item => item.id === details.itemId);
-      const cueNumber = item?.customFields?.cue || 'CUE';
-      enhancedDescription = `ROW ${rowNumber} - ${formatCueDisplay(cueNumber)}: ${description}`;
+      const cueRaw = (item?.customFields?.cue ?? '').toString();
+      const parsedCue = parseInt(cueRaw.replace(/[^0-9-]/g, ''), 10);
+      const cueNumber = Number.isFinite(parsedCue) ? parsedCue : undefined;
+      enhancedDescription = `ROW ${rowNumber} - ${formatCueDisplay(cueRaw || 'CUE')}: ${description}`;
       enhancedDetails = {
         ...details,
         rowNumber,
@@ -275,6 +281,7 @@ const RunOfShowPage: React.FC = () => {
             userId: user.id,
             userName: user.full_name || user.email || 'Unknown',
             userRole: currentUserRole || 'VIEWER',
+            changeType: pendingChange?.action || 'unknown',
             action: pendingChange?.action || 'unknown',
             description: pendingChange?.description || 'unknown',
             details: pendingChange?.details || {},
@@ -459,13 +466,15 @@ const RunOfShowPage: React.FC = () => {
         // Add row information to the description
         let enhancedDescription = pendingChange.description;
         let rowNumber: number | undefined;
-        let cueNumber: string | undefined;
+        let cueNumber: number | undefined;
         
         if (pendingChange.details?.itemId) {
           rowNumber = schedule.findIndex(item => item.id === pendingChange.details.itemId) + 1;
           const item = schedule.find(item => item.id === pendingChange.details.itemId);
-          cueNumber = item?.customFields?.cue || 'CUE';
-          enhancedDescription = `ROW ${rowNumber} - ${formatCueDisplay(cueNumber)}: ${pendingChange.description}`;
+          const cueRaw = (item?.customFields?.cue ?? '').toString();
+          const parsedCue = parseInt(cueRaw.replace(/[^0-9-]/g, ''), 10);
+          cueNumber = Number.isFinite(parsedCue) ? parsedCue : undefined;
+          enhancedDescription = `ROW ${rowNumber} - ${formatCueDisplay(cueRaw || 'CUE')}: ${pendingChange.description}`;
         }
         
         // Process the pending change immediately
@@ -474,6 +483,7 @@ const RunOfShowPage: React.FC = () => {
           userId: user.id,
           userName: user.full_name || user.email || 'Unknown',
           userRole: currentUserRole || 'VIEWER' || 'VIEWER',
+          changeType: pendingChange.action,
           action: pendingChange.action,
           description: enhancedDescription,
           details: pendingChange.details,
@@ -759,7 +769,6 @@ const RunOfShowPage: React.FC = () => {
     // For plain numbers or other formats, add "CUE " prefix
     return `CUE ${cue}`;
   };
-
   // Helper function to convert HTML to plain text with basic markdown-style formatting
   const cleanNotesForCSV = (htmlString: string): string => {
     if (!htmlString) return '';
@@ -865,8 +874,8 @@ const RunOfShowPage: React.FC = () => {
         
         // Get the timezone offset for the event timezone
         const eventTime = new Date(tempDate.toLocaleString("en-US", { timeZone: timezone }));
-        const localTime = new Date(tempDate.toLocaleString("en-US", { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }));
-        const timezoneOffset = eventTime.getTime() - localTime.getTime();
+        const systemLocalTime = new Date(tempDate.toLocaleString("en-US", { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }));
+        const timezoneOffset = eventTime.getTime() - systemLocalTime.getTime();
         
         return new Date(tempDate.getTime() - timezoneOffset);
       }
@@ -967,7 +976,7 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Function to handle modal editing state (stays paused until modal closes)
-  const handleModalEditing = () => {
+  const handleModalEditing = useCallback(() => {
     console.log('✏️ Modal opened - pausing sync until closed');
     setIsUserEditing(true);
     
@@ -976,7 +985,7 @@ const RunOfShowPage: React.FC = () => {
       clearTimeout(editingTimeout);
       setEditingTimeout(null);
     }
-  };
+  }, [editingTimeout]);
 
   // Countdown timer functions with WebSocket sync
   const startCountdownTimer = useCallback(() => {
@@ -1024,7 +1033,7 @@ const RunOfShowPage: React.FC = () => {
   }, []);
 
   // Function to resume editing when modal closes
-  const handleModalClosed = () => {
+  const handleModalClosed = useCallback(() => {
     console.log('✏️ Modal closed - resuming sync in 5 seconds');
     
     // Set timeout to resume syncing after 5 seconds
@@ -1036,7 +1045,7 @@ const RunOfShowPage: React.FC = () => {
     }, 5000);
     
     setEditingTimeout(timeout);
-  };
+  }, [startCountdownTimer]);
   
   
   // Load user role from navigation state or localStorage
@@ -1256,7 +1265,7 @@ const RunOfShowPage: React.FC = () => {
     try {
       const completedData = await apiClient.getCompletedCues(event.id);
 
-      if (completedData) {
+      if (Array.isArray(completedData)) {
         const completedCuesMap: Record<number, boolean> = {};
         completedData.forEach((cue: any) => {
           if (cue.item_id) {
@@ -1476,9 +1485,10 @@ const RunOfShowPage: React.FC = () => {
 
     try {
       console.log('🟣 Loading completed cues from API for event:', event.id);
-      const completedCuesData = await DatabaseService.getCompletedCues(event.id);
+      const completedResult = await DatabaseService.getCompletedCues(event.id);
+      const completedCuesData: any[] = Array.isArray(completedResult) ? completedResult : [];
       
-      if (completedCuesData && completedCuesData.length > 0) {
+      if (completedCuesData.length > 0) {
         console.log('🟣 Found completed cues:', completedCuesData);
         
         // Convert the database data to completedCues state format
@@ -1557,7 +1567,6 @@ const RunOfShowPage: React.FC = () => {
     
     return null; // No parent found
   };
-
   // Toggle indented status for a cue
   const toggleIndentedCue = async (itemId: number) => {
     if (!event?.id || !user?.id) return;
@@ -1589,7 +1598,7 @@ const RunOfShowPage: React.FC = () => {
           itemId, 
           parentId, 
           user.id, 
-          user.name || 'Unknown User', 
+          user.full_name || user.email || 'Unknown User', 
           currentUserRole || 'VIEWER'
         );
         
@@ -1599,7 +1608,7 @@ const RunOfShowPage: React.FC = () => {
             [itemId]: {
               parentId: parentId,
               userId: user.id,
-              userName: user.name || 'Unknown User'
+              userName: user.full_name || user.email || 'Unknown User'
             }
           }));
           console.log('✅ Successfully added indented status');
@@ -1655,7 +1664,7 @@ const RunOfShowPage: React.FC = () => {
         const activeTimer = await DatabaseService.getActiveTimer(event.id);
         if (activeTimer) {
           // Skip if this timer was started by the current user
-          if (activeTimer.user_id === user.id) {
+          if (activeTimer.user_id === user?.id) {
             console.log('⏭️ Skipping countdown sync - timer started by current user');
             return;
           }
@@ -1667,7 +1676,7 @@ const RunOfShowPage: React.FC = () => {
             total: activeTimer.duration_seconds,
             startedAt: activeTimer.started_at,
             userId: activeTimer.user_id,
-            currentUserId: user.id
+            currentUserId: user?.id
           });
           
           // Update timer progress for both loaded and running states
@@ -1937,7 +1946,7 @@ const RunOfShowPage: React.FC = () => {
         console.log('🟠 Sub-cue timer loaded:', subCueTimerData.item_id, 'Duration:', subCueTimerData.duration_seconds, 's', 'Active:', subCueTimerData.is_active, 'Running:', subCueTimerData.is_running);
         
         // Skip if this is the current user's sub-cue timer
-        if (user && subCueTimerData.user_id === user.id) {
+        if (user?.id && subCueTimerData.user_id === user?.id) {
           console.log('⏭️ Skipping sub-cue sync - change made by current user');
           return;
         }
@@ -2334,7 +2343,6 @@ const RunOfShowPage: React.FC = () => {
       console.error('❌ Error loading CUE state from API:', error);
     }
   };
-
   // Backup schedule data to prevent data loss
   const backupScheduleData = async () => {
     if (!event?.id || !user?.id) return;
@@ -3126,7 +3134,6 @@ const RunOfShowPage: React.FC = () => {
       console.warn('Formatting command not supported:', format);
     }
   };
-
   // Save function
   const saveNotes = () => {
     const editor = document.getElementById('notes-editor');
@@ -3919,7 +3926,6 @@ const RunOfShowPage: React.FC = () => {
     
     console.log('✅ Timer duration updated - running timer synced immediately, schedule will sync after pause');
   };
-
   // Load a CUE (stop any active timer and select the CUE)
   const loadCue = async (itemId: number) => {
     console.log('🚀🚀🚀 loadCue function STARTED with itemId:', itemId);
@@ -3931,6 +3937,24 @@ const RunOfShowPage: React.FC = () => {
       console.log('❌ Missing user or event ID:', { user: !!user, eventId: event?.id });
       return;
     }
+    
+    // Capture running timer data BEFORE stopping (for overtime calculation after UI update)
+    const runningTimerData: Array<{ timerId: number; elapsedSeconds: number; totalSeconds: number }> = [];
+    Object.keys(activeTimers).forEach(timerIdStr => {
+      const timerId = parseInt(timerIdStr);
+      if (activeTimers[timerId]) {
+        const timerData = timerProgress[timerId];
+        if (timerData && timerData.startedAt) {
+          const startTime = timerData.startedAt instanceof Date 
+            ? timerData.startedAt.getTime() 
+            : new Date(timerData.startedAt).getTime();
+          const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+          const totalSeconds = timerData.total || 0;
+          runningTimerData.push({ timerId, elapsedSeconds, totalSeconds });
+        }
+      }
+    });
+    
     // Mark any currently running CUE as completed (purple)
     Object.keys(activeTimers).forEach(async (timerId) => {
       if (activeTimers[parseInt(timerId)]) {
@@ -4106,6 +4130,7 @@ const RunOfShowPage: React.FC = () => {
         }
       }));
       setActiveItemId(itemId);
+      // Note: loadedItems update will trigger useEffect that measures commit time
       setLoadedItems(prev => ({ ...prev, [itemId]: true }));
       
       // Calculate row number and cue display for database
@@ -4180,6 +4205,47 @@ const RunOfShowPage: React.FC = () => {
       }
     }
     setLoadedCueDependents(dependentIds);
+    
+    // Calculate and save overtime for previously running timers AFTER UI update (async, non-blocking)
+    // This runs in the background so it doesn't slow down the UI
+    if (runningTimerData.length > 0) {
+      console.log('⏱️ Calculating overtime for', runningTimerData.length, 'previously running timer(s) (async)');
+      
+      // Use setTimeout to run this after the current call stack clears (ensures UI updates first)
+      setTimeout(async () => {
+        for (const { timerId, elapsedSeconds, totalSeconds } of runningTimerData) {
+          try {
+            const overtimeSeconds = elapsedSeconds - totalSeconds;
+            const overtimeMinutes = Math.round(overtimeSeconds / 60);
+            
+            console.log(`⏱️ Calculating overtime for timer ${timerId}: elapsed=${elapsedSeconds}s, total=${totalSeconds}s, overtime=${overtimeMinutes}m`);
+            
+            // Save overtime to database (even if 0, to clear any previous overtime)
+            await DatabaseService.saveOvertimeMinutes(event.id, timerId, overtimeMinutes);
+            console.log(`✅ Overtime saved for timer ${timerId}: ${overtimeMinutes} minutes`);
+            
+            // Update local state
+            setOvertimeMinutes(prev => ({
+              ...prev,
+              [timerId]: overtimeMinutes
+            }));
+            
+            // Broadcast overtime update via WebSocket
+            const socket = socketClient.getSocket();
+            if (socket) {
+              socket.emit('overtimeUpdate', {
+                event_id: event.id,
+                item_id: timerId,
+                overtime_minutes: overtimeMinutes
+              });
+              console.log(`✅ Overtime broadcasted for timer ${timerId}: ${overtimeMinutes} minutes`);
+            }
+          } catch (error) {
+            console.error(`❌ Failed to save overtime for timer ${timerId}:`, error);
+          }
+        }
+      }, 0); // Run after current call stack, but as soon as possible
+    }
   };
 
   // Reset all row states to cleared
@@ -4719,7 +4785,6 @@ const RunOfShowPage: React.FC = () => {
       timeout = setTimeout(() => func(...args), wait);
     }) as T;
   }
-
   const loadFromAPI = useCallback(async () => {
     if (!event?.id) return;
     
@@ -4786,8 +4851,8 @@ const RunOfShowPage: React.FC = () => {
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
         if (showStartOvertimeData) {
           // Parse the data structure correctly
-          const overtimeMinutes = showStartOvertimeData.show_start_overtime || showStartOvertimeData.overtimeMinutes;
-          const itemId = showStartOvertimeData.item_id || showStartOvertimeData.itemId;
+          const overtimeMinutes = (showStartOvertimeData as any).show_start_overtime ?? (showStartOvertimeData as any).overtimeMinutes ?? 0;
+          const itemId = (showStartOvertimeData as any).item_id ?? (showStartOvertimeData as any).itemId ?? null;
           
           setShowStartOvertime(overtimeMinutes);
           console.log('✅ Loaded show start overtime:', showStartOvertimeData);
@@ -5274,7 +5339,12 @@ const RunOfShowPage: React.FC = () => {
         
         // Load current completed cues
         try {
-          const completedCuesResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/completed-cues/${event?.id}`);
+          const envAny = (import.meta as any)?.env || {};
+          const apiBase = envAny.VITE_API_BASE_URL || 
+            (envAny.PROD 
+              ? 'https://ros-50-production.up.railway.app'  // Railway production URL
+              : 'http://localhost:3001');  // Local development
+          const completedCuesResponse = await fetch(`${apiBase}/api/completed-cues/${event?.id}`);
           if (completedCuesResponse.ok) {
             const completedCuesArray = await completedCuesResponse.json();
             console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);
@@ -5306,7 +5376,7 @@ const RunOfShowPage: React.FC = () => {
             // Load START cue overtime from separate table (same as initial load)
             const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
             if (showStartOvertimeData) {
-              const overtimeMinutes = showStartOvertimeData.show_start_overtime || showStartOvertimeData.overtimeMinutes;
+              const overtimeMinutes = (showStartOvertimeData as any).show_start_overtime ?? (showStartOvertimeData as any).overtimeMinutes ?? 0;
               setShowStartOvertime(overtimeMinutes);
               console.log('✅ Initial sync: Show start overtime reloaded on page return:', overtimeMinutes);
             } else {
@@ -5516,7 +5586,6 @@ const RunOfShowPage: React.FC = () => {
       console.error('❌ Error checking data source:', error);
     }
   };
-
   // Backup functions
 
   const loadBackups = async () => {
@@ -5622,7 +5691,7 @@ const RunOfShowPage: React.FC = () => {
     try {
       console.log('🔄 Restoring from backup:', selectedBackup.id);
       
-      const restoredData = await NeonBackupService.restoreFromBackup(selectedBackup.id);
+      const restoredData = await NeonBackupService.restoreFromBackup(String(selectedBackup.id));
       
       // Update the schedule and custom columns
       setSchedule(restoredData.scheduleData);
@@ -5644,9 +5713,11 @@ const RunOfShowPage: React.FC = () => {
       // Save to API
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
+        event_name: restoredData.eventData?.event_name || event?.name || 'Event',
+        settings: (restoredData as any).settings || {},
         schedule_items: restoredData.scheduleData,
         custom_columns: restoredData.customColumnsData,
-        event_data: restoredData.eventData
+        event_date: restoredData.eventData?.event_date || null
       }, {
         userId: user?.id || 'unknown',
         userName: user?.full_name || user?.email || 'Unknown User',
@@ -6211,7 +6282,6 @@ const RunOfShowPage: React.FC = () => {
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
-
   const toggleTimer = async (itemId: number) => {
     if (!user || !event?.id) return;
 
@@ -6939,7 +7009,6 @@ const RunOfShowPage: React.FC = () => {
     
     return cleaned;
   };
-
   // Handle Excel import
   const handleExcelImport = async (importedData: any[]) => {
     try {
@@ -7297,6 +7366,47 @@ const RunOfShowPage: React.FC = () => {
     });
   };
 
+  // Precompute cumulative overtime for each row (optimization to avoid passing schedule array)
+  const cumulativeOvertimeByItemId = useMemo(() => {
+    const overtimeMap = new Map<number, number>();
+    
+    // Find the START cue index to know where to start counting overtime
+    const startCueIndex = startCueId ? schedule.findIndex(s => s.id === startCueId) : -1;
+    
+    schedule.forEach((item, index) => {
+      let totalOvertime = 0;
+      
+      // Skip indented items - they don't have cumulative overtime
+      if (indentedCues[item.id]) {
+        overtimeMap.set(item.id, 0);
+        return;
+      }
+      
+      const currentItemDay = item.day || 1;
+      const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+      
+      // Only count overtime from START cue onwards (ignore rows above STAR)
+      for (let i = startCountingFrom; i < index; i++) {
+        const prevItem = schedule[i];
+        const prevItemDay = prevItem.day || 1;
+        
+        // Only count overtime from the same day and non-indented items
+        if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+          totalOvertime += overtimeMinutes[prevItem.id] || 0;
+        }
+      }
+      
+      // Add show start overtime for START cue and all rows after it
+      if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+        totalOvertime += showStartOvertime;
+      }
+      
+      overtimeMap.set(item.id, totalOvertime);
+    });
+    
+    return overtimeMap;
+  }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime]);
+
   // Get available days based on event duration
   const getAvailableDays = () => {
     const days = event?.numberOfDays || 5; // Default to 5 days if not specified
@@ -7315,6 +7425,49 @@ const RunOfShowPage: React.FC = () => {
     
     return filtered;
   };
+
+  // Memoized filtered schedule
+  const filteredSchedule = useMemo(() => getFilteredSchedule(), [schedule, selectedDay]);
+
+  // Precompute row class names for main rows
+  const rowClassNames = useMemo(() => {
+    const classNames = new Map<number, string>();
+    filteredSchedule.forEach((item, index) => {
+      const hybridItemId: any = hybridTimerData?.activeTimer?.item_id;
+      const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
+      const isHybridRunning = Boolean(isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
+      const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running);
+      if (isHybridRunning) { classNames.set(item.id, 'bg-green-950'); return; }
+      if (isHybridLoaded) { classNames.set(item.id, 'bg-blue-950'); return; }
+      if (completedCues[item.id]) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
+      if (stoppedItems.has(item.id)) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
+      if (loadedCueDependents.has(item.id)) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
+      if (indentedCues[item.id]) {
+        const parentId = indentedCues[item.id].parentId;
+        const currentlyLoadedItemId: any = hybridTimerData?.activeTimer?.item_id || activeItemId;
+        const parentIsLoaded = Boolean(currentlyLoadedItemId && (
+          parseInt(String(currentlyLoadedItemId)) === parentId ||
+          currentlyLoadedItemId === parentId ||
+          String(currentlyLoadedItemId) === String(parentId)
+        ));
+        const parentIsRunning = activeTimers[parentId] !== undefined;
+        if (parentIsLoaded || parentIsRunning) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
+      }
+      if (lastLoadedCueId === item.id) { classNames.set(item.id, 'bg-purple-950 border-purple-400'); return; }
+      classNames.set(item.id, index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
+    });
+    return classNames;
+  }, [
+    filteredSchedule,
+    hybridTimerData?.activeTimer,
+    completedCues,
+    stoppedItems,
+    loadedCueDependents,
+    indentedCues,
+    activeItemId,
+    activeTimers,
+    lastLoadedCueId
+  ]);
 
   // Handle scroll for grid headers visibility
   useEffect(() => {
@@ -7557,7 +7710,6 @@ const RunOfShowPage: React.FC = () => {
       </div>
     );
   }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
       {/* Page Visibility Indicator */}
@@ -8517,14 +8669,11 @@ const RunOfShowPage: React.FC = () => {
                     {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
                       ? 'RUNNING'
                       : 'LOADED'
-                    } -                     {(() => {
+                    } - {(() => {
                       // Try to find the schedule item with proper type conversion
                       const itemId = hybridTimerData.activeTimer.item_id;
-                      const scheduleItem = schedule.find(item => 
-                        item.id === itemId || 
-                        item.id === parseInt(itemId) || 
-                        parseInt(item.id) === parseInt(itemId)
-                      );
+                      const idNum = typeof itemId === 'string' ? parseInt(itemId, 10) : Number(itemId);
+                      const scheduleItem = schedule.find(item => item.id === idNum);
                       
                       // Debug: Log only occasionally to reduce spam
                       if (Math.random() < 0.01) {
@@ -8574,7 +8723,7 @@ const RunOfShowPage: React.FC = () => {
                             return `${formatCueDisplay(cueDisplay)} - ${formatSubCueTime(remaining)}`;
                           } else {
                             // Fallback to old secondaryTimer logic
-                            return `${formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - ${formatSubCueTime(secondaryTimer.remaining)}`;
+                            return `${formatCueDisplay(schedule.find(item => item.id === secondaryTimer?.itemId)?.customFields.cue)} - ${formatSubCueTime(secondaryTimer?.remaining ?? 0)}`;
                           }
                         })()}
                       </div>
@@ -8853,7 +9002,6 @@ const RunOfShowPage: React.FC = () => {
               </div>
             </div>
           </div>
-
           {/* Duplicate Grid Headers - Fixed at Top */}
           <div className={`px-8 transition-all duration-500 ease-in-out overflow-hidden ${showGridHeaders ? 'max-h-80 opacity-100 -mb-6' : 'max-h-0 opacity-0 mb-0'}`}>
             <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '127.67%', marginLeft: '-13.83%' }}>
@@ -9006,8 +9154,8 @@ const RunOfShowPage: React.FC = () => {
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Assets
-                            {currentUserRole === 'VIEWER' && (
-                              <span className="text-yellow-400" title="Read-only for VIEWERs">🔒</span>
+                            {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
+                              <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                             )}
                           </span>
                           <div 
@@ -9248,7 +9396,6 @@ const RunOfShowPage: React.FC = () => {
               </button>
             </div>
           </div>
-          
           {/* Schedule Layout */}
           <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
             {/* Row Number Column */}
@@ -9449,7 +9596,7 @@ const RunOfShowPage: React.FC = () => {
                              
                              await DatabaseService.saveRunOfShowData(runOfShowData, {
                                userId: user?.id || 'unknown',
-                               userName: user?.name || 'Unknown User',
+                               userName: user?.full_name || user?.email || 'Unknown User',
                                userRole: user?.role || 'VIEWER'
                              });
                              
@@ -9621,7 +9768,6 @@ const RunOfShowPage: React.FC = () => {
                 ))
               )}
             </div>
-
             {/* Center Scrollable Section - Main Schedule Data */}
             <div id="main-scroll-container" className="flex-1 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
               <div className="min-w-max">
@@ -9842,873 +9988,61 @@ const RunOfShowPage: React.FC = () => {
 
 
                 {/* Schedule Rows */}
-                {getFilteredSchedule().length === 0 ? (
+                {filteredSchedule.length === 0 ? (
                   <div className="h-24 flex items-center justify-center text-slate-500 text-xl">
                     No schedule items for Day {selectedDay}. Click "Add Schedule Item" to start!
                   </div>
                 ) : (
-                                     getFilteredSchedule().map((item, index) => (
+                                     filteredSchedule.map((item, index) => (
                      <div 
-                       key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
+                       key={item.id}
                        data-item-id={item.id}
-                       className={`border-b-2 border-slate-600 flex ${
-                         // Use hybrid timer data for real-time highlighting (ClockPage style)
-                         (() => {
-                         // Match item_id with both string and number comparison
-                         const hybridItemId = hybridTimerData?.activeTimer?.item_id;
-                         const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
-                         const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                         const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
-                         
-                         // Debug logging removed to prevent console spam
-                         
-                         // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
-                         if (isHybridRunning) return 'bg-green-950';
-                         if (isHybridLoaded) return 'bg-blue-950';
-                         
-                         // Only use old logic for completed/stopped states (not active states)
-                         if (completedCues[item.id]) return 'bg-gray-900 opacity-40';
-                         if (stoppedItems.has(item.id)) return 'bg-gray-900 opacity-40';
-                         if (loadedCueDependents.has(item.id)) return 'bg-amber-950 border-amber-600';
-                         
-                         // Debug logging removed to prevent console spam
-                         
-                         // INDENTED CUES: Highlight when parent is loaded OR running
-                         if (indentedCues[item.id]) {
-                           const parentId = indentedCues[item.id].parentId;
-                           const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
-                           
-                           // Check if parent is currently loaded
-                           const parentIsLoaded = currentlyLoadedItemId && (
-                             parseInt(String(currentlyLoadedItemId)) === parentId || 
-                             currentlyLoadedItemId === parentId || 
-                             String(currentlyLoadedItemId) === String(parentId)
-                           );
-                           
-                           // Check if parent is running
-                           const parentIsRunning = activeTimers[parentId] !== undefined;
-                           
-                           if (parentIsLoaded || parentIsRunning) return 'bg-amber-950 border-amber-600';
-                         }
-                         if (lastLoadedCueId === item.id) return 'bg-purple-950 border-purple-400';
-                         return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
-                         })()
-                       }`}
+                       className={`border-b-2 border-slate-600 flex ${rowClassNames.get(item.id) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900')}`}
                        style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                      >
-                       {visibleColumns.start && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.start }}
-                         >
-                           <div className="flex flex-col items-center gap-1">
-                           <span className="text-white font-mono text-base font-bold">
-                               {indentedCues[item.id] ? '↘' : calculateStartTimeWithOvertime(index)}
-                           </span>
-                             {!indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(index) !== calculateStartTimeWithOvertime(index)) && (
-                               <span className={`text-sm font-bold px-2 py-1 rounded text-center leading-tight ${
-                                 (() => {
-                                  // For START cue: use show start overtime only for color
-                                  if (item.id === startCueId) {
-                                    return showStartOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
-                                  }
-                                  
-                                  // For other rows: calculate total cumulative overtime for color
-                                   let totalOvertime = 0;
-                                   for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
-                                     const prevItem = schedule[i];
-                                     const prevItemDay = prevItem.day || 1;
-                                     const currentItemDay = item.day || 1;
-                                     if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
-                                       totalOvertime += overtimeMinutes[prevItem.id] || 0;
-                                     }
-                                   }
-                                  // Add show start overtime for rows after START
-                                  if (showStartOvertime !== 0 && startCueId !== null) {
-                                    const startCueIndex = schedule.findIndex(s => s.id === startCueId);
-                                    const currentIndex = schedule.findIndex(s => s.id === item.id);
-                                    if (startCueIndex !== -1 && currentIndex > startCueIndex) {
-                                      totalOvertime += showStartOvertime;
-                                    }
-                                  }
-                                  return totalOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
-                                })()
-                               }`} title="Time adjusted due to overtime">
-                                 {(() => {
-                                  // For START cue row: show ONLY show start overtime (not duration)
-                                  if (item.id === startCueId) {
-                                    const showStartOT = showStartOvertime || 0;
-                                    
-                                    if (showStartOT > 0) {
-                                      const hours = Math.floor(showStartOT / 60);
-                                      const minutes = showStartOT % 60;
-                                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                                      return `+${timeDisplay} late`;
-                                    } else if (showStartOT < 0) {
-                                      const hours = Math.floor(Math.abs(showStartOT) / 60);
-                                      const minutes = Math.abs(showStartOT) % 60;
-                                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                                      return `-${timeDisplay} early`;
-                                    }
-                                    return 'On time';
-                                  }
-                                  
-                                  // For other rows: calculate total cumulative overtime (includes show start + all duration)
-                                   let totalOvertime = 0;
-                                   for (let i = 0; i < schedule.findIndex(s => s.id === item.id); i++) {
-                                     const prevItem = schedule[i];
-                                     const prevItemDay = prevItem.day || 1;
-                                     const currentItemDay = item.day || 1;
-                                     if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
-                                       totalOvertime += overtimeMinutes[prevItem.id] || 0;
-                                     }
-                                   }
-                                  // Add show start overtime for rows after START cue
-                                  if (showStartOvertime !== 0 && startCueId !== null) {
-                                    const startCueIndex = schedule.findIndex(s => s.id === startCueId);
-                                    const currentIndex = schedule.findIndex(s => s.id === item.id);
-                                    if (startCueIndex !== -1 && currentIndex > startCueIndex) {
-                                      totalOvertime += showStartOvertime;
-                                     }
-                                   }
-                                   if (totalOvertime > 0) {
-                                     const hours = Math.floor(totalOvertime / 60);
-                                     const minutes = totalOvertime % 60;
-                                     const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                                     return `+${timeDisplay}`;
-                                   } else if (totalOvertime < 0) {
-                                     const hours = Math.floor(Math.abs(totalOvertime) / 60);
-                                     const minutes = Math.abs(totalOvertime) % 60;
-                                     const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                                     return `-${timeDisplay}`;
-                                   }
-                                   return '0m';
-                                 })()}
-                               </span>
-                             )}
-                           </div>
-                         </div>
-                       )}
-                       {visibleColumns.programType && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.programType }}
-                         >
-                        <select 
-                          value={item.programType}
-                            onFocus={() => {
-                              // Pause syncing when dropdown is clicked/focused
-                              console.log('✏️ Program Type dropdown focused - pausing sync');
-                              handleModalEditing();
-                            }}
-          onChange={(e) => {
-            if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-              alert('Only EDITORs can edit program type. Please change your role to EDITOR.');
-              return;
-            }
-            const oldValue = item.programType;
-            setSchedule(prev => prev.map(scheduleItem => 
-              scheduleItem.id === item.id 
-                ? { ...scheduleItem, programType: e.target.value }
-                : scheduleItem
-            ));
-            
-            // Log the change (debounced)
-            logChangeDebounced(
-              `programType_${item.id}`,
-              'FIELD_UPDATE', 
-              `Updated program type for "${item.segmentName}" from "${oldValue}" to "${e.target.value}"`, 
-              {
-                changeType: 'FIELD_CHANGE',
-                itemId: item.id,
-                itemName: item.segmentName,
-                fieldName: 'programType',
-                oldValue: oldValue,
-                newValue: e.target.value,
-                details: {
-                  fieldType: 'select',
-                  optionChange: true
-                }
-              }
-            );
-                              // Resume syncing when dropdown selection is made
-                              handleModalClosed();
-          }}
-          disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-          className="w-full px-3 py-2 border-2 rounded text-base transition-colors bg-slate-700 border-slate-500 text-white focus:border-blue-500"
-          style={{ 
-            backgroundColor: programTypeColors[item.programType] || '#374151',
-            color: item.programType === 'Sub Cue' ? '#000000' : '#ffffff',
-            opacity: 1
-          }}
-          title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit program type' : 'Select program type'}
-                        >
-                          {programTypes.map(type => (
-                            <option 
-                              key={type} 
-                              value={type}
-                              style={{ 
-                                backgroundColor: programTypeColors[type] || '#374151',
-                                color: type === 'Sub Cue' ? '#000000' : '#ffffff'
-                              }}
-                            >
-                              {type}
-                            </option>
-                          ))}
-                        </select>
-                       </div>
-                       )}
-                       {visibleColumns.duration && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.duration }}
-                         >
-                        <div className="flex items-center gap-2">
-                          <input 
-                            type="number" 
-                            min="0" 
-                            max="23" 
-                            value={item.durationHours}
-                          onChange={(e) => {
-                            // Detect user editing
-                            handleUserEditing();
-                            
-                            if (currentUserRole === 'VIEWER') {
-                              alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
-                              return;
-                            }
-                            const oldValue = item.durationHours;
-                            const newValue = parseInt(e.target.value) || 0;
-                            setSchedule(prev => prev.map(scheduleItem => 
-                              scheduleItem.id === item.id 
-                                ? { ...scheduleItem, durationHours: newValue }
-                                : scheduleItem
-                            ));
-                            
-                            // Log the change (debounced)
-                            logChangeDebounced(
-                              `durationHours_${item.id}`,
-                              'FIELD_UPDATE', 
-                              `Updated duration hours for "${item.segmentName}" from ${oldValue} to ${newValue}`, 
-                              {
-                                changeType: 'FIELD_CHANGE',
-                                itemId: item.id,
-                                itemName: item.segmentName,
-                                fieldName: 'durationHours',
-                                oldValue: oldValue,
-                                newValue: newValue,
-                                details: {
-                                  fieldType: 'number',
-                                  timeChange: newValue - oldValue
-                                }
-                              }
-                            );
-                          }}
-                          disabled={currentUserRole === 'VIEWER'}
-                          className="w-14 px-2 py-2 border border-slate-600 rounded text-center text-lg font-mono font-bold transition-colors bg-slate-700 text-white"
-                          style={{ opacity: 1 }}
-                          title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit hours'}
-                          />
-                          <span className="text-slate-400 text-xl font-bold">:</span>
-                          <input 
-                            type="number" 
-                            min="0" 
-                            max="59" 
-                            value={item.durationMinutes}
-                          onChange={(e) => {
-                            // Detect user editing
-                            handleUserEditing();
-                            
-                            if (currentUserRole === 'VIEWER') {
-                              alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
-                              return;
-                            }
-                            const oldValue = item.durationMinutes;
-                            const newValue = parseInt(e.target.value) || 0;
-                            setSchedule(prev => prev.map(scheduleItem => 
-                              scheduleItem.id === item.id 
-                                ? { ...scheduleItem, durationMinutes: newValue }
-                                : scheduleItem
-                            ));
-                            
-                            // Log the change (debounced)
-                            logChangeDebounced(
-                              `durationMinutes_${item.id}`,
-                              'FIELD_UPDATE', 
-                              `Updated duration minutes for "${item.segmentName}" from ${oldValue} to ${newValue}`, 
-                              {
-                                changeType: 'FIELD_CHANGE',
-                                itemId: item.id,
-                                itemName: item.segmentName,
-                                fieldName: 'durationMinutes',
-                                oldValue: oldValue,
-                                newValue: newValue,
-                                details: {
-                                  fieldType: 'number',
-                                  timeChange: newValue - oldValue
-                                }
-                              }
-                            );
-                          }}
-                          disabled={currentUserRole === 'VIEWER'}
-                          className="w-14 px-2 py-2 border border-slate-600 rounded text-center text-lg font-mono font-bold transition-colors bg-slate-700 text-white"
-                          style={{ opacity: 1 }}
-                          title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit minutes'}
-                          />
-                          <span className="text-slate-400 text-xl font-bold">:</span>
-                          <input 
-                            type="number" 
-                            min="0" 
-                            max="59" 
-                            value={item.durationSeconds}
-                          onChange={(e) => {
-                            // Detect user editing
-                            handleUserEditing();
-                            
-                            if (currentUserRole === 'VIEWER') {
-                              alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
-                              return;
-                            }
-                            const oldValue = item.durationSeconds;
-                            const newValue = parseInt(e.target.value) || 0;
-                            setSchedule(prev => prev.map(scheduleItem => 
-                              scheduleItem.id === item.id 
-                                ? { ...scheduleItem, durationSeconds: newValue }
-                                : scheduleItem
-                            ));
-                            
-                            // Log the change (debounced)
-                            logChangeDebounced(
-                              `durationSeconds_${item.id}`,
-                              'FIELD_UPDATE', 
-                              `Updated duration seconds for "${item.segmentName}" from ${oldValue} to ${newValue}`, 
-                              {
-                                changeType: 'FIELD_CHANGE',
-                                itemId: item.id,
-                                itemName: item.segmentName,
-                                fieldName: 'durationSeconds',
-                                oldValue: oldValue,
-                                newValue: newValue,
-                                details: {
-                                  fieldType: 'number',
-                                  timeChange: newValue - oldValue
-                                }
-                              }
-                            );
-                          }}
-                          disabled={currentUserRole === 'VIEWER'}
-                          className="w-14 px-2 py-2 border border-slate-600 rounded text-center text-lg font-mono font-bold transition-colors bg-slate-700 text-white"
-                          style={{ opacity: 1 }}
-                          title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit seconds'}
-                          />
-                        </div>
-                       </div>
-                       )}
-                       {visibleColumns.segmentName && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.segmentName }}
-                         >
-                        <input
-                          type="text"
-                          value={item.segmentName}
-                          onChange={(e) => {
-                            // Detect user editing
-                            handleUserEditing();
-                            
-                            if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                              alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
-                              return;
-                            }
-                            const oldValue = item.segmentName;
-                            setSchedule(prev => prev.map(scheduleItem => 
-                              scheduleItem.id === item.id 
-                                ? { ...scheduleItem, segmentName: e.target.value }
-                                : scheduleItem
-                            ));
-                            
-                            // Log the change (debounced)
-                            logChangeDebounced(
-                              `segmentName_${item.id}`,
-                              'FIELD_UPDATE', 
-                              `Updated segment name for "${oldValue}" to "${e.target.value}"`, 
-                              {
-                                changeType: 'FIELD_CHANGE',
-                                itemId: item.id,
-                                itemName: e.target.value,
-                                fieldName: 'segmentName',
-                                oldValue: oldValue,
-                                newValue: e.target.value,
-                                details: {
-                                  fieldType: 'text',
-                                  characterChange: e.target.value.length - oldValue.length
-                                }
-                              }
-                            );
-                          }}
-                          disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-                          className={`w-full px-3 py-2 border border-slate-600 rounded text-base transition-colors ${
-                            currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
-                              ? 'bg-slate-700 text-white'
-                              : 'bg-slate-700 text-white'
-                          }`}
-                          placeholder={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
-                          title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit segment names' : 'Edit segment name'}
-                        />
-                       </div>
-                       )}
-                       {visibleColumns.shotType && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.shotType }}
-                         >
-                        <select 
-                          value={item.shotType}
-                          onFocus={() => {
-                            // Pause syncing when dropdown is clicked/focused
-                            console.log('✏️ Shot Type dropdown focused - pausing sync');
-                            handleModalEditing();
-                          }}
-          onChange={(e) => {
-            if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-              alert('Only EDITORs can edit shot type. Please change your role to EDITOR.');
-              return;
-            }
-            const oldValue = item.shotType;
-            setSchedule(prev => prev.map(scheduleItem => 
-              scheduleItem.id === item.id 
-                ? { ...scheduleItem, shotType: e.target.value }
-                : scheduleItem
-            ));
-            
-            // Log the change (debounced)
-            logChangeDebounced(
-              `shotType_${item.id}`,
-              'FIELD_UPDATE', 
-              `Updated shot type for "${item.segmentName}" from "${oldValue}" to "${e.target.value}"`, 
-              {
-                changeType: 'FIELD_CHANGE',
-                itemId: item.id,
-                itemName: item.segmentName,
-                fieldName: 'shotType',
-                oldValue: oldValue,
-                newValue: e.target.value,
-                details: {
-                  fieldType: 'select',
-                  optionChange: true
-                }
-              }
-            );
-            // Resume syncing when dropdown selection is made
-            handleModalClosed();
-          }}
-          disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-          className="w-full px-3 py-2 border border-slate-600 rounded text-base transition-colors bg-slate-700 text-white"
-          style={{ opacity: 1 }}
-          title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit shot type' : 'Select shot type'}
-                        >
-                          <option value="">Select Shot Type</option>
-                          {shotTypes.map(type => (
-                            <option key={type} value={type}>{type}</option>
-                          ))}
-                        </select>
-                       </div>
-                       )}
-                       {visibleColumns.pptQA && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.pptQA }}
-                         >
-                        <div className="flex items-center gap-2">
-                          <label className="flex items-center gap-1">
-                            <input
-                              type="checkbox"
-                              checked={item.hasPPT}
-                              onChange={(e) => {
-                                // Detect user editing
-                                handleUserEditing();
-                                
-                                if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                                  alert('Only EDITORs can edit PPT settings. Please change your role to EDITOR.');
-                                  return;
-                                }
-                                const oldValue = item.hasPPT;
-                                setSchedule(prev => prev.map(scheduleItem => 
-                                  scheduleItem.id === item.id 
-                                    ? { ...scheduleItem, hasPPT: e.target.checked }
-                                    : scheduleItem
-                                ));
-                                
-                                // Log the change (debounced)
-                                logChangeDebounced(
-                                  `hasPPT_${item.id}`,
-                                  'FIELD_UPDATE', 
-                                  `Updated PPT status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`, 
-                                  {
-                                    changeType: 'FIELD_CHANGE',
-                                    itemId: item.id,
-                                    itemName: item.segmentName,
-                                    fieldName: 'hasPPT',
-                                    oldValue: oldValue ? 'TRUE' : 'FALSE',
-                                    newValue: e.target.checked ? 'TRUE' : 'FALSE',
-                                    details: {
-                                      fieldType: 'checkbox',
-                                      booleanChange: true
-                                    }
-                                  }
-                                );
-                              }}
-                              className={`w-6 h-6 rounded border-2 transition-colors ${
-                                currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
-                                  ? 'border-slate-400 bg-slate-700 cursor-not-allowed'
-                                  : 'border-slate-400 bg-slate-700 hover:border-blue-400 focus:ring-2 focus:ring-blue-500'
-                              }`}
-                              style={{ 
-                                opacity: 1,
-                                filter: 'none',
-                                WebkitFilter: 'none'
-                              }}
-                              title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit PPT settings' : 'Toggle PPT'}
-                            />
-                            <span className="text-base font-medium text-white">PPT</span>
-                          </label>
-                          <label className="flex items-center gap-1">
-                            <input
-                              type="checkbox"
-                              checked={item.hasQA}
-                              onChange={(e) => {
-                                // Detect user editing
-                                handleUserEditing();
-                                
-                                if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                                  alert('Only EDITORs can edit Q&A settings. Please change your role to EDITOR.');
-                                  return;
-                                }
-                                const oldValue = item.hasQA;
-                                setSchedule(prev => prev.map(scheduleItem => 
-                                  scheduleItem.id === item.id 
-                                    ? { ...scheduleItem, hasQA: e.target.checked }
-                                    : scheduleItem
-                                ));
-                                
-                                // Log the change (debounced)
-                                logChangeDebounced(
-                                  `hasQA_${item.id}`,
-                                  'FIELD_UPDATE', 
-                                  `Updated Q&A status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`, 
-                                  {
-                                    changeType: 'FIELD_CHANGE',
-                                    itemId: item.id,
-                                    itemName: item.segmentName,
-                                    fieldName: 'hasQA',
-                                    oldValue: oldValue ? 'TRUE' : 'FALSE',
-                                    newValue: e.target.checked ? 'TRUE' : 'FALSE',
-                                    details: {
-                                      fieldType: 'checkbox',
-                                      booleanChange: true
-                                    }
-                                  }
-                                );
-                              }}
-                              className={`w-6 h-6 rounded border-2 transition-colors ${
-                                currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
-                                  ? 'border-slate-400 bg-slate-700 cursor-not-allowed'
-                                  : 'border-slate-400 bg-slate-700 hover:border-blue-400 focus:ring-2 focus:ring-blue-500'
-                              }`}
-                              style={{ 
-                                opacity: 1,
-                                filter: 'none',
-                                WebkitFilter: 'none'
-                              }}
-                              title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit Q&A settings' : 'Toggle Q&A'}
-                            />
-                            <span className="text-base font-medium text-white">Q&A</span>
-                          </label>
-                        </div>
-                       </div>
-                       )}
-                       {visibleColumns.notes && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-                           style={{ width: columnWidths.notes, height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
-                      >
-                        <div
-                          onClick={() => {
-                            if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                              if (currentUserRole === 'OPERATOR' && item.notes) {
-                                alert(`Notes (View Only):\n\n${item.notes.replace(/<[^>]*>/g, '')}`);
-                                return;
-                              }
-                              alert('Only EDITORs can edit notes. Please change your role to EDITOR.');
-                              return;
-                            }
-                            handleModalEditing();
-                            setEditingNotesItem(item.id);
-                            setShowNotesModal(true);
-                          }}
-                          className="w-full px-3 py-2 border border-slate-600 rounded text-white text-base transition-colors bg-slate-700 cursor-pointer hover:bg-slate-600"
-                          style={{ 
-                            minHeight: '4rem', // Minimum height for empty state
-                            maxHeight: 'none', // Allow content to expand
-                            wordWrap: 'break-word',
-                            overflowWrap: 'break-word',
-                            display: 'flex',
-                            alignItems: 'flex-start', // Align content to top
-                            justifyContent: 'flex-start' // Align content to left
-                          }}
-                          title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit notes' : currentUserRole === 'OPERATOR' ? 'Click to view notes (read-only)' : 'Click to edit notes'}
-                        >
-                          {item.notes ? (
-                            <div 
-                              className="text-left w-full notes-display"
-                              style={{
-                                lineHeight: '1.4',
-                                overflow: 'visible'
-                              }}
-                              dangerouslySetInnerHTML={{ __html: item.notes }}
-                            />
-                          ) : (
-                            <span className="text-slate-400">Click to edit notes...</span>
-                          )}
-                        </div>
-                       </div>
-                       )}
-                       {visibleColumns.assets && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.assets }}
-                         >
-                        <div
-                          onClick={() => {
-                            if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                              // For OPERATOR, show view-only modal instead of edit
-                              if (currentUserRole === 'OPERATOR' && item.assets) {
-                                setViewingAssetsItem(item.id);
-                                setShowViewAssetsModal(true);
-                                return;
-                              }
-                              alert('Only EDITORs can edit assets. Please change your role to EDITOR.');
-                              return;
-                            }
-                            // Pause syncing when assets modal opens
-                            handleModalEditing();
-                            setEditingAssetsItem(item.id);
-                            setShowAssetsModal(true);
-                          }}
-                          className="w-full px-3 py-2 border border-slate-600 rounded text-white text-base transition-colors flex items-center justify-center bg-slate-700 cursor-pointer hover:bg-slate-600"
-                          title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit assets' : currentUserRole === 'OPERATOR' ? 'Click to view assets (read-only)' : 'Click to edit assets'}
-                        >
-                          {item.assets ? (
-                            <div className="text-center">
-                              <div className="text-sm font-medium">
-                                {item.assets.split('||').length} Asset{item.assets.split('||').length !== 1 ? 's' : ''}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">Click to add assets...</span>
-                          )}
-                        </div>
-                       </div>
-                       )}
-                       {visibleColumns.participants && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-start justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-                           style={{ 
-                             width: columnWidths.participants, 
-                             height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)
-                           }}
-                         >
-                          <div
-                            onClick={() => {
-                              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                                if (currentUserRole === 'OPERATOR' && item.speakers) {
-                                  alert(`Participants (View Only):\n\n${displaySpeakers(item.speakers)}`);
-                                  return;
-                                }
-                                alert('Only EDITORs can edit participants. Please change your role to EDITOR.');
-                                return;
-                              }
-                              setEditingParticipantsItem(item.id);
-                              setShowParticipantsModal(true);
-                            }}
-                            className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-base cursor-pointer hover:bg-slate-600"
-                            style={{
-                              height: `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)`,
-                              maxHeight: `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)`,
-                              overflow: 'hidden',
-                              lineHeight: '1.6',
-                              wordWrap: 'break-word',
-                              overflowWrap: 'break-word',
-                              whiteSpace: 'pre-wrap'
-                            }}
-                            title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit participants' : currentUserRole === 'OPERATOR' ? 'Click to view participants (read-only)' : 'Click to edit participants'}
-                          >
-                            {displaySpeakers(item.speakers || '') || 'Click to add participants...'}
-                          </div>
-                       </div>
-                       )}
-                       {visibleColumns.speakers && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-                           style={{ width: columnWidths.speakers, height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
-                         >
-                        <div
-                          onClick={() => {
-                            if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                              if (currentUserRole === 'OPERATOR' && item.speakersText) {
-                                alert(`Speakers (View Only):\n\n${displaySpeakersText(item.speakersText)}`);
-                                return;
-                              }
-                              alert('Only EDITORs can edit speakers. Please change your role to EDITOR.');
-                              return;
-                            }
-                            // Pause syncing when speakers modal opens
-                            handleModalEditing();
-                            setEditingSpeakersItem(item.id);
-                            setShowSpeakersModal(true);
-                          }}
-                          className="w-full px-3 py-2 border border-slate-600 rounded text-white text-base transition-colors flex items-start justify-start bg-slate-700 cursor-pointer hover:bg-slate-600"
-                          style={{ 
-                            height: getSpeakersHeight(item.speakersText),
-                            minHeight: getSpeakersHeight(item.speakersText), // Ensure full expansion
-                            wordWrap: 'break-word',
-                            overflowWrap: 'break-word',
-                            overflow: 'hidden', // Hide any potential scrollbars
-                            paddingBottom: '1rem', // Extra bottom padding
-                            lineHeight: '1.6',
-                            whiteSpace: 'pre-wrap'
-                          }}
-                          title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit speakers' : currentUserRole === 'OPERATOR' ? 'Click to view speakers (read-only)' : 'Click to edit speakers'}
-                        >
-                          <div className="text-left w-full">
-                          {displaySpeakersText(item.speakersText || '') || 'Click to add speakers...'}
-                          </div>
-                        </div>
-                       </div>
-                       )}
-                       {visibleColumns.public && (
-                         <div 
-                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                           style={{ width: columnWidths.public }}
-                         >
-                          <input
-                            type="checkbox"
-                            checked={item.isPublic || false}
-                          onChange={(e) => {
-                            if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                              alert('Only EDITORs can change public status. Please change your role to EDITOR.');
-                              return;
-                            }
-                            const oldValue = item.isPublic;
-                            setSchedule(prev => prev.map(scheduleItem => 
-                              scheduleItem.id === item.id 
-                                ? { ...scheduleItem, isPublic: e.target.checked }
-                                : scheduleItem
-                            ));
-                            
-                            // Log the change
-                            logChange('FIELD_UPDATE', `Updated Public status for "${item.segmentName}" from ${oldValue} to ${e.target.checked}`, {
-                              changeType: 'FIELD_CHANGE',
-                              itemId: item.id,
-                              itemName: item.segmentName,
-                              fieldName: 'isPublic',
-                              oldValue: oldValue,
-                              newValue: e.target.checked,
-                              details: {
-                                fieldType: 'checkbox',
-                                booleanChange: true
-                              }
-                            });
-                            
-                            // Mark user as editing to trigger auto-save
-                            handleUserEditing();
-                            
-                            
-                            // Save to API
-                            saveToAPI();
-                          }}
-                          className={`w-5 h-5 rounded border-2 focus:ring-2 transition-colors ${
-                            currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
-                              ? 'border-slate-500 bg-slate-700 text-blue-600 cursor-not-allowed'
-                              : 'border-slate-500 bg-slate-700 text-blue-600 focus:ring-blue-500'
-                          }`}
-                          style={{ 
-                            opacity: 1,
-                            filter: 'none',
-                            WebkitFilter: 'none'
-                          }}
-                          title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can change public status' : 'Toggle public visibility'}
-                        />
-                       </div>
-                       )}
-                       {customColumns.map(column => 
-                         visibleCustomColumns[column.id] !== false && (
-                           <div 
-                             key={column.id} 
-                             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-                             style={{ 
-                               width: customColumnWidths[column.id] || 256, 
-                               height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)
-                             }}
-                           >
-                          <textarea
-                            value={item.customFields[column.name] || ''}
-                            onFocus={() => {
-                              // Pause syncing when custom column is focused
-                              console.log('✏️ Custom column focused - pausing sync');
-                              handleUserEditing();
-                            }}
-                            onChange={(e) => {
-                              // Pause syncing when custom column is being typed in
-                              handleUserEditing();
-                            const oldValue = item.customFields[column.name] || '';
-                            setSchedule(prev => prev.map(scheduleItem => 
-                              scheduleItem.id === item.id 
-                                ? { 
-                                    ...scheduleItem, 
-                                    customFields: { 
-                                      ...scheduleItem.customFields,
-                                      [column.name]: e.target.value
-                                    }
-                                  }
-                                : scheduleItem
-                            ));
-                            
-                            // Log the change (debounced)
-                            logChangeDebounced(
-                              `custom_${column.name}_${item.id}`,
-                              'FIELD_UPDATE', 
-                              `Updated custom field "${column.name}" for "${item.segmentName}" from "${oldValue}" to "${e.target.value}"`, 
-                              {
-                                changeType: 'FIELD_CHANGE',
-                                itemId: item.id,
-                                itemName: item.segmentName,
-                                fieldName: `custom_${column.name}`,
-                                oldValue: oldValue,
-                                newValue: e.target.value,
-                                details: {
-                                  fieldType: 'custom_field',
-                                  columnName: column.name,
-                                  characterChange: e.target.value.length - oldValue.length
-                                }
-                              }
-                            );
-                            }}
-                            className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-base resize-none"
-                            style={{
-                              height: `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)`, // Stay within container
-                              maxHeight: `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)`, // Strict constraint
-                              overflow: 'hidden', // Remove scrollbars completely
-                              lineHeight: '1.6', // Better line spacing
-                              wordWrap: 'break-word',
-                              overflowWrap: 'break-word'
-                            }}
-                            rows={Math.max(2, (item.customFields[column.name] || '').split('\n').length)}
-                            placeholder={`${column.name}...`}
-                          />
-                        </div>
-                       )
-                       )}
+                      <ScheduleRow
+                        asFragment
+                        className=""
+                        item={item}
+                        index={index}
+                        columnWidths={columnWidths}
+                        visibleColumns={visibleColumns}
+                        indentedCues={indentedCues}
+                        overtimeMinutes={overtimeMinutes}
+                        startCueId={startCueId}
+                        showStartOvertime={showStartOvertime}
+                        cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
+                        programTypes={programTypes}
+                        programTypeColors={programTypeColors}
+                        currentUserRole={currentUserRole}
+                        setSchedule={setSchedule}
+                        handleUserEditing={handleUserEditing}
+                        handleModalEditing={handleModalEditing}
+                        handleModalClosed={handleModalClosed}
+                        logChangeDebounced={logChangeDebounced}
+                        logChange={logChange}
+                        saveToAPI={saveToAPI}
+                        setEditingNotesItem={setEditingNotesItem}
+                        setShowNotesModal={setShowNotesModal}
+                        setViewingAssetsItem={setViewingAssetsItem}
+                        setShowViewAssetsModal={setShowViewAssetsModal}
+                        setEditingAssetsItem={setEditingAssetsItem}
+                        setShowAssetsModal={setShowAssetsModal}
+                        setEditingParticipantsItem={setEditingParticipantsItem}
+                        setShowParticipantsModal={setShowParticipantsModal}
+                        displaySpeakers={displaySpeakers}
+                        setEditingSpeakersItem={setEditingSpeakersItem}
+                        setShowSpeakersModal={setShowSpeakersModal}
+                        getSpeakersHeight={getSpeakersHeight}
+                        displaySpeakersText={displaySpeakersText}
+                        calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+                        calculateStartTime={calculateStartTime}
+                        customColumns={customColumns}
+                        visibleCustomColumns={visibleCustomColumns}
+                        customColumnWidths={customColumnWidths}
+                        getRowHeight={getRowHeight}
+                      />
+                       {/* shotType, pptQA, notes, assets, participants, speakers, public, custom columns moved to ScheduleRow */}
                     </div>
                   ))
                 )}
@@ -10874,7 +10208,6 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       </div>
-
       {/* Add Item Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -11669,7 +11002,6 @@ const RunOfShowPage: React.FC = () => {
            </div>
          </div>
        )}
-
        {/* Assets Editor Modal */}
        {showAssetsModal && editingAssetsItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -12394,7 +11726,6 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       )}
-
       {/* Time Status Toast */}
       {showTimeToast && timeToastEnabled && (
         <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
@@ -12601,7 +11932,7 @@ const RunOfShowPage: React.FC = () => {
                             🔄 Load/Overwrite
                           </button>
                           <button
-                            onClick={() => deleteBackup(backup.id)}
+                            onClick={() => deleteBackup(String(backup.id))}
                             className="px-5 py-3 bg-red-600 hover:bg-red-500 text-white text-base font-medium rounded-lg transition-colors"
                             title="Delete this backup"
                           >

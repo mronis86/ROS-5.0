@@ -13,7 +13,7 @@ export interface LocalChange {
   description?: string;
   rowNumber?: number;
   cueNumber?: number;
-  details?: string;
+  details?: any;
   segmentName?: string;
   synced: boolean;
 }
