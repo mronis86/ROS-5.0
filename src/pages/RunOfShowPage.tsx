@@ -2721,7 +2721,7 @@ const RunOfShowPage: React.FC = () => {
   }, [selectedDay]);
 
   const programTypes = [
-    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
+    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage', 'Sub Cue',
     'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
   ];
 
@@ -2738,7 +2738,7 @@ const RunOfShowPage: React.FC = () => {
     'Break': '#EC4899',              // Bright Pink
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
-    'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
+    'Full-Stage': '#EA580C' // Bright Orange
   };
 
   // Function to get subtle row background color based on Program Type
@@ -8436,32 +8436,25 @@ const RunOfShowPage: React.FC = () => {
                               // For non-indented items, use calculated start time
                               startTime = calculatedStartTime || '';
                               
-                              // Calculate end time from next non-indented row's start time
-                              endTime = (() => {
-                                // Find the next non-indented item in the filtered schedule
-                                let nextNonIndentedItem: ScheduleItem | null = null;
-                                let nextIndex = index + 1;
-                                
-                                while (nextIndex < filteredSchedule.length) {
-                                  const nextItem = filteredSchedule[nextIndex];
-                                  console.log(`  Checking next item ${nextIndex}: ${nextItem.customFields?.cue || nextIndex + 1}, isIndented=${nextItem.isIndented}`);
-                                  if (!nextItem.isIndented) {
-                                    nextNonIndentedItem = nextItem;
-                                    break;
-                                  }
-                                  nextIndex++;
-                                }
-                                
-                                if (nextNonIndentedItem) {
-                                  // Get the next non-indented item's start time
-                                  const nextOriginalIndex = schedule.findIndex(s => s.id === nextNonIndentedItem!.id);
+                              // Calculate end time from next row's start time
+                              // Find the next row that has a start time (skip indented rows)
+                              let nextRowStartTime = '';
+                              for (let nextIndex = index + 1; nextIndex < filteredSchedule.length; nextIndex++) {
+                                const nextItem = filteredSchedule[nextIndex];
+                                if (!nextItem.isIndented) {
+                                  const nextOriginalIndex = schedule.findIndex(s => s.id === nextItem.id);
                                   const nextStartTime = calculateStartTime(nextOriginalIndex);
-                                  console.log(`  Found next non-indented item: ${nextNonIndentedItem.customFields?.cue}, startTime=${nextStartTime}`);
-                                  return nextStartTime || '';
-                                } else {
-                                  // For the last non-indented row, calculate end time from duration as fallback
-                                  if (!calculatedStartTime) return '';
-                                  
+                                  nextRowStartTime = nextStartTime || '';
+                                  console.log(`  Next row (${nextIndex + 1}) start time: ${nextRowStartTime}`);
+                                  break;
+                                }
+                              }
+                              
+                              if (nextRowStartTime) {
+                                endTime = nextRowStartTime;
+                              } else {
+                                // For the last row (or if no next row with start time), calculate end time from duration
+                                if (calculatedStartTime) {
                                   const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
                                   const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
                                   
@@ -8472,9 +8465,10 @@ const RunOfShowPage: React.FC = () => {
                                   const endMinutes = Math.floor((totalSeconds % 3600) / 60);
                                   const endSecs = totalSeconds % 60;
                                   
-                                  return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
+                                  endTime = `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
+                                  console.log(`  Last row - calculated end time from duration: ${endTime}`);
                                 }
-                              })();
+                              }
                             } else {
                               console.log(`  Indented item - keeping startTime and endTime blank`);
                             }
@@ -9943,15 +9937,71 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.public && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      className="px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 relative"
                       style={{ width: columnWidths.public }}
                     >
-                      <span className="text-white font-bold flex items-center gap-1">
+                      <span className="text-white font-bold flex items-center gap-1 mb-1">
                         Public
                         {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
                       </span>
+                      {currentUserRole === 'EDITOR' && (
+                        <div className="flex gap-1 text-xs">
+                          <button
+                            onClick={() => {
+                              const filteredItems = filteredSchedule;
+                              
+                              setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => {
+                                const isInFiltered = filteredItems.some(item => item.id === scheduleItem.id);
+                                return isInFiltered 
+                                  ? { ...scheduleItem, isPublic: true }
+                                  : scheduleItem;
+                              }));
+                              
+                              if (logChange) {
+                                logChange('BULK_UPDATE', `Bulk enabled Public status for ${filteredItems.length} item(s)`, {
+                                  changeType: 'BULK_CHANGE',
+                                  fieldName: 'isPublic',
+                                  newValue: true,
+                                  itemCount: filteredItems.length,
+                                  details: { fieldType: 'checkbox', bulkOperation: true }
+                                });
+                              }
+                            }}
+                            className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs"
+                            title="Select all visible items as public"
+                          >
+                            All
+                          </button>
+                          <button
+                            onClick={() => {
+                              const filteredItems = filteredSchedule;
+                              
+                              setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => {
+                                const isInFiltered = filteredItems.some(item => item.id === scheduleItem.id);
+                                return isInFiltered 
+                                  ? { ...scheduleItem, isPublic: false }
+                                  : scheduleItem;
+                              }));
+                              
+                              if (logChange) {
+                                logChange('BULK_UPDATE', `Bulk disabled Public status for ${filteredItems.length} item(s)`, {
+                                  changeType: 'BULK_CHANGE',
+                                  fieldName: 'isPublic',
+                                  newValue: false,
+                                  itemCount: filteredItems.length,
+                                  details: { fieldType: 'checkbox', bulkOperation: true }
+                                });
+                              }
+                            }}
+                            className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs"
+                            title="Deselect all visible items from public"
+                          >
+                            None
+                          </button>
+                        </div>
+                      )}
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                         onMouseDown={(e) => handleResizeStart(e, 'public')}
@@ -9998,7 +10048,14 @@ const RunOfShowPage: React.FC = () => {
                        key={item.id}
                        data-item-id={item.id}
                        className={`border-b-2 border-slate-600 flex ${rowClassNames.get(item.id) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900')}`}
-                       style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
+                       style={{ 
+                         height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns),
+                         textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
+                         textDecorationThickness: item.programType === 'KILLED' ? '4px' : 'auto',
+                         textDecorationColor: item.programType === 'KILLED' ? '#DC2626' : 'auto',
+                         color: item.programType === 'KILLED' ? '#9CA3AF' : 'inherit',
+                         opacity: item.programType === 'KILLED' ? 0.7 : 1
+                       }}
                      >
                       <ScheduleRow
                         asFragment
@@ -10014,6 +10071,7 @@ const RunOfShowPage: React.FC = () => {
                         cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
                         programTypes={programTypes}
                         programTypeColors={programTypeColors}
+                        shotTypes={shotTypes}
                         currentUserRole={currentUserRole}
                         setSchedule={setSchedule}
                         handleUserEditing={handleUserEditing}
@@ -10265,7 +10323,8 @@ const RunOfShowPage: React.FC = () => {
                     className="w-full px-3 py-2 bg-slate-700 border-2 border-slate-500 rounded text-white focus:outline-none focus:border-blue-500 text-sm"
                     style={{ 
                       backgroundColor: programTypeColors[modalForm.programType] || '#374151',
-                      color: modalForm.programType === 'Sub Cue' ? '#000000' : '#ffffff'
+                      color: modalForm.programType === 'Sub Cue' || modalForm.programType === 'KILLED' ? '#000000' : '#ffffff',
+                      textDecoration: modalForm.programType === 'KILLED' ? 'line-through' : 'none'
                     }}
                   >
                     {programTypes.map(type => (
@@ -10274,7 +10333,8 @@ const RunOfShowPage: React.FC = () => {
                         value={type}
                         style={{ 
                           backgroundColor: programTypeColors[type] || '#374151',
-                          color: type === 'Sub Cue' ? '#000000' : '#ffffff'
+                          color: type === 'Sub Cue' || type === 'KILLED' ? '#000000' : '#ffffff',
+                          textDecoration: type === 'KILLED' ? 'line-through' : 'none'
                         }}
                       >
                         {type}

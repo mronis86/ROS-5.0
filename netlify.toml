@@ -6,9 +6,9 @@
   publish = "dist"
   
   # Environment variables for build
-  [build.environment]
-    NODE_VERSION = "18"
-    NPM_VERSION = "9"
+[build.environment]
+  NODE_VERSION = "20.19.0"
+  NPM_VERSION = "10"
 
 # Redirect rules for SPA (Single Page Application)
 [[redirects]]

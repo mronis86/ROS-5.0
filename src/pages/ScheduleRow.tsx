@@ -15,6 +15,7 @@ export interface ScheduleRowProps {
   cumulativeOvertime: number; // Precomputed cumulative overtime for this row
   programTypes: string[];
   programTypeColors: any;
+  shotTypes: string[];
   currentUserRole: string;
   setSchedule: Function;
   handleUserEditing: Function;
@@ -60,6 +61,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   cumulativeOvertime,
   programTypes,
   programTypeColors,
+  shotTypes,
   currentUserRole,
   setSchedule,
   handleUserEditing,
@@ -89,6 +91,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   getRowHeight,
   asFragment
 }) => {
+  // Helper functions
+  const handleSelectFocus = () => {
+    handleModalEditing();
+  };
+
+  const handleSelectBlur = () => {
+    handleModalClosed();
+  };
+
   const Content = (
     <>
       {/* Start time, program type, and row details, mirroring RunOfShowPage*/}
@@ -164,7 +175,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         >
           <select
             value={item.programType}
-            onFocus={() => { handleModalEditing(); }}
+            onFocus={handleSelectFocus}
+            onBlur={handleSelectBlur}
             onChange={(e) => {
               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                 alert('Only EDITORs can edit program type. Please change your role to EDITOR.');
@@ -194,11 +206,20 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             }}
             disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
             className="w-full px-3 py-2 border-2 rounded text-base transition-colors bg-slate-700 border-slate-500 text-white focus:border-blue-500"
-            style={{ backgroundColor: programTypeColors[item.programType] || '#374151', color: item.programType === 'Sub Cue' ? '#000000' : '#ffffff', opacity: 1 }}
+            style={{ 
+              backgroundColor: programTypeColors[item.programType] || '#374151', 
+              color: item.programType === 'Sub Cue' || item.programType === 'KILLED' ? '#000000' : '#ffffff', 
+              textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
+              opacity: 1
+            }}
             title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit program type' : 'Select program type'}
           >
             {programTypes.map(type => (
-              <option key={type} value={type} style={{ backgroundColor: programTypeColors[type] || '#374151', color: type === 'Sub Cue' ? '#000000' : '#ffffff' }}>
+              <option key={type} value={type} style={{ 
+                backgroundColor: programTypeColors[type] || '#374151', 
+                color: type === 'Sub Cue' || type === 'KILLED' ? '#000000' : '#ffffff',
+                textDecoration: type === 'KILLED' ? 'line-through' : 'none'
+              }}>
                 {type}
               </option>
             ))}
@@ -386,7 +407,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         >
           <select 
             value={item.shotType}
-            onFocus={() => { handleModalEditing(); }}
+            onFocus={handleSelectFocus}
+            onBlur={handleSelectBlur}
             onChange={(e) => {
               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                 alert('Only EDITORs can edit shot type. Please change your role to EDITOR.');
@@ -415,12 +437,12 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               handleModalClosed();
             }}
             disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-            className="w-full px-3 py-2 border border-slate-600 rounded text-base transition-colors bg-slate-700 text-white"
+            className="w-full px-3 py-2 border-2 rounded text-base transition-colors bg-slate-700 border-slate-500 text-white focus:border-blue-500"
             style={{ opacity: 1 }}
             title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit shot type' : 'Select shot type'}
           >
             <option value="">Select Shot Type</option>
-            {(window as any)?.shotTypes?.map?.((type: string) => (
+            {shotTypes?.map?.((type: string) => (
               <option key={type} value={type}>{type}</option>
             ))}
           </select>
@@ -792,6 +814,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.columnWidths !== nextProps.columnWidths) return false;
   if (prevProps.programTypes !== nextProps.programTypes) return false;
   if (prevProps.programTypeColors !== nextProps.programTypeColors) return false;
+  if (prevProps.shotTypes !== nextProps.shotTypes) return false;
 
   // Role changes can affect disabled states and styling
   if (prevProps.currentUserRole !== nextProps.currentUserRole) return false;
