@@ -1873,8 +1873,9 @@ const PhotoViewPage: React.FC = () => {
                         className="inline-block px-2 py-1 rounded text-xs font-medium text-white border shadow-lg"
                         style={{ 
                           backgroundColor: programTypeColors[item.programType] || '#6B7280',
-                          color: item.programType === 'Sub Cue' ? 'black' : 'white',
-                          borderColor: item.programType === 'Sub Cue' ? 'black' : 'transparent'
+                          color: item.programType === 'Sub Cue' || item.programType === 'KILLED' ? 'black' : 'white',
+                          borderColor: item.programType === 'Sub Cue' ? 'black' : 'transparent',
+                          textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none'
                         }}
                       >
                         {item.programType || 'Unknown'}
