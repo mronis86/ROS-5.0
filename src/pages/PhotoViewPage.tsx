@@ -1854,7 +1854,17 @@ const PhotoViewPage: React.FC = () => {
             }
             
             return (
-              <div key={item.id} className={cssClass}>
+              <div 
+                key={item.id} 
+                className={cssClass}
+                style={{
+                  textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
+                  textDecorationThickness: item.programType === 'KILLED' ? '4px' : 'auto',
+                  textDecorationColor: item.programType === 'KILLED' ? '#DC2626' : 'auto',
+                  color: item.programType === 'KILLED' ? '#9CA3AF' : 'inherit',
+                  opacity: item.programType === 'KILLED' ? 0.7 : 1
+                }}
+              >
                         {/* Main Data Row - Made taller for better portrait image display */}
                         <div className={`grid grid-cols-11 gap-0 ${
                           shouldHighlightIndented ? 'bg-amber-950' : 
@@ -1866,7 +1876,7 @@ const PhotoViewPage: React.FC = () => {
                   {/* CUE Column - Enhanced for taller display */}
                   <div className="col-span-1 border-r border-slate-600 p-3 flex flex-col justify-center">
                     <div className="text-center">
-                      <div className="text-lg font-bold mb-3 text-white">
+                      <div className={`text-lg font-bold mb-3 ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>
                         {item.customFields?.cue || `CUE ${itemIndex + 1}`}
                       </div>
                       <div 
@@ -1888,7 +1898,7 @@ const PhotoViewPage: React.FC = () => {
                     <div className="text-center">
                       <div className="mb-4">
                         <div className="text-gray-400 text-xs mb-1">START TIME</div>
-                        <div className="text-lg font-bold text-white">
+                        <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>
                           {indentedCues[item.id] ? '↘' : (startTime || 'No Time')}
                         </div>
                         {/* Overtime indicator */}
@@ -1976,7 +1986,7 @@ const PhotoViewPage: React.FC = () => {
                       </div>
                       <div>
                         <div className="text-gray-400 text-xs mb-1">DURATION</div>
-                        <div className="text-base font-bold text-white">{duration}</div>
+                        <div className={`text-base font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>{duration}</div>
                       </div>
                     </div>
                   </div>
@@ -1986,15 +1996,15 @@ const PhotoViewPage: React.FC = () => {
                     <div className="space-y-3">
                       <div>
                         <div className="text-gray-400 text-xs mb-1">SEGMENT NAME</div>
-                        <div className="text-lg font-bold text-white">{item.segmentName || 'Untitled Segment'}</div>
+                        <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>{item.segmentName || 'Untitled Segment'}</div>
                       </div>
                       <div>
                         <div className="text-gray-400 text-xs mb-1">SHOT TYPE</div>
-                        <div className="text-sm font-bold text-white">{item.shotType || 'Not specified'}</div>
+                        <div className={`text-sm font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>{item.shotType || 'Not specified'}</div>
                       </div>
                       <div>
                         <div className="text-gray-400 text-xs mb-1">PPT/Q&A</div>
-                        <div className="text-sm font-bold text-white">{pptQAString}</div>
+                        <div className={`text-sm font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>{pptQAString}</div>
                       </div>
                     </div>
                   </div>
@@ -2040,7 +2050,7 @@ const PhotoViewPage: React.FC = () => {
                               const nameResult = formatNameForTwoLines(speakerForSlot.fullName || 'Unnamed');
                               return (
                                 <div 
-                                  className={`font-bold text-white mb-2 leading-tight ${
+                                  className={`font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'} mb-2 leading-tight ${
                                     nameResult.needsSmallText ? 'text-sm' : 'text-base'
                                   }`}
                                   dangerouslySetInnerHTML={{ __html: nameResult.html }}
@@ -2107,7 +2117,7 @@ const PhotoViewPage: React.FC = () => {
                           }`}>
                             <div className="text-gray-400 text-sm mb-2 font-bold">NOTES:</div>
                             <div 
-                              className="text-sm text-white break-words leading-relaxed"
+                              className={`text-sm ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'} break-words leading-relaxed`}
                               style={{ whiteSpace: 'pre-line' }}
                               dangerouslySetInnerHTML={{ 
                                 __html: item.notes
