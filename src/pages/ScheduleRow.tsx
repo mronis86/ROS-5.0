@@ -30,6 +30,8 @@ export interface ScheduleRowProps {
   setShowNotesModal?: Function;
   setViewingAssetsItem?: Function;
   setShowViewAssetsModal?: Function;
+  setViewingSpeakersItem?: Function;
+  setShowViewSpeakersModal?: Function;
   setEditingAssetsItem?: Function;
   setShowAssetsModal?: Function;
   setEditingParticipantsItem?: Function;
@@ -76,6 +78,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   setShowNotesModal,
   setViewingAssetsItem,
   setShowViewAssetsModal,
+  setViewingSpeakersItem,
+  setShowViewSpeakersModal,
   setEditingAssetsItem,
   setShowAssetsModal,
   setEditingParticipantsItem,
@@ -558,8 +562,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             {item.notes ? (
               <div 
                 className="text-left w-full notes-display"
-                style={{ lineHeight: '1.4', overflow: 'visible' }}
-                dangerouslySetInnerHTML={{ __html: item.notes }}
+                style={{ lineHeight: '1.4', overflow: 'visible', whiteSpace: 'pre-line' }}
+                dangerouslySetInnerHTML={{ 
+                  __html: String(item.notes)
+                    .replace(/\r\n/g, '<br>') // Handle Windows line breaks
+                    .replace(/\r/g, '<br>') // Handle Mac line breaks
+                    .replace(/\n/g, '<br>') // Handle Unix line breaks
+                }}
               />
             ) : (
               <span className="text-slate-400">Click to edit notes...</span>
@@ -613,7 +622,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             onClick={() => {
               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                 if (currentUserRole === 'OPERATOR' && item.speakersText) {
-                  alert(`Speakers (View Only):\\n\\n${displaySpeakersText ? displaySpeakersText(item.speakersText) : String(item.speakersText)}`);
+                  // Use the view modal instead of alert
+                  if (setViewingSpeakersItem && setShowViewSpeakersModal) {
+                    setViewingSpeakersItem(item.id);
+                    setShowViewSpeakersModal(true);
+                    return;
+                  }
+                  // Fallback to alert if modal functions not available
+                  alert(`Speakers (View Only):\n\n${displaySpeakersText ? displaySpeakersText(item.speakersText) : String(item.speakersText)}`);
                   return;
                 }
                 alert('Only EDITORs can edit speakers. Please change your role to EDITOR.');

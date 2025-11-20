@@ -236,6 +236,32 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
 
       const parsedRows: ParsedRow[] = [];
 
+      // Helper function to get cell value with preserved newlines
+      const getCellValue = (rowIndex: number, colIndex: number): string => {
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+        const cell = worksheet[cellAddress];
+        if (!cell) return '';
+        
+        let value = '';
+        
+        // Try to get the formatted text value first (preserves newlines)
+        if (cell.w !== undefined) {
+          // w is the formatted text value which preserves newlines
+          value = cell.w;
+        } else if (cell.v !== undefined) {
+          // v is the raw value - convert to string
+          value = String(cell.v);
+        }
+        
+        if (!value) return '';
+        
+        // Normalize line breaks: convert \r\n (Windows) and \r (Mac) to \n (Unix)
+        // This ensures consistent line breaks regardless of Excel's format
+        value = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        return value;
+      };
+
       for (let i = 11; i < jsonData.length; i++) {
         const row = jsonData[i] as any[];
         if (!row || row.length === 0) continue;
@@ -288,8 +314,9 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
           parsedRow.hasQA = hasQA;
         }
         
-        // Column L (index 11) = Notes
-        if (row[11]) parsedRow.notes = row[11].toString();
+        // Column L (index 11) = Notes - preserve line breaks by accessing cell directly
+        const notesValue = getCellValue(i, 11);
+        if (notesValue) parsedRow.notes = notesValue;
         
         // Column N (index 13) = Assets
         if (row[13]) {
@@ -352,6 +379,32 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
 
       const parsedRows: ParsedRow[] = [];
 
+      // Helper function to get cell value with preserved newlines
+      const getCellValue = (rowIndex: number, colIndex: number): string => {
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+        const cell = worksheet[cellAddress];
+        if (!cell) return '';
+        
+        let value = '';
+        
+        // Try to get the formatted text value first (preserves newlines)
+        if (cell.w !== undefined) {
+          // w is the formatted text value which preserves newlines
+          value = cell.w;
+        } else if (cell.v !== undefined) {
+          // v is the raw value - convert to string
+          value = String(cell.v);
+        }
+        
+        if (!value) return '';
+        
+        // Normalize line breaks: convert \r\n (Windows) and \r (Mac) to \n (Unix)
+        // This ensures consistent line breaks regardless of Excel's format
+        value = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        return value;
+      };
+
       for (let i = 11; i < jsonData.length; i++) {
         const row = jsonData[i] as any[];
         if (!row || row.length === 0) continue;
@@ -404,8 +457,9 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
           parsedRow.hasQA = hasQA;
         }
         
-        // Column L (index 11) = Notes
-        if (row[11]) parsedRow.notes = row[11].toString();
+        // Column L (index 11) = Notes - preserve line breaks by accessing cell directly
+        const notesValue = getCellValue(i, 11);
+        if (notesValue) parsedRow.notes = notesValue;
         
         // Column N (index 13) = Assets
         if (row[13]) {

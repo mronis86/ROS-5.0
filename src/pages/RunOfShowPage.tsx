@@ -613,6 +613,8 @@ const RunOfShowPage: React.FC = () => {
   const [editingAssetsItem, setEditingAssetsItem] = useState<number | null>(null);
   const [showViewAssetsModal, setShowViewAssetsModal] = useState(false);
   const [viewingAssetsItem, setViewingAssetsItem] = useState<number | null>(null);
+  const [showViewSpeakersModal, setShowViewSpeakersModal] = useState(false);
+  const [viewingSpeakersItem, setViewingSpeakersItem] = useState<number | null>(null);
   const [showParticipantsModal, setShowParticipantsModal] = useState(false);
   const [editingParticipantsItem, setEditingParticipantsItem] = useState<number | null>(null);
   const [tempSpeakers, setTempSpeakers] = useState<Speaker[]>([]);
@@ -760,14 +762,16 @@ const RunOfShowPage: React.FC = () => {
   const [stoppedItems, setStoppedItems] = useState<Set<number>>(new Set());
   
   // Helper function to format cue display with proper spacing
-  const formatCueDisplay = (cue: string | undefined) => {
-    if (!cue) return 'CUE';
+  const formatCueDisplay = (cue: string | number | undefined) => {
+    if (!cue && cue !== 0) return 'CUE';
+    // Convert to string if it's a number
+    const cueStr = String(cue);
     // If cue already has proper spacing, return as is
-    if (cue.includes('CUE ')) return cue;
+    if (cueStr.includes('CUE ')) return cueStr;
     // If cue is like "CUE2", convert to "CUE 2"
-    if (cue.match(/^CUE\d+$/)) return cue.replace(/^CUE(\d+)$/, 'CUE $1');
+    if (cueStr.match(/^CUE\d+$/)) return cueStr.replace(/^CUE(\d+)$/, 'CUE $1');
     // For plain numbers or other formats, add "CUE " prefix
-    return `CUE ${cue}`;
+    return `CUE ${cueStr}`;
   };
   // Helper function to convert HTML to plain text with basic markdown-style formatting
   const cleanNotesForCSV = (htmlString: string): string => {
@@ -1040,12 +1044,33 @@ const RunOfShowPage: React.FC = () => {
     const timeout = setTimeout(() => {
       console.log('⏸️ User stopped editing - resuming sync');
       setIsUserEditing(false);
-      // Restart countdown when user stops editing
+      // Restart countdown when user stops editing (resets to 20s)
       startCountdownTimer();
     }, 5000);
     
     setEditingTimeout(timeout);
   }, [startCountdownTimer]);
+
+  // Pause/resume countdown timer based on modal states and editing
+  useEffect(() => {
+    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal;
+    const shouldPause = isUserEditing || anyModalOpen;
+
+    if (shouldPause) {
+      // Pause: stop the interval
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+        console.log('⏸️ Countdown paused - modal open or user editing');
+      }
+    } else {
+      // Resume: restart the countdown timer from 20s
+      if (!countdownIntervalRef.current && event?.id) {
+        console.log('▶️ Countdown resumed - modal closed and user not editing (restarting at 20s)');
+        startCountdownTimer();
+      }
+    }
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, event?.id, startCountdownTimer]);
   
   
   // Load user role from navigation state or localStorage
@@ -1226,7 +1251,13 @@ const RunOfShowPage: React.FC = () => {
         setChangeLog(localChanges.slice(0, 100));
       }, 2000); // Refresh every 2 seconds
       
-      return () => clearInterval(interval);
+      // Start the change log sync timer (syncs to master change log every 5 minutes)
+      changeLogService.startSyncTimer();
+      
+      return () => {
+        clearInterval(interval);
+        changeLogService.stopSyncTimer();
+      };
     }
   }, [event?.id]);
 
@@ -2406,7 +2437,7 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal) {
+    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -2440,6 +2471,16 @@ const RunOfShowPage: React.FC = () => {
 
       if (result) {
         console.log('✅ Schedule data synced to database successfully');
+        
+        // Sync local changes to master change log
+        console.log('🔄 Syncing local changes to master change log...');
+        const syncResult = await changeLogService.syncChanges();
+        if (syncResult) {
+          console.log('✅ Local changes synced to master change log');
+        } else {
+          console.log('⚠️ Failed to sync some local changes to master change log');
+        }
+        
         // Refresh master log using existing function
         await loadMasterChangeLog();
         console.log('🔄 Master change log refreshed after sync');
@@ -2721,7 +2762,7 @@ const RunOfShowPage: React.FC = () => {
   }, [selectedDay]);
 
   const programTypes = [
-    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage', 'Sub Cue',
+    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
     'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
   ];
 
@@ -2738,7 +2779,7 @@ const RunOfShowPage: React.FC = () => {
     'Break': '#EC4899',              // Bright Pink
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
-    'Full-Stage': '#EA580C' // Bright Orange
+    'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
   };
 
   // Function to get subtle row background color based on Program Type
@@ -8436,25 +8477,32 @@ const RunOfShowPage: React.FC = () => {
                               // For non-indented items, use calculated start time
                               startTime = calculatedStartTime || '';
                               
-                              // Calculate end time from next row's start time
-                              // Find the next row that has a start time (skip indented rows)
-                              let nextRowStartTime = '';
-                              for (let nextIndex = index + 1; nextIndex < filteredSchedule.length; nextIndex++) {
-                                const nextItem = filteredSchedule[nextIndex];
-                                if (!nextItem.isIndented) {
-                                  const nextOriginalIndex = schedule.findIndex(s => s.id === nextItem.id);
-                                  const nextStartTime = calculateStartTime(nextOriginalIndex);
-                                  nextRowStartTime = nextStartTime || '';
-                                  console.log(`  Next row (${nextIndex + 1}) start time: ${nextRowStartTime}`);
-                                  break;
+                              // Calculate end time from next non-indented row's start time
+                              endTime = (() => {
+                                // Find the next non-indented item in the filtered schedule
+                                let nextNonIndentedItem: ScheduleItem | null = null;
+                                let nextIndex = index + 1;
+                                
+                                while (nextIndex < filteredSchedule.length) {
+                                  const nextItem = filteredSchedule[nextIndex];
+                                  console.log(`  Checking next item ${nextIndex}: ${nextItem.customFields?.cue || nextIndex + 1}, isIndented=${nextItem.isIndented}`);
+                                  if (!nextItem.isIndented) {
+                                    nextNonIndentedItem = nextItem;
+                                    break;
+                                  }
+                                  nextIndex++;
                                 }
-                              }
-                              
-                              if (nextRowStartTime) {
-                                endTime = nextRowStartTime;
-                              } else {
-                                // For the last row (or if no next row with start time), calculate end time from duration
-                                if (calculatedStartTime) {
+                                
+                                if (nextNonIndentedItem) {
+                                  // Get the next non-indented item's start time
+                                  const nextOriginalIndex = schedule.findIndex(s => s.id === nextNonIndentedItem!.id);
+                                  const nextStartTime = calculateStartTime(nextOriginalIndex);
+                                  console.log(`  Found next non-indented item: ${nextNonIndentedItem.customFields?.cue}, startTime=${nextStartTime}`);
+                                  return nextStartTime || '';
+                                } else {
+                                  // For the last non-indented row, calculate end time from duration as fallback
+                                  if (!calculatedStartTime) return '';
+                                  
                                   const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
                                   const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
                                   
@@ -8465,10 +8513,9 @@ const RunOfShowPage: React.FC = () => {
                                   const endMinutes = Math.floor((totalSeconds % 3600) / 60);
                                   const endSecs = totalSeconds % 60;
                                   
-                                  endTime = `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
-                                  console.log(`  Last row - calculated end time from duration: ${endTime}`);
+                                  return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
                                 }
-                              }
+                              })();
                             } else {
                               console.log(`  Indented item - keeping startTime and endTime blank`);
                             }
@@ -8538,6 +8585,7 @@ const RunOfShowPage: React.FC = () => {
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
+                          handleModalEditing();
                           setShowExcelImportModal(true);
                         }}
                         className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
@@ -9180,7 +9228,12 @@ const RunOfShowPage: React.FC = () => {
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
                           style={{ width: columnWidths.speakers }}
                         >
-                          <span className="text-white font-bold">Speakers</span>
+                          <span className="text-white font-bold flex items-center gap-1">
+                            Speakers
+                            {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
+                              <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                            )}
+                          </span>
                           <div 
                             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                             onMouseDown={(e) => handleResizeStart(e, 'speakers')}
@@ -9937,71 +9990,15 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.public && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 relative"
+                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
                       style={{ width: columnWidths.public }}
                     >
-                      <span className="text-white font-bold flex items-center gap-1 mb-1">
+                      <span className="text-white font-bold flex items-center gap-1">
                         Public
                         {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
                       </span>
-                      {currentUserRole === 'EDITOR' && (
-                        <div className="flex gap-1 text-xs">
-                          <button
-                            onClick={() => {
-                              const filteredItems = filteredSchedule;
-                              
-                              setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => {
-                                const isInFiltered = filteredItems.some(item => item.id === scheduleItem.id);
-                                return isInFiltered 
-                                  ? { ...scheduleItem, isPublic: true }
-                                  : scheduleItem;
-                              }));
-                              
-                              if (logChange) {
-                                logChange('BULK_UPDATE', `Bulk enabled Public status for ${filteredItems.length} item(s)`, {
-                                  changeType: 'BULK_CHANGE',
-                                  fieldName: 'isPublic',
-                                  newValue: true,
-                                  itemCount: filteredItems.length,
-                                  details: { fieldType: 'checkbox', bulkOperation: true }
-                                });
-                              }
-                            }}
-                            className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs"
-                            title="Select all visible items as public"
-                          >
-                            All
-                          </button>
-                          <button
-                            onClick={() => {
-                              const filteredItems = filteredSchedule;
-                              
-                              setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => {
-                                const isInFiltered = filteredItems.some(item => item.id === scheduleItem.id);
-                                return isInFiltered 
-                                  ? { ...scheduleItem, isPublic: false }
-                                  : scheduleItem;
-                              }));
-                              
-                              if (logChange) {
-                                logChange('BULK_UPDATE', `Bulk disabled Public status for ${filteredItems.length} item(s)`, {
-                                  changeType: 'BULK_CHANGE',
-                                  fieldName: 'isPublic',
-                                  newValue: false,
-                                  itemCount: filteredItems.length,
-                                  details: { fieldType: 'checkbox', bulkOperation: true }
-                                });
-                              }
-                            }}
-                            className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs"
-                            title="Deselect all visible items from public"
-                          >
-                            None
-                          </button>
-                        </div>
-                      )}
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                         onMouseDown={(e) => handleResizeStart(e, 'public')}
@@ -10071,7 +10068,6 @@ const RunOfShowPage: React.FC = () => {
                         cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
                         programTypes={programTypes}
                         programTypeColors={programTypeColors}
-                        shotTypes={shotTypes}
                         currentUserRole={currentUserRole}
                         setSchedule={setSchedule}
                         handleUserEditing={handleUserEditing}
@@ -10084,6 +10080,8 @@ const RunOfShowPage: React.FC = () => {
                         setShowNotesModal={setShowNotesModal}
                         setViewingAssetsItem={setViewingAssetsItem}
                         setShowViewAssetsModal={setShowViewAssetsModal}
+                        setViewingSpeakersItem={setViewingSpeakersItem}
+                        setShowViewSpeakersModal={setShowViewSpeakersModal}
                         setEditingAssetsItem={setEditingAssetsItem}
                         setShowAssetsModal={setShowAssetsModal}
                         setEditingParticipantsItem={setEditingParticipantsItem}
@@ -10323,8 +10321,7 @@ const RunOfShowPage: React.FC = () => {
                     className="w-full px-3 py-2 bg-slate-700 border-2 border-slate-500 rounded text-white focus:outline-none focus:border-blue-500 text-sm"
                     style={{ 
                       backgroundColor: programTypeColors[modalForm.programType] || '#374151',
-                      color: modalForm.programType === 'Sub Cue' || modalForm.programType === 'KILLED' ? '#000000' : '#ffffff',
-                      textDecoration: modalForm.programType === 'KILLED' ? 'line-through' : 'none'
+                      color: modalForm.programType === 'Sub Cue' ? '#000000' : '#ffffff'
                     }}
                   >
                     {programTypes.map(type => (
@@ -10333,8 +10330,7 @@ const RunOfShowPage: React.FC = () => {
                         value={type}
                         style={{ 
                           backgroundColor: programTypeColors[type] || '#374151',
-                          color: type === 'Sub Cue' || type === 'KILLED' ? '#000000' : '#ffffff',
-                          textDecoration: type === 'KILLED' ? 'line-through' : 'none'
+                          color: type === 'Sub Cue' ? '#000000' : '#ffffff'
                         }}
                       >
                         {type}
@@ -11228,6 +11224,131 @@ const RunOfShowPage: React.FC = () => {
          </div>
        )}
 
+       {/* View-Only Speakers Modal for OPERATORs */}
+       {showViewSpeakersModal && viewingSpeakersItem !== null && (
+         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+           <div className="bg-slate-800 rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+             <div className="flex justify-between items-center mb-6">
+               <h2 className="text-2xl font-bold text-white">Speakers List</h2>
+               <button
+                 onClick={() => {
+                   setShowViewSpeakersModal(false);
+                   setViewingSpeakersItem(null);
+                 }}
+                 className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
+               >
+                 Close
+               </button>
+             </div>
+             
+             <div className="space-y-4">
+               {(() => {
+                 const item = schedule.find(s => s.id === viewingSpeakersItem);
+                 if (!item || !item.speakersText) {
+                   return (
+                     <div className="text-center py-8">
+                       <p className="text-slate-400 text-lg">No speakers available for this item.</p>
+                     </div>
+                   );
+                 }
+                 
+                 // Parse speakers from JSON
+                 let speakers: Speaker[] = [];
+                 try {
+                   const parsedSpeakers = JSON.parse(item.speakersText);
+                   if (Array.isArray(parsedSpeakers)) {
+                     speakers = parsedSpeakers;
+                   } else {
+                     speakers = [parsedSpeakers];
+                   }
+                 } catch {
+                   return (
+                     <div className="text-center py-8">
+                       <p className="text-slate-400 text-lg">Unable to parse speakers data.</p>
+                     </div>
+                   );
+                 }
+                 
+                 if (speakers.length === 0) {
+                   return (
+                     <div className="text-center py-8">
+                       <p className="text-slate-400 text-lg">No speakers available for this item.</p>
+                     </div>
+                   );
+                 }
+                 
+                 return (
+                   <div className="space-y-4">
+                     <div className="max-h-96 overflow-y-auto space-y-3 pr-2">
+                       {speakers.map((speaker, index) => (
+                         <div key={index} className="bg-slate-700 rounded-lg p-4 border border-slate-600">
+                           <div className="flex gap-4">
+                             {/* Photo on the left */}
+                             {speaker.photoLink && (
+                               <div className="flex-shrink-0">
+                                 <img 
+                                   src={speaker.photoLink} 
+                                   alt={speaker.fullName || 'Speaker'}
+                                   className="w-24 h-32 rounded-lg object-cover border-2 border-slate-500"
+                                   onError={(e) => {
+                                     e.currentTarget.style.display = 'none';
+                                   }}
+                                 />
+                               </div>
+                             )}
+                             
+                             {/* Info on the right */}
+                             <div className="flex-1 space-y-2">
+                               {/* Slot and Location at the top */}
+                               <div className="flex items-center gap-3 mb-2">
+                                 {speaker.slot && (
+                                   <div className="text-yellow-400 font-bold text-base">
+                                     SLOT {speaker.slot}
+                                   </div>
+                                 )}
+                                 {speaker.location && (
+                                   <div className="text-slate-300 text-base flex items-center gap-1">
+                                     {speaker.location === 'Podium' && <span>🎤</span>}
+                                     {speaker.location === 'Seat' && <span>🪑</span>}
+                                     {speaker.location === 'Virtual' && <span>📺</span>}
+                                     {speaker.location === 'Moderator' && <span>🎙️</span>}
+                                     {!['Podium', 'Seat', 'Virtual', 'Moderator'].includes(speaker.location) && <span>📍</span>}
+                                     <span>{speaker.location}</span>
+                                   </div>
+                                 )}
+                               </div>
+                               
+                               {/* Name */}
+                               <div className="text-white font-semibold text-lg">
+                                 {speaker.fullName || 'Unnamed Speaker'}
+                               </div>
+                               
+                               {/* Title */}
+                               {speaker.title && (
+                                 <div className="text-slate-300 text-sm">
+                                   <strong>Title:</strong> {speaker.title}
+                                 </div>
+                               )}
+                               
+                               {/* Organization */}
+                               {speaker.org && (
+                                 <div className="text-slate-300 text-sm">
+                                   <strong>Organization:</strong> {speaker.org}
+                                 </div>
+                               )}
+                             </div>
+                           </div>
+                         </div>
+                       ))}
+                     </div>
+                   </div>
+                 );
+               })()}
+             </div>
+           </div>
+         </div>
+       )}
+
        {/* Enhanced Participants Modal */}
        {showParticipantsModal && editingParticipantsItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -12093,7 +12214,10 @@ const RunOfShowPage: React.FC = () => {
       {/* Excel Import Modal */}
       <ExcelImportModal
         isOpen={showExcelImportModal}
-        onClose={() => setShowExcelImportModal(false)}
+        onClose={() => {
+          handleModalClosed();
+          setShowExcelImportModal(false);
+        }}
         onImport={handleExcelImport}
         onDeleteAll={handleDeleteAllScheduleItems}
       />
