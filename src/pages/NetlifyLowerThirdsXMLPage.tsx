@@ -186,8 +186,8 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(fetchData, 10000);
+    // Auto-refresh every 20 seconds
+    const interval = setInterval(fetchData, 20000);
     return () => clearInterval(interval);
   }, [eventId]);
 
@@ -336,7 +336,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                               {window.location.origin}/.netlify/functions/vmix-lower-thirds-xml?eventId={eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-lower-thirds-xml?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-lower-thirds-xml?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -354,7 +354,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                               {window.location.origin}/.netlify/functions/vmix-lower-thirds-csv?eventId={eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-lower-thirds-csv?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-lower-thirds-csv?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -381,7 +381,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                               {RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.xml?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.xml?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -399,7 +399,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                               {RAILWAY_API_URL}/lower-thirds.csv?eventId={eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.csv?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/lower-thirds.csv?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -424,7 +424,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                                   {RAILWAY_API_URL}/cache/lower-thirds.xml?eventId={eventId}
                                 </code>
                                 <button
-                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/lower-thirds.xml?eventId={eventId}`)}
+                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/lower-thirds.xml?eventId=${eventId}`)}
                                   className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                                 >
                                   Copy
@@ -442,7 +442,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                                   {RAILWAY_API_URL}/cache/lower-thirds.csv?eventId={eventId}
                                 </code>
                                 <button
-                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/lower-thirds.csv?eventId={eventId}`)}
+                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/lower-thirds.csv?eventId=${eventId}`)}
                                   className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                                 >
                                   Copy
@@ -481,7 +481,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                         <li>Click <strong>Add</strong> to create a new data source</li>
                         <li>Choose <strong>XML</strong> or <strong>CSV</strong> as the type</li>
                         <li>Paste one of the Railway API URLs above (yellow section)</li>
-                        <li>Set refresh interval to <strong>10 seconds</strong></li>
+                        <li>Set refresh interval to <strong>20 seconds</strong></li>
                         <li>Click <strong>OK</strong> to save</li>
                         <li>Use the data fields in your VMIX titles/overlays</li>
                       </ol>
@@ -514,7 +514,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
             {isLoading ? 'Refreshing...' : '🔄 Refresh Data'}
           </button>
           <p className="mt-2 text-sm text-gray-500">
-            Data auto-refreshes every 10 seconds
+            Data auto-refreshes every 20 seconds
           </p>
         </div>
       </div>

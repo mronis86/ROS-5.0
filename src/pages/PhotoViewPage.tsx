@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
@@ -256,6 +256,11 @@ const PhotoViewPage: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isUserEditing, setIsUserEditing] = useState<boolean>(false);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  
+  // Hybrid timer data (same pattern as RunOfShowPage)
+  const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
+  
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [activeTimers, setActiveTimers] = useState<{[key: number]: boolean}>({});
@@ -456,7 +461,14 @@ const PhotoViewPage: React.FC = () => {
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values (matches Run of Show)
   const getRemainingTime = () => {
-    // If timer state is stopped, return 0
+    // Use hybrid timer first (same pattern as RunOfShowPage)
+    if (hybridTimerData?.activeTimer) {
+      const progress = hybridTimerProgress;
+      const remaining = progress.total - progress.elapsed;
+      return remaining;
+    }
+    
+    // Fallback to old logic for compatibility
     if (timerState === 'stopped') {
       return 0;
     }
@@ -483,7 +495,16 @@ const PhotoViewPage: React.FC = () => {
 
   // Get remaining percentage for progress bar (matches FullScreenTimer)
   const getRemainingPercentage = () => {
-    // If timer state is stopped, return 0
+    // Use hybrid timer first (same pattern as RunOfShowPage)
+    if (hybridTimerData?.activeTimer) {
+      const progress = hybridTimerProgress;
+      const remainingSeconds = progress.total - progress.elapsed;
+      // Handle negative values (overrun) - show 0% when overrun
+      if (remainingSeconds < 0) return 0;
+      return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
+    }
+    
+    // Fallback to old logic for compatibility
     if (timerState === 'stopped') {
       return 0;
     }
@@ -510,6 +531,24 @@ const PhotoViewPage: React.FC = () => {
 
   // Get progress bar color based on remaining time (matches FullScreenTimer)
   const getProgressBarColor = () => {
+    // Use hybrid timer first (same pattern as RunOfShowPage)
+    if (hybridTimerData?.activeTimer) {
+      const progress = hybridTimerProgress;
+      const remainingSeconds = progress.total - progress.elapsed;
+      
+      // Color based on remaining time
+      if (remainingSeconds < 0) { // Overrun - red
+        return '#ef4444';
+      } else if (remainingSeconds > 120) { // More than 2 minutes
+        return '#10b981'; // Green
+      } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
+        return '#f59e0b'; // Yellow
+      } else { // Less than 30 seconds
+        return '#ef4444'; // Red
+      }
+    }
+    
+    // Fallback to old logic for compatibility
     const activeTimerIds = Object.keys(activeTimers);
     if (activeTimerIds.length > 0) {
       const activeTimerId = parseInt(activeTimerIds[0]);
@@ -548,6 +587,22 @@ const PhotoViewPage: React.FC = () => {
 
   // Get countdown color based on remaining time (matches progress bar colors)
   const getCountdownColor = () => {
+    // Use hybrid timer first (same pattern as RunOfShowPage)
+    if (hybridTimerData?.activeTimer) {
+      const progress = hybridTimerProgress;
+      const remainingSeconds = progress.total - progress.elapsed;
+      
+      // Color based on remaining time (matches progress bar)
+      if (remainingSeconds > 120) { // More than 2 minutes
+        return '#10b981'; // Green
+      } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
+        return '#f59e0b'; // Yellow
+      } else { // Less than 30 seconds
+        return '#ef4444'; // Red
+      }
+    }
+    
+    // Fallback to old logic for compatibility
     // If no cue is selected (no activeItemId or timerState is stopped), show white
     if (!activeItemId || timerState === 'stopped' || timerState === null) {
       return '#ffffff'; // White
@@ -636,14 +691,16 @@ const PhotoViewPage: React.FC = () => {
     }
   }, [event?.id]);
 
-  // Update current time every second
+  // Update current time every second (synced with server using clockOffset)
   useEffect(() => {
     const timer = setInterval(() => {
-      setCurrentTime(new Date());
+      // Use synced time with server to match RunOfShow, Clock, and Green Room pages
+      const syncedNow = new Date(Date.now() + clockOffset);
+      setCurrentTime(syncedNow);
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [clockOffset]);
 
   // Lightweight periodic refresh for Photo page (similar to Run of Show 5s reliability check)
   useEffect(() => {
@@ -764,6 +821,11 @@ const PhotoViewPage: React.FC = () => {
             setTimerState(activeTimerData.timer_state);
             setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
             
+            // Set hybrid timer data (same pattern as RunOfShowPage)
+            setHybridTimerData({
+              activeTimer: activeTimerData
+            });
+            
             setTimerProgress({
               [parseInt(activeTimerData.item_id)]: {
                 elapsed: activeTimerData.elapsed_seconds || 0,
@@ -777,6 +839,7 @@ const PhotoViewPage: React.FC = () => {
             setActiveItemId(null);
             setTimerState(null);
             setLoadedItems({});
+            setHybridTimerData({ activeTimer: null });
             setTimerProgress({});
             console.log('✅ PhotoView: No active timer found on mount');
           }
@@ -811,11 +874,18 @@ const PhotoViewPage: React.FC = () => {
       },
       onTimerUpdated: (data: any) => {
         console.log('📡 PhotoView: Timer updated via WebSocket', data);
-        // Update timer state directly from WebSocket data
+        // Update hybrid timer data directly from WebSocket (same pattern as RunOfShowPage)
         if (data && data.item_id) {
+          setHybridTimerData(prev => ({
+            ...prev,
+            activeTimer: data
+          }));
+          
+          // Also update legacy timerProgress for compatibility
+          const itemId = parseInt(data.item_id);
           setTimerProgress(prev => ({
             ...prev,
-            [data.item_id]: {
+            [itemId]: {
               elapsed: data.elapsed_seconds || 0,
               total: data.duration_seconds || 0,
               startedAt: data.started_at ? new Date(data.started_at) : null
@@ -825,12 +895,12 @@ const PhotoViewPage: React.FC = () => {
           // Update timer state based on timer_state from active_timers table
           if (data.timer_state === 'running') {
             setTimerState('running');
-            setActiveItemId(parseInt(data.item_id));
-            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
+            setActiveItemId(itemId);
+            setLoadedItems(prev => ({ ...prev, [itemId]: true }));
           } else if (data.timer_state === 'loaded') {
             setTimerState('loaded');
-            setActiveItemId(parseInt(data.item_id));
-            setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
+            setActiveItemId(itemId);
+            setLoadedItems(prev => ({ ...prev, [itemId]: true }));
           }
         }
       },
@@ -838,6 +908,7 @@ const PhotoViewPage: React.FC = () => {
         console.log('📡 PhotoView: Timer stopped via WebSocket', data);
         // Clear timer state when stopped
         if (data && data.item_id) {
+          setHybridTimerData({ activeTimer: null });
           setActiveItemId(null);
           setTimerState(null);
           setLoadedItems(prev => {
@@ -855,6 +926,7 @@ const PhotoViewPage: React.FC = () => {
       onTimersStopped: (data: any) => {
         console.log('📡 PhotoView: All timers stopped via WebSocket', data);
         // Clear all timer states
+        setHybridTimerData({ activeTimer: null });
         setActiveItemId(null);
         setTimerState(null);
         setLoadedItems({});
@@ -1093,6 +1165,11 @@ const PhotoViewPage: React.FC = () => {
               setTimerState(activeTimerData.timer_state);
               setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
               
+              // Set hybrid timer data (same pattern as RunOfShowPage)
+              setHybridTimerData({
+                activeTimer: activeTimerData
+              });
+              
               // Update timer progress
               setTimerProgress({
                 [parseInt(activeTimerData.item_id)]: {
@@ -1212,44 +1289,56 @@ const PhotoViewPage: React.FC = () => {
   }, [event?.id, schedule]);
 
 
-  // Local timer updates for smooth countdown/progress bar (like GreenRoom/RunOfShow)
+  // Real-time countdown timer for running timers (same pattern as RunOfShowPage)
+  // Uses clock offset to sync with server time
   useEffect(() => {
-    if (!activeItemId || !timerProgress[activeItemId]) return;
-
-    const progress = timerProgress[activeItemId];
-    if (progress.startedAt && timerState === 'running') {
-      const startedAt = progress.startedAt;
-      const duration = progress.total;
+    const activeTimer = hybridTimerData?.activeTimer;
+    const isRunning = activeTimer?.timer_state === 'running' || (activeTimer?.is_running && activeTimer?.is_active);
+    
+    if (isRunning && activeTimer?.started_at) {
+      const startedAt = new Date(activeTimer.started_at);
+      const total = activeTimer.duration_seconds || 0;
       
-      console.log(`🔄 PhotoView: Starting continuous local timer for ${activeItemId} with duration ${duration}s, start time: ${startedAt.toISOString()}`);
+      console.log('⏰ PhotoView Hybrid timer - Setup with clock offset:', {
+        started_at: activeTimer.started_at,
+        total,
+        clockOffsetMs: clockOffset,
+        clockOffsetSeconds: Math.floor(clockOffset / 1000),
+        timer_state: activeTimer.timer_state
+      });
       
-      const continuousTimer = setInterval(() => {
+      const updateCountdown = () => {
+        // Use client time + clock offset to sync with server
         const syncedNow = new Date(Date.now() + clockOffset);
         const elapsed = Math.floor((syncedNow.getTime() - startedAt.getTime()) / 1000);
         
-        // Always update timer progress for smooth counting
-        setTimerProgress(prev => ({
-          ...prev,
-          [activeItemId]: {
-            ...prev[activeItemId],
-            elapsed: elapsed
-          }
-        }));
-        
-        // Drift detector removed - WebSocket handles all sync
-        
-        // Debug logging for first few seconds
-        if (elapsed <= 10) {
-          console.log(`🕐 PhotoView Timer ${activeItemId}: Continuous elapsed=${elapsed}s, Start=${startedAt.toISOString()}, Now=${syncedNow.toISOString()}`);
-        }
-      }, 1000);
-
-      return () => {
-        console.log(`🔄 PhotoView: Stopping continuous local timer for ${activeItemId}`);
-        clearInterval(continuousTimer);
+        setHybridTimerProgress({
+          elapsed: elapsed,
+          total: total
+        });
       };
+      
+      // Update immediately
+      updateCountdown();
+      
+      // Set up interval for real-time updates
+      const interval = setInterval(updateCountdown, 1000);
+      
+      return () => clearInterval(interval);
+    } else if (activeTimer && activeTimer.timer_state !== 'running' && !activeTimer.is_running) {
+      // Timer is loaded but not running - show 0 elapsed
+      setHybridTimerProgress({
+        elapsed: 0,
+        total: activeTimer.duration_seconds || 0
+      });
+    } else if (!activeTimer) {
+      // No active timer - clear display
+      setHybridTimerProgress({
+        elapsed: 0,
+        total: 0
+      });
     }
-  }, [activeItemId, timerState]); // Removed timerProgress to prevent constant restarts
+  }, [hybridTimerData?.activeTimer?.timer_state, hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, clockOffset]);
 
   // Local timer updates for sub-cue timers
   useEffect(() => {
@@ -1304,7 +1393,7 @@ const PhotoViewPage: React.FC = () => {
     return () => {
       intervals.forEach(interval => clearInterval(interval));
     };
-  }, [subCueTimerProgress]);
+  }, [subCueTimerProgress, clockOffset]); // Include clockOffset to restart when sync changes
 
   // Cleanup on component unmount (drift detector removed)
   useEffect(() => {

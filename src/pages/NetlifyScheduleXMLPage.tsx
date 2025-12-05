@@ -147,8 +147,8 @@ const NetlifyScheduleXMLPage: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(fetchData, 10000);
+    // Auto-refresh every 20 seconds
+    const interval = setInterval(fetchData, 20000);
     return () => clearInterval(interval);
   }, [eventId]);
 
@@ -294,10 +294,10 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                           <h4 className="font-semibold text-purple-300 mb-2 text-sm">🎬 VMIX XML URL (Netlify Function):</h4>
                           <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
                             <code className="text-purple-400 break-all flex-1 text-sm">
-                              {window.location.origin}/.netlify/functions/vmix-schedule-xml?eventId={eventId}
+                              {window.location.origin}/.netlify/functions/vmix-schedule-xml?eventId=${eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-schedule-xml?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-schedule-xml?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -312,10 +312,10 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                           <h4 className="font-semibold text-purple-300 mb-2 text-sm">🎬 VMIX CSV URL (Netlify Function):</h4>
                           <div className="bg-gray-900 p-3 rounded border border-purple-500 flex items-center justify-between">
                             <code className="text-purple-400 break-all flex-1 text-sm">
-                              {window.location.origin}/.netlify/functions/vmix-schedule-csv?eventId={eventId}
+                              {window.location.origin}/.netlify/functions/vmix-schedule-csv?eventId=${eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-schedule-csv?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${window.location.origin}/.netlify/functions/vmix-schedule-csv?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -339,10 +339,10 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                           <h4 className="font-semibold text-blue-300 mb-2 text-sm">XML Data Source URL (Railway):</h4>
                           <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
                             <code className="text-green-400 break-all flex-1 text-sm">
-                              {RAILWAY_API_URL}/schedule.xml?eventId={eventId}
+                              {RAILWAY_API_URL}/schedule.xml?eventId=${eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/schedule.xml?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/schedule.xml?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -357,10 +357,10 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                           <h4 className="font-semibold text-blue-300 mb-2 text-sm">CSV Data Source URL (Railway):</h4>
                           <div className="bg-gray-900 p-3 rounded border border-gray-700 flex items-center justify-between">
                             <code className="text-green-400 break-all flex-1 text-sm">
-                              {RAILWAY_API_URL}/schedule.csv?eventId={eventId}
+                              {RAILWAY_API_URL}/schedule.csv?eventId=${eventId}
                             </code>
                             <button
-                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/schedule.csv?eventId={eventId}`)}
+                              onClick={() => copyToClipboard(`${RAILWAY_API_URL}/schedule.csv?eventId=${eventId}`)}
                               className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
                             >
                               Copy
@@ -382,10 +382,10 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                               <h5 className="font-semibold text-purple-200 mb-2 text-sm">XML (Upstash Cache):</h5>
                               <div className="bg-gray-900 p-3 rounded border border-purple-500/30 flex items-center justify-between">
                                 <code className="text-purple-300 break-all flex-1 text-sm">
-                                  {RAILWAY_API_URL}/cache/schedule.xml?eventId={eventId}
+                                  {RAILWAY_API_URL}/cache/schedule.xml?eventId=${eventId}
                                 </code>
                                 <button
-                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/schedule.xml?eventId={eventId}`)}
+                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/schedule.xml?eventId=${eventId}`)}
                                   className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                                 >
                                   Copy
@@ -400,10 +400,10 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                               <h5 className="font-semibold text-purple-200 mb-2 text-sm">CSV (Upstash Cache):</h5>
                               <div className="bg-gray-900 p-3 rounded border border-purple-500/30 flex items-center justify-between">
                                 <code className="text-purple-300 break-all flex-1 text-sm">
-                                  {RAILWAY_API_URL}/cache/schedule.csv?eventId={eventId}
+                                  {RAILWAY_API_URL}/cache/schedule.csv?eventId=${eventId}
                                 </code>
                                 <button
-                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/schedule.csv?eventId={eventId}`)}
+                                  onClick={() => copyToClipboard(`${RAILWAY_API_URL}/cache/schedule.csv?eventId=${eventId}`)}
                                   className="ml-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded transition-colors"
                                 >
                                   Copy
@@ -423,11 +423,11 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                       <div className="space-y-2 text-sm">
                         <div>
                           <p className="text-gray-400 mb-1">XML:</p>
-                          <code className="text-gray-500 text-xs">http://localhost:3002/api/schedule.xml?eventId={eventId}</code>
+                          <code className="text-gray-500 text-xs">http://localhost:3002/api/schedule.xml?eventId=${eventId}</code>
                         </div>
                         <div>
                           <p className="text-gray-400 mb-1">CSV:</p>
-                          <code className="text-gray-500 text-xs">http://localhost:3002/api/schedule.csv?eventId={eventId}</code>
+                          <code className="text-gray-500 text-xs">http://localhost:3002/api/schedule.csv?eventId=${eventId}</code>
                         </div>
                         <p className="text-xs text-gray-500 mt-2">
                           (Only works when local server is running)
@@ -442,7 +442,7 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                         <li>Click <strong>Add</strong> to create a new data source</li>
                         <li>Choose <strong>XML</strong> or <strong>CSV</strong> as the type</li>
                         <li>Paste one of the Railway API URLs above (yellow section)</li>
-                        <li>Set refresh interval to <strong>10 seconds</strong></li>
+                        <li>Set refresh interval to <strong>20 seconds</strong></li>
                         <li>Click <strong>OK</strong> to save</li>
                         <li>Use the data fields in your VMIX titles/overlays</li>
                       </ol>
@@ -475,7 +475,7 @@ const NetlifyScheduleXMLPage: React.FC = () => {
             {isLoading ? 'Refreshing...' : '🔄 Refresh Data'}
           </button>
           <p className="mt-2 text-sm text-gray-500">
-            Data auto-refreshes every 10 seconds
+            Data auto-refreshes every 20 seconds
           </p>
         </div>
       </div>
