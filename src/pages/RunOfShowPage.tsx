@@ -10068,6 +10068,7 @@ const RunOfShowPage: React.FC = () => {
                         cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
                         programTypes={programTypes}
                         programTypeColors={programTypeColors}
+                        shotTypes={shotTypes}
                         currentUserRole={currentUserRole}
                         setSchedule={setSchedule}
                         handleUserEditing={handleUserEditing}

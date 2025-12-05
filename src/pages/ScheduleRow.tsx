@@ -101,7 +101,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   };
 
   const handleSelectBlur = () => {
-    handleModalClosed();
+    // Delay to allow dropdown to open before closing
+    setTimeout(() => {
+      handleModalClosed();
+    }, 200);
   };
 
   const Content = (
@@ -407,7 +410,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.shotType && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.shotType }}
+          style={{ width: columnWidths.shotType, overflow: 'visible', zIndex: 1 }}
         >
           <select 
             value={item.shotType}
@@ -442,7 +445,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             }}
             disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
             className="w-full px-3 py-2 border-2 rounded text-base transition-colors bg-slate-700 border-slate-500 text-white focus:border-blue-500"
-            style={{ opacity: 1 }}
+            style={{ opacity: 1, zIndex: 10, position: 'relative' }}
             title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit shot type' : 'Select shot type'}
           >
             <option value="">Select Shot Type</option>
