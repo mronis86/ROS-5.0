@@ -615,6 +615,12 @@ const RunOfShowPage: React.FC = () => {
   const [viewingAssetsItem, setViewingAssetsItem] = useState<number | null>(null);
   const [showViewSpeakersModal, setShowViewSpeakersModal] = useState(false);
   const [viewingSpeakersItem, setViewingSpeakersItem] = useState<number | null>(null);
+  const [showSpeakerManagerModal, setShowSpeakerManagerModal] = useState(false);
+  const [sourceRowId, setSourceRowId] = useState<number | null>(null);
+  const [targetRowId, setTargetRowId] = useState<number | null>(null);
+  const [selectedSpeakers, setSelectedSpeakers] = useState<Set<string>>(new Set());
+  const [speakersToCopy, setSpeakersToCopy] = useState<Speaker[]>([]); // Original source speakers (for display)
+  const [editableSpeakers, setEditableSpeakers] = useState<Speaker[]>([]); // Editable copy for target (for editing)
   const [showParticipantsModal, setShowParticipantsModal] = useState(false);
   const [editingParticipantsItem, setEditingParticipantsItem] = useState<number | null>(null);
   const [tempSpeakers, setTempSpeakers] = useState<Speaker[]>([]);
@@ -639,6 +645,7 @@ const RunOfShowPage: React.FC = () => {
   const [showGridHeaders, setShowGridHeaders] = useState(false);
   const [activeRowMenu, setActiveRowMenu] = useState<number | null>(null);
   const [activeItemMenu, setActiveItemMenu] = useState<number | null>(null);
+  const [activeJumpMenu, setActiveJumpMenu] = useState<number | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [timerProgress, setTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
@@ -1053,7 +1060,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
-    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal;
+    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showSpeakerManagerModal;
     const shouldPause = isUserEditing || anyModalOpen;
 
     if (shouldPause) {
@@ -1070,7 +1077,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, event?.id, startCountdownTimer]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
   
   
   // Load user role from navigation state or localStorage
@@ -2437,7 +2444,7 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal) {
+    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showSpeakerManagerModal) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -4568,6 +4575,7 @@ const RunOfShowPage: React.FC = () => {
     const handleClickOutside = () => {
       setActiveItemMenu(null);
       setActiveRowMenu(null);
+      setActiveJumpMenu(null);
       setShowMenuDropdown(false);
     };
     document.addEventListener('click', handleClickOutside);
@@ -7215,19 +7223,6 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  const duplicateScheduleItem = (itemId: number) => {
-    const itemToDuplicate = schedule.find(item => item.id === itemId);
-    if (itemToDuplicate) {
-      const newItem = {
-        ...itemToDuplicate,
-        id: Date.now(),
-        segmentName: `${itemToDuplicate.segmentName} (Copy)`
-      };
-      setSchedule(prev => [...prev, newItem]);
-      setActiveItemMenu(null);
-    }
-  };
-
   const moveScheduleItem = (itemId: number, direction: 'up' | 'down') => {
     const currentIndex = schedule.findIndex(item => item.id === itemId);
     if (currentIndex === -1) return;
@@ -7260,6 +7255,90 @@ const RunOfShowPage: React.FC = () => {
     }
     
     setActiveRowMenu(null);
+  };
+
+  const duplicateScheduleItem = (itemId: number) => {
+    const itemToDuplicate = schedule.find(item => item.id === itemId);
+    if (!itemToDuplicate) return;
+    
+    // Generate random Timer ID for the duplicate
+    const generateRandomTimerId = () => {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let result = '';
+      for (let i = 0; i < 5; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    };
+    
+    // Find the index of the item to duplicate
+    const sourceIndex = schedule.findIndex(item => item.id === itemId);
+    if (sourceIndex === -1) return;
+    
+    // Create duplicate with new ID and timer ID
+    const duplicatedItem: ScheduleItem = {
+      ...itemToDuplicate,
+      id: Date.now(),
+      timerId: generateRandomTimerId(),
+      segmentName: `${itemToDuplicate.segmentName} (Copy)`,
+      customFields: {
+        ...itemToDuplicate.customFields,
+        cue: itemToDuplicate.customFields?.cue || ''
+      },
+      // Reset timer-related fields
+      isIndented: false // Don't duplicate indentation
+    };
+    
+    // Insert duplicate right after the original item
+    setSchedule(prev => {
+      const newSchedule = [...prev];
+      newSchedule.splice(sourceIndex + 1, 0, duplicatedItem);
+      return newSchedule;
+    });
+    
+    // Calculate the actual row number where the duplicate was added
+    const actualRowNumber = sourceIndex + 2;
+    
+    // Log the change with comprehensive information
+    logChange('DUPLICATE_ITEM', `Duplicated schedule item: "${itemToDuplicate.segmentName}"`, {
+      changeType: 'DUPLICATE',
+      itemId: duplicatedItem.id,
+      sourceItemId: itemToDuplicate.id,
+      itemName: duplicatedItem.segmentName,
+      sourceItemName: itemToDuplicate.segmentName,
+      rowNumber: actualRowNumber,
+      sourceRowNumber: sourceIndex + 1,
+      cueNumber: duplicatedItem.customFields.cue ? parseInt(duplicatedItem.customFields.cue, 10) : null,
+      details: {
+        // Basic Info
+        day: duplicatedItem.day,
+        programType: duplicatedItem.programType,
+        shotType: duplicatedItem.shotType,
+        position: `Row ${actualRowNumber}`,
+        
+        // Duration
+        durationHours: duplicatedItem.durationHours,
+        durationMinutes: duplicatedItem.durationMinutes,
+        totalDurationMinutes: (duplicatedItem.durationHours * 60) + duplicatedItem.durationMinutes,
+        
+        // Content Details
+        speakers: duplicatedItem.speakers || 'None',
+        speakersText: duplicatedItem.speakersText || 'None',
+        notes: duplicatedItem.notes || '',
+        
+        // Technical Details
+        assets: duplicatedItem.assets || 'None',
+        hasPPT: duplicatedItem.hasPPT,
+        hasQA: duplicatedItem.hasQA,
+        
+        // Timer Info
+        timerId: duplicatedItem.timerId,
+        isPublic: duplicatedItem.isPublic,
+        isIndented: duplicatedItem.isIndented
+      }
+    });
+    
+    handleUserEditing();
   };
 
   const moveToSpecificRow = (itemId: number, targetRowNumber: number) => {
@@ -8647,6 +8726,19 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         OSC Control
                       </button>
+                      <button
+                        onClick={() => {
+                          setShowMenuDropdown(false);
+                          handleModalEditing();
+                          setShowSpeakerManagerModal(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        Speaker Manager
+                      </button>
                     </div>
                   </div>
                 )}
@@ -9506,39 +9598,15 @@ const RunOfShowPage: React.FC = () => {
                      }`}
                      style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                    >
-                    <div className="flex flex-col items-center gap-1">
+                    <div className="flex flex-col items-center gap-1 relative">
                       <button
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           if (currentUserRole === 'VIEWER') {
-                            alert('Viewers cannot jump to rows. Please change your role to EDITOR or OPERATOR.');
+                            alert('Viewers cannot access row actions. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          
-                          // Pause syncing immediately BEFORE the prompt
-                          console.log('✏️ Row jump button clicked - pausing sync');
-                          setIsUserEditing(true);
-                          
-                          // Clear any existing timeout
-                          if (editingTimeout) {
-                            clearTimeout(editingTimeout);
-                          }
-                          
-                          // Use setTimeout to ensure the state update happens before the prompt
-                          setTimeout(() => {
-                          const targetRow = prompt(`Move to row (1-${getFilteredSchedule().length}):`, (index + 1).toString());
-                            
-                            // Resume syncing after prompt closes
-                            console.log('⏸️ Row jump prompt closed - resuming sync in 5 seconds');
-                            const timeout = setTimeout(() => {
-                              console.log('⏸️ User stopped editing - resuming sync');
-                              setIsUserEditing(false);
-                            }, 5000);
-                            setEditingTimeout(timeout);
-                            
-                          if (targetRow && !isNaN(Number(targetRow))) {
-                            moveToSpecificRow(item.id, Number(targetRow));
-                          }
-                          }, 0);
+                          setActiveJumpMenu(activeJumpMenu === item.id ? null : item.id);
                         }}
                         className={`w-5 h-5 text-white rounded flex items-center justify-center text-xs font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
@@ -9546,10 +9614,68 @@ const RunOfShowPage: React.FC = () => {
                             : 'bg-purple-600 hover:bg-purple-500'
                         }`}
                         disabled={currentUserRole === 'VIEWER'}
-                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot jump to rows' : 'Jump to Row'}
+                        title="Row actions"
                       >
                         #
                       </button>
+                      {activeJumpMenu === item.id && (
+                        <div 
+                          className="absolute left-0 top-6 z-50 bg-slate-700 border border-slate-600 rounded-lg shadow-lg min-w-[160px]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUserEditing();
+                              
+                              // Pause syncing immediately BEFORE the prompt
+                              console.log('✏️ Move to row button clicked - pausing sync');
+                              setIsUserEditing(true);
+                              
+                              // Clear any existing timeout
+                              if (editingTimeout) {
+                                clearTimeout(editingTimeout);
+                              }
+                              
+                              // Use setTimeout to ensure the state update happens before the prompt
+                              setTimeout(() => {
+                                const targetRow = prompt(`Move to row (1-${getFilteredSchedule().length}):`, (index + 1).toString());
+                                
+                                // Resume syncing after prompt closes
+                                console.log('⏸️ Row jump prompt closed - resuming sync in 5 seconds');
+                                const timeout = setTimeout(() => {
+                                  console.log('⏸️ User stopped editing - resuming sync');
+                                  setIsUserEditing(false);
+                                }, 5000);
+                                setEditingTimeout(timeout);
+                                
+                                if (targetRow && !isNaN(Number(targetRow))) {
+                                  moveToSpecificRow(item.id, Number(targetRow));
+                                }
+                                setActiveJumpMenu(null);
+                              }, 0);
+                            }}
+                            className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2 rounded-t-lg"
+                            title="Move this row to a specific position"
+                          >
+                            <span>↕</span>
+                            <span>Move to Row</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUserEditing();
+                              duplicateScheduleItem(item.id);
+                              setActiveJumpMenu(null);
+                            }}
+                            className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2 rounded-b-lg"
+                            title="Duplicate this row"
+                          >
+                            <span>⧉</span>
+                            <span>Duplicate Row</span>
+                          </button>
+                        </div>
+                      )}
                       <span className="text-white font-bold text-lg">
                         {index + 1}
                       </span>
@@ -12208,6 +12334,347 @@ const RunOfShowPage: React.FC = () => {
                 🔄 Confirm Restore
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Speaker Manager Modal */}
+      {showSpeakerManagerModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl max-w-6xl w-full max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center p-4 border-b border-slate-600">
+              <h2 className="text-xl font-bold text-white">Speaker Manager - Copy Speakers Between Rows</h2>
+              <button
+                onClick={() => {
+                  setShowSpeakerManagerModal(false);
+                  setSourceRowId(null);
+                  setTargetRowId(null);
+                  setSelectedSpeakers(new Set());
+                  setSpeakersToCopy([]);
+                  setEditableSpeakers([]);
+                }}
+                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="flex-1 p-4 space-y-4 overflow-hidden">
+              {/* Compact Two-Column Layout */}
+              <div className="grid grid-cols-2 gap-6">
+                {/* Left Column: Source Selection */}
+                <div className="space-y-3">
+                  <h3 className="text-base font-semibold text-white">Source Row (Copy From)</h3>
+                  <select
+                    value={sourceRowId || ''}
+                    onChange={(e) => {
+                      const rowId = e.target.value ? parseInt(e.target.value) : null;
+                      setSourceRowId(rowId);
+                      setSelectedSpeakers(new Set());
+                      setSpeakersToCopy([]);
+                      if (rowId) {
+                        const item = schedule.find(s => s.id === rowId);
+                        if (item?.speakersText) {
+                          try {
+                            const parsed = JSON.parse(item.speakersText);
+                            const speakers = Array.isArray(parsed) ? parsed : [parsed];
+                            setSpeakersToCopy(speakers);
+                          } catch {
+                            setSpeakersToCopy([]);
+                          }
+                        } else {
+                          setSpeakersToCopy([]);
+                        }
+                      }
+                    }}
+                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-500 rounded text-white text-sm"
+                  >
+                    <option value="">Select source row...</option>
+                    {getFilteredSchedule().map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.customFields?.cue ? `CUE ${item.customFields.cue}: ` : ''}{item.segmentName}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Speakers List - With Photos Always Visible */}
+                  {sourceRowId && speakersToCopy.length > 0 && (
+                    <div className="bg-slate-700 rounded-lg p-3 h-[calc(80vh-280px)] overflow-y-auto">
+                      <div className="text-sm text-slate-300 mb-3">Select speakers to copy:</div>
+                      <div className="space-y-3">
+                        {speakersToCopy.map((speaker, index) => {
+                          const speakerId = speaker.id || `speaker_${index}`;
+                          const isSelected = selectedSpeakers.has(speakerId);
+                          return (
+                            <label
+                              key={speakerId}
+                              className={`flex items-start gap-3 p-3 rounded cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-blue-600 border-2 border-blue-400'
+                                  : 'bg-slate-600 border-2 border-slate-500 hover:border-slate-400'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  const newSelected = new Set(selectedSpeakers);
+                                  if (e.target.checked) {
+                                    newSelected.add(speakerId);
+                                  } else {
+                                    newSelected.delete(speakerId);
+                                  }
+                                  setSelectedSpeakers(newSelected);
+                                  
+                                  // Update editable speakers if target row is selected
+                                  if (targetRowId) {
+                                    const speakersToEdit = speakersToCopy
+                                      .filter((s, idx) => {
+                                        const sid = s.id || `speaker_${idx}`;
+                                        return newSelected.has(sid);
+                                      })
+                                      .map(speaker => ({ ...speaker })); // Deep copy for editing
+                                    setEditableSpeakers(speakersToEdit);
+                                  }
+                                }}
+                                className="w-5 h-5 mt-1 flex-shrink-0"
+                              />
+                              {speaker.photoLink && (
+                                <img
+                                  src={speaker.photoLink}
+                                  alt={speaker.fullName}
+                                  className="w-20 h-24 rounded object-cover border-2 border-slate-400 flex-shrink-0"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="text-white text-base font-semibold">{speaker.fullName || 'Unnamed'}</div>
+                                <div className="text-sm text-slate-300 mt-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-yellow-400 font-bold">SLOT {speaker.slot}</span>
+                                    <span>•</span>
+                                    <span>
+                                      {speaker.location === 'Podium' && '🎤'}
+                                      {speaker.location === 'Seat' && '🪑'}
+                                      {speaker.location === 'Virtual' && '📺'}
+                                      {speaker.location === 'Moderator' && '🎙️'}
+                                      {speaker.location}
+                                    </span>
+                                  </div>
+                                  {speaker.title && <div className="mt-1">Title: {speaker.title}</div>}
+                                  {speaker.org && <div>Org: {speaker.org}</div>}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Right Column: Target Selection + Edit Section */}
+                <div className="space-y-3 flex flex-col">
+                  <div>
+                    <h3 className="text-base font-semibold text-white mb-2">Target Row (Copy To)</h3>
+                    <select
+                      value={targetRowId || ''}
+                      onChange={(e) => {
+                        const newTargetRowId = e.target.value ? parseInt(e.target.value) : null;
+                        setTargetRowId(newTargetRowId);
+                        // When target is selected, create editable copies of selected speakers
+                        if (newTargetRowId && selectedSpeakers.size > 0) {
+                          const speakersToEdit = speakersToCopy
+                            .filter((speaker, index) => selectedSpeakers.has(speaker.id || `speaker_${index}`))
+                            .map(speaker => ({ ...speaker })); // Deep copy for editing
+                          setEditableSpeakers(speakersToEdit);
+                        } else {
+                          setEditableSpeakers([]);
+                        }
+                      }}
+                      disabled={!sourceRowId || selectedSpeakers.size === 0}
+                      className="w-full px-4 py-2.5 bg-slate-700 border border-slate-500 rounded text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Select target row...</option>
+                      {getFilteredSchedule()
+                        .filter(item => item.id !== sourceRowId)
+                        .map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.customFields?.cue ? `CUE ${item.customFields.cue}: ` : ''}{item.segmentName}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* Edit Slot & Location - Clean, no photos or extra info */}
+                  {targetRowId && selectedSpeakers.size > 0 && editableSpeakers.length > 0 && (
+                    <div className="flex-1 flex flex-col min-h-0">
+                      <h3 className="text-base font-semibold text-white mb-3">Adjust Slot & Location</h3>
+                      <div className="bg-slate-700 rounded-lg p-3 h-[calc(80vh-280px)] overflow-y-auto">
+                        <div className="space-y-3">
+                          {editableSpeakers.map((speaker, index) => {
+                            const speakerId = speaker.id || `speaker_${index}`;
+                            // Get available slots for target row
+                            const targetItem = schedule.find(s => s.id === targetRowId);
+                            let existingSlots: number[] = [];
+                            if (targetItem?.speakersText) {
+                              try {
+                                const parsed = JSON.parse(targetItem.speakersText);
+                                const existing = Array.isArray(parsed) ? parsed : [parsed];
+                                existingSlots = existing.map((s: Speaker) => s.slot);
+                              } catch {}
+                            }
+                            const availableSlots = [1, 2, 3, 4, 5, 6, 7].filter(slot => !existingSlots.includes(slot));
+                            const locationOptions: ('Podium' | 'Seat' | 'Virtual' | 'Moderator')[] = ['Podium', 'Seat', 'Virtual', 'Moderator'];
+
+                            return (
+                              <div key={speakerId} className="bg-slate-600 rounded-lg p-3">
+                                <div className="text-white font-semibold text-sm mb-3">{speaker.fullName || 'Unnamed'}</div>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-xs text-slate-300 mb-1 block">Slot:</label>
+                                    <select
+                                      value={speaker.slot}
+                                      onChange={(e) => {
+                                        const newSlot = parseInt(e.target.value);
+                                        setEditableSpeakers(prev =>
+                                          prev.map(s =>
+                                            (s.id || `speaker_${editableSpeakers.indexOf(s)}`) === speakerId
+                                              ? { ...s, slot: newSlot }
+                                              : s
+                                          )
+                                        );
+                                      }}
+                                      className="w-full px-3 py-2 bg-slate-500 border border-slate-400 rounded text-white text-sm"
+                                    >
+                                      {availableSlots.map(slot => (
+                                        <option key={slot} value={slot}>
+                                          {slot}
+                                        </option>
+                                      ))}
+                                      {!availableSlots.includes(speaker.slot) && (
+                                        <option value={speaker.slot}>{speaker.slot} (conflict)</option>
+                                      )}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-slate-300 mb-1 block">Location:</label>
+                                    <select
+                                      value={speaker.location}
+                                      onChange={(e) => {
+                                        const newLocation = e.target.value as 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+                                        setEditableSpeakers(prev =>
+                                          prev.map(s =>
+                                            (s.id || `speaker_${editableSpeakers.indexOf(s)}`) === speakerId
+                                              ? { ...s, location: newLocation }
+                                              : s
+                                          )
+                                        );
+                                      }}
+                                      className="w-full px-3 py-2 bg-slate-500 border border-slate-400 rounded text-white text-sm"
+                                    >
+                                      {locationOptions.map(loc => (
+                                        <option key={loc} value={loc}>
+                                          {loc}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+
+            </div>
+
+            {/* Footer with Copy Button */}
+            {targetRowId && selectedSpeakers.size > 0 && (
+              <div className="border-t border-slate-600 p-4 bg-slate-800 rounded-b-xl">
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => {
+                      if (!sourceRowId || !targetRowId || selectedSpeakers.size === 0) return;
+
+                      handleUserEditing();
+
+                      const targetItem = schedule.find(s => s.id === targetRowId);
+                      if (!targetItem) return;
+
+                      // Get selected speakers with updated slot numbers and locations from editableSpeakers
+                      const speakersToAdd = editableSpeakers.map(speaker => ({
+                        ...speaker,
+                        id: `speaker_${Date.now()}_${Math.random()}`, // New ID for copied speaker
+                      }));
+
+                      // Get existing speakers from target
+                      let existingSpeakers: Speaker[] = [];
+                      if (targetItem.speakersText) {
+                        try {
+                          const parsed = JSON.parse(targetItem.speakersText);
+                          existingSpeakers = Array.isArray(parsed) ? parsed : [parsed];
+                        } catch {}
+                      }
+
+                      // Combine existing and new speakers
+                      const allSpeakers = [...existingSpeakers, ...speakersToAdd];
+                      const speakersJson = JSON.stringify(allSpeakers);
+
+                      // Update the target item
+                      const oldValue = targetItem.speakersText || '';
+                      setSchedule(prev =>
+                        prev.map(item =>
+                          item.id === targetRowId
+                            ? { ...item, speakersText: speakersJson }
+                            : item
+                        )
+                      );
+
+                      // Log the change
+                      const sourceItem = schedule.find(s => s.id === sourceRowId);
+                      logChange(
+                        'COPY_SPEAKERS',
+                        `Copied ${speakersToAdd.length} speaker(s) from "${sourceItem?.segmentName}" to "${targetItem.segmentName}"`,
+                        {
+                          changeType: 'COPY_SPEAKERS',
+                          sourceItemId: sourceRowId,
+                          targetItemId: targetRowId,
+                          sourceItemName: sourceItem?.segmentName,
+                          targetItemName: targetItem.segmentName,
+                          speakersCount: speakersToAdd.length,
+                          details: {
+                            speakers: speakersToAdd.map(s => ({
+                              name: s.fullName,
+                              slot: s.slot,
+                              location: s.location
+                            }))
+                          }
+                        }
+                      );
+
+                      // Close modal and reset
+                      setShowSpeakerManagerModal(false);
+                      setSourceRowId(null);
+                      setTargetRowId(null);
+                      setSelectedSpeakers(new Set());
+                      setSpeakersToCopy([]);
+                      setEditableSpeakers([]);
+                    }}
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors"
+                  >
+                    Copy {selectedSpeakers.size} Speaker{selectedSpeakers.size !== 1 ? 's' : ''} to Target Row
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
