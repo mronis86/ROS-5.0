@@ -35,6 +35,7 @@ interface LowerThird {
     title: string;
     subtitle: string;
     photo: string;
+    slot: number;
   }>; // Added speakers array for internal processing
 }
 
@@ -96,9 +97,10 @@ const LowerThirdsXMLPage: React.FC = () => {
       
       // Parse speakers if available
       if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker, speakerIndex) => {
-          if (speakerIndex < 7) { // Only first 7 speakers
-            const baseIdx = speakerIndex * 3;
+        item.speakers.forEach((speaker) => {
+          const slot = speaker.slot || 0;
+          if (slot >= 1 && slot <= 7) {
+            const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
             speakers[baseIdx + 1] = speaker.subtitle || '';
             speakers[baseIdx + 2] = speaker.photo || '';
@@ -191,7 +193,8 @@ const LowerThirdsXMLPage: React.FC = () => {
             baseEntry.speakers = sortedSpeakers.map(speaker => ({
               title: speaker.fullName || '',
               subtitle: speaker.title && speaker.org ? `${speaker.title}\n${speaker.org}` : speaker.title || speaker.org || '',
-              photo: speaker.photoLink || ''
+              photo: speaker.photoLink || '',
+              slot: speaker.slot || 0
             }));
           } catch (error) {
             console.log('Error parsing speakers JSON for item:', item.id, error);
@@ -355,9 +358,10 @@ const LowerThirdsXMLPage: React.FC = () => {
       
       // Parse speakers if available
       if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker, speakerIndex) => {
-          if (speakerIndex < 7) { // Only first 7 speakers
-            const baseIdx = speakerIndex * 3;
+        item.speakers.forEach((speaker) => {
+          const slot = speaker.slot || 0;
+          if (slot >= 1 && slot <= 7) {
+            const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
             speakers[baseIdx + 1] = speaker.subtitle || '';
             speakers[baseIdx + 2] = speaker.photo || '';

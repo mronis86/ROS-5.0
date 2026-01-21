@@ -10,6 +10,7 @@ interface LowerThird {
     title: string;
     subtitle: string;
     photo: string;
+    slot: number;
   }>;
 }
 
@@ -45,9 +46,10 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
     ${data.map(item => {
       const speakers = new Array(21).fill('');
       if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker, speakerIndex) => {
-          if (speakerIndex < 7) {
-            const baseIdx = speakerIndex * 3;
+        item.speakers.forEach((speaker) => {
+          const slot = speaker.slot || 0;
+          if (slot >= 1 && slot <= 7) {
+            const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
             speakers[baseIdx + 1] = speaker.subtitle || '';
             speakers[baseIdx + 2] = speaker.photo || '';
@@ -94,9 +96,10 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
     data.forEach((item, index) => {
       const speakers = new Array(21).fill('');
       if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker, speakerIndex) => {
-          if (speakerIndex < 7) {
-            const baseIdx = speakerIndex * 3;
+        item.speakers.forEach((speaker) => {
+          const slot = speaker.slot || 0;
+          if (slot >= 1 && slot <= 7) {
+            const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
             speakers[baseIdx + 1] = speaker.subtitle || '';
             speakers[baseIdx + 2] = speaker.photo || '';
@@ -153,8 +156,9 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
               speakersArray.forEach((speaker: any) => {
                 speakers.push({
                   title: speaker.fullName || speaker.name || '',
-                  subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
-                  photo: speaker.photoLink || ''
+                  subtitle: [speaker.title, speaker.org].filter(Boolean).join('\n'),
+                  photo: speaker.photoLink || '',
+                  slot: speaker.slot || 0
                 });
               });
             }

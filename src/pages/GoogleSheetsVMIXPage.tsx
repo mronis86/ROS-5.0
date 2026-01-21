@@ -10,6 +10,7 @@ interface VMIXLowerThird {
     name: string;
     title: string;
     photo: string;
+    slot: number;
   }>;
 }
 
@@ -117,8 +118,9 @@ const GoogleSheetsVMIXPage: React.FC = () => {
                   speakersArray.forEach((speaker: any) => {
                     speakers.push({
                       name: speaker.fullName || speaker.name || '',
-                      title: [speaker.title, speaker.org].filter(Boolean).join(', '),
-                      photo: speaker.photoLink || ''
+                      title: [speaker.title, speaker.org].filter(Boolean).join('\n'),
+                      photo: speaker.photoLink || '',
+                      slot: speaker.slot || 0
                     });
                   });
                 }
@@ -142,9 +144,10 @@ const GoogleSheetsVMIXPage: React.FC = () => {
             data = lowerThirdsData.map((item, index) => {
               const speakers = new Array(21).fill('');
               if (item.speakers && item.speakers.length > 0) {
-                item.speakers.forEach((speaker, speakerIndex) => {
-                  if (speakerIndex < 7) {
-                    const baseIdx = speakerIndex * 3;
+                item.speakers.forEach((speaker) => {
+                  const slot = speaker.slot || 0;
+                  if (slot >= 1 && slot <= 7) {
+                    const baseIdx = (slot - 1) * 3;
                     speakers[baseIdx] = speaker.name || '';
                     speakers[baseIdx + 1] = speaker.title || '';
                     speakers[baseIdx + 2] = speaker.photo || '';
@@ -351,8 +354,9 @@ const GoogleSheetsVMIXPage: React.FC = () => {
                 speakersArray.forEach((speaker: any) => {
                   speakers.push({
                     name: speaker.fullName || speaker.name || '',
-                    title: [speaker.title, speaker.org].filter(Boolean).join(', '),
-                    photo: speaker.photoLink || ''
+                    title: [speaker.title, speaker.org].filter(Boolean).join('\n'),
+                    photo: speaker.photoLink || '',
+                    slot: speaker.slot || 0
                   });
                 });
               }
@@ -441,9 +445,10 @@ const GoogleSheetsVMIXPage: React.FC = () => {
       const rows = lowerThirds.map((item, index) => {
         const speakers = new Array(21).fill('');
         if (item.speakers && item.speakers.length > 0) {
-          item.speakers.forEach((speaker, speakerIndex) => {
-            if (speakerIndex < 7) {
-              const baseIdx = speakerIndex * 3;
+          item.speakers.forEach((speaker) => {
+            const slot = speaker.slot || 0;
+            if (slot >= 1 && slot <= 7) {
+              const baseIdx = (slot - 1) * 3;
               speakers[baseIdx] = speaker.name || '';
               speakers[baseIdx + 1] = speaker.title || '';
               speakers[baseIdx + 2] = speaker.photo || '';
