@@ -84,8 +84,6 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lineListRef = useRef<HTMLDivElement>(null);
-  // Always use getApiBaseUrl() to ensure we use Railway API in production
-  const baseUrl = getApiBaseUrl();
 
   const linesWithTimes = rawLines.length > 0 ? getLinesWithTimeIndices(rawLines) : [];
 
@@ -130,7 +128,11 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch(`${baseUrl}/api/parse-agenda?extractOnly=1`, {
+      // Always get fresh API base URL to ensure correct endpoint
+      const apiBaseUrl = getApiBaseUrl();
+      const url = `${apiBaseUrl}/api/parse-agenda?extractOnly=1`;
+      console.log('[AgendaImportModal] API URL:', url, 'Hostname:', window.location.hostname);
+      const res = await fetch(url, {
         method: 'POST',
         body: form
       });

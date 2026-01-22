@@ -1,17 +1,22 @@
 // API Client for communicating with our Express API server
 const getApiBaseUrl = () => {
   // Check for forced local override from EventListPage toggle
-  if ((window as any).__FORCE_LOCAL_API__) {
+  if (typeof window !== 'undefined' && (window as any).__FORCE_LOCAL_API__) {
     return (window as any).__LOCAL_API_URL__ || 'http://localhost:3001';  // FIXED: Match api-server.js
   }
-  // Use environment variable if set, otherwise default to Railway in production
+  // Use environment variable if set
   if (import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL;
   }
-  // In production builds (Netlify), always use Railway
+  // In production builds (Netlify), ALWAYS use Railway
   // Check if we're in a production build by checking if we're not on localhost
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-    return 'https://ros-50-production.up.railway.app';
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname.toLowerCase();
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '';
+    // If NOT localhost, we're in production - use Railway
+    if (!isLocalhost) {
+      return 'https://ros-50-production.up.railway.app';
+    }
   }
   // Local development
   return 'http://localhost:3001';
