@@ -4,10 +4,17 @@ const getApiBaseUrl = () => {
   if ((window as any).__FORCE_LOCAL_API__) {
     return (window as any).__LOCAL_API_URL__ || 'http://localhost:3001';  // FIXED: Match api-server.js
   }
-  return import.meta.env.VITE_API_BASE_URL || 
-    (import.meta.env.PROD 
-      ? 'https://ros-50-production.up.railway.app'  // Railway production URL
-      : 'http://localhost:3001');  // Local development
+  // Use environment variable if set, otherwise default to Railway in production
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  // In production builds (Netlify), always use Railway
+  // Check if we're in a production build by checking if we're not on localhost
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return 'https://ros-50-production.up.railway.app';
+  }
+  // Local development
+  return 'http://localhost:3001';
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -323,3 +330,4 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient();
+export { getApiBaseUrl };
