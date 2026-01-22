@@ -25,6 +25,12 @@ build/
 deploy-ready/
 Netlify-Build-*/
 netlify-build-*/
+ROS-5.0-Netlify-Build-*/
+
+# Large zip files
+*.zip
+!public/*.zip
+public/ROS-OSC-Control-portable.zip
 
 # IDE files
 .vscode/
