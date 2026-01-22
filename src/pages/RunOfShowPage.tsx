@@ -16,6 +16,7 @@ import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal from '../components/DisplayModal';
 import ExcelImportModal from '../components/ExcelImportModal';
+import AgendaImportModal from '../components/AgendaImportModal';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
 
@@ -668,6 +669,7 @@ const RunOfShowPage: React.FC = () => {
   const [showDisplayModal, setShowDisplayModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
+  const [showAgendaImportModal, setShowAgendaImportModal] = useState(false);
   const [backups, setBackups] = useState<BackupData[]>([]);
   const [backupStats, setBackupStats] = useState({
     totalBackups: 0,
@@ -1060,7 +1062,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
-    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showSpeakerManagerModal;
+    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showSpeakerManagerModal;
     const shouldPause = isUserEditing || anyModalOpen;
 
     if (shouldPause) {
@@ -1077,7 +1079,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
   
   
   // Load user role from navigation state or localStorage
@@ -2444,7 +2446,7 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showSpeakerManagerModal) {
+    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showSpeakerManagerModal) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -8677,6 +8679,19 @@ const RunOfShowPage: React.FC = () => {
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
+                          handleModalEditing();
+                          setShowAgendaImportModal(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Import Agenda
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMenuDropdown(false);
                           setShowBackupModal(true);
                         }}
                         className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
@@ -12685,6 +12700,17 @@ const RunOfShowPage: React.FC = () => {
         onClose={() => {
           handleModalClosed();
           setShowExcelImportModal(false);
+        }}
+        onImport={handleExcelImport}
+        onDeleteAll={handleDeleteAllScheduleItems}
+      />
+
+      {/* Agenda Import Modal (PDF / Word) */}
+      <AgendaImportModal
+        isOpen={showAgendaImportModal}
+        onClose={() => {
+          handleModalClosed();
+          setShowAgendaImportModal(false);
         }}
         onImport={handleExcelImport}
         onDeleteAll={handleDeleteAllScheduleItems}

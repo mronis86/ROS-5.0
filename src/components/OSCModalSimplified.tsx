@@ -55,6 +55,20 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
             <div className="bg-slate-700 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-white mb-3 text-center">📥 Download OSC Apps</h3>
               
+              {/* ROS-OSC-Control Portable (recommended) */}
+              <div className="text-center mb-4">
+                <a
+                  href="/ROS-OSC-Control-portable.zip"
+                  download="ROS-OSC-Control-portable.zip"
+                  className="block bg-amber-600 hover:bg-amber-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  ⚡ ROS-OSC-Control (Portable)
+                </a>
+                <div className="text-xs text-amber-400 mt-2">
+                  Recommended • Single .exe • No install • ros-osc-control dist
+                </div>
+              </div>
+
               {/* Electron OSC App */}
               <div className="text-center mb-4">
                 <a
@@ -65,7 +79,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                   🖥️ Electron OSC App (Desktop)
                 </a>
                 <div className="text-xs text-blue-400 mt-2">
-                  ⚡ Desktop app • Event list • Run of Show • OSC Log
+                  Event list • Run of Show • OSC Log
                 </div>
               </div>
               
@@ -79,12 +93,12 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                   🐍 Python OSC App (GUI)
                 </a>
                 <div className="text-xs text-green-400 mt-2">
-                  ✨ GUI toggle • Railway or Local • WebSocket
+                  GUI toggle • Railway or Local • WebSocket
                 </div>
               </div>
               
               <div className="text-xs text-slate-500 mt-3 text-center">
-                <strong>Instructions:</strong> Extract zip, run install.bat (or install-dependencies.bat) to install, then start the app
+                <strong>Portable:</strong> Build <code className="bg-slate-600 px-1 rounded">ros-osc-control</code> with <code className="bg-slate-600 px-1 rounded">build-standalone.bat</code>, then run <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code> to update the zip. Others: extract, run install, then start.
               </div>
             </div>
           </div>
