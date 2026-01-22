@@ -6,6 +6,10 @@ const morgan = require('morgan');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { Pool } = require('pg');
+const multer = require('multer');
+const pdf = require('pdf-parse');
+const mammoth = require('mammoth');
+const { parseAgenda, findFirstTimeLineIndex } = require('./lib/agenda-parser');
 require('dotenv').config();
 
 // Force Railway rebuild - 2025-10-20 - Build #7 - Show start overtime table and star selection
@@ -280,6 +284,18 @@ app.use(cors());
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
+// Multer for agenda file upload (PDF / Word)
+const agendaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /\.(pdf|docx)$/i.test(file.originalname) ||
+      ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.mimetype);
+    if (ok) cb(null, true);
+    else cb(new Error('Only PDF and Word (.docx) files are allowed'));
+  }
+});
+
 // Health check endpoint - lightweight version to reduce Neon queries
 app.get('/health', async (req, res) => {
   try {
@@ -359,6 +375,71 @@ app.get('/api/test-upstash', async (req, res) => {
       configured: true,
       error: error.message
     });
+  }
+});
+
+// Parse agenda from PDF or Word (server-side, no external APIs)
+app.get('/api/parse-agenda', (req, res) => {
+  res.json({ ok: true, message: 'POST a PDF or .docx file as "file" to parse agenda.' });
+});
+
+app.post('/api/parse-agenda', agendaUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'No file uploaded. Send a PDF or Word (.docx) file as "file".' });
+    }
+    const buf = req.file.buffer;
+    const name = (req.file.originalname || '').toLowerCase();
+    const isPdf = name.endsWith('.pdf') || req.file.mimetype === 'application/pdf';
+    const isDocx = name.endsWith('.docx') || req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    let rawText = '';
+    if (isPdf) {
+      const data = await pdf(buf);
+      rawText = data.text || '';
+    } else if (isDocx) {
+      const result = await mammoth.extractRawText({ buffer: buf });
+      rawText = result.value || '';
+    } else {
+      return res.status(400).json({ error: 'Unsupported format. Use PDF or Word (.docx) only.' });
+    }
+
+    const extractOnly = /^(1|true|yes)$/i.test(String(req.query.extractOnly ?? req.body?.extractOnly ?? '').trim());
+    if (extractOnly) {
+      const raw = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const rawLines = raw.split('\n');
+      const suggestedStartLineIndex = findFirstTimeLineIndex(rawLines);
+      return res.json({ rawText: raw, rawLines, suggestedStartLineIndex });
+    }
+
+    let startLineIndex = -1;
+    const raw = String(req.query.startLineIndex ?? req.body?.startLineIndex ?? '').trim();
+    if (raw !== '') {
+      const n = parseInt(raw, 10);
+      if (!isNaN(n) && n >= 0) startLineIndex = n;
+    }
+
+    const { items, rawText: parsedRaw, firstTimeLineIndex, rawLines } = parseAgenda(rawText, startLineIndex);
+    res.json({ items, rawText: parsedRaw, firstTimeLineIndex, rawLines: rawLines || [] });
+  } catch (err) {
+    console.error('Parse agenda error:', err);
+    res.status(500).json({ error: err.message || 'Failed to parse agenda document.' });
+  }
+});
+
+// Parse agenda from raw text only (no file). Start line is enforced client-side by slicing before sending.
+// Body: { rawText: string }. Always parses from line 0 of the provided text.
+app.post('/api/parse-agenda-from-text', async (req, res) => {
+  try {
+    const rawText = typeof req.body?.rawText === 'string' ? req.body.rawText : '';
+    if (!rawText.trim()) {
+      return res.status(400).json({ error: 'Missing or empty rawText. Send JSON body: { rawText: string }.' });
+    }
+    const { items, rawText: parsedRaw, firstTimeLineIndex, rawLines } = parseAgenda(rawText, 0);
+    res.json({ items, rawText: parsedRaw, firstTimeLineIndex, rawLines: rawLines || [] });
+  } catch (err) {
+    console.error('Parse agenda from text error:', err);
+    res.status(500).json({ error: err.message || 'Failed to parse agenda text.' });
   }
 });
 
@@ -2969,6 +3050,18 @@ app.delete('/api/script-comments/:commentId', async (req, res) => {
     console.error('Error deleting comment:', error);
     res.status(500).json({ error: 'Failed to delete comment' });
   }
+});
+
+// Error handler for multer / parse-agenda (return JSON instead of HTML)
+app.use((err, req, res, next) => {
+  const url = req.originalUrl || '';
+  if (url.startsWith('/api/parse-agenda')) {
+    const msg = err.code === 'LIMIT_FILE_SIZE'
+      ? 'File too large. Maximum size is 10MB.'
+      : (err.message || 'Upload failed.');
+    return res.status(400).json({ error: msg });
+  }
+  next(err);
 });
 
 // Start server on all network interfaces (allows local network access)
