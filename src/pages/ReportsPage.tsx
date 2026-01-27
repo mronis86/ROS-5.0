@@ -57,6 +57,19 @@ const ReportsPage: React.FC = () => {
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('landscape');
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
 
+  // Format CUE display consistently
+  const formatCueDisplay = (cue: string | number | undefined) => {
+    if (!cue && cue !== 0) return ''; // Return empty string to allow fallback
+    // Convert to string if it's a number
+    const cueStr = String(cue);
+    // If cue already has proper spacing, return as is
+    if (cueStr.includes('CUE ')) return cueStr;
+    // If cue is like "CUE2", convert to "CUE 2"
+    if (cueStr.match(/^CUE\d+$/)) return cueStr.replace(/^CUE(\d+)$/, 'CUE $1');
+    // For plain numbers or other formats, add "CUE " prefix
+    return `CUE ${cueStr}`;
+  };
+
   // UTC conversion functions (same as other pages)
   const getCurrentTimeUTC = (): Date => {
     return new Date();
@@ -401,7 +414,8 @@ const ReportsPage: React.FC = () => {
       'Video': '#F59E0B',              // Bright Yellow/Orange
       'Panel+Remote': '#1E40AF',       // Darker Blue
       'Remote Only': '#60A5FA',        // Light Blue
-      'Break': '#EC4899',              // Bright Pink
+      'Break F&B/B2B': '#EC4899',              // Bright Pink
+      'Breakout Session': '#20B2AA',           // Seafoam
       'TBD': '#6B7280',                // Medium Gray
       'KILLED': '#DC2626',             // Bright Red
       'Podium': '#FFFFFF',             // White (no highlighting)
@@ -941,7 +955,7 @@ const ReportsPage: React.FC = () => {
                 </tr>
                 <tr>
                   <td>
-                    <div style="margin-bottom: 4px;">${item.customFields.cue || `CUE ${index + 1}`}</div>
+                    <div style="margin-bottom: 4px;">${formatCueDisplay(item.customFields?.cue) || `CUE ${index + 1}`}</div>
                     <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${item.programType || 'Unknown'}</div>
                   </td>
                   <td class="times-cell">
@@ -1531,7 +1545,7 @@ const ReportsPage: React.FC = () => {
                 </tr>
                 <tr>
                   <td class="times-cell">
-                    <div style="margin-bottom: 4px; font-weight: bold;">${item.customFields.cue || `CUE ${index + 1}`}</div>
+                    <div style="margin-bottom: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue) || `CUE ${index + 1}`}</div>
                     <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${item.programType || 'Unknown'}</div>
                     <div class="times-content" style="margin-top: 6px;">
                       <div class="start-time">
@@ -1840,7 +1854,7 @@ const ReportsPage: React.FC = () => {
         
         content += `
           <tr style="background-color: ${getRowBackgroundColor(item.programType)};">
-            <td>${item.programType === 'Sub Cue' ? `<span style="background-color: #9CA3AF; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${item.customFields?.cue || ''}</span>` : (item.programType === 'Podium' || item.programType === 'Podium Transition') ? `<span style="background-color: #8B4513; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${item.customFields?.cue || ''}</span>` : (item.programType === 'Panel' || item.programType === 'Panel Transition') ? `<span style="background-color: #404040; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${item.customFields?.cue || ''}</span>` : (item.customFields?.cue || '')}</td>
+            <td>${item.programType === 'Sub Cue' ? `<span style="background-color: #9CA3AF; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : (item.programType === 'Podium' || item.programType === 'Podium Transition') ? `<span style="background-color: #8B4513; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : (item.programType === 'Panel' || item.programType === 'Panel Transition') ? `<span style="background-color: #404040; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : formatCueDisplay(item.customFields?.cue)}</td>
             <td>${startTime}</td>
             <td>${duration}</td>
             <td>${item.segmentName || 'Untitled Segment'}</td>

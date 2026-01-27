@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Event } from '../types/Event';
+import { Event, LOCATION_OPTIONS } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
@@ -625,6 +625,10 @@ const RunOfShowPage: React.FC = () => {
   const [showParticipantsModal, setShowParticipantsModal] = useState(false);
   const [editingParticipantsItem, setEditingParticipantsItem] = useState<number | null>(null);
   const [tempSpeakers, setTempSpeakers] = useState<Speaker[]>([]);
+  const [showBreakoutRoomModal, setShowBreakoutRoomModal] = useState(false);
+  const [breakoutRoomParentId, setBreakoutRoomParentId] = useState<number | null>(null);
+  const [numberOfBreakoutRooms, setNumberOfBreakoutRooms] = useState<number>(1);
+  const [breakoutRoomsData, setBreakoutRoomsData] = useState<Array<{ location: string; title: string }>>([{ location: 'Great Hall', title: '' }]);
   const [activeTimers, setActiveTimers] = useState<Record<number, boolean>>({});
   const [activeTimerIntervals, setActiveTimerIntervals] = useState<Record<number, NodeJS.Timeout>>({});
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
@@ -2772,7 +2776,7 @@ const RunOfShowPage: React.FC = () => {
 
   const programTypes = [
     'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
-    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
+    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'TBD', 'KILLED'
   ];
 
   // Program Type color mapping
@@ -2785,7 +2789,8 @@ const RunOfShowPage: React.FC = () => {
     'Video': '#F59E0B',              // Bright Yellow/Orange
     'Panel+Remote': '#1E40AF',       // Darker Blue
     'Remote Only': '#60A5FA',        // Light Blue
-    'Break': '#EC4899',              // Bright Pink
+    'Break F&B/B2B': '#EC4899',              // Bright Pink
+    'Breakout Session': '#20B2AA',           // Seafoam
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
     'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
@@ -6217,6 +6222,190 @@ const RunOfShowPage: React.FC = () => {
     });
   };
 
+  // Add a breakout room (sub-indented cue) for a Breakout Session
+  const addBreakoutRoom = async (parentBreakoutId: number, location: string, breakoutTitle: string, roomIndex: number = 0) => {
+    if (!event?.id || !user?.id) return false;
+    
+    try {
+      // Generate random Timer ID
+      const generateRandomTimerId = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < 5; i++) {
+          result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return result;
+      };
+      
+      // Format segment name as "Location - Breakout Title"
+      const segmentName = `${location} - ${breakoutTitle}`;
+      
+      // Helper to create room item
+      const createRoomItem = (parentBreakout: ScheduleItem, existingChildCount: number, roomIndex: number, segmentName: string): ScheduleItem => {
+        // Extract parent CUE number and format new CUE with letter suffix
+        const parentCue = parentBreakout.customFields?.cue || '';
+        const parentCueStr = String(parentCue);
+        
+        // Extract the number from parent CUE (handles "CUE 2", "CUE2", "2", etc.)
+        const cueNumberMatch = parentCueStr.match(/(\d+)/);
+        const baseCueNumber = cueNumberMatch ? cueNumberMatch[1] : '';
+        
+        // Calculate the letter suffix (A, B, C, etc.) based on existing children + roomIndex
+        const letterIndex = existingChildCount + roomIndex;
+        const letterSuffix = String.fromCharCode(65 + (letterIndex % 26)); // A=65, B=66, etc.
+        
+        // Format the new CUE number (e.g., "CUE 2A", "CUE 2B")
+        const newCueNumber = baseCueNumber ? `CUE ${baseCueNumber}${letterSuffix}` : `CUE ${letterSuffix}`;
+        
+        // Generate random Timer ID
+        const generateRandomTimerId = () => {
+          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+          let result = '';
+          for (let i = 0; i < 5; i++) {
+            result += chars.charAt(Math.floor(Math.random() * chars.length));
+          }
+          return result;
+        };
+        
+        return {
+          id: Date.now() + Math.floor(Math.random() * 10000), // Ensure unique IDs
+          day: parentBreakout.day || selectedDay,
+          programType: 'Breakout Session', // Keep Breakout Session as program type but mark as indented
+          shotType: '',
+          segmentName: segmentName,
+          durationHours: 0,
+          durationMinutes: 0,
+          durationSeconds: 0,
+          notes: '',
+          assets: '',
+          speakers: '',
+          speakersText: '',
+          hasPPT: false,
+          hasQA: false,
+          timerId: generateRandomTimerId(),
+          isPublic: parentBreakout.isPublic || false,
+          isIndented: true,
+          customFields: {
+            cue: newCueNumber
+          }
+        };
+      };
+      
+      // Use functional update to get current schedule state and create room item
+      let createdRoomItem: ScheduleItem | null = null;
+      
+      setSchedule(prev => {
+        // Find the parent breakout session in the current schedule
+        const parentBreakout = prev.find(item => item.id === parentBreakoutId);
+        if (!parentBreakout || parentBreakout.programType !== 'Breakout Session') {
+          console.error('❌ Parent item is not a Breakout Session');
+          return prev;
+        }
+        
+        // Find the position of the parent in the schedule
+        const parentIndex = prev.findIndex(item => item.id === parentBreakoutId);
+        if (parentIndex === -1) {
+          console.error('❌ Parent breakout session not found in schedule');
+          return prev;
+        }
+        
+        // Find the last indented cue under this parent to insert after it
+        let lastChildIndex = parentIndex;
+        let existingChildCount = 0;
+        for (let i = parentIndex + 1; i < prev.length; i++) {
+          if (indentedCues[prev[i].id]?.parentId === parentBreakoutId) {
+            lastChildIndex = i;
+            existingChildCount++;
+          } else {
+            break;
+          }
+        }
+        
+        // Create the breakout room item using helper function
+        const newRoomItem = createRoomItem(parentBreakout, existingChildCount, roomIndex, segmentName);
+        createdRoomItem = newRoomItem;
+        
+        // Add to schedule at the correct position
+        const newSchedule = [...prev];
+        newSchedule.splice(lastChildIndex + 1, 0, newRoomItem);
+        return newSchedule;
+      });
+      
+      // Wait a moment for state to update
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      if (!createdRoomItem) {
+        console.error('❌ Failed to create room item');
+        return false;
+      }
+      
+      const finalRoomItem = createdRoomItem;
+      
+      // Mark as indented in the database
+      const success = await DatabaseService.markCueIndented(
+        event.id,
+        finalRoomItem.id,
+        parentBreakoutId,
+        user.id,
+        user.full_name || user.email || 'Unknown User',
+        currentUserRole || 'VIEWER'
+      );
+      
+      if (success) {
+        setIndentedCues(prev => ({
+          ...prev,
+          [finalRoomItem.id]: {
+            parentId: parentBreakoutId,
+            userId: user.id,
+            userName: user.full_name || user.email || 'Unknown User'
+          }
+        }));
+        
+        // Log the change
+        logChange('ADD_BREAKOUT_ROOM', `Added breakout room: "${finalRoomItem.segmentName}"`, {
+          changeType: 'ADD',
+          itemId: finalRoomItem.id,
+          parentId: parentBreakoutId,
+          itemName: finalRoomItem.segmentName
+        });
+        
+        console.log('✅ Successfully added breakout room');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('❌ Error adding breakout room:', error);
+      return false;
+    }
+  };
+
+  // Add multiple breakout rooms at once
+  const addMultipleBreakoutRooms = async (parentBreakoutId: number, roomsData: Array<{ location: string; title: string }>) => {
+    if (!event?.id || !user?.id || roomsData.length < 1) return;
+    
+    let successCount = 0;
+    for (let i = 0; i < roomsData.length; i++) {
+      const room = roomsData[i];
+      if (room.location && room.title.trim()) {
+        // Pass roomIndex so CUE numbers are sequential (A, B, C, etc.)
+        const success = await addBreakoutRoom(parentBreakoutId, room.location, room.title.trim(), i);
+        if (success) successCount++;
+        // Delay between additions to ensure state updates and unique IDs
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    if (successCount > 0) {
+      // Trigger auto-save after all rooms are added
+      handleUserEditing();
+      console.log(`✅ Successfully added ${successCount} breakout room(s)`);
+    }
+    
+    if (successCount < roomsData.length) {
+      alert(`Warning: Only ${successCount} of ${roomsData.length} breakout rooms were added successfully.`);
+    }
+  };
+
   const addCustomColumn = (name: string) => {
     const newColumn: CustomColumn = { name, id: Date.now().toString() };
     setCustomColumns(prev => [...prev, newColumn]);
@@ -8602,10 +8791,13 @@ const RunOfShowPage: React.FC = () => {
                             }
                             // For indented items, startTime and endTime remain empty strings
 
+                            // Map program type for CSV export (convert Break F&B/B2B back to Break, keep Breakout Session as is)
+                            const exportProgramType = item.programType === 'Break F&B/B2B' ? 'Break' : (item.programType || '');
+                            
                             const baseRow = [
                               index + 1, // ROW number
                               item.customFields?.cue || `CUE ${index + 1}`, // CUE
-                              item.programType || '',
+                              exportProgramType,
                               item.shotType || '',
                               item.segmentName || '',
                               duration,
@@ -9683,12 +9875,31 @@ const RunOfShowPage: React.FC = () => {
                               duplicateScheduleItem(item.id);
                               setActiveJumpMenu(null);
                             }}
-                            className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2 rounded-b-lg"
+                            className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2"
                             title="Duplicate this row"
                           >
                             <span>⧉</span>
                             <span>Duplicate Row</span>
                           </button>
+                          {/* Add Breakout Room button - only show for Breakout Session items */}
+                          {item.programType === 'Breakout Session' && !indentedCues[item.id] && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUserEditing();
+                                setActiveJumpMenu(null);
+                                setBreakoutRoomParentId(item.id);
+                                setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
+                                setNumberOfBreakoutRooms(1);
+                                setShowBreakoutRoomModal(true);
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2 border-t border-slate-600"
+                              title="Add a breakout room as a sub-indented cue"
+                            >
+                              <span>🏢</span>
+                              <span>Add Breakout Room</span>
+                            </button>
+                          )}
                         </div>
                       )}
                       <span className="text-white font-bold text-lg">
@@ -10482,6 +10693,18 @@ const RunOfShowPage: React.FC = () => {
                 </div>
               </div>
               
+              {/* Breakout Session - Info Section */}
+              {modalForm.programType === 'Breakout Session' && (
+                <div className="bg-slate-700/50 border border-slate-600 rounded p-3 mb-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-cyan-400 text-lg">ℹ️</span>
+                    <div className="flex-1">
+                      <p className="text-slate-300 text-sm font-medium mb-1">Breakout Rooms</p>
+                      <p className="text-slate-400 text-xs">After adding this Breakout Session, use the row actions menu (# button) to add breakout rooms. Rooms will appear as sub-indented cues with no time.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Segment Name</label>
@@ -12690,6 +12913,123 @@ const RunOfShowPage: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Breakout Room Modal */}
+      {showBreakoutRoomModal && breakoutRoomParentId !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-lg max-w-2xl w-full max-h-[90vh] flex flex-col shadow-xl">
+            <div className="p-6 shrink-0">
+              <h2 className="text-xl font-bold text-white">Add Breakout Rooms</h2>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 min-h-0">
+              <div className="space-y-4 pb-4">
+                <div>
+                  <label className="block text-slate-300 text-sm font-medium mb-2">
+                    Number of Breakout Rooms
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={numberOfBreakoutRooms}
+                    onChange={(e) => {
+                      const num = Math.max(1, parseInt(e.target.value) || 1);
+                      setNumberOfBreakoutRooms(num);
+                      setBreakoutRoomsData(prev => {
+                        const newData = [...prev];
+                        while (newData.length < num) {
+                          newData.push({ location: 'Great Hall', title: '' });
+                        }
+                        return newData.slice(0, num);
+                      });
+                    }}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
+                    autoFocus
+                  />
+                </div>
+
+                {breakoutRoomsData.map((room, index) => (
+                  <div key={index} className="bg-slate-700/30 border border-slate-600 rounded p-4 space-y-3">
+                    <h3 className="text-slate-300 font-medium text-sm">Room {index + 1}</h3>
+                    <div>
+                      <label className="block text-slate-300 text-sm font-medium mb-2">Location</label>
+                      <select
+                        value={room.location}
+                        onChange={(e) => {
+                          const newData = [...breakoutRoomsData];
+                          newData[index].location = e.target.value;
+                          setBreakoutRoomsData(newData);
+                        }}
+                        className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
+                      >
+                        {LOCATION_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-sm font-medium mb-2">Breakout Title</label>
+                      <input
+                        type="text"
+                        value={room.title}
+                        onChange={(e) => {
+                          const newData = [...breakoutRoomsData];
+                          newData[index].title = e.target.value;
+                          setBreakoutRoomsData(newData);
+                        }}
+                        className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                        placeholder="e.g., Session A, Track 1, Workshop"
+                      />
+                    </div>
+                  </div>
+                ))}
+
+                <div className="bg-slate-700/50 border border-slate-600 rounded p-3">
+                  <p className="text-slate-400 text-xs mb-1">
+                    <strong>Format:</strong> Each room will be added as &quot;Location - Breakout Title&quot; (e.g., &quot;MR1 - Session A&quot;, &quot;Great Hall - Track 1&quot;).
+                  </p>
+                  <p className="text-slate-400 text-xs">
+                    Rooms will be added as sub-indented cues under the Breakout Session with the same program type (Breakout Session) but will appear indented with no time.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <footer className="shrink-0 border-t border-slate-600 px-6 py-4 bg-slate-800/95 rounded-b-lg">
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    const validRooms = breakoutRoomsData.filter(room => room.location && room.title.trim());
+                    if (validRooms.length === breakoutRoomsData.length && validRooms.length > 0) {
+                      await addMultipleBreakoutRooms(breakoutRoomParentId, validRooms);
+                      setShowBreakoutRoomModal(false);
+                      setBreakoutRoomParentId(null);
+                      setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
+                      setNumberOfBreakoutRooms(1);
+                    } else {
+                      alert('Please fill in both Location and Breakout Title for all rooms.');
+                    }
+                  }}
+                  disabled={breakoutRoomsData.length === 0 || !breakoutRoomsData.every(room => room.location && room.title.trim())}
+                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-medium rounded transition-colors"
+                >
+                  Add {numberOfBreakoutRooms} Room{numberOfBreakoutRooms !== 1 ? 's' : ''}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowBreakoutRoomModal(false);
+                    setBreakoutRoomParentId(null);
+                    setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
+                    setNumberOfBreakoutRooms(1);
+                  }}
+                  className="flex-1 px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </footer>
           </div>
         </div>
       )}

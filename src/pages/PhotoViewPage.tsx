@@ -1694,7 +1694,8 @@ const PhotoViewPage: React.FC = () => {
     'Video': '#F59E0B',              // Bright Yellow/Orange
     'Panel+Remote': '#1E40AF',       // Darker Blue
     'Remote Only': '#60A5FA',        // Light Blue
-    'Break': '#EC4899',              // Bright Pink
+    'Break F&B/B2B': '#EC4899',              // Bright Pink
+    'Breakout Session': '#20B2AA',           // Seafoam
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
     'Podium': '#8B4513',             // Brown

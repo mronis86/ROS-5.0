@@ -22,6 +22,59 @@ interface ExcelImportModalProps {
   onDeleteAll: () => void;
 }
 
+/** Normalize for alias lookup: lowercase, collapse spaces/hyphens. */
+const normalizeShotTypeForAlias = (s: string) =>
+  s.replace(/\s+/g, ' ').replace(/-/g, '').replace(/\s/g, '').toLowerCase().trim();
+
+/** Exact alias -> canonical Shot Type. */
+const SHOT_TYPE_ALIASES = (() => {
+  const canonical = ['Podium', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'] as const;
+  const aliasList: [string, string][] = [
+    ['pod', 'Podium'],
+    ['p', 'Podium'],
+    ['2sh', '2-Shot'],
+    ['twoshot', '2-Shot'],
+    ['3sh', '3-Shot'],
+    ['threeshot', '3-Shot'],
+    ['4sh', '4-Shot'],
+    ['fourshot', '4-Shot'],
+    ['5sh', '5-Shot'],
+    ['fiveshot', '5-Shot'],
+    ['6sh', '6-Shot'],
+    ['sixshot', '6-Shot'],
+    ['7sh', '7-Shot'],
+    ['sevenshot', '7-Shot'],
+    ['ted', 'Ted-Talk'],
+    ['tedtalk', 'Ted-Talk'],
+  ];
+  const m = new Map<string, string>();
+  for (const c of canonical) m.set(normalizeShotTypeForAlias(c), c);
+  for (const [alias, can] of aliasList) m.set(normalizeShotTypeForAlias(alias), can);
+  return m;
+})();
+
+/** Pattern-based: e.g. "2 shot lav", "2shot lavalier", "3shot" -> N-Shot. Number alone is not matched. */
+const SHOT_TYPE_PATTERNS: { pattern: RegExp; canonical: string }[] = [
+  { pattern: /^2(shot|sh|lav|lavalier)/, canonical: '2-Shot' },
+  { pattern: /^twoshot/, canonical: '2-Shot' },
+  { pattern: /^two(shot|sh|lav|lavalier)/, canonical: '2-Shot' },
+  { pattern: /^3(shot|sh|lav|lavalier)/, canonical: '3-Shot' },
+  { pattern: /^threeshot/, canonical: '3-Shot' },
+  { pattern: /^three(shot|sh|lav|lavalier)/, canonical: '3-Shot' },
+  { pattern: /^4(shot|sh|lav|lavalier)/, canonical: '4-Shot' },
+  { pattern: /^fourshot/, canonical: '4-Shot' },
+  { pattern: /^four(shot|sh|lav|lavalier)/, canonical: '4-Shot' },
+  { pattern: /^5(shot|sh|lav|lavalier)/, canonical: '5-Shot' },
+  { pattern: /^fiveshot/, canonical: '5-Shot' },
+  { pattern: /^five(shot|sh|lav|lavalier)/, canonical: '5-Shot' },
+  { pattern: /^6(shot|sh|lav|lavalier)/, canonical: '6-Shot' },
+  { pattern: /^sixshot/, canonical: '6-Shot' },
+  { pattern: /^six(shot|sh|lav|lavalier)/, canonical: '6-Shot' },
+  { pattern: /^7(shot|sh|lav|lavalier)/, canonical: '7-Shot' },
+  { pattern: /^sevenshot/, canonical: '7-Shot' },
+  { pattern: /^seven(shot|sh|lav|lavalier)/, canonical: '7-Shot' },
+];
+
 const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, onImport, onDeleteAll }) => {
   const [file, setFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<ParsedRow[]>([]);
@@ -51,6 +104,19 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  /** Map shorthand/variants (e.g. POD, 2shot, 2 shot lav) to canonical Shot Type. */
+  const resolveShotTypeAlias = (raw: string): string | null => {
+    if (!raw || typeof raw !== 'string') return null;
+    const n = normalizeShotTypeForAlias(raw);
+    if (!n) return null;
+    const exact = SHOT_TYPE_ALIASES.get(n);
+    if (exact) return exact;
+    for (const { pattern, canonical } of SHOT_TYPE_PATTERNS) {
+      if (pattern.test(n)) return canonical;
+    }
+    return null;
+  };
+
   const parseShotTypeAndFlags = (value: string) => {
     const text = value.toString().toLowerCase();
     let shotType = value;
@@ -68,6 +134,8 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
     }
     
     shotType = shotType.replace(/^\++|\++$/g, '').replace(/\s*\+\s*/g, ' ').trim();
+    const resolved = resolveShotTypeAlias(shotType);
+    if (resolved) shotType = resolved;
     
     return { shotType, hasPPT, hasQA };
   };
@@ -289,6 +357,14 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
           if (programType.toLowerCase() === 'pod transition') {
             programType = 'Podium Transition';
           }
+          // Map "Break" to "Break F&B/B2B" for compatibility
+          if (programType.toLowerCase() === 'break') {
+            programType = 'Break F&B/B2B';
+          }
+          // Map "Breakout Session" if explicitly specified
+          if (programType.toLowerCase() === 'breakout session' || programType.toLowerCase() === 'breakout') {
+            programType = 'Breakout Session';
+          }
           parsedRow.programType = programType;
         }
         
@@ -432,6 +508,14 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
           if (programType.toLowerCase() === 'pod transition') {
             programType = 'Podium Transition';
           }
+          // Map "Break" to "Break F&B/B2B" for compatibility
+          if (programType.toLowerCase() === 'break') {
+            programType = 'Break F&B/B2B';
+          }
+          // Map "Breakout Session" if explicitly specified
+          if (programType.toLowerCase() === 'breakout session' || programType.toLowerCase() === 'breakout') {
+            programType = 'Breakout Session';
+          }
           parsedRow.programType = programType;
         }
         
@@ -523,9 +607,9 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-slate-800 rounded-lg p-6 w-full max-w-4xl max-h-[80vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-4">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-800 rounded-lg w-full max-w-4xl max-h-[85vh] flex flex-col shadow-xl">
+        <header className="shrink-0 flex justify-between items-center p-6 pb-0">
           <h2 className="text-xl font-bold text-white">Import Excel File</h2>
           <button
             onClick={handleClose}
@@ -533,8 +617,9 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
           >
             ×
           </button>
-        </div>
+        </header>
 
+        <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4">
         <div className="space-y-4">
           {/* Delete All Button - Only show before parsing */}
           {parsedData.length === 0 && (
@@ -554,13 +639,14 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
             </div>
           )}
 
-          {/* Instructions - Hide after parsing */}
-          {parsedData.length === 0 && (
+          {/* Instructions - Hide after first parse (open workbook) to save room */}
+          {parsedData.length === 0 && sheets.length <= 1 && (
             <div className="bg-slate-700 p-4 rounded-md">
               <h3 className="text-white font-semibold mb-2">Excel File Format Requirements:</h3>
               <ul className="text-gray-300 text-sm space-y-1">
                 <li>• Headers should be in row 11, data should start from row 12</li>
                 <li>• Expected columns: A=CUE, C=Program Type, D=Duration, J=Segment Name, K=Shot Type+PPT+QA, L=Notes, N=Assets, V-AB=Speakers</li>
+                <li>• Shot Type (K): Use Podium, 2-Shot … 7-Shot, Ted-Talk. Shorthand OK: POD, 2shot, 2 shot, 2 shot lav, 2shot lavalier, 3shot, etc.</li>
                 <li>• "Pod Transition" will be converted to "Podium Transition"</li>
                 <li>• Excel decimal time format (0.002083...) will be converted to HH:MM:SS</li>
                 <li>• Speaker format: Name, Title, [Org], Photo URL (with line breaks). Use *P* (Podium), *M* (Moderator), *V* (Virtual) prefixes</li>
@@ -596,11 +682,11 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
             </div>
           )}
 
-          {/* Sheet Selection - Show when multiple sheets */}
+          {/* Sheet Selection - Show when multiple sheets (after "Open workbook") */}
           {sheets.length > 1 && parsedData.length === 0 && (
             <div>
               <label className="block text-white text-sm font-medium mb-2">
-                Select Sheet ({sheets.length} sheets found)
+                Choose sheet to load ({sheets.length} sheets found)
               </label>
               <select
                 value={selectedSheet}
@@ -613,25 +699,6 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
                   </option>
                 ))}
               </select>
-            </div>
-          )}
-
-          {/* Parse Button - Hide after parsing */}
-          {parsedData.length === 0 && (
-            <div className="flex justify-center gap-4">
-              <button
-                onClick={sheets.length > 1 ? parseSelectedSheet : handleParse}
-                disabled={!file || isProcessing || (sheets.length > 1 && !selectedSheet)}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-md transition-colors"
-              >
-                {isProcessing ? 'Parsing...' : 'Parse Excel File'}
-              </button>
-              <button
-                onClick={handleClose}
-                className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-md transition-colors"
-              >
-                Cancel
-              </button>
             </div>
           )}
 
@@ -720,33 +787,57 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
                   </tbody>
                 </table>
               </div>
-
-              {/* Action Buttons */}
-              <div className="flex justify-center gap-4 mt-4">
-                <button
-                  onClick={handleImport}
-                  className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-md transition-colors"
-                >
-                  Import {parsedData.length} Items
-                </button>
-                <button
-                  onClick={() => {
-                    setFile(null);
-                    setParsedData([]);
-                    setError(null);
-                    if (fileInputRef.current) {
-                      fileInputRef.current.value = '';
-                    }
-                  }}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors"
-                >
-                  Import Another File
-                </button>
-              </div>
             </div>
           )}
 
         </div>
+        </div>
+
+        <footer className="shrink-0 border-t border-slate-600 px-6 py-4 bg-slate-800 rounded-b-lg">
+          {parsedData.length === 0 ? (
+            <div className="flex justify-center gap-4">
+              <button
+                onClick={sheets.length > 1 ? parseSelectedSheet : handleParse}
+                disabled={!file || isProcessing || (sheets.length > 1 && !selectedSheet)}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-md transition-colors"
+              >
+                {isProcessing
+                  ? (sheets.length > 1 ? 'Loading...' : 'Opening...')
+                  : (sheets.length > 1 ? 'Load sheet data' : 'Open workbook')}
+              </button>
+              <button
+                onClick={handleClose}
+                className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-md transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex justify-center gap-4">
+              <button
+                onClick={handleImport}
+                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-md transition-colors"
+              >
+                Import {parsedData.length} Items
+              </button>
+              <button
+                onClick={() => {
+                  setFile(null);
+                  setParsedData([]);
+                  setError(null);
+                  setSheets([]);
+                  setSelectedSheet('');
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = '';
+                  }
+                }}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors"
+              >
+                Import Another File
+              </button>
+            </div>
+          )}
+        </footer>
       </div>
     </div>
   );

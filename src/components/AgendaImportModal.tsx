@@ -33,7 +33,7 @@ type Step = 'select' | 'extract' | 'parse';
 
 const PROGRAM_TYPES = [
   'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
-  'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
+  'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'TBD', 'KILLED'
 ];
 
 const PROGRAM_TYPE_COLORS: Record<string, string> = {
@@ -45,7 +45,8 @@ const PROGRAM_TYPE_COLORS: Record<string, string> = {
   'Video': '#F59E0B',
   'Panel+Remote': '#1E40AF',
   'Remote Only': '#60A5FA',
-  'Break': '#EC4899',
+  'Break F&B/B2B': '#EC4899',
+  'Breakout Session': '#20B2AA',
   'TBD': '#6B7280',
   'KILLED': '#DC2626',
   'Full-Stage/Ted-Talk': '#EA580C'

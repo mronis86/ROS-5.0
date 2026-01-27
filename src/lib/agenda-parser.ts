@@ -57,6 +57,30 @@ function normalizeLine(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+/** Strip leading time (e.g. "9:00 AM – " or "• 9:00 AM ") so only the segment name remains. */
+function stripLeadingTimeFromSegmentName(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  let t = text.trim();
+  const timePrefix =
+    /^\s*[•\-]?\s*\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm)?\s*[-–—]?\s*/i;
+  t = t.replace(timePrefix, '').trim();
+  // Strip "a.m. - ", "a.m.- ", "p.m. - ", "p.m.- " (with or without periods) at start
+  const leftoverAmPm = /^\s*(?:a\.m\.|p\.m\.|am|pm)\s*[-–—]\s*/i;
+  let prev = '';
+  while (prev !== t) {
+    prev = t;
+    t = t.replace(leftoverAmPm, '').trim();
+  }
+  // Also strip " - H:MM a.m.- " or " - H:MM p.m.- " (second time in range) at start
+  const secondTimeInRange = /^\s*[-–—]\s*\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*(?:a\.m\.|p\.m\.|am|pm)?\s*[-–—]\s*/i;
+  prev = '';
+  while (prev !== t) {
+    prev = t;
+    t = t.replace(secondTimeInRange, '').trim();
+  }
+  return t;
+}
+
 function isHeaderLike(line: string): boolean {
   const t = normalizeLine(line).toLowerCase();
   if (!t) return true;
@@ -278,7 +302,7 @@ export function parseAgenda(rawText: string, startLineIndex: number): ParseAgend
     const speakerLines: string[] = [];
 
     if (b.lines.length > 0) {
-      segmentName = b.lines[0];
+      segmentName = stripLeadingTimeFromSegmentName(b.lines[0]);
       for (let j = 1; j < b.lines.length; j++) {
         speakerLines.push(b.lines[j]);
       }
@@ -317,7 +341,7 @@ export function parseAgenda(rawText: string, startLineIndex: number): ParseAgend
       row,
       cue,
       segmentName,
-      startTime: b.timeRaw || '',
+      startTime: b.timeRaw || '', // Parsed start time; shown in modal for verification, used for duration calc
       duration,
       shotType: '',
       hasPPT: false,

@@ -21,8 +21,12 @@ export const LOCATION_OPTIONS = [
   { value: 'Great Hall', label: 'Great Hall', color: 'bg-blue-600' },
   { value: 'Briefing Center', label: 'Briefing Center', color: 'bg-green-600' },
   { value: 'Lee Anderson', label: 'Lee Anderson', color: 'bg-purple-600' },
-  { value: 'Virtual Show', label: 'Virtual Show', color: 'bg-orange-600' },
-  { value: 'Off Site', label: 'Off Site', color: 'bg-red-600' }
+  { value: 'MR1', label: 'MR1', color: 'bg-indigo-600' },
+  { value: 'MR2', label: 'MR2', color: 'bg-indigo-600' },
+  { value: 'MR3', label: 'MR3', color: 'bg-indigo-600' },
+  { value: 'MR4', label: 'MR4', color: 'bg-indigo-600' },
+  { value: 'MR3+4', label: 'MR3+4', color: 'bg-indigo-600' },
+  { value: 'Virtual', label: 'Virtual', color: 'bg-orange-600' }
 ];
 
 export const DAYS_OPTIONS = [1, 2, 3, 4, 5];
