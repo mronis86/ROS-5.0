@@ -24,6 +24,7 @@ interface SocketCallbacks {
   onOvertimeReset?: (data: any) => void; // NEW! For overtime reset
   onShowStartOvertimeUpdate?: (data: any) => void; // NEW! For show start overtime
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
+  onPresenceUpdated?: (viewers: { userId: string; userName: string; userRole: string }[]) => void;
 }
 
 class SocketClient {
@@ -128,6 +129,9 @@ class SocketClient {
           console.log('📡 SocketClient: Received startCueSelectionUpdate event:', message.data);
           this.callbacks.onStartCueSelectionUpdate?.(message.data);
           break;
+        case 'presenceUpdated':
+          this.callbacks.onPresenceUpdated?.(message.data || []);
+          break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);
       }
@@ -200,6 +204,17 @@ class SocketClient {
     if (this.socket && this.eventId) {
       console.log('📡 Emitting sync request event');
       this.socket.emit('requestSync', { eventId: this.eventId });
+    }
+  }
+
+  sendPresence(eventId: string, user: { userId: string; userName: string; userRole: string }) {
+    if (this.socket && eventId) {
+      this.socket.emit('presenceJoin', {
+        eventId,
+        userId: user.userId,
+        userName: user.userName || '',
+        userRole: user.userRole || 'VIEWER',
+      });
     }
   }
 

@@ -2468,6 +2468,16 @@ app.post('/api/timers/reset', async (req, res) => {
 // Socket.IO connection handling
 // ========================================
 
+// Presence: who's viewing Run of Show per event (in-memory, no DB)
+const presenceByEvent = new Map(); // eventId -> Map(socketId -> { userId, userName, userRole })
+const socketToEvent = new Map();   // socketId -> eventId (for cleanup on disconnect)
+
+function broadcastPresence(eventId) {
+  const m = presenceByEvent.get(eventId);
+  const list = m ? Array.from(m.values()).map((v) => ({ userId: v.userId, userName: v.userName, userRole: v.userRole })) : [];
+  io.to(`event:${eventId}`).emit('update', { type: 'presenceUpdated', data: list });
+}
+
 io.on('connection', (socket) => {
   console.log(`🔌 Socket.IO client connected: ${socket.id}`);
   
@@ -2486,6 +2496,17 @@ io.on('connection', (socket) => {
   socket.on('leaveEvent', (eventId) => {
     socket.leave(`event:${eventId}`);
     console.log(`🔌 Socket.IO client ${socket.id} left event:${eventId}`);
+  });
+
+  // Presence: user viewing Run of Show for this event
+  socket.on('presenceJoin', (data) => {
+    const { eventId, userId, userName, userRole } = data || {};
+    if (!eventId || !userId) return;
+    if (!presenceByEvent.has(eventId)) presenceByEvent.set(eventId, new Map());
+    presenceByEvent.get(eventId).set(socket.id, { userId, userName: userName || '', userRole: userRole || 'VIEWER' });
+    socketToEvent.set(socket.id, eventId);
+    console.log(`👁️ Presence: ${userName || userId} joined event:${eventId}`);
+    broadcastPresence(eventId);
   });
   
   // Handle reset all states event
@@ -2633,6 +2654,17 @@ io.on('connection', (socket) => {
 
   // Handle disconnection
   socket.on('disconnect', () => {
+    const eventId = socketToEvent.get(socket.id);
+    if (eventId) {
+      const m = presenceByEvent.get(eventId);
+      if (m) {
+        m.delete(socket.id);
+        if (m.size === 0) presenceByEvent.delete(eventId);
+      }
+      socketToEvent.delete(socket.id);
+      broadcastPresence(eventId);
+      console.log(`👁️ Presence: socket ${socket.id} left event:${eventId}`);
+    }
     console.log(`🔌 Socket.IO client disconnected: ${socket.id}`);
   });
 });

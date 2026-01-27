@@ -8,9 +8,9 @@ const AppHeader: React.FC = () => {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-slate-800 border-b border-slate-700 px-6 py-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         {/* Logo and Title */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
               <span className="text-white font-bold text-lg">R</span>
@@ -21,7 +21,7 @@ const AppHeader: React.FC = () => {
 
         {/* User Profile Section */}
         {user ? (
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 shrink-0">
             {/* User Details */}
             <div className="text-right">
               <p className="text-white font-semibold text-base">

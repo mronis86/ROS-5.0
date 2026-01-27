@@ -435,6 +435,27 @@ const ReportsPage: React.FC = () => {
     return getProgramTypeColor(programType);
   };
 
+  // Normalize notes for print: preserve line breaks (\n, <br>) as \n, strip HTML, escape for HTML output
+  const notesForPrint = (raw: string): string => {
+    if (!raw || typeof raw !== 'string') return '';
+    let s = raw
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/<[^>]*>/g, '')
+      .trim();
+    return s;
+  };
+
+  const escapeHtml = (s: string): string => {
+    if (!s) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  };
+
   // Generate report content
   const generateReportContent = () => {
     const isShowFile = reportType === 'showfile';
@@ -787,6 +808,7 @@ const ReportsPage: React.FC = () => {
           font-size: 10px;
           line-height: 1.3;
           background: #f9f9f9;
+          white-space: pre-line;
         }
             .modal-cell .field-label { 
               font-weight: normal; 
@@ -1039,7 +1061,7 @@ const ReportsPage: React.FC = () => {
                   <td colspan="11" class="notes-header-cell">NOTES</td>
                 </tr>
                 <tr class="notes-content-row">
-                  <td colspan="11" class="notes-content-cell">${item.notes || 'None'}</td>
+                  <td colspan="11" class="notes-content-cell">${escapeHtml(notesForPrint(item.notes) || 'None')}</td>
                 </tr>
               </table>
             </div>
@@ -1381,6 +1403,7 @@ const ReportsPage: React.FC = () => {
           font-size: 10px;
           line-height: 1.3;
           background: #f9f9f9;
+          white-space: pre-line;
         }
             .modal-cell .field-label { 
               font-weight: normal; 
@@ -1647,7 +1670,7 @@ const ReportsPage: React.FC = () => {
                   <td colspan="11" class="notes-header-cell">NOTES</td>
                 </tr>
                 <tr class="notes-content-row">
-                  <td colspan="11" class="notes-content-cell">${item.notes || 'None'}</td>
+                  <td colspan="11" class="notes-content-cell">${escapeHtml(notesForPrint(item.notes) || 'None')}</td>
                 </tr>
               </table>
             </div>
@@ -1841,14 +1864,12 @@ const ReportsPage: React.FC = () => {
           shotPptText = '';
         }
         
-        // Clean up notes for display
+        // Clean up notes for display (preserve line breaks from Excel/editor)
         let notesText = '';
         if (item.notes) {
-          // Remove HTML tags and clean up the notes
-          const cleanNotes = item.notes.replace(/<[^>]*>/g, '').trim();
-          if (cleanNotes && cleanNotes.length > 0 && 
-              cleanNotes !== 'None' && cleanNotes !== 'null' && cleanNotes !== 'undefined') {
-            notesText = cleanNotes;
+          const cleaned = notesForPrint(item.notes);
+          if (cleaned && cleaned !== 'None' && cleaned !== 'null' && cleaned !== 'undefined') {
+            notesText = escapeHtml(cleaned);
           }
         }
         

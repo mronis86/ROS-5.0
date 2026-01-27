@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
+import { ActiveViewersProvider } from './contexts/ActiveViewersContext';
 import AuthGuard from './components/AuthGuard';
 import AppHeader from './components/AppHeader';
 import EventListPage from './pages/EventListPage';
@@ -35,6 +36,7 @@ function AppContent() {
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
 
   return (
+    <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && <AppHeader />}
@@ -65,6 +67,7 @@ function AppContent() {
         <Route path="/google-sheets-vmix" element={<GoogleSheetsVMIXPage />} />
       </Routes>
     </div>
+    </ActiveViewersProvider>
   );
 }
 

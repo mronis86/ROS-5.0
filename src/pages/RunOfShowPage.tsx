@@ -7,6 +7,7 @@ import { changeLogService, LocalChange } from '../services/changeLogService';
 import { NeonBackupService, BackupData } from '../services/neon-backup-service';
 
 import { useAuth } from '../contexts/AuthContext';
+import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import RoleSelectionModal from '../components/RoleSelectionModal';
@@ -671,6 +672,7 @@ const RunOfShowPage: React.FC = () => {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [showOSCModal, setShowOSCModal] = useState(false);
   const [showDisplayModal, setShowDisplayModal] = useState(false);
+  const [showViewersModal, setShowViewersModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   const [showAgendaImportModal, setShowAgendaImportModal] = useState(false);
@@ -732,7 +734,9 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(`followEnabled_${event?.id}`, isFollowEnabled.toString());
   }, [isFollowEnabled, event?.id]);
-  
+
+  const { viewers, setViewers } = useActiveViewers();
+
   // Scroll to active item when activeItemId changes and follow is enabled
   useEffect(() => {
     if (isFollowEnabled && activeItemId) {
@@ -4589,6 +4593,15 @@ const RunOfShowPage: React.FC = () => {
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
+  // Convert plain-text newlines to <br> for contenteditable (e.g. Excel-imported notes)
+  const notesForEditor = (raw: string) => {
+    if (!raw) return '';
+    return String(raw)
+      .replace(/\r\n/g, '<br>')
+      .replace(/\r/g, '<br>')
+      .replace(/\n/g, '<br>');
+  };
+
   // Initialize temp content when modal opens
   useEffect(() => {
     if (showNotesModal && editingNotesItem !== null) {
@@ -4596,11 +4609,11 @@ const RunOfShowPage: React.FC = () => {
       if (editor) {
         if (editingNotesItem === -1) {
           // Editing modal form notes
-          editor.innerHTML = modalForm.notes || '';
+          editor.innerHTML = notesForEditor(modalForm.notes || '');
         } else {
           // Editing existing schedule item notes
           const item = schedule.find(item => item.id === editingNotesItem);
-          editor.innerHTML = item?.notes || '';
+          editor.innerHTML = notesForEditor(item?.notes || '');
         }
       }
     }
@@ -5386,6 +5399,20 @@ const RunOfShowPage: React.FC = () => {
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+        if (connected) {
+          if (user && event?.id) {
+            socketClient.sendPresence(event.id, {
+              userId: user.id,
+              userName: user.full_name || user.email || '',
+              userRole: user.role || 'VIEWER',
+            });
+          }
+        } else {
+          setViewers([]);
+        }
+      },
+      onPresenceUpdated: (list) => {
+        setViewers(list);
       },
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');
@@ -5527,8 +5554,9 @@ const RunOfShowPage: React.FC = () => {
       // sseClient.disconnect(event.id); // DISABLED: SSE causes excessive API calls
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      setViewers([]);
     };
-  }, [event?.id]);
+  }, [event?.id, user]);
 
   // Real-time countdown timer for running timers (ClockPage style)
   // Uses clock offset to sync with server time
@@ -8657,6 +8685,20 @@ const RunOfShowPage: React.FC = () => {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                         Reports and Printing
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMenuDropdown(false);
+                          setShowViewersModal(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                        title="View who is viewing this event"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        Viewers ({viewers.length})
                       </button>
                       <button
                         onClick={() => {
@@ -13055,6 +13097,48 @@ const RunOfShowPage: React.FC = () => {
         onImport={handleExcelImport}
         onDeleteAll={handleDeleteAllScheduleItems}
       />
+
+      {/* Viewers modal – who's viewing this event */}
+      {showViewersModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
+          onClick={() => setShowViewersModal(false)}
+        >
+          <div
+            className="bg-slate-800 rounded-lg shadow-xl border border-slate-600 w-full max-w-md max-h-[70vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-slate-600 flex justify-between items-center shrink-0">
+              <h2 className="text-lg font-semibold text-white">
+                Viewing this event ({viewers.length})
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowViewersModal(false)}
+                className="text-slate-400 hover:text-white text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <ul className="space-y-3">
+                {viewers.map((v) => (
+                  <li
+                    key={v.userId}
+                    className="flex items-center justify-between py-2 px-3 rounded-md bg-slate-700/50 border border-slate-600"
+                  >
+                    <span className="text-white font-medium">{v.userName}</span>
+                    <span className="text-slate-400 text-sm">{v.userRole}</span>
+                  </li>
+                ))}
+              </ul>
+              {viewers.length === 0 && (
+                <p className="text-slate-400 text-sm text-center py-4">No one else is viewing this event.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
