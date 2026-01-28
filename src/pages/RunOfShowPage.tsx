@@ -5401,11 +5401,12 @@ const RunOfShowPage: React.FC = () => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
         if (connected) {
           if (user && event?.id) {
-            console.log(`👁️ Presence: sending presenceJoin for ${user.full_name || user.email} (${user.role})`);
+            const role = currentUserRole || 'VIEWER';
+            console.log(`👁️ Presence: sending presenceJoin for ${user.full_name || user.email} (${role})`);
             socketClient.sendPresence(String(event.id), {
               userId: user.id,
               userName: user.full_name || user.email || '',
-              userRole: user.role || 'VIEWER',
+              userRole: role,
             });
           } else {
             console.log(`👁️ Presence: skipped (no user or event: user=${!!user}, eventId=${event?.id})`);
@@ -5561,6 +5562,18 @@ const RunOfShowPage: React.FC = () => {
       setViewers([]);
     };
   }, [event?.id, user]);
+
+  // Re-send presence when currentUserRole changes (so Viewers modal shows correct role)
+  useEffect(() => {
+    if (!event?.id || !user || !socketClient.isConnected()) return;
+    const role = currentUserRole || 'VIEWER';
+    console.log(`👁️ Presence: re-sending (role changed to ${role})`);
+    socketClient.sendPresence(String(event.id), {
+      userId: user.id,
+      userName: user.full_name || user.email || '',
+      userRole: role,
+    });
+  }, [currentUserRole, event?.id, user]);
 
   // Real-time countdown timer for running timers (ClockPage style)
   // Uses clock offset to sync with server time

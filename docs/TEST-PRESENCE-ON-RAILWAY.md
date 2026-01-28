@@ -68,7 +68,21 @@ VITE_API_BASE_URL=https://ros-50-production.up.railway.app
 
 ---
 
-## 5. How to Test Presence
+## 5. Local vs Netlify Must Use the **Same** Backend
+
+Presence is **in-memory per API server**. If local dev uses **localhost:3001** and Netlify uses **Railway**, they connect to **different** backends and **will never see each other** in Viewers.
+
+- **To have local + Netlify see each other:** Run local React with **Railway** as the API:
+  - Create `.env.local` (or set env before `npm run dev`):
+    ```bash
+    VITE_API_BASE_URL=https://ros-50-production.up.railway.app
+    ```
+  - Restart `npm run dev`. Both local and Netlify will hit Railway; presence is shared.
+- **Local-only testing:** Use local api-server (`node api-server.js` on 3001). Only clients pointing at localhost will see each other.
+
+---
+
+## 6. How to Test Presence
 
 1. Open your **production** site (Netlify URL) in a browser.  
 2. Sign in (email + name).  
@@ -85,11 +99,12 @@ VITE_API_BASE_URL=https://ros-50-production.up.railway.app
 
 ---
 
-## 6. If It Doesn’t Work
+## 7. If It Doesn’t Work
 
 - **Viewers always 0 or only you**  
   - Confirm both frontend and API are **deployed** (Railway + Netlify both successful).  
   - Confirm the **production** app is using the **Railway** API (`VITE_API_BASE_URL` and socket default).  
+  - **Local + Netlify:** If testing both, **local must use Railway** too (see §5). Otherwise they use different backends and won't see each other.  
   - Try a **hard refresh** (or incognito) to avoid old JS.
 
 - **Socket / connection errors**  
