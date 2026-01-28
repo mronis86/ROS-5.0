@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState } from 'react';
 export interface ActiveViewer {
   userId: string;
   userName: string;
+  userEmail: string;
   userRole: string;
 }
 

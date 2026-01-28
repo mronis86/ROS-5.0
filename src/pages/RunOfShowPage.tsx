@@ -67,6 +67,16 @@ const RunOfShowPage: React.FC = () => {
   // Authentication state
   const { user, loading: authLoading } = useAuth();
   const [currentUserRole, setCurrentUserRole] = useState<'VIEWER' | 'EDITOR' | 'OPERATOR'>('VIEWER');
+
+  // Presence: robust name/email from user (auth-service, user_metadata, primaryEmail, etc.)
+  const getPresenceUserFields = (u: typeof user) => {
+    if (!u) return { userName: '', userEmail: '' };
+    const ua = u as { full_name?: string; email?: string; user_metadata?: { full_name?: string; email?: string }; primaryEmail?: string };
+    return {
+      userName: ua.full_name || ua.email || ua.user_metadata?.full_name || ua.primaryEmail || 'Unknown',
+      userEmail: ua.email || ua.user_metadata?.email || ua.primaryEmail || '',
+    };
+  };
   const [showRoleChangeModal, setShowRoleChangeModal] = useState(false);
   // Enhanced change log with local buffer and API sync
   const [showChangeLog, setShowChangeLog] = useState(false);
@@ -5402,10 +5412,12 @@ const RunOfShowPage: React.FC = () => {
         if (connected) {
           if (user && event?.id) {
             const role = currentUserRole || 'VIEWER';
-            console.log(`👁️ Presence: sending presenceJoin for ${user.full_name || user.email} (${role})`);
+            const { userName, userEmail } = getPresenceUserFields(user);
+            console.log(`👁️ Presence: sending presenceJoin for ${userName} (${userEmail || 'no email'}) role=${role}`);
             socketClient.sendPresence(String(event.id), {
               userId: user.id,
-              userName: user.full_name || user.email || '',
+              userName,
+              userEmail,
               userRole: role,
             });
           } else {
@@ -5416,8 +5428,14 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onPresenceUpdated: (list) => {
-        console.log(`👁️ Presence: received presenceUpdated, viewers=${list?.length ?? 0}`, list);
-        setViewers(list ?? []);
+        const normalized = (list ?? []).map((v: Record<string, unknown>) => ({
+          userId: String(v.userId ?? v.user_id ?? ''),
+          userName: String(v.userName ?? v.user_name ?? ''),
+          userEmail: String(v.userEmail ?? v.user_email ?? ''),
+          userRole: String(v.userRole ?? v.user_role ?? 'VIEWER'),
+        }));
+        console.log(`👁️ Presence: received presenceUpdated, viewers=${normalized.length}`, normalized);
+        setViewers(normalized);
       },
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');
@@ -5567,10 +5585,12 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     if (!event?.id || !user || !socketClient.isConnected()) return;
     const role = currentUserRole || 'VIEWER';
+    const { userName, userEmail } = getPresenceUserFields(user);
     console.log(`👁️ Presence: re-sending (role changed to ${role})`);
     socketClient.sendPresence(String(event.id), {
       userId: user.id,
-      userName: user.full_name || user.email || '',
+      userName,
+      userEmail,
       userRole: role,
     });
   }, [currentUserRole, event?.id, user]);
@@ -13118,41 +13138,55 @@ const RunOfShowPage: React.FC = () => {
       {/* Viewers modal – who's viewing this event */}
       {showViewersModal && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
           onClick={() => setShowViewersModal(false)}
         >
           <div
-            className="bg-slate-800 rounded-lg shadow-xl border border-slate-600 w-full max-w-md max-h-[70vh] flex flex-col"
+            className="bg-slate-800 rounded-lg shadow-xl border border-slate-600 w-full max-w-2xl flex flex-col"
+            style={{ maxHeight: 'min(85vh, 440px)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-6 py-4 border-b border-slate-600 flex justify-between items-center shrink-0">
-              <h2 className="text-lg font-semibold text-white">
+            <div className="px-5 py-3 border-b border-slate-600 flex justify-between items-center shrink-0">
+              <h2 className="text-base font-semibold text-white">
                 Viewing this event ({viewers.length})
               </h2>
               <button
                 type="button"
                 onClick={() => setShowViewersModal(false)}
-                className="text-slate-400 hover:text-white text-2xl leading-none"
+                className="text-slate-400 hover:text-white text-xl leading-none"
               >
                 ×
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <ul className="space-y-3">
-                {viewers.map((v) => (
-                  <li
-                    key={v.userId}
-                    className="flex items-center justify-between py-2 px-3 rounded-md bg-slate-700/50 border border-slate-600"
-                  >
-                    <span className="text-white font-medium">{v.userName}</span>
-                    <span className="text-slate-400 text-sm">{v.userRole}</span>
-                  </li>
-                ))}
-              </ul>
-              {viewers.length === 0 && (
-                <p className="text-slate-400 text-sm text-center py-4">No one else is viewing this event.</p>
-              )}
-            </div>
+            {viewers.length === 0 ? (
+              <p className="text-slate-400 text-sm text-center py-8 px-5 shrink-0">No one else is viewing this event.</p>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                <table className="w-full table-fixed border-collapse text-left">
+                  <colgroup>
+                    <col style={{ width: '35%' }} />
+                    <col style={{ width: '50%' }} />
+                    <col style={{ width: '15%' }} />
+                  </colgroup>
+                  <thead className="sticky top-0 z-10 bg-slate-800 border-b border-slate-600">
+                    <tr>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-400 uppercase tracking-wider">Name</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-400 uppercase tracking-wider">Email</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Role</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewers.map((v) => (
+                      <tr key={v.userId} className="border-b border-slate-700 hover:bg-slate-700/30">
+                        <td className="px-4 py-2.5 text-white font-medium align-top overflow-hidden truncate" title={v.userName || undefined}>{v.userName || '—'}</td>
+                        <td className="px-4 py-2.5 text-slate-400 text-sm align-top overflow-hidden truncate" title={v.userEmail || undefined}>{v.userEmail || '—'}</td>
+                        <td className="px-4 py-2.5 text-slate-400 text-sm text-right align-top">{v.userRole}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}

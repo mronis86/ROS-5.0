@@ -24,7 +24,7 @@ interface SocketCallbacks {
   onOvertimeReset?: (data: any) => void; // NEW! For overtime reset
   onShowStartOvertimeUpdate?: (data: any) => void; // NEW! For show start overtime
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
-  onPresenceUpdated?: (viewers: { userId: string; userName: string; userRole: string }[]) => void;
+  onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
 }
 
 class SocketClient {
@@ -207,9 +207,15 @@ class SocketClient {
     }
   }
 
-  sendPresence(eventId: string, user: { userId: string; userName: string; userRole: string }) {
+  sendPresence(eventId: string, user: { userId: string; userName: string; userEmail: string; userRole: string }) {
     if (this.socket && eventId) {
-      const payload = { eventId: String(eventId), userId: user.userId, userName: user.userName || '', userRole: user.userRole || 'VIEWER' };
+      const payload = {
+        eventId: String(eventId),
+        userId: user.userId,
+        userName: user.userName || '',
+        userEmail: user.userEmail || '',
+        userRole: user.userRole || 'VIEWER',
+      };
       this.socket.emit('presenceJoin', payload);
     }
   }

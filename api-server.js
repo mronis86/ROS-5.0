@@ -2474,7 +2474,7 @@ const socketToEvent = new Map();   // socketId -> eventId (for cleanup on discon
 
 function broadcastPresence(eventId) {
   const m = presenceByEvent.get(eventId);
-  const list = m ? Array.from(m.values()).map((v) => ({ userId: v.userId, userName: v.userName, userRole: v.userRole })) : [];
+  const list = m ? Array.from(m.values()).map((v) => ({ userId: v.userId, userName: v.userName, userEmail: v.userEmail || '', userRole: v.userRole })) : [];
   io.to(`event:${eventId}`).emit('update', { type: 'presenceUpdated', data: list });
 }
 
@@ -2500,10 +2500,10 @@ io.on('connection', (socket) => {
 
   // Presence: user viewing Run of Show for this event
   socket.on('presenceJoin', (data) => {
-    const { eventId, userId, userName, userRole } = data || {};
+    const { eventId, userId, userName, userEmail, userRole } = data || {};
     if (!eventId || !userId) return;
     if (!presenceByEvent.has(eventId)) presenceByEvent.set(eventId, new Map());
-    presenceByEvent.get(eventId).set(socket.id, { userId, userName: userName || '', userRole: userRole || 'VIEWER' });
+    presenceByEvent.get(eventId).set(socket.id, { userId, userName: userName || '', userEmail: userEmail || '', userRole: userRole || 'VIEWER' });
     socketToEvent.set(socket.id, eventId);
     console.log(`👁️ Presence: ${userName || userId} joined event:${eventId}`);
     broadcastPresence(eventId);
