@@ -67,6 +67,11 @@ const RunOfShowPage: React.FC = () => {
   // Authentication state
   const { user, loading: authLoading } = useAuth();
   const [currentUserRole, setCurrentUserRole] = useState<'VIEWER' | 'EDITOR' | 'OPERATOR'>('VIEWER');
+  const currentUserRoleRef = useRef<'VIEWER' | 'EDITOR' | 'OPERATOR'>(currentUserRole);
+
+  useEffect(() => {
+    currentUserRoleRef.current = currentUserRole;
+  }, [currentUserRole]);
 
   // Presence: robust name/email from user (auth-service, user_metadata, primaryEmail, etc.)
   const getPresenceUserFields = (u: typeof user) => {
@@ -1109,6 +1114,13 @@ const RunOfShowPage: React.FC = () => {
     }
 
     if (user && event?.id) {
+      // Set role immediately from navigation state when launching from EventListPage (role modal).
+      // Ensures presence sends correct role on socket connect before async API resolves.
+      if (userRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(userRole)) {
+        setCurrentUserRole(userRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
+        console.log('✅ Using role from navigation state (immediate):', userRole);
+      }
+
       // First priority: check API for the most recent role (this will have the latest changes)
       const loadRoleFromAPI = async () => {
         try {
@@ -5411,7 +5423,7 @@ const RunOfShowPage: React.FC = () => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
         if (connected) {
           if (user && event?.id) {
-            const role = currentUserRole || 'VIEWER';
+            const role = currentUserRoleRef.current || 'VIEWER';
             const { userName, userEmail } = getPresenceUserFields(user);
             console.log(`👁️ Presence: sending presenceJoin for ${userName} (${userEmail || 'no email'}) role=${role}`);
             socketClient.sendPresence(String(event.id), {
@@ -13142,8 +13154,8 @@ const RunOfShowPage: React.FC = () => {
           onClick={() => setShowViewersModal(false)}
         >
           <div
-            className="bg-slate-800 rounded-lg shadow-xl border border-slate-600 w-full max-w-2xl flex flex-col"
-            style={{ maxHeight: 'min(85vh, 440px)' }}
+            className="bg-slate-800 rounded-lg shadow-xl border border-slate-600 w-full max-w-2xl flex flex-col viewers-modal-fixed"
+            style={{ height: 'min(440px, 85vh)' }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-5 py-3 border-b border-slate-600 flex justify-between items-center shrink-0">
@@ -13158,10 +13170,10 @@ const RunOfShowPage: React.FC = () => {
                 ×
               </button>
             </div>
-            {viewers.length === 0 ? (
-              <p className="text-slate-400 text-sm text-center py-8 px-5 shrink-0">No one else is viewing this event.</p>
-            ) : (
-              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-scroll overscroll-contain viewers-modal-scroll">
+              {viewers.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8 px-5">No one else is viewing this event.</p>
+              ) : (
                 <table className="w-full table-fixed border-collapse text-left">
                   <colgroup>
                     <col style={{ width: '35%' }} />
@@ -13185,8 +13197,8 @@ const RunOfShowPage: React.FC = () => {
                     ))}
                   </tbody>
                 </table>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}
