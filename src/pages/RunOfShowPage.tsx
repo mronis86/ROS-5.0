@@ -5401,18 +5401,22 @@ const RunOfShowPage: React.FC = () => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
         if (connected) {
           if (user && event?.id) {
-            socketClient.sendPresence(event.id, {
+            console.log(`👁️ Presence: sending presenceJoin for ${user.full_name || user.email} (${user.role})`);
+            socketClient.sendPresence(String(event.id), {
               userId: user.id,
               userName: user.full_name || user.email || '',
               userRole: user.role || 'VIEWER',
             });
+          } else {
+            console.log(`👁️ Presence: skipped (no user or event: user=${!!user}, eventId=${event?.id})`);
           }
         } else {
           setViewers([]);
         }
       },
       onPresenceUpdated: (list) => {
-        setViewers(list);
+        console.log(`👁️ Presence: received presenceUpdated, viewers=${list?.length ?? 0}`, list);
+        setViewers(list ?? []);
       },
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');

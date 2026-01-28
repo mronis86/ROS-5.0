@@ -61,11 +61,10 @@ class SocketClient {
     this.socket.on('connect', () => {
       console.log(`✅ Socket.IO connected for event: ${eventId}`);
       this.reconnectAttempts = 0;
-      this.callbacks.onConnectionChange?.(true);
-      
-      // Join the event room
+      // Join the event room FIRST so we're in the room before presenceJoin broadcast
       this.socket?.emit('joinEvent', eventId);
-      
+      this.callbacks.onConnectionChange?.(true);
+
       // CRITICAL: Immediately sync current state on connect/reconnect
       this.performInitialSync(eventId);
     });
@@ -130,6 +129,7 @@ class SocketClient {
           this.callbacks.onStartCueSelectionUpdate?.(message.data);
           break;
         case 'presenceUpdated':
+          console.log('📡 SocketClient: presenceUpdated', message.data?.length ?? 0, 'viewers');
           this.callbacks.onPresenceUpdated?.(message.data || []);
           break;
         default:
@@ -209,12 +209,8 @@ class SocketClient {
 
   sendPresence(eventId: string, user: { userId: string; userName: string; userRole: string }) {
     if (this.socket && eventId) {
-      this.socket.emit('presenceJoin', {
-        eventId,
-        userId: user.userId,
-        userName: user.userName || '',
-        userRole: user.userRole || 'VIEWER',
-      });
+      const payload = { eventId: String(eventId), userId: user.userId, userName: user.userName || '', userRole: user.userRole || 'VIEWER' };
+      this.socket.emit('presenceJoin', payload);
     }
   }
 
