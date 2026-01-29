@@ -1,0 +1,383 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Database, Server, Zap, Users } from 'lucide-react';
+import { getApiBaseUrl } from '../services/api-client';
+
+const ADMIN_PASSWORD = '1615';
+const ADMIN_UNLOCK_KEY = 'ros_admin_unlocked';
+
+interface ServiceStatus {
+  connected?: boolean;
+  configured?: boolean;
+  label: string;
+  dbName?: string | null;
+  nodeVersion?: string;
+  uptimeSeconds?: number;
+  env?: string;
+}
+
+interface HealthData {
+  status: string;
+  timestamp?: string;
+  dbConnected?: boolean;
+  database?: string;
+  upstashConfigured?: boolean;
+  error?: string;
+  services?: {
+    neon?: ServiceStatus;
+    railway?: ServiceStatus;
+    upstash?: ServiceStatus;
+  };
+}
+
+const SERVICE_CONFIG = [
+  { key: 'neon' as const, icon: Database, label: 'Neon', desc: 'Database', statusKey: 'connected' as const, iconColor: 'teal' as const },
+  { key: 'railway' as const, icon: Server, label: 'Railway', desc: 'API', statusKey: 'connected' as const, iconColor: 'violet' as const },
+  { key: 'upstash' as const, icon: Zap, label: 'Upstash', desc: 'Redis / KV', statusKey: 'configured' as const, iconColor: 'amber' as const },
+];
+
+function iconColorClasses(ok: boolean, color: 'teal' | 'violet' | 'amber'): string {
+  if (!ok) return 'bg-slate-700/80 text-slate-400';
+  return color === 'teal' ? 'bg-teal-500/20 text-teal-400' : color === 'violet' ? 'bg-violet-500/20 text-violet-400' : 'bg-amber-500/20 text-amber-400';
+}
+
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return `${h}h ${mm}m`;
+}
+
+interface PresenceViewer {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: string;
+}
+
+interface PresenceEvent {
+  eventId: string;
+  eventName: string;
+  viewers: PresenceViewer[];
+}
+
+export default function AdminPage() {
+  const [unlocked, setUnlocked] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthData | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [presence, setPresence] = useState<PresenceEvent[]>([]);
+  const [presenceLoading, setPresenceLoading] = useState(false);
+  const [presenceError, setPresenceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
+  }, []);
+
+  const fetchHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/health`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setHealth({
+          status: 'unhealthy',
+          error: data.error || `HTTP ${res.status}`,
+          timestamp: (data as any).timestamp,
+          services: data.services ?? {
+            neon: { connected: false, label: 'Neon' },
+            railway: { connected: true, label: 'Railway' },
+            upstash: { configured: !!(data as any).upstashConfigured, label: 'Upstash' },
+          },
+        });
+        return;
+      }
+      if (!data.services) {
+        data.services = {
+          neon: { connected: !!data.dbConnected, label: 'Neon', dbName: null },
+          railway: { connected: data.status === 'healthy', label: 'Railway', nodeVersion: undefined, uptimeSeconds: undefined, env: undefined },
+          upstash: { configured: !!data.upstashConfigured, label: 'Upstash' },
+        };
+      }
+      setHealth(data);
+    } catch (e) {
+      setHealth({
+        status: 'unhealthy',
+        error: e instanceof Error ? e.message : 'Request failed',
+        services: {
+          neon: { connected: false, label: 'Neon' },
+          railway: { connected: false, label: 'Railway' },
+          upstash: { configured: false, label: 'Upstash' },
+        },
+      });
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
+
+  const fetchPresence = useCallback(async () => {
+    setPresenceLoading(true);
+    setPresenceError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/presence?key=${ADMIN_PASSWORD}`);
+      if (res.status === 401) {
+        setPresenceError('Unauthorized');
+        setPresence([]);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = res.status === 404
+          ? 'Presence endpoint not found (404). Redeploy the API (e.g. Railway) with the latest api-server.js.'
+          : (err.error || `HTTP ${res.status}`);
+        setPresenceError(msg);
+        setPresence([]);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setPresence(Array.isArray(data.events) ? data.events : []);
+    } catch (e) {
+      setPresenceError(e instanceof Error ? e.message : 'Request failed');
+      setPresence([]);
+    } finally {
+      setPresenceLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 30_000);
+    return () => clearInterval(interval);
+  }, [unlocked, fetchHealth]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    fetchPresence();
+    const interval = setInterval(fetchPresence, 15_000);
+    return () => clearInterval(interval);
+  }, [unlocked, fetchPresence]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (password !== ADMIN_PASSWORD) {
+      setError('Invalid password');
+      return;
+    }
+    sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
+    setUnlocked(true);
+    setPassword('');
+  };
+
+  const handleLock = () => {
+    sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
+    setUnlocked(false);
+    setPassword('');
+    setError(null);
+  };
+
+  if (!unlocked) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
+          <h2 className="text-xl font-bold text-white text-center mb-6">
+            Admin
+          </h2>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-slate-300 text-sm font-medium mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                placeholder="Enter password"
+                autoFocus
+              />
+            </div>
+            {error && (
+              <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-2 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+            <button
+              type="submit"
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
+            >
+              Continue
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800">
+      <header className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+        <h1 className="text-xl font-bold text-white">Admin</h1>
+        <button
+          type="button"
+          onClick={handleLock}
+          className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-md transition-colors"
+        >
+          Lock
+        </button>
+      </header>
+      <main className="p-6 max-w-4xl mx-auto space-y-6">
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <h2 className="text-lg font-semibold text-white">Services</h2>
+            <div className="flex items-center gap-3">
+              {health?.timestamp && (
+                <span className="text-slate-500 text-xs tabular-nums">
+                  Updated {new Date(health.timestamp).toLocaleTimeString()}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={fetchHealth}
+                disabled={healthLoading}
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+              >
+                {healthLoading ? 'Checking…' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+          {healthLoading && !health ? (
+            <ul className="divide-y divide-slate-700/80 animate-pulse">
+              {SERVICE_CONFIG.map(({ key }) => (
+                <li key={key} className="py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-slate-700" />
+                    <div className="h-4 w-24 bg-slate-700 rounded" />
+                  </div>
+                  <div className="h-6 w-20 bg-slate-700 rounded-full" />
+                </li>
+              ))}
+            </ul>
+          ) : health?.services ? (
+            <>
+              {health.error && (
+                <div className="mb-4 px-4 py-2 rounded-lg bg-red-900/30 border border-red-800/50 text-red-300 text-sm">
+                  {health.error}
+                </div>
+              )}
+              <ul className="divide-y divide-slate-700/80">
+                {SERVICE_CONFIG.map(({ key, icon: Icon, label, desc, statusKey, iconColor }) => {
+                  const svc = health.services[key];
+                  const ok = svc ? (statusKey === 'connected' ? svc.connected : svc.configured) : false;
+                  const apiBase = key === 'railway' ? getApiBaseUrl() : '';
+                  const statusLabel = statusKey === 'connected'
+                    ? (ok ? 'Connected' : 'Disconnected')
+                    : (ok ? 'Configured' : 'Not configured');
+                  return (
+                    <li key={key} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center ${iconColorClasses(ok, iconColor)}`}>
+                          <Icon className="w-4 h-4" strokeWidth={2} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-baseline gap-2">
+                            <span className="font-semibold text-white">{label}</span>
+                            <span className="text-slate-500 text-sm">{desc}</span>
+                          </div>
+                          {key === 'neon' && svc?.dbName && (
+                            <p className="text-slate-400 text-xs mt-1 font-mono truncate" title={svc.dbName}>DB: {svc.dbName}</p>
+                          )}
+                          {key === 'railway' && (apiBase || svc?.nodeVersion || typeof svc?.uptimeSeconds === 'number' || svc?.env) && (
+                            <p
+                              className="text-slate-400 text-xs mt-1 truncate"
+                              title={[apiBase, svc?.nodeVersion && `Node ${svc.nodeVersion}`, typeof svc?.uptimeSeconds === 'number' && `Uptime ${formatUptime(svc.uptimeSeconds)}`, svc?.env].filter(Boolean).join(' · ')}
+                            >
+                              {apiBase && <span className="font-mono">{apiBase.replace(/^https?:\/\//, '')}</span>}
+                              {svc?.nodeVersion && <span className="ml-2"> · Node {svc.nodeVersion}</span>}
+                              {typeof svc?.uptimeSeconds === 'number' && <span> · Uptime {formatUptime(svc.uptimeSeconds)}</span>}
+                              {svc?.env && <span> · {svc.env}</span>}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${ok ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700/80 text-slate-400'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                        {statusLabel}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          ) : (
+            <p className="text-slate-400 text-sm">No status yet. Click Refresh.</p>
+          )}
+        </section>
+
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Users className="w-5 h-5 text-slate-400" />
+              Events & users
+            </h2>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={fetchPresence}
+                disabled={presenceLoading}
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+              >
+                {presenceLoading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+          <p className="text-slate-500 text-sm mb-4">Active events and viewers (refreshes every 15s)</p>
+          {presenceError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              Error loading presence: {presenceError}
+            </div>
+          )}
+          {presenceLoading && presence.length === 0 && !presenceError ? (
+            <p className="text-slate-400 text-sm">Loading…</p>
+          ) : presence.length === 0 ? (
+            <p className="text-slate-400 text-sm">
+              No active events or viewers. Viewers appear when someone has Run of Show open for an event (same API as this admin page).
+            </p>
+          ) : (
+            <ul className="space-y-4">
+              {presence.map((ev) => (
+                <li key={ev.eventId} className="rounded-lg border border-slate-700/80 bg-slate-800/60 p-4">
+                  <div className="font-medium text-white mb-2">
+                    {ev.eventName}
+                    <span className="text-slate-500 font-normal text-sm ml-2">({ev.eventId})</span>
+                  </div>
+                  {ev.viewers.length === 0 ? (
+                    <p className="text-slate-500 text-sm">No viewers</p>
+                  ) : (
+                    <ul className="divide-y divide-slate-700/60">
+                      {ev.viewers.map((v) => (
+                        <li key={v.userId} className="py-2 first:pt-0 last:pb-0 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                          <span className="text-white font-medium">{v.userName || v.userEmail || v.userId}</span>
+                          {v.userEmail && v.userName !== v.userEmail && (
+                            <span className="text-slate-400 truncate">{v.userEmail}</span>
+                          )}
+                          <span className="text-slate-500 text-xs px-2 py-0.5 rounded bg-slate-700/80">{v.userRole}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}

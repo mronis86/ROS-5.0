@@ -298,21 +298,83 @@ const agendaUpload = multer({
 
 // Health check endpoint - lightweight version to reduce Neon queries
 app.get('/health', async (req, res) => {
+  const upstashConfigured = !!(UPSTASH_URL && UPSTASH_TOKEN);
+  const timestamp = new Date().toISOString();
+  const railwayMeta = {
+    nodeVersion: process.version,
+    uptimeSeconds: Math.floor(process.uptime()),
+    env: process.env.NODE_ENV || 'development'
+  };
   try {
-    // Use a lightweight query that doesn't prevent auto-suspend
-    const result = await pool.query('SELECT 1 as health');
-    res.json({ 
-      status: 'healthy', 
-      timestamp: new Date().toISOString(),
-      dbConnected: result.rows[0].health === 1,
+    const result = await pool.query('SELECT 1 AS health, current_database() AS name');
+    const neonConnected = result.rows[0].health === 1;
+    const dbName = result.rows[0].name || null;
+    res.json({
+      status: 'healthy',
+      timestamp,
+      dbConnected: neonConnected,
       database: 'connected',
-      upstashConfigured: !!(UPSTASH_URL && UPSTASH_TOKEN)
+      upstashConfigured,
+      services: {
+        neon: { connected: neonConnected, label: 'Neon', dbName },
+        railway: { connected: true, label: 'Railway', ...railwayMeta },
+        upstash: { configured: upstashConfigured, label: 'Upstash' }
+      }
     });
   } catch (error) {
-    res.status(500).json({ 
-      status: 'unhealthy', 
-      error: error.message 
+    res.status(500).json({
+      status: 'unhealthy',
+      error: error.message,
+      timestamp,
+      dbConnected: false,
+      upstashConfigured,
+      services: {
+        neon: { connected: false, label: 'Neon', dbName: null },
+        railway: { connected: true, label: 'Railway', ...railwayMeta },
+        upstash: { configured: upstashConfigured, label: 'Upstash' }
+      }
     });
+  }
+});
+
+// Admin presence: active events and viewers (protected by ?key=1615)
+// Registered early with other /api routes. Handler uses presenceByEvent (defined in Socket section).
+app.get('/api/admin/presence', async (req, res) => {
+  if (req.query.key !== '1615') {
+    console.log('[admin presence] 401 Unauthorized (missing or wrong key)');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const eventIds = Array.from(presenceByEvent.keys());
+    console.log('[admin presence] eventIds:', eventIds.length, eventIds.slice(0, 5));
+    if (eventIds.length === 0) {
+      return res.json({ events: [] });
+    }
+    const ids = eventIds.map(String);
+    const r = await pool.query(
+      'SELECT id, name FROM calendar_events WHERE id::text = ANY($1)',
+      [ids]
+    );
+    const idToName = new Map(r.rows.map((row) => [String(row.id), row.name || 'Unknown']));
+    const events = eventIds.map((origId) => {
+      const eid = String(origId);
+      const m = presenceByEvent.get(origId);
+      const viewers = m ? Array.from(m.values()).map((v) => ({
+        userId: v.userId,
+        userName: v.userName || '',
+        userEmail: v.userEmail || '',
+        userRole: v.userRole || 'VIEWER'
+      })) : [];
+      return {
+        eventId: eid,
+        eventName: idToName.get(eid) || `Event ${eid}`,
+        viewers
+      };
+    });
+    res.json({ events });
+  } catch (err) {
+    console.error('[admin presence] error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
