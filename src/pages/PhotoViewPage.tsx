@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 // import { supabase } from '../services/supabase'; // REMOVED: Using WebSocket-only approach
@@ -32,19 +32,86 @@ interface ScheduleItem {
 
 const PhotoViewPage: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const urlParams = new URLSearchParams(location.search);
-  const eventId = urlParams.get('eventId');
-  const eventName = urlParams.get('eventName');
-  const eventDate = urlParams.get('eventDate');
-  const eventLocation = urlParams.get('eventLocation');
-  
-  const event: Event = location.state?.event || {
-    id: eventId || '',
-    name: eventName || 'Current Event',
-    date: eventDate || '',
-    location: eventLocation || '',
-    numberOfDays: 1
+  const eventIdParam = urlParams.get('eventId');
+  const eventNameParam = urlParams.get('eventName');
+  const eventDateParam = urlParams.get('eventDate');
+  const eventLocationParam = urlParams.get('eventLocation');
+
+  const initialEvent = (): Event | null => {
+    const fromState = location.state?.event as Event | undefined;
+    if (fromState?.id) return fromState;
+    if (eventIdParam) {
+      return {
+        id: eventIdParam,
+        name: eventNameParam || 'Current Event',
+        date: eventDateParam || '',
+        location: eventLocationParam || '',
+        numberOfDays: 1
+      };
+    }
+    return null;
   };
+
+  const [event, setEvent] = useState<Event | null>(initialEvent);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+
+  // Sync event from URL/location when navigating externally (e.g. from Run of Show link)
+  useEffect(() => {
+    const fromState = location.state?.event as Event | undefined;
+    if (fromState?.id && fromState.id !== event?.id) {
+      setEvent(fromState);
+      setSelectedDay(1);
+    } else if (eventIdParam && (!event?.id || event.id !== eventIdParam)) {
+      setEvent({
+        id: eventIdParam,
+        name: eventNameParam || 'Current Event',
+        date: eventDateParam || '',
+        location: eventLocationParam || '',
+        numberOfDays: 1
+      });
+      setSelectedDay(1);
+    }
+  }, [eventIdParam, eventNameParam, eventDateParam, eventLocationParam, location.state?.event, event?.id]);
+
+  // Fetch events list for the event selector dropdown
+  useEffect(() => {
+    const loadEvents = async () => {
+      try {
+        setEventsLoading(true);
+        const calendarEvents = await DatabaseService.getCalendarEvents();
+        const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
+          const dateObj = new Date(calEvent.date);
+          const simpleDate = dateObj.toISOString().split('T')[0];
+          return {
+            id: calEvent.id || '',
+            name: calEvent.name,
+            date: simpleDate,
+            location: calEvent.schedule_data?.location || '',
+            numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+            timezone: calEvent.schedule_data?.timezone,
+            created_at: calEvent.created_at,
+            updated_at: calEvent.updated_at
+          };
+        });
+        mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        setEvents(mapped.filter((e) => e.id));
+      } catch (e) {
+        console.warn('PhotoView: Failed to load events for selector:', e);
+        setEvents([]);
+      } finally {
+        setEventsLoading(false);
+      }
+    };
+    loadEvents();
+  }, []);
+
+  const eventId = event?.id ?? eventIdParam ?? null;
+  const eventName = event?.name ?? eventNameParam ?? null;
+  const eventDate = event?.date ?? eventDateParam ?? null;
+  const eventLocation = event?.location ?? eventLocationParam ?? null;
 
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -287,6 +354,14 @@ const PhotoViewPage: React.FC = () => {
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
+  const [selectedDay, setSelectedDay] = useState<number>(1);
+  const [showEventSelector, setShowEventSelector] = useState(false);
+
+  // Filter schedule by selected day (multi-day events)
+  const filteredSchedule = React.useMemo(
+    () => schedule.filter((item) => (item.day || 1) === selectedDay),
+    [schedule, selectedDay]
+  );
 
   // Reset all states function (called from WebSocket events)
   const resetAllStates = async () => {
@@ -1474,16 +1549,17 @@ const PhotoViewPage: React.FC = () => {
       console.log('=== PHOTO VIEW PAGE INITIALIZATION ===');
       
       if (!event?.id && !eventId) {
-        setError('No event selected');
+        setError('');
         setIsLoading(false);
         return;
       }
 
       try {
         // Try to load from Supabase first
-        if (event?.id || eventId) {
-          console.log('🔄 Loading from API for event:', event?.id || eventId);
-          const data = await DatabaseService.getRunOfShowData(event?.id || eventId);
+        const loadId = event?.id || eventId;
+        if (loadId) {
+          console.log('🔄 Loading from API for event:', loadId);
+          const data = await DatabaseService.getRunOfShowData(loadId);
           if (data?.schedule_items) {
             console.log('✅ Loaded from API:', data);
             
@@ -1511,12 +1587,20 @@ const PhotoViewPage: React.FC = () => {
             });
             console.log('📱 PhotoView: First item duration from API:', formattedSchedule[0]?.durationMinutes, 'minutes');
             setSchedule(formattedSchedule);
+            const maxDay = formattedSchedule.length
+              ? Math.max(1, ...formattedSchedule.map((i: { day?: number }) => i.day || 1))
+              : 1;
+            setEvent((prev) =>
+              prev && (prev.numberOfDays ?? 1) <= 1 && maxDay > 1
+                ? { ...prev, numberOfDays: maxDay }
+                : prev
+            );
             
             // Load overtime data
             try {
               console.log('⏰ PhotoView: Loading overtime data...');
-              const overtimeData = await DatabaseService.getOvertimeMinutes(event?.id || eventId);
-              const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event?.id || eventId);
+              const overtimeData = await DatabaseService.getOvertimeMinutes(loadId);
+              const showStartOvertimeData = await DatabaseService.getShowStartOvertime(loadId);
               
               console.log('⏰ PhotoView: Loaded overtime data:', { overtimeData, showStartOvertimeData });
               setOvertimeMinutes(overtimeData);
@@ -1555,8 +1639,8 @@ const PhotoViewPage: React.FC = () => {
         console.log('📱 Falling back to localStorage...');
         let savedSchedule: string | null = null;
         
-        if (event?.id || eventId) {
-          const scheduleKey = `runOfShowSchedule_${event?.id || eventId}`;
+        if (loadId) {
+          const scheduleKey = `runOfShowSchedule_${loadId}`;
           savedSchedule = localStorage.getItem(scheduleKey);
         }
         
@@ -1652,38 +1736,18 @@ const PhotoViewPage: React.FC = () => {
   }, [event?.id, eventId]);
 
 
-  // Get the current item and next 2 items (same logic as Green Room)
+  // Get the current item and next 2 items (same logic as Green Room), filtered by selected day
   const getPreviewItems = () => {
-    // console.log('🔍 getPreviewItems called');
-    // console.log('Schedule length:', schedule.length);
-    // console.log('Active item ID:', activeItemId);
-    // console.log('Active item ID type:', typeof activeItemId);
-    
-    if (schedule.length === 0) {
-      // console.log('No schedule items available');
-      return [];
-    }
-    
-    // Convert both to strings for comparison since activeItemId might be a string
-    const currentIndex = activeItemId ? schedule.findIndex(item => String(item.id) === String(activeItemId)) : -1;
-    // console.log('Current index:', currentIndex);
-    
-    if (currentIndex === -1) {
-      // If no active item or active item not found, show first 3 items
-      // console.log('No active item or not found, showing first 3 items');
-      return schedule.slice(0, 3);
-    }
-
-    // Show current item and next 2 items (up to 3 total)
-    const endIndex = Math.min(currentIndex + 3, schedule.length);
-    const result = schedule.slice(currentIndex, endIndex);
-    // console.log('Showing items from index', currentIndex, 'to', endIndex - 1, ':', result.length, 'items');
-    // console.log('Items:', result.map(item => ({ id: item.id, name: item.segmentName })));
-    return result;
+    if (filteredSchedule.length === 0) return [];
+    const currentIndex = activeItemId
+      ? filteredSchedule.findIndex((item) => String(item.id) === String(activeItemId))
+      : -1;
+    if (currentIndex === -1) return filteredSchedule.slice(0, 3);
+    const endIndex = Math.min(currentIndex + 3, filteredSchedule.length);
+    return filteredSchedule.slice(currentIndex, endIndex);
   };
 
   const previewItems = getPreviewItems();
-  // console.log('Preview items:', previewItems);
 
   // Program type colors
   const programTypeColors: { [key: string]: string } = {
@@ -1778,6 +1842,22 @@ const PhotoViewPage: React.FC = () => {
     }
   };
 
+  const handleEventChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value;
+    if (!id) return;
+    const selected = events.find(ev => ev.id === id);
+    if (!selected) return;
+    setEvent(selected);
+    setSelectedDay(1);
+    setShowEventSelector(false);
+    setError('');
+    setIsLoading(true);
+    navigate(
+      `/photo-view?eventId=${encodeURIComponent(selected.id)}&eventName=${encodeURIComponent(selected.name || '')}&eventDate=${encodeURIComponent(selected.date || '')}&eventLocation=${encodeURIComponent(selected.location || '')}`,
+      { replace: true, state: { event: selected } }
+    );
+  };
+
   return (
     <>
     <div className="min-h-screen bg-slate-900 text-white p-6">
@@ -1789,17 +1869,73 @@ const PhotoViewPage: React.FC = () => {
           <div className="text-sm text-gray-300 mt-1">
             {currentTime.toLocaleTimeString()}
           </div>
-          {/* Notes Toggle Button */}
-          <button
-            onClick={() => setShowNotes(!showNotes)}
-            className={`mt-2 px-2 py-1 text-xs rounded border transition-colors ${
-              showNotes 
-                ? 'bg-blue-600 border-blue-500 text-white' 
-                : 'bg-slate-700 border-slate-600 text-gray-300 hover:bg-slate-600'
-            }`}
-          >
-            {showNotes ? 'Hide Notes' : 'Show Notes'}
-          </button>
+          <div className="flex flex-wrap items-center gap-3 mt-2">
+            {events.length > 1 && (
+              <>
+                {showEventSelector ? (
+                  <>
+                    <label className="text-sm text-gray-400">Event:</label>
+                    <select
+                      value={event?.id ?? ''}
+                      onChange={handleEventChange}
+                      className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[180px] max-w-[280px]"
+                      disabled={eventsLoading}
+                      title="Select which event to view"
+                    >
+                      <option value="">{eventsLoading ? 'Loading…' : 'Select event…'}</option>
+                      {events.map((ev) => (
+                        <option key={ev.id} value={ev.id}>
+                          {ev.name} {ev.date ? `(${ev.date})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setShowEventSelector(false)}
+                      className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors"
+                      title="Hide event selector"
+                    >
+                      Hide
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowEventSelector(true)}
+                    className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors"
+                    title="Change event"
+                  >
+                    Change event
+                  </button>
+                )}
+              </>
+            )}
+            {(event?.numberOfDays ?? 1) > 1 && (
+              <>
+                <label className="text-sm text-gray-400 ml-1">Day:</label>
+                <select
+                  value={selectedDay}
+                  onChange={(e) => setSelectedDay(Number(e.target.value))}
+                  className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent w-auto"
+                  title="Select which day to view"
+                >
+                  {Array.from({ length: event?.numberOfDays ?? 1 }, (_, i) => i + 1).map((d) => (
+                    <option key={d} value={d}>Day {d}</option>
+                  ))}
+                </select>
+              </>
+            )}
+            <button
+              onClick={() => setShowNotes(!showNotes)}
+              className={`ml-2 px-2 py-1 text-xs rounded border transition-colors ${
+                showNotes
+                  ? 'bg-blue-600 border-blue-500 text-white'
+                  : 'bg-slate-700 border-slate-600 text-gray-300 hover:bg-slate-600'
+              }`}
+            >
+              {showNotes ? 'Hide Notes' : 'Show Notes'}
+            </button>
+          </div>
         </div>
         <div className="flex items-center space-x-6">
             {/* Status Text Display */}
@@ -1890,7 +2026,9 @@ const PhotoViewPage: React.FC = () => {
         {/* Table Rows */}
         {previewItems.length === 0 ? (
           <div className="text-center text-gray-400 text-xl py-12 bg-slate-800 border border-slate-600 border-t-0">
-            No schedule items available
+            {schedule.length > 0 && filteredSchedule.length === 0 && (event?.numberOfDays ?? 1) > 1
+              ? `No schedule items for Day ${selectedDay}`
+              : 'No schedule items available'}
           </div>
         ) : (
           previewItems.map((item, index) => {

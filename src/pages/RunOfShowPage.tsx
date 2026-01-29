@@ -10483,7 +10483,9 @@ const RunOfShowPage: React.FC = () => {
                     No schedule items for Day {selectedDay}. Click "Add Schedule Item" to start!
                   </div>
                 ) : (
-                                     filteredSchedule.map((item, index) => (
+                                    filteredSchedule.map((item, index) => {
+                      const originalIndex = schedule.findIndex(s => s.id === item.id);
+                      return (
                      <div 
                        key={item.id}
                        data-item-id={item.id}
@@ -10501,7 +10503,7 @@ const RunOfShowPage: React.FC = () => {
                         asFragment
                         className=""
                         item={item}
-                        index={index}
+                        index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}
                         visibleColumns={visibleColumns}
                         indentedCues={indentedCues}
@@ -10544,7 +10546,7 @@ const RunOfShowPage: React.FC = () => {
                       />
                        {/* shotType, pptQA, notes, assets, participants, speakers, public, custom columns moved to ScheduleRow */}
                     </div>
-                  ))
+                  ); })
                 )}
               </div>
             </div>
