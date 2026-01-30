@@ -378,6 +378,67 @@ app.get('/api/admin/presence', async (req, res) => {
   }
 });
 
+// Admin running timers: list events with running timers (protected by ?key=1615)
+app.get('/api/admin/running-timers', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const r = await pool.query(
+      `SELECT at.event_id, at.item_id, at.cue_is, at.duration_seconds, at.started_at, at.timer_state,
+              at.is_active, at.is_running, ce.name AS event_name
+       FROM active_timers at
+       LEFT JOIN calendar_events ce ON ce.id::text = at.event_id::text
+       WHERE at.timer_state = 'running' OR (at.is_active = true AND at.is_running = true)
+       ORDER BY at.updated_at DESC`
+    );
+    const timers = (r.rows || []).map((row) => ({
+      eventId: String(row.event_id),
+      eventName: row.event_name || `Event ${row.event_id}`,
+      itemId: row.item_id,
+      cueIs: row.cue_is || `CUE ${row.item_id}`,
+      durationSeconds: row.duration_seconds,
+      startedAt: row.started_at,
+      timerState: row.timer_state,
+    }));
+    res.json({ timers });
+  } catch (err) {
+    console.error('[admin running-timers] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin stop timer: stop all timers for an event (protected by ?key=1615)
+app.post('/api/admin/stop-timer', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const { event_id } = req.body || {};
+  if (!event_id) {
+    return res.status(400).json({ error: 'event_id required' });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE active_timers
+       SET is_running = false, is_active = false, timer_state = 'stopped',
+           user_name = COALESCE(user_name, 'Admin'), updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING *`,
+      [event_id]
+    );
+    const eventId = String(event_id);
+    broadcastUpdate(eventId, 'timersStopped', { count: result.rows.length });
+    res.json({
+      success: true,
+      stoppedCount: result.rows.length,
+      message: `Stopped ${result.rows.length} timer(s) for event ${eventId}`,
+    });
+  } catch (err) {
+    console.error('[admin stop-timer] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Test endpoint to verify Upstash is working
 app.get('/api/test-upstash', async (req, res) => {
   try {

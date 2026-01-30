@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Database, Server, Zap, Users } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 
 const ADMIN_PASSWORD = '1615';
@@ -63,6 +63,16 @@ interface PresenceEvent {
   viewers: PresenceViewer[];
 }
 
+interface RunningTimerRow {
+  eventId: string;
+  eventName: string;
+  itemId: number;
+  cueIs: string;
+  durationSeconds: number;
+  startedAt: string;
+  timerState: string;
+}
+
 export default function AdminPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState('');
@@ -72,6 +82,10 @@ export default function AdminPage() {
   const [presence, setPresence] = useState<PresenceEvent[]>([]);
   const [presenceLoading, setPresenceLoading] = useState(false);
   const [presenceError, setPresenceError] = useState<string | null>(null);
+  const [runningTimers, setRunningTimers] = useState<RunningTimerRow[]>([]);
+  const [runningTimersLoading, setRunningTimersLoading] = useState(false);
+  const [runningTimersError, setRunningTimersError] = useState<string | null>(null);
+  const [stoppingEventId, setStoppingEventId] = useState<string | null>(null);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -162,6 +176,60 @@ export default function AdminPage() {
     const interval = setInterval(fetchPresence, 15_000);
     return () => clearInterval(interval);
   }, [unlocked, fetchPresence]);
+
+  const fetchRunningTimers = useCallback(async () => {
+    setRunningTimersLoading(true);
+    setRunningTimersError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/running-timers?key=${ADMIN_PASSWORD}`);
+      if (res.status === 401) {
+        setRunningTimersError('Unauthorized');
+        setRunningTimers([]);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setRunningTimersError((err as { error?: string }).error || `HTTP ${res.status}`);
+        setRunningTimers([]);
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { timers?: RunningTimerRow[] };
+      setRunningTimers(Array.isArray(data.timers) ? data.timers : []);
+    } catch (e) {
+      setRunningTimersError(e instanceof Error ? e.message : 'Request failed');
+      setRunningTimers([]);
+    } finally {
+      setRunningTimersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    fetchRunningTimers();
+    const interval = setInterval(fetchRunningTimers, 15_000);
+    return () => clearInterval(interval);
+  }, [unlocked, fetchRunningTimers]);
+
+  const stopTimerForEvent = useCallback(async (eventId: string) => {
+    setStoppingEventId(eventId);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/stop-timer?key=${ADMIN_PASSWORD}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_id: eventId }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        console.error('Stop timer failed:', err.error);
+        return;
+      }
+      await fetchRunningTimers();
+    } finally {
+      setStoppingEventId(null);
+    }
+  }, [fetchRunningTimers]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -317,6 +385,62 @@ export default function AdminPage() {
             </>
           ) : (
             <p className="text-slate-400 text-sm">No status yet. Click Refresh.</p>
+          )}
+        </section>
+
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Timer className="w-5 h-5 text-slate-400" />
+              Running timers
+            </h2>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={fetchRunningTimers}
+                disabled={runningTimersLoading}
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+              >
+                {runningTimersLoading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+          <p className="text-slate-500 text-sm mb-4">Events with a timer currently running (refreshes every 15s). Stop them from here.</p>
+          {runningTimersError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              Error: {runningTimersError}
+            </div>
+          )}
+          {runningTimersLoading && runningTimers.length === 0 && !runningTimersError ? (
+            <p className="text-slate-400 text-sm">Loading…</p>
+          ) : runningTimers.length === 0 ? (
+            <p className="text-slate-400 text-sm">No running timers. Timers appear when someone has started a countdown on Run of Show.</p>
+          ) : (
+            <ul className="space-y-3">
+              {runningTimers.map((t) => (
+                <li key={t.eventId} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700/80 bg-slate-800/60 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-white truncate">{t.eventName}</div>
+                    <div className="text-slate-400 text-sm">
+                      {t.cueIs}
+                      {t.durationSeconds != null && (
+                        <span className="ml-2"> · {Math.floor(t.durationSeconds / 60)}m</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => stopTimerForEvent(t.eventId)}
+                    disabled={stoppingEventId === t.eventId}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                    title="Stop timer for this event"
+                  >
+                    <Square className="w-3.5 h-3.5" />
+                    {stoppingEventId === t.eventId ? 'Stopping…' : 'Stop'}
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
 
