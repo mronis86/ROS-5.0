@@ -427,7 +427,7 @@ app.post('/api/admin/stop-timer', async (req, res) => {
       [event_id]
     );
     const eventId = String(event_id);
-    broadcastUpdate(eventId, 'timersStopped', { count: result.rows.length });
+    broadcastUpdate(eventId, 'timersStopped', { count: result.rows.length, event_id: eventId });
     res.json({
       success: true,
       stoppedCount: result.rows.length,
@@ -1527,8 +1527,8 @@ app.put('/api/active-timers/stop-all', async (req, res) => {
       [event_id, user_id, user_name, user_role]
     );
     
-    // Broadcast update via WebSocket
-    broadcastUpdate(event_id, 'timersStopped', { count: result.rows.length });
+    // Broadcast update via WebSocket (include event_id so clients can verify)
+    broadcastUpdate(event_id, 'timersStopped', { count: result.rows.length, event_id });
     
     res.json({ 
       success: true, 
