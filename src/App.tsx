@@ -22,6 +22,7 @@ import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
 import ScriptsFollowPage from './pages/ScriptsFollowPage';
 import TeleprompterPage from './pages/TeleprompterPage';
+import AdminPage from './pages/AdminPage';
 
 function AppContent() {
   const location = useLocation();
@@ -34,12 +35,13 @@ function AppContent() {
   const isGoogleSheets = location.pathname === '/google-sheets-vmix';
   const isLocalXML = location.pathname === '/lower-thirds-xml' || location.pathname === '/schedule-xml' || location.pathname === '/custom-columns-xml';
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
+  const isAdmin = location.pathname === '/admin';
 
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && <AppHeader />}
+      {!isFullScreenTimer && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && <AppHeader />}
       
       <AuthGuard>
         <Routes>
@@ -57,6 +59,7 @@ function AppContent() {
       
       {/* Pages that work without authentication */}
       <Routes>
+        <Route path="/admin" element={<AdminPage />} />
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
