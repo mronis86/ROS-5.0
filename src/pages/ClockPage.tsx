@@ -3,18 +3,19 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Clock from '../components/Clock';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import { Event } from '../types/Event';
 
 const ClockPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  
+
   // Get event ID from URL parameters
   const eventIdFromUrl = searchParams.get('eventId');
-  
+
   // Get timer data from location state or use defaults
   const timerData = location.state || {};
-  
+
   // Clock component handles its own timer state via WebSocket
   // ClockPage only manages messages to avoid state conflicts
   const [message, setMessage] = useState('');
@@ -26,6 +27,58 @@ const ClockPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+
+  // Event selector (same pattern as PhotoView / Green Room)
+  const [events, setEvents] = useState<Event[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [showEventSelector, setShowEventSelector] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(!!document.fullscreenElement);
+
+  // Sync eventId from URL when it changes (e.g. user changed event via selector)
+  useEffect(() => {
+    if (eventIdFromUrl !== null && eventIdFromUrl !== eventId) {
+      setEventId(eventIdFromUrl);
+    }
+  }, [eventIdFromUrl, eventId]);
+
+  // Fetch events list for the event selector dropdown
+  useEffect(() => {
+    const loadEvents = async () => {
+      try {
+        setEventsLoading(true);
+        const calendarEvents = await DatabaseService.getCalendarEvents();
+        const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
+          const dateObj = new Date(calEvent.date);
+          const simpleDate = dateObj.toISOString().split('T')[0];
+          return {
+            id: calEvent.id || '',
+            name: calEvent.name,
+            date: simpleDate,
+            location: calEvent.schedule_data?.location || '',
+            numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+            timezone: calEvent.schedule_data?.timezone,
+            created_at: calEvent.created_at,
+            updated_at: calEvent.updated_at
+          };
+        });
+        mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        setEvents(mapped.filter((e) => e.id));
+      } catch (e) {
+        console.warn('ClockPage: Failed to load events for selector:', e);
+        setEvents([]);
+      } finally {
+        setEventsLoading(false);
+      }
+    };
+    loadEvents();
+  }, []);
+
+  // Track fullscreen so we can hide event selector when in fullscreen
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullScreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -241,16 +294,70 @@ const ClockPage: React.FC = () => {
     }
   };
 
+  const handleEventChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value;
+    if (!id) return;
+    const selected = events.find(ev => ev.id === id);
+    if (!selected) return;
+    setEventId(selected.id);
+    setShowEventSelector(false);
+    navigate(`/clock?eventId=${encodeURIComponent(selected.id)}`, { replace: true });
+  };
+
   return (
     <>
-      <Clock
+      <div className="relative w-full min-h-screen">
+        <Clock
         onClose={handleClose}
         message={message}
         messageEnabled={messageEnabled}
         eventId={eventId}
         supabaseMessage={supabaseMessage}
       />
-      
+
+        {/* Event Selector - left side below CURRENT TIME, fixed so it doesn't move on scroll */}
+        {!isFullScreen && events.length > 1 && (
+          <div className="fixed top-[115px] left-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2">
+            {showEventSelector ? (
+              <>
+                <label className="text-sm text-gray-400 block mb-1">Event:</label>
+                <select
+                  value={eventId ?? ''}
+                  onChange={handleEventChange}
+                  className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[160px] max-w-[240px]"
+                  disabled={eventsLoading}
+                  title="Select which event for clock"
+                >
+                  <option value="">{eventsLoading ? 'Loading…' : 'Select event…'}</option>
+                  {events.map((ev) => (
+                    <option key={ev.id} value={ev.id}>
+                      {ev.name} {ev.date ? `(${ev.date})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowEventSelector(false)}
+                  className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors w-full"
+                  title="Hide event selector"
+                >
+                  Hide
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowEventSelector(true)}
+                className="px-3 py-2 text-sm rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors w-full"
+                title="Change event"
+              >
+                Change event
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Disconnect Timer Modal - same as Electron app */}
       {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
       
