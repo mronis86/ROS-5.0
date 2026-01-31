@@ -23,9 +23,54 @@ node_modules/electron/dist/
 dist/
 build/
 deploy-ready/
+public/build-info.txt
 Netlify-Build-*/
 netlify-build-*/
 ROS-5.0-Netlify-Build-*/
+# netlify-upload built contents (keep netlify.toml, _redirects, README.md)
+netlify-upload/index.html
+netlify-upload/assets/
+netlify-upload/api/
+netlify-upload/*.zip
+netlify-upload/build-info.txt
+netlify-upload/electron-osc-app/
+netlify-upload/*.html
+netlify-upload/*.js
+netlify-upload/*.json
+netlify-upload/*.csv
+netlify-upload/*.xml
+netlify-upload/*.webm
+netlify-upload/vmix-*
+netlify-upload/lower-thirds*
+netlify-upload/schedule*
+netlify-upload/custom-graphics*
+netlify-upload/google-sheets*
+netlify-upload/pointed_*
+netlify-upload/start-*
+
+# netlify dated deploy folders (build artifacts - use create-netlify-dated.bat to regenerate)
+netlify-*-V2/
+
+# netlify-deploy built contents (keep README.md)
+netlify-deploy/index.html
+netlify-deploy/assets/
+netlify-deploy/api/
+netlify-deploy/*.zip
+netlify-deploy/build-info.txt
+netlify-deploy/electron-osc-app/
+netlify-deploy/*.html
+netlify-deploy/*.js
+netlify-deploy/*.json
+netlify-deploy/*.csv
+netlify-deploy/*.xml
+netlify-deploy/*.webm
+netlify-deploy/vmix-*
+netlify-deploy/lower-thirds*
+netlify-deploy/schedule*
+netlify-deploy/custom-graphics*
+netlify-deploy/google-sheets*
+netlify-deploy/pointed_*
+netlify-deploy/start-*
 
 # Large zip files
 *.zip
