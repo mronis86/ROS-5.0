@@ -66,6 +66,7 @@ const GreenRoomPage: React.FC = () => {
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
+  const [syncCountdown, setSyncCountdown] = useState<number>(20);
 
   // Event list for selector (like PhotoViewPage)
   const [events, setEvents] = useState<Event[]>([]);
@@ -374,63 +375,63 @@ const GreenRoomPage: React.FC = () => {
     }
   }, [event?.id]);
 
-  // Lightweight periodic refresh for Green Room (similar to PhotoViewPage)
+  // Green Room: 20s-only for schedule/overtime/start-end times (like PhotoView). Cache invalidated so fetch is fresh.
+  const runDataSyncRef = useRef<(() => Promise<void>) | null>(null);
+  const timerStoppedSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    if (!event?.id) {
-      return;
-    }
+    if (!event?.id) return;
 
-    // Removed verbose logging to prevent console spam
-    
-    // 20-second lightweight refresh to ensure data stays current
-    const refreshInterval = setInterval(async () => {
-      // Removed verbose logging to prevent console spam (runs every 20 seconds)
-
+    const runDataSync = async () => {
+      const id = event.id;
       try {
-        // Reload schedule data and overtime adjustments
-        const data = await DatabaseService.getRunOfShowData(event.id);
+        apiClient.invalidateSyncDataCache(id);
+        const data = await DatabaseService.getRunOfShowData(id);
         if (data?.schedule_items) {
           // Removed verbose logging to prevent console spam
 
-          // Update master start time if it changed
           const masterStartTimeFromDB = data.settings?.masterStartTime || data.settings?.dayStartTimes?.['1'] || '09:00';
-          if (masterStartTimeFromDB !== masterStartTime) {
-            // Removed verbose logging to prevent console spam
-            setMasterStartTime(masterStartTimeFromDB);
+          setMasterStartTime(masterStartTimeFromDB);
+          if (data.settings?.dayStartTimes) {
+            setDayStartTimes(data.settings.dayStartTimes);
           }
           
-          // Reload overtime data
+          // Reload overtime data (cache invalidated above)
           try {
-            const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
-            const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
-            const indentedCuesData = await DatabaseService.getIndentedCues(event.id);
+            const overtimeData = (await DatabaseService.getOvertimeMinutes(id)) || {};
+            const showStartOvertimeData = await DatabaseService.getShowStartOvertime(id);
+            const indentedCuesData = await DatabaseService.getIndentedCues(id);
+            
+            let overtimeValue = 0;
+            let startCueIdValue: number | null = null;
+            let indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
             
             if (overtimeData) {
               setOvertimeMinutes(overtimeData);
             }
             
             if (showStartOvertimeData !== null) {
-              const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
-              const startCueIdValue = (showStartOvertimeData as any).item_id || showStartOvertimeData.startCueId;
+              overtimeValue = (showStartOvertimeData as any).show_start_overtime ?? (showStartOvertimeData as any).overtimeMinutes ?? 0;
+              startCueIdValue = (showStartOvertimeData as any).item_id ?? (showStartOvertimeData as any).itemId ?? null;
               setShowStartOvertime(overtimeValue);
-              if (startCueIdValue) {
-                setStartCueId(startCueIdValue);
-              }
+              if (startCueIdValue) setStartCueId(startCueIdValue);
             }
             
             if (indentedCuesData && indentedCuesData.length > 0) {
-              const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
               indentedCuesData.forEach((cue: any) => {
-                indentedCuesMap[cue.item_id] = {
-                  parentId: cue.parent_id,
-                  userId: cue.user_id,
-                  userName: cue.user_name
-                };
+                if (cue.item_id && cue.parent_item_id) {
+                  indentedCuesMap[cue.item_id] = {
+                    parentId: cue.parent_item_id,
+                    userId: cue.user_id || '',
+                    userName: cue.user_name || ''
+                  };
+                }
               });
               setIndentedCues(indentedCuesMap);
+            } else {
+              setIndentedCues({});
             }
             
-            // Recalculate schedule with fresh overtime data
             const formattedSchedule = data.schedule_items.map((item: any) => ({
               ...item,
               isPublic: item.isPublic === true || item.isPublic === 'true',
@@ -440,7 +441,11 @@ const GreenRoomPage: React.FC = () => {
               durationSeconds: (item.duration_seconds || 0) % 60
             }));
             
-            // Recalculate times with overtime adjustments
+            const startCueItem = formattedSchedule.find((item: any) => item.isStartCue === true);
+            if (startCueItem) {
+              startCueIdValue = startCueItem.id;
+              setStartCueId(startCueItem.id);
+            }
             const recalculatedSchedule = formattedSchedule.map((item: any, index: number) => {
               if (!item) return null;
               
@@ -489,10 +494,9 @@ const GreenRoomPage: React.FC = () => {
                 endTime,
                 duration
               };
-            });
+            }).filter(item => item !== null);
             
             setSchedule(recalculatedSchedule);
-            // Removed verbose logging to prevent console spam
           } catch (error) {
             console.error('❌ GreenRoom: 20s refresh - error loading overtime data:', error);
           }
@@ -500,15 +504,26 @@ const GreenRoomPage: React.FC = () => {
       } catch (error) {
         console.error('❌ GreenRoom: 20s refresh failed:', error);
       }
-    }, 20000); // 20 seconds
+    };
 
-    // Removed verbose logging to prevent console spam
+    runDataSyncRef.current = runDataSync;
+    runDataSync(); // Run on mount for fresh start/end times
+
+    const tickInterval = setInterval(() => {
+      setSyncCountdown(prev => {
+        if (prev <= 1) {
+          runDataSync();
+          return 20;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
     return () => {
-      // Removed verbose logging to prevent console spam
-      clearInterval(refreshInterval);
+      runDataSyncRef.current = null;
+      clearInterval(tickInterval);
     };
-  }, [event?.id, masterStartTime]);
+  }, [event?.id]);
 
   // Update current time every second
   useEffect(() => {
@@ -566,8 +581,15 @@ const GreenRoomPage: React.FC = () => {
     if (!event?.id) return;
     
     loadActiveTimer(); // Load initial data
-    
-    // Removed verbose logging to prevent console spam
+
+    const scheduleTimerStoppedSync = () => {
+      if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
+      timerStoppedSyncTimeoutRef.current = setTimeout(() => {
+        timerStoppedSyncTimeoutRef.current = null;
+        runDataSyncRef.current?.();
+        setSyncCountdown(20);
+      }, 1000);
+    };
     
     const callbacks = {
       onServerTime: (data: any) => {
@@ -579,8 +601,9 @@ const GreenRoomPage: React.FC = () => {
         // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
       },
       onTimerUpdated: (data: any) => {
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
-        // Update timer state directly from WebSocket data (like PhotoViewPage)
+        if (data?.timer_state === 'running' && (data.elapsed_seconds ?? 0) <= 1) {
+          scheduleTimerStoppedSync();
+        }
         if (data && data.item_id) {
           setTimerProgress(prev => ({
             ...prev,
@@ -629,6 +652,7 @@ const GreenRoomPage: React.FC = () => {
             return newProgress;
           });
         }
+        scheduleTimerStoppedSync();
       },
       onTimersStopped: (data: any) => {
         // Removed verbose logging to prevent console spam
@@ -643,13 +667,13 @@ const GreenRoomPage: React.FC = () => {
           setLoadedItems({});
         }
         setTimerProgress({});
+        scheduleTimerStoppedSync();
       },
       onTimerStarted: (data: any) => {
-        // Removed verbose logging to prevent console spam
-        // Update active item when timer starts
         if (data && data.item_id) {
           setActiveItemId(data.item_id);
         }
+        scheduleTimerStoppedSync();
       },
       onActiveTimersUpdated: (data: any) => {
         // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
@@ -663,17 +687,15 @@ const GreenRoomPage: React.FC = () => {
             setLoadedItems({ [data.item_id]: true });
             // Removed verbose logging to prevent console spam
           } else {
-            // Timer is stopped - keep last loaded cue visible
             setTimerState(null);
             if (lastLoadedCueId) {
               setActiveItemId(lastLoadedCueId);
               setLoadedItems({ [lastLoadedCueId]: true });
-              // Removed verbose logging to prevent console spam
             } else {
               setActiveItemId(null);
               setLoadedItems({});
             }
-            // Removed verbose logging to prevent console spam
+            scheduleTimerStoppedSync();
           }
         }
       },
@@ -687,15 +709,11 @@ const GreenRoomPage: React.FC = () => {
         setLastLoadedCueId(null); // Clear last loaded cue on reset
         // Removed verbose logging to prevent console spam
       },
-      onScheduleUpdated: (data: any) => {
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
-        // Always reload on schedule updates to catch public status changes
-        loadSchedule();
+      onScheduleUpdated: () => {
+        // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
-      onRunOfShowDataUpdated: (data: any) => {
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
-        // Always reload on schedule updates to catch public status changes
-        loadSchedule();
+      onRunOfShowDataUpdated: () => {
+        // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
       onConnectionChange: (connected: boolean) => {
         // Removed verbose logging to prevent console spam
@@ -768,10 +786,10 @@ const GreenRoomPage: React.FC = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      // Removed verbose logging to prevent console spam
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
+      if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
     };
   }, [event?.id]);
 
@@ -839,10 +857,7 @@ const GreenRoomPage: React.FC = () => {
     }
 
     try {
-      // Clear cache to ensure fresh data
-      apiClient.cache.delete(`runOfShowData_${currentEventId}`);
-      console.log('🔄 Cleared cache for run of show data');
-      
+      apiClient.invalidateSyncDataCache(currentEventId);
       const data = await DatabaseService.getRunOfShowData(currentEventId);
       
       // Load overtime data FIRST before processing schedule
@@ -875,11 +890,13 @@ const GreenRoomPage: React.FC = () => {
         if (indentedCuesData && indentedCuesData.length > 0) {
           const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
           indentedCuesData.forEach((cue: any) => {
-            indentedCuesMap[cue.item_id] = {
-              parentId: cue.parent_id,
-              userId: cue.user_id,
-              userName: cue.user_name
-            };
+            if (cue.item_id && cue.parent_item_id) {
+              indentedCuesMap[cue.item_id] = {
+                parentId: cue.parent_item_id,
+                userId: cue.user_id || '',
+                userName: cue.user_name || ''
+              };
+            }
           });
           freshIndentedCues = indentedCuesMap;
           setIndentedCues(indentedCuesMap);
@@ -1208,85 +1225,21 @@ const GreenRoomPage: React.FC = () => {
     // Removed verbose logging to prevent console spam
     
     const callbacks = {
-      onRunOfShowDataUpdated: (data: any) => {
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
-        // Update schedule data directly from WebSocket
-        if (data && data.schedule_items) {
-          setSchedule(data.schedule_items);
-        }
-        // Update master start time if provided
-        if (data && data.settings && data.settings.masterStartTime) {
-          setMasterStartTime(data.settings.masterStartTime);
-        }
-        // Update overtime data if provided
-        if (data && data.overtime_minutes) {
-          // Removed verbose logging to prevent console spam
-          setOvertimeMinutes(data.overtime_minutes);
-        }
-        if (data && data.indented_cues) {
-          // Removed verbose logging to prevent console spam
-          setIndentedCues(data.indented_cues);
-        }
-        if (data && data.show_start_overtime !== undefined) {
-          // Removed verbose logging to prevent console spam
-          setShowStartOvertime(data.show_start_overtime);
-        }
-        if (data && data.start_cue_id !== undefined) {
-          // Removed verbose logging to prevent console spam
-          setStartCueId(data.start_cue_id);
-        }
-        // Removed verbose logging to prevent console spam
+      onRunOfShowDataUpdated: () => {
+        // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
-      onOvertimeUpdate: (data: any) => {
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
-        if (data && data.item_id && data.overtimeMinutes !== undefined) {
-          setOvertimeMinutes(prev => {
-            const updated = {
-              ...prev,
-              [data.item_id]: data.overtimeMinutes
-            };
-            // Removed verbose logging to prevent console spam
-            return updated;
-          });
-          // Removed verbose logging to prevent console spam
-        }
+      onOvertimeUpdate: () => {
+        // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
-      onShowStartOvertimeUpdate: (data: any) => {
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
-        if (data && data.showStartOvertime !== undefined) {
-          setShowStartOvertime(data.showStartOvertime);
-          // Removed verbose logging to prevent console spam
-        }
-        if (data && data.item_id) {
-          setStartCueId(data.item_id);
-          // Removed verbose logging to prevent console spam
-        }
+      onShowStartOvertimeUpdate: () => {
+        // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
       onConnectionChange: (connected: boolean) => {
         // Removed verbose logging to prevent console spam
       },
       onInitialSync: async () => {
-        // Removed verbose logging to prevent console spam
-        
-        // Load current schedule data
-        try {
-          const scheduleResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/run-of-show-data/${event?.id}`);
-          if (scheduleResponse.ok) {
-            const data = await scheduleResponse.json();
-            // Removed verbose logging to prevent console spam
-            
-            if (data && data.schedule_items) {
-              setSchedule(data.schedule_items);
-            }
-            if (data && data.settings && data.settings.masterStartTime) {
-              setMasterStartTime(data.settings.masterStartTime);
-            }
-            
-            // Removed verbose logging to prevent console spam
-          }
-        } catch (error) {
-          console.error('❌ Green Room: Schedule initial sync failed:', error);
-        }
+        // Use runDataSync for schedule (start/end times) - same as 20s sync
+        runDataSyncRef.current?.();
       }
     };
 
@@ -1520,24 +1473,8 @@ const GreenRoomPage: React.FC = () => {
   const handleReconnect = () => {
     setShowDisconnectNotification(false);
     if (event?.id) {
-      // Reconnect with original callbacks
-      const loadSchedule = async () => {
-        try {
-          const data = await DatabaseService.getRunOfShowData(event.id);
-          if (data && data.schedule_items) {
-            setSchedule(data.schedule_items);
-          }
-          if (data && data.settings && data.settings.masterStartTime) {
-            setMasterStartTime(data.settings.masterStartTime);
-          }
-        } catch (error) {
-          console.error('❌ Error loading schedule:', error);
-        }
-      };
-      
-      loadSchedule();
-      
-      // Show modal again after timed disconnect to set new timer
+      runDataSyncRef.current?.();
+      setSyncCountdown(20);
       setShowDisconnectModal(true);
     }
   };
@@ -1683,6 +1620,9 @@ const GreenRoomPage: React.FC = () => {
           </div>
           <div className="text-white text-base">
             Expected Finish: {getExpectedFinishTime()}
+          </div>
+          <div className="text-white/70 text-xs mt-2" title="Start/end times update every 20 seconds">
+            Sync in: {syncCountdown}s
           </div>
         </div>
       </div>

@@ -241,6 +241,13 @@ class ApiClient {
     return this.request(`/api/show-start-overtime/${eventId}`, {}, `showStartOvertime_${eventId}`, this.CACHE_TTL.completedCues);
   }
 
+  /** Invalidate cache for Photo page 20s sync - ensures fresh overtime/schedule data every sync */
+  invalidateSyncDataCache(eventId: string): void {
+    this.cache.delete(`runOfShowData_${eventId}`);
+    this.cache.delete(`overtimeMinutes_${eventId}`);
+    this.cache.delete(`showStartOvertime_${eventId}`);
+  }
+
   async saveStartCueSelection(eventId: string, itemId: number) {
     const result = await this.request('/api/start-cue-selection', {
       method: 'POST',

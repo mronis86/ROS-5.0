@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
+import { apiClient } from '../services/api-client';
 import { Event } from '../types/Event';
 // import { supabase } from '../services/supabase'; // REMOVED: Using WebSocket-only approach
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
@@ -319,9 +320,7 @@ const PhotoViewPage: React.FC = () => {
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   const [masterStartTime, setMasterStartTime] = useState<string>('09:00');
-  const [countdown, setCountdown] = useState<number>(20);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isUserEditing, setIsUserEditing] = useState<boolean>(false);
+  const [syncCountdown, setSyncCountdown] = useState<number>(20); // Seconds until next 20s data sync (overtime, start time, duration)
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   
   // Hybrid timer data (same pattern as RunOfShowPage)
@@ -363,11 +362,10 @@ const PhotoViewPage: React.FC = () => {
     [schedule, selectedDay]
   );
 
-  // Reset all states function (called from WebSocket events)
-  const resetAllStates = async () => {
-    console.log('🔄 PhotoView: Resetting all states from RunOfShow reset...');
-    
-    // Clear all timer states and highlights
+  // Reset all states function (called from WebSocket reset event)
+  // Photo page only gets schedule/overtime from 20s sync - no DB reload here
+  const resetAllStates = () => {
+    console.log('🔄 PhotoView: Resetting all states (next 20s sync will repopulate)');
     setActiveItemId(null);
     setTimerState(null);
     setLoadedItems({});
@@ -376,42 +374,9 @@ const PhotoViewPage: React.FC = () => {
     setSubCueTimers({});
     setSubCueTimerProgress({});
     setSecondaryTimer(null);
-    
-    // Clear overtime data (same as Run of Show page)
     setOvertimeMinutes({});
     setShowStartOvertime(0);
-    console.log('✅ PhotoView: Cleared overtime data from reset');
-    
-    // Clear indented state locally first
-    setSchedule(prevSchedule => 
-      prevSchedule.map(item => ({
-        ...item,
-        isIndented: false
-      }))
-    );
-    
-    // Reload schedule data from database to get the latest state
-    if (event?.id) {
-      try {
-        console.log('🔄 PhotoView: Reloading schedule data after reset...');
-        const data = await DatabaseService.getRunOfShowData(event.id);
-        if (data?.schedule_items) {
-          const formattedSchedule = data.schedule_items.map((item: any) => ({
-            ...item,
-            isPublic: item.isPublic || false,
-            isIndented: false // Force clear indented state
-          }));
-          setSchedule(formattedSchedule);
-          console.log('✅ PhotoView: Schedule data reloaded and indented state cleared');
-        }
-      } catch (error) {
-        console.warn('⚠️ PhotoView: Failed to reload schedule data:', error);
-        // Fallback: clear indented state locally (already done above)
-        console.log('✅ PhotoView: Using local fallback to clear indented state');
-      }
-    }
-    
-    console.log('✅ PhotoView: All states and highlights reset successfully');
+    setSchedule(prev => prev.map(item => ({ ...item, isIndented: false })));
   };
 
 
@@ -777,88 +742,91 @@ const PhotoViewPage: React.FC = () => {
     return () => clearInterval(timer);
   }, [clockOffset]);
 
-  // Lightweight periodic refresh for Photo page (similar to Run of Show 5s reliability check)
+  // Photo page ONLY gets overtime, START time, duration changes every 20s (no WebSocket updates for these)
+  // Also syncs ~1s after timer stopped for quicker overtime updates
+  const eventIdRef = useRef(event?.id);
+  eventIdRef.current = event?.id;
+  const runDataSyncRef = useRef<(() => Promise<void>) | null>(null);
+  const timerStoppedSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    if (!event?.id) {
-      console.log('🔄 PhotoView: No event ID, skipping 20-second refresh setup');
-      return;
-    }
+    const eventId = eventIdRef.current;
+    if (!eventId) return;
 
-    console.log('🔄 PhotoView: Setting up lightweight periodic refresh (20 seconds) for event:', event.id);
-    
-    // 20-second lightweight refresh to ensure data stays current
-    const refreshInterval = setInterval(async () => {
-      console.log('🔄 PhotoView: 20s refresh - ensuring data is current');
-
-      // Lightweight refresh - reload schedule data directly
+    const runDataSync = async () => {
+      const id = eventIdRef.current;
+      if (!id) return;
       try {
-        const data = await DatabaseService.getRunOfShowData(event.id);
+        apiClient.invalidateSyncDataCache(id);
+        console.log('🔄 PhotoView: sync - fetching schedule, overtime, START cue');
+        const data = await DatabaseService.getRunOfShowData(id);
         if (data?.schedule_items) {
-          console.log('🔄 PhotoView: 20s refresh - reloaded schedule data');
-
-          // Update master start time if it changed
           const masterStartTimeFromDB = data.settings?.masterStartTime || data.settings?.dayStartTimes?.['1'] || '09:00';
-          if (masterStartTimeFromDB !== masterStartTime) {
-            console.log('🔄 PhotoView: 20s refresh - updated master start time to:', masterStartTimeFromDB);
-            setMasterStartTime(masterStartTimeFromDB);
+          setMasterStartTime(masterStartTimeFromDB);
+          if (data.settings?.dayStartTimes) {
+            setDayStartTimes(data.settings.dayStartTimes);
           }
-          
-          // Update schedule if it changed
+
           const formattedSchedule = data.schedule_items.map((item: any) => ({
             ...item,
             isPublic: item.isPublic || false,
-            // Convert duration_seconds to separate fields
             durationHours: Math.floor((item.duration_seconds || 0) / 3600),
             durationMinutes: Math.floor(((item.duration_seconds || 0) % 3600) / 60),
             durationSeconds: (item.duration_seconds || 0) % 60
           }));
-          console.log('🔄 PhotoView: 20s refresh - updating schedule with', formattedSchedule.length, 'items');
-          console.log('🔄 PhotoView: 20s refresh - first item duration:', formattedSchedule[0]?.durationMinutes, 'minutes');
-          console.log('🔄 PhotoView: 20s refresh - first item raw data:', {
-            duration_seconds: formattedSchedule[0]?.duration_seconds,
-            durationMinutes: formattedSchedule[0]?.durationMinutes,
-            durationHours: formattedSchedule[0]?.durationHours,
-            durationSeconds: formattedSchedule[0]?.durationSeconds
-          });
-          console.log('🔄 PhotoView: 20s refresh - BEFORE conversion duration_seconds:', data.schedule_items[0]?.duration_seconds);
-          console.log('🔄 PhotoView: 20s refresh - first item should use durationMinutes:', formattedSchedule[0]?.durationMinutes, 'minutes');
-          
           setSchedule(formattedSchedule);
+
+          const startCueItem = formattedSchedule.find((item: any) => item.isStartCue === true);
+          setStartCueId(startCueItem ? startCueItem.id : null);
+
+          const overtimeData = await DatabaseService.getOvertimeMinutes(id);
+          const showStartOvertimeData = await DatabaseService.getShowStartOvertime(id);
+          setOvertimeMinutes(overtimeData);
+          const overtimeValue = showStartOvertimeData !== null
+            ? ((showStartOvertimeData as any).show_start_overtime ?? (showStartOvertimeData as any).overtimeMinutes ?? 0)
+            : 0;
+          setShowStartOvertime(overtimeValue);
+
+          // Indented cues (sub-cue relationships) - row order/changes come from schedule above
+          const indentedCuesData = await DatabaseService.getIndentedCues(id);
+          if (indentedCuesData && indentedCuesData.length > 0) {
+            const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
+            indentedCuesData.forEach((cue: any) => {
+              if (cue.item_id && cue.parent_item_id) {
+                indentedCuesMap[cue.item_id] = {
+                  parentId: cue.parent_item_id,
+                  userId: cue.user_id || '',
+                  userName: cue.user_name || ''
+                };
+              }
+            });
+            setIndentedCues(indentedCuesMap);
+          } else {
+            setIndentedCues({});
+          }
         }
       } catch (error) {
-        console.error('❌ PhotoView: 20s refresh failed:', error);
+        console.error('❌ PhotoView: 20s sync failed:', error);
       }
-    }, 20000); // 20 seconds
-
-    console.log('🔄 PhotoView: 20-second refresh interval created, will start in 20 seconds');
-
-    return () => {
-      console.log('🧹 PhotoView: Cleaning up 20-second refresh timer');
-      clearInterval(refreshInterval);
     };
-  }, [event?.id]);
 
-  // Countdown timer logic
-  useEffect(() => {
-    if (isUserEditing || isSyncing) return;
+    runDataSyncRef.current = runDataSync;
 
-    const timer = setInterval(() => {
-      setCountdown(prev => {
+    const tickInterval = setInterval(() => {
+      setSyncCountdown(prev => {
         if (prev <= 1) {
-          setIsSyncing(true);
-          // Simulate sync for 3 seconds
-          setTimeout(() => {
-            setIsSyncing(false);
-            setCountdown(20);
-          }, 3000);
-          return 0;
+          runDataSync();
+          return 20;
         }
         return prev - 1;
       });
     }, 1000);
 
-    return () => clearInterval(timer);
-  }, [isUserEditing, isSyncing]);
+    return () => {
+      runDataSyncRef.current = null;
+      clearInterval(tickInterval);
+    };
+  }, [event?.id]);
 
 
 
@@ -932,7 +900,16 @@ const PhotoViewPage: React.FC = () => {
     if (!event?.id) return;
 
     console.log('🔌 Setting up WebSocket connection for PhotoView timer updates');
-    
+
+    const scheduleTimerStoppedSync = () => {
+      if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
+      timerStoppedSyncTimeoutRef.current = setTimeout(() => {
+        timerStoppedSyncTimeoutRef.current = null;
+        runDataSyncRef.current?.();
+        setSyncCountdown(20);
+      }, 1000);
+    };
+
     const callbacks = {
       onServerTime: (data: any) => {
         // Sync client clock with server clock
@@ -949,6 +926,10 @@ const PhotoViewPage: React.FC = () => {
       },
       onTimerUpdated: (data: any) => {
         console.log('📡 PhotoView: Timer updated via WebSocket', data);
+        // Timer start: server sends timerUpdated (not timerStarted) when timer starts
+        if (data?.timer_state === 'running' && (data.elapsed_seconds ?? 0) <= 1) {
+          scheduleTimerStoppedSync();
+        }
         // Update hybrid timer data directly from WebSocket (same pattern as RunOfShowPage)
         if (data && data.item_id) {
           setHybridTimerData(prev => ({
@@ -997,6 +978,7 @@ const PhotoViewPage: React.FC = () => {
             return newProgress;
           });
         }
+        scheduleTimerStoppedSync();
       },
       onTimersStopped: (data: any) => {
         console.log('📡 PhotoView: All timers stopped via WebSocket', data);
@@ -1006,6 +988,7 @@ const PhotoViewPage: React.FC = () => {
         setTimerState(null);
         setLoadedItems({});
         setTimerProgress({});
+        scheduleTimerStoppedSync();
       },
       onTimerStarted: (data: any) => {
         console.log('📡 PhotoView: Timer started via WebSocket', data);
@@ -1025,9 +1008,11 @@ const PhotoViewPage: React.FC = () => {
                         }
                       }));
                     }
+        scheduleTimerStoppedSync();
       },
       onSubCueTimerStarted: (data: any) => {
         console.log('📡 PhotoView: Sub-cue timer started via WebSocket', data);
+        scheduleTimerStoppedSync();
         // Handle sub-cue timer start
         if (data && data.item_id) {
           const itemId = parseInt(data.item_id);
@@ -1091,124 +1076,29 @@ const PhotoViewPage: React.FC = () => {
             setTimerState(null);
             setLoadedItems({});
             setTimerProgress({});
+            scheduleTimerStoppedSync();
           }
         }
       },
-      onRunOfShowDataUpdated: (data: any) => {
-        console.log('📡 PhotoView: Run of show data updated via WebSocket', data);
-        // Handle schedule updates - only if data actually changed
-        if (data && data.schedule_items) {
-          const formattedSchedule = data.schedule_items.map((item: any) => ({
-            ...item,
-            startTime: item.start_time || '09:00',
-            durationHours: Math.floor((item.duration_seconds || 0) / 3600),
-            durationMinutes: Math.floor(((item.duration_seconds || 0) % 3600) / 60),
-            durationSeconds: (item.duration_seconds || 0) % 60
-          }));
-          
-          setSchedule(formattedSchedule);
-          
-          // Update START CUE ID from schedule items
-          const startCueItem = formattedSchedule.find(item => item.isStartCue === true);
-          if (startCueItem) {
-            setStartCueId(startCueItem.id);
-            console.log('⭐ PhotoView: START cue marker updated from WebSocket:', startCueItem.id);
-          } else {
-            setStartCueId(null);
-            console.log('⭐ PhotoView: No START cue marker found in WebSocket update');
-          }
-          
-          // Reload overtime data when schedule updates
-          if (event?.id) {
-            (async () => {
-              try {
-                console.log('⏰ PhotoView: Reloading overtime data after schedule update...');
-                const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
-                const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
-                
-                console.log('⏰ PhotoView: Reloaded overtime data:', { overtimeData, showStartOvertimeData });
-                setOvertimeMinutes(overtimeData);
-                if (showStartOvertimeData !== null) {
-                  const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
-                  setShowStartOvertime(overtimeValue);
-                  console.log('⏰ PhotoView: Reloaded show start overtime:', overtimeValue);
-                }
-              } catch (error) {
-                console.error('❌ PhotoView: Failed to reload overtime data:', error);
-              }
-            })();
-          }
-        }
+      onRunOfShowDataUpdated: () => {
+        // Photo page ONLY gets schedule/overtime/start/duration updates every 20s - ignore WebSocket
       },
-      onOvertimeUpdate: (data: any) => {
-        console.log('📡 PhotoView: Overtime update received via WebSocket', data);
-        if (data && data.event_id === event?.id && data.item_id && typeof data.overtimeMinutes === 'number') {
-          console.log(`✅ PhotoView: Updating overtime for item ${data.item_id} to ${data.overtimeMinutes} minutes`);
-          
-          // Update local overtime state
-          setOvertimeMinutes(prev => {
-            const updated = {
-              ...prev,
-              [data.item_id]: data.overtimeMinutes
-            };
-            console.log('✅ PhotoView: Overtime state updated from WebSocket:', updated);
-            console.log('✅ PhotoView: Previous overtime state:', prev);
-            console.log('✅ PhotoView: New overtime state:', updated);
-            return updated;
-          });
-          
-          // If this is the START cue, also update show start overtime
-          if (data.item_id === startCueId) {
-            setShowStartOvertime(data.overtimeMinutes);
-            console.log(`✅ PhotoView: Show start overtime also updated: ${data.overtimeMinutes} minutes`);
-          }
-        }
+      onOvertimeUpdate: () => {
+        // Photo page ONLY gets overtime updates every 20s - ignore WebSocket
       },
-      onShowStartOvertimeUpdate: (data: { event_id: string; item_id: number; showStartOvertime: number }) => {
-        console.log('📡 PhotoView: Show start overtime update received via WebSocket', data);
-        if (data.event_id === event?.id) {
-          setShowStartOvertime(data.showStartOvertime);
-          setStartCueId(data.item_id); // Also update which cue is marked as START
-          console.log(`✅ PhotoView: Show start overtime updated: ${data.showStartOvertime} minutes`);
-        }
+      onShowStartOvertimeUpdate: () => {
+        // Photo page ONLY gets show start overtime updates every 20s - ignore WebSocket
       },
-      onStartCueSelectionUpdate: (data: { event_id: string; item_id: number }) => {
-        console.log('📡 PhotoView: Start cue selection update received via WebSocket', data);
-        if (data.event_id === event?.id) {
-          setStartCueId(data.item_id);
-          console.log(`✅ PhotoView: Start cue selection updated: item ${data.item_id}`);
-        }
+      onStartCueSelectionUpdate: () => {
+        // Photo page ONLY gets START cue updates every 20s - ignore WebSocket
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 PhotoView WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
       },
       onResetAllStates: (data: any) => {
         console.log('📡 PhotoView: Reset all states triggered via WebSocket', data);
-        console.log('🔄 PhotoView: About to call resetAllStates function');
-        // Clear all states when RunOfShowPage resets
+        // Clear all states; next 20s sync will repopulate (Photo page only gets data every 20s)
         resetAllStates();
-        console.log('✅ PhotoView: resetAllStates function called');
-        
-        // After reset, reload overtime data to get current state
-        if (event?.id) {
-          setTimeout(async () => {
-            try {
-              console.log('⏰ PhotoView: Reloading overtime data after reset...');
-              const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
-              const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
-              
-              console.log('⏰ PhotoView: Reloaded overtime data after reset:', { overtimeData, showStartOvertimeData });
-              setOvertimeMinutes(overtimeData);
-              if (showStartOvertimeData !== null) {
-                const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
-                setShowStartOvertime(overtimeValue);
-                console.log('⏰ PhotoView: Reloaded show start overtime after reset:', overtimeValue);
-              }
-            } catch (error) {
-              console.error('❌ PhotoView: Failed to reload overtime data after reset:', error);
-            }
-          }, 1000); // Wait 1 second for reset to complete
-        }
       },
       onInitialSync: async () => {
         console.log('🔄 PhotoView: WebSocket initial sync triggered - loading current state');
@@ -1360,6 +1250,7 @@ const PhotoViewPage: React.FC = () => {
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimerState) clearTimeout(disconnectTimerState);
+      if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
     };
   }, [event?.id, schedule]);
 
@@ -1866,10 +1757,9 @@ const PhotoViewPage: React.FC = () => {
       <div className="flex justify-between items-start mb-6">
         <div>
           <h1 className="text-2xl font-bold">{event?.name || 'Current Event'}</h1>
-          <div className="text-sm text-gray-300 mt-1">
-            {currentTime.toLocaleTimeString()}
-          </div>
           <div className="flex flex-wrap items-center gap-3 mt-2">
+            <span className="text-sm text-gray-300">{currentTime.toLocaleTimeString()}</span>
+            <span className="text-xs text-slate-400" title="Overtime, start time, and duration update every 20 seconds">Sync in: {syncCountdown}s</span>
             {events.length > 1 && (
               <>
                 {showEventSelector ? (
@@ -1960,13 +1850,11 @@ const PhotoViewPage: React.FC = () => {
               )}
             </div>
           
-          
-          {/* Timer Display with Color */}
+          {/* Timer Display with Color - stays on right */}
           <div className="relative">
             <div className="text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600" style={{ color: getCountdownColor() }}>
               {formatTime(getRemainingTime())}
             </div>
-            {/* Drift Status Indicator - positioned in bottom-right corner */}
           </div>
         </div>
       </div>
@@ -1985,8 +1873,8 @@ const PhotoViewPage: React.FC = () => {
         )}
       </div>
 
-      {/* Report-style Table */}
-      <div className="max-w-7xl mx-auto">
+    {/* Report-style Table */}
+    <div className="max-w-7xl mx-auto">
         {/* Table Header */}
         <div className="bg-slate-700 border border-slate-600">
           <div className="grid grid-cols-11 gap-0">
