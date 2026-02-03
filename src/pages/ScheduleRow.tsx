@@ -13,6 +13,9 @@ export interface ScheduleRowProps {
   startCueId: any;
   showStartOvertime: number;
   cumulativeOvertime: number; // Precomputed cumulative overtime for this row
+  originalDuration?: { durationHours: number; durationMinutes: number; durationSeconds: number } | null;
+  showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
+  showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
   programTypes: string[];
   programTypeColors: any;
   shotTypes: string[];
@@ -61,6 +64,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   startCueId,
   showStartOvertime,
   cumulativeOvertime,
+  originalDuration,
+  showWasUnderDuration,
+  showMode,
   programTypes,
   programTypeColors,
   shotTypes,
@@ -119,11 +125,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             <span className="text-white font-mono text-base font-bold">
               {indentedCues[item.id]
                 ? '↘'
-                : (calculateStartTimeWithOvertime
+                : (calculateStartTime && calculateStartTimeWithOvertime
+                    ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index))
+                    : calculateStartTimeWithOvertime
                     ? String(calculateStartTimeWithOvertime(index))
                     : String(index + 1))}
             </span>
-            {!indentedCues[item.id] && (
+            {!indentedCues[item.id] && showMode !== 'rehearsal' && (
               (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) ||
                (calculateStartTime && calculateStartTimeWithOvertime &&
                 String(calculateStartTime(index)) !== String(calculateStartTimeWithOvertime(index))))
@@ -357,6 +365,22 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit seconds'}
             />
           </div>
+          {showWasUnderDuration && originalDuration && (
+            (item.durationHours !== originalDuration.durationHours ||
+             item.durationMinutes !== originalDuration.durationMinutes ||
+             item.durationSeconds !== originalDuration.durationSeconds) && (() => {
+              const h = originalDuration.durationHours ?? 0;
+              const m = originalDuration.durationMinutes ?? 0;
+              const s = originalDuration.durationSeconds ?? 0;
+              const totalSec = h * 3600 + m * 60 + s;
+              const wasText = totalSec >= 3600 ? `${h}h ${m}m` : totalSec >= 60 ? `${m} min` : `${s} sec`;
+              return (
+                <div className="text-slate-500 text-xs mt-1">
+                  was {wasText}
+                </div>
+              );
+            })()
+          )}
         </div>
       )}
       {/* Segment name column (after Duration) */}
@@ -816,6 +840,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   // Start cue changes that affect badges
   if (prevProps.startCueId !== nextProps.startCueId) return false;
   if (prevProps.showStartOvertime !== nextProps.showStartOvertime) return false;
+  if (prevProps.showMode !== nextProps.showMode) return false;
 
   // Shallow-compare key item fields used in the row
   const fieldsToCheck = [
