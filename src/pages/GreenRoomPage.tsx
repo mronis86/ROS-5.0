@@ -406,15 +406,15 @@ const GreenRoomPage: React.FC = () => {
             let startCueIdValue: number | null = null;
             let indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
             
-            if (overtimeData) {
-              setOvertimeMinutes(overtimeData);
-            }
+            setOvertimeMinutes(overtimeData || {});
             
             if (showStartOvertimeData !== null) {
               overtimeValue = (showStartOvertimeData as any).show_start_overtime ?? (showStartOvertimeData as any).overtimeMinutes ?? 0;
               startCueIdValue = (showStartOvertimeData as any).item_id ?? (showStartOvertimeData as any).itemId ?? null;
               setShowStartOvertime(overtimeValue);
               if (startCueIdValue) setStartCueId(startCueIdValue);
+            } else {
+              setShowStartOvertime(0);
             }
             
             if (indentedCuesData && indentedCuesData.length > 0) {
@@ -700,14 +700,15 @@ const GreenRoomPage: React.FC = () => {
         }
       },
       onResetAllStates: (data: any) => {
-        // Removed verbose logging to prevent console spam
-        // Clear all states when RunOfShowPage resets
         setActiveItemId(null);
         setTimerState(null);
         setLoadedItems({});
         setTimerProgress({});
-        setLastLoadedCueId(null); // Clear last loaded cue on reset
-        // Removed verbose logging to prevent console spam
+        setLastLoadedCueId(null);
+        setOvertimeMinutes({});
+        setShowStartOvertime(0);
+        runDataSyncRef.current?.();
+        setSyncCountdown(20);
       },
       onScheduleUpdated: () => {
         // Green Room 20s-only for schedule/overtime - ignore WebSocket
