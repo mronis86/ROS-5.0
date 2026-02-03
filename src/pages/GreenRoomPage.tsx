@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
@@ -34,6 +34,7 @@ interface ScheduleItem {
 
 const GreenRoomPage: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const urlParams = new URLSearchParams(location.search);
   const eventId = urlParams.get('eventId');
   const eventName = urlParams.get('eventName');
@@ -65,6 +66,43 @@ const GreenRoomPage: React.FC = () => {
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
+
+  // Event list for selector (like PhotoViewPage)
+  const [events, setEvents] = useState<Event[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [showEventSelector, setShowEventSelector] = useState(false);
+
+  // Fetch events list for the event selector dropdown
+  useEffect(() => {
+    const loadEvents = async () => {
+      try {
+        setEventsLoading(true);
+        const calendarEvents = await DatabaseService.getCalendarEvents();
+        const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
+          const dateObj = new Date(calEvent.date);
+          const simpleDate = dateObj.toISOString().split('T')[0];
+          return {
+            id: calEvent.id || '',
+            name: calEvent.name,
+            date: simpleDate,
+            location: calEvent.schedule_data?.location || '',
+            numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+            timezone: calEvent.schedule_data?.timezone,
+            created_at: calEvent.created_at,
+            updated_at: calEvent.updated_at
+          };
+        });
+        mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        setEvents(mapped.filter((e) => e.id));
+      } catch (e) {
+        console.warn('GreenRoom: Failed to load events for selector:', e);
+        setEvents([]);
+      } finally {
+        setEventsLoading(false);
+      }
+    };
+    loadEvents();
+  }, []);
 
   // UTC utility functions with proper timezone conversion
   const getCurrentTimeUTC = (): Date => {
@@ -1504,6 +1542,20 @@ const GreenRoomPage: React.FC = () => {
     }
   };
 
+  const handleEventChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value;
+    if (!id) return;
+    const selected = events.find(ev => ev.id === id);
+    if (!selected) return;
+    setShowEventSelector(false);
+    setError(null);
+    setIsLoading(true);
+    navigate(
+      `/green-room?eventId=${encodeURIComponent(selected.id)}&eventName=${encodeURIComponent(selected.name || '')}&eventDate=${encodeURIComponent(selected.date || '')}&eventLocation=${encodeURIComponent(selected.location || '')}`,
+      { replace: true, state: { event: selected } }
+    );
+  };
+
   return (
     <>
       <div className="w-full h-screen text-white overflow-hidden relative" style={{ aspectRatio: '9/16' }}>
@@ -1524,15 +1576,57 @@ const GreenRoomPage: React.FC = () => {
       
       {/* Content Overlay */}
       <div className="relative z-10">
-        {/* Fullscreen Button and Day Selector Stacked - Hidden in Fullscreen */}
+        {/* Back to Event List, Event Selector, Fullscreen, Day - Hidden in Fullscreen */}
         {!isFullscreen && (
-          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2">
+          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[180px]">
+            {/* Event selector (like PhotoViewPage) */}
+            {events.length > 1 && (
+              <div className="space-y-1">
+                {showEventSelector ? (
+                  <>
+                    <label className="text-xs text-gray-400 block">Event:</label>
+                    <select
+                      value={event?.id ?? ''}
+                      onChange={handleEventChange}
+                      className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:ring-2 focus:ring-blue-500"
+                      disabled={eventsLoading}
+                      title="Select which event to view"
+                    >
+                      <option value="">{eventsLoading ? 'Loading…' : 'Select event…'}</option>
+                      {events.map((ev) => (
+                        <option key={ev.id} value={ev.id}>
+                          {ev.name} {ev.date ? `(${ev.date})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setShowEventSelector(false)}
+                      className="w-full px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600"
+                      title="Hide event selector"
+                    >
+                      Hide
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowEventSelector(true)}
+                    className="w-full px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600"
+                    title="Change event"
+                  >
+                    Change event
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Fullscreen Button */}
             <button
               onClick={() => {
                 document.documentElement.requestFullscreen();
               }}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded border border-blue-500 text-lg transition-colors w-full"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded border border-blue-500 text-lg transition-colors"
               title="Enter Fullscreen"
             >
               Fullscreen
@@ -1545,12 +1639,11 @@ const GreenRoomPage: React.FC = () => {
                 onChange={(e) => {
                   const day = parseInt(e.target.value);
                   setSelectedDay(day);
-                  // Update master start time for selected day
                   if (dayStartTimes[day]) {
                     setMasterStartTime(dayStartTimes[day]);
                   }
                 }}
-                className="bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-lg"
+                className="w-full bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-lg"
               >
                 {Array.from({ length: numberOfDays }, (_, i) => i + 1).map(day => (
                   <option key={day} value={day}>
