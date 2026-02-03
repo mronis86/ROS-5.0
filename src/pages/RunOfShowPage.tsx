@@ -734,6 +734,22 @@ const RunOfShowPage: React.FC = () => {
   });
   const [customColumnWidths, setCustomColumnWidths] = useState<Record<string, number>>({});
   
+  // Row number column: 'normal' | 'small' (muted) | 'hidden'. Click # header to cycle.
+  const [rowNumberDisplayMode, setRowNumberDisplayMode] = useState<'normal' | 'small' | 'hidden'>(() => {
+    const key = `rowNumberDisplayMode_${event?.id || 'default'}`;
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+    if (saved === 'small' || saved === 'hidden' || saved === 'normal') return saved;
+    return 'normal';
+  });
+  const cycleRowNumberDisplayMode = () => {
+    setRowNumberDisplayMode(prev => {
+      const next = prev === 'normal' ? 'small' : prev === 'small' ? 'hidden' : 'normal';
+      const key = `rowNumberDisplayMode_${event?.id || 'default'}`;
+      if (typeof localStorage !== 'undefined') localStorage.setItem(key, next);
+      return next;
+    });
+  };
+  
   // Follow feature state
   const [isFollowEnabled, setIsFollowEnabled] = useState(false);
   
@@ -9438,11 +9454,16 @@ const RunOfShowPage: React.FC = () => {
           <div className={`px-8 transition-all duration-500 ease-in-out overflow-hidden ${showGridHeaders ? 'max-h-80 opacity-100 -mb-6' : 'max-h-0 opacity-0 mb-0'}`}>
             <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '127.67%', marginLeft: '-13.83%' }}>
               <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
-                {/* Row Number Column Header */}
+                {/* Row Number Column Header - click to cycle: normal → small → hidden */}
                 <div className="w-12 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
-                  <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={cycleRowNumberDisplayMode}
+                    className="h-16 w-full bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center cursor-pointer hover:bg-slate-600 transition-colors"
+                    title={`Row number: ${rowNumberDisplayMode} (click for ${rowNumberDisplayMode === 'normal' ? 'small' : rowNumberDisplayMode === 'small' ? 'hidden' : 'normal'})`}
+                  >
                     <span className="text-white font-bold text-xs">#</span>
-                  </div>
+                  </button>
                 </div>
                 
                 {/* CUE Column Header */}
@@ -9835,13 +9856,17 @@ const RunOfShowPage: React.FC = () => {
           </div>
           {/* Schedule Layout */}
           <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
-            {/* Row Number Column */}
+            {/* Row Number Column - click # header to cycle: normal → small → hidden */}
             <div className="w-12 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
-              {/* Header */}
-              <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+              {/* Header - clickable to cycle display mode */}
+              <button
+                type="button"
+                onClick={cycleRowNumberDisplayMode}
+                className="h-24 w-full bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center cursor-pointer hover:bg-slate-600 transition-colors"
+                title={`Row number: ${rowNumberDisplayMode} (click for ${rowNumberDisplayMode === 'normal' ? 'small' : rowNumberDisplayMode === 'small' ? 'hidden' : 'normal'})`}
+              >
                 <span className="text-white font-bold text-xs">#</span>
-              </div>
-              
+              </button>
               
               {/* Row Numbers */}
               {getFilteredSchedule().length === 0 ? (
@@ -9993,9 +10018,15 @@ const RunOfShowPage: React.FC = () => {
                           )}
                         </div>
                       )}
-                      <span className="text-white font-bold text-lg">
-                        {index + 1}
-                      </span>
+                      {rowNumberDisplayMode !== 'hidden' && (
+                        <span className={
+                          rowNumberDisplayMode === 'normal'
+                            ? 'text-white font-bold text-lg'
+                            : 'text-slate-300 font-semibold text-sm'
+                        }>
+                          {index + 1}
+                        </span>
+                      )}
                       <button
                         onClick={() => {
                           if (currentUserRole === 'VIEWER') {

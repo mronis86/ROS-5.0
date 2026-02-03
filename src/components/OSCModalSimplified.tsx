@@ -15,9 +15,9 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 rounded-lg p-6 w-full max-w-5xl max-h-[80vh] flex flex-col">
+      <div className="bg-slate-800 rounded-lg p-6 w-full max-w-5xl max-h-[90vh] flex flex-col min-h-0">
         {/* Header */}
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex-shrink-0 flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-white">OSC Control Panel</h2>
           <button
             onClick={onClose}
@@ -27,11 +27,11 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Content - scrollable so it stays inside modal */}
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0 overflow-y-auto">
           
           {/* Left Column - Event Info & Download */}
-          <div className="space-y-4">
+          <div className="space-y-4 min-w-0">
             {/* Event Information */}
             <div className="bg-slate-700 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-white mb-3">Event Information</h3>
@@ -83,28 +83,28 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
               
-              {/* Python WebSocket Version */}
-              <div className="text-center">
+              {/* Python OSC App (ros-osc-python-app) */}
+              <div className="text-center mb-4">
                 <a
-                  href="/OSC_WebSocket_App.zip"
-                  download="OSC_WebSocket_App.zip"
+                  href="/ros-osc-python-app.zip"
+                  download="ros-osc-python-app.zip"
                   className="block bg-green-600 hover:bg-green-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
                   🐍 Python OSC App (GUI)
                 </a>
                 <div className="text-xs text-green-400 mt-2">
-                  GUI toggle • Railway or Local • WebSocket
+                  GUI toggle • Railway or Local • WebSocket • ros-osc-python-app
                 </div>
               </div>
               
-              <div className="text-xs text-slate-500 mt-3 text-center">
-                <strong>Portable:</strong> Build <code className="bg-slate-600 px-1 rounded">ros-osc-control</code> with <code className="bg-slate-600 px-1 rounded">build-standalone.bat</code>, then run <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code> to update the zip. Others: extract, run install, then start.
+              <div className="text-xs text-slate-500 mt-2 text-center leading-tight">
+                <strong>Portable:</strong> <code className="bg-slate-600 px-1 rounded">build-standalone.bat</code> then <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code>. <strong>Python:</strong> <code className="bg-slate-600 px-1 rounded">create-ros-osc-python-app-zip.bat</code>. Others: extract, install, start.
               </div>
             </div>
           </div>
 
           {/* Right Column - OSC Commands */}
-          <div className="space-y-4">
+          <div className="space-y-4 min-w-0">
             <div className="bg-slate-700 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-white mb-3">OSC Commands Reference</h3>
               <div className="text-xs text-slate-400 space-y-3">
