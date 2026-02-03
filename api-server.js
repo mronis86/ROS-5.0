@@ -651,6 +651,70 @@ app.delete('/api/calendar-events/:id', async (req, res) => {
   }
 });
 
+// Show mode (rehearsal vs in-show) - global per event, stored in run_of_show_data.settings
+app.get('/api/show-mode/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      'SELECT settings FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ showMode: 'rehearsal', trackWasDurations: false });
+    }
+    const settings = result.rows[0].settings || {};
+    const showMode = (settings.show_mode === 'in-show' || settings.show_mode === 'rehearsal')
+      ? settings.show_mode
+      : 'rehearsal';
+    const trackWasDurations = settings.track_was_durations === true;
+    res.json({ showMode, trackWasDurations });
+  } catch (error) {
+    console.error('Error fetching show mode:', error);
+    res.status(500).json({ error: 'Failed to fetch show mode' });
+  }
+});
+
+app.patch('/api/show-mode/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { showMode, trackWasDurations } = req.body;
+    const updates = {};
+    if (showMode === 'rehearsal' || showMode === 'in-show') {
+      updates.show_mode = showMode;
+    }
+    if (typeof trackWasDurations === 'boolean') {
+      updates.track_was_durations = trackWasDurations;
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Provide showMode and/or trackWasDurations' });
+    }
+    const result = await pool.query(
+      `UPDATE run_of_show_data 
+       SET settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING *`,
+      [eventId, JSON.stringify(updates)]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    const settings = result.rows[0].settings || {};
+    const currentShowMode = (settings.show_mode === 'in-show' || settings.show_mode === 'rehearsal')
+      ? settings.show_mode
+      : 'rehearsal';
+    const currentTrackWasDurations = settings.track_was_durations === true;
+    broadcastUpdate(eventId, 'showModeUpdate', {
+      event_id: eventId,
+      showMode: currentShowMode,
+      trackWasDurations: currentTrackWasDurations
+    });
+    res.json({ showMode: currentShowMode, trackWasDurations: currentTrackWasDurations });
+  } catch (error) {
+    console.error('Error updating show mode:', error);
+    res.status(500).json({ error: 'Failed to update show mode' });
+  }
+});
+
 // Run of Show Data endpoints
 app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   try {

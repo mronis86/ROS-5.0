@@ -18,6 +18,7 @@ import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal from '../components/DisplayModal';
 import ExcelImportModal from '../components/ExcelImportModal';
 import AgendaImportModal from '../components/AgendaImportModal';
+import ConfirmModal from '../components/ConfirmModal';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
 
@@ -652,6 +653,38 @@ const RunOfShowPage: React.FC = () => {
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0); // Minutes late (+) or early (-)
+  
+  const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const showModeRef = useRef<'rehearsal' | 'in-show'>(showMode);
+  useEffect(() => { showModeRef.current = showMode; }, [showMode]);
+  const [showInShowConfirmModal, setShowInShowConfirmModal] = useState(false);
+  const [showRehearsalConfirmModal, setShowRehearsalConfirmModal] = useState(false);
+  const [trackWasDurations, setTrackWasDurations] = useState(false);
+  const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
+  const originalDurationsSetForEventRef = useRef<string | null>(null);
+  useEffect(() => { originalDurationsSetForEventRef.current = null; }, [event?.id]);
+  useEffect(() => {
+    if (showMode !== 'in-show' || !trackWasDurations || !event?.id || !schedule.length) return;
+    if (originalDurationsSetForEventRef.current === event.id) return;
+    const next: Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }> = {};
+    schedule.forEach((s: ScheduleItem) => {
+      next[s.id] = {
+        durationHours: s.durationHours ?? 0,
+        durationMinutes: s.durationMinutes ?? 0,
+        durationSeconds: s.durationSeconds ?? 0
+      };
+    });
+    setOriginalDurations(prev => Object.keys(next).length ? { ...prev, ...next } : prev);
+    originalDurationsSetForEventRef.current = event.id;
+  }, [showMode, trackWasDurations, event?.id, schedule]);
+  
+  useEffect(() => {
+    if (!event?.id) return;
+    DatabaseService.getShowSettings(event.id).then(s => {
+      setShowMode(s.showMode);
+      setTrackWasDurations(s.trackWasDurations);
+    });
+  }, [event?.id]);
   
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
@@ -4195,6 +4228,16 @@ const RunOfShowPage: React.FC = () => {
     // Initialize timer progress for the loaded CUE
     const item = schedule.find(s => s.id === itemId);
     if (item) {
+      if (showModeRef.current === 'in-show' && trackWasDurations && !originalDurations[itemId]) {
+        setOriginalDurations(prev => ({
+          ...prev,
+          [itemId]: {
+            durationHours: item.durationHours ?? 0,
+            durationMinutes: item.durationMinutes ?? 0,
+            durationSeconds: item.durationSeconds ?? 0
+          }
+        }));
+      }
       console.log('🔄 Item found:', item);
       console.log('🔄 Item ID type:', typeof item.id, 'Value:', item.id);
       console.log('🔄 Item duration values:', {
@@ -4310,6 +4353,10 @@ const RunOfShowPage: React.FC = () => {
       
       // Use setTimeout to run this after the current call stack clears (ensures UI updates first)
       setTimeout(async () => {
+        if (showModeRef.current === 'rehearsal') {
+          console.log('⏱️ Rehearsal mode: skipping overtime save/broadcast');
+          return;
+        }
         for (const { timerId, elapsedSeconds, totalSeconds } of runningTimerData) {
           try {
             const overtimeSeconds = elapsedSeconds - totalSeconds;
@@ -4496,6 +4543,38 @@ const RunOfShowPage: React.FC = () => {
     
     // NOTE: Do NOT clear isIndented property - this is part of the schedule structure
     // The reset should only clear completed cues and timer states, not modify schedule structure
+    
+    // Restore durations from originalDurations when Track was durations is on
+    if (trackWasDurations && Object.keys(originalDurations).length > 0) {
+      const restoredSchedule = schedule.map(s => {
+        const orig = originalDurations[s.id];
+        if (orig) {
+          return {
+            ...s,
+            durationHours: orig.durationHours,
+            durationMinutes: orig.durationMinutes,
+            durationSeconds: orig.durationSeconds
+          };
+        }
+        return s;
+      });
+      setSchedule(restoredSchedule);
+      if (event?.id && user?.id) {
+        const scheduleWithDurationSeconds = restoredSchedule.map((item: ScheduleItem) => ({
+          ...item,
+          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+          isIndented: indentedCues[item.id] ? true : false
+        }));
+        DatabaseService.saveRunOfShowData({
+          event_id: event.id,
+          event_name: event.name,
+          event_date: event.date,
+          schedule_items: scheduleWithDurationSeconds,
+          custom_columns: customColumns,
+          settings: { eventName, masterStartTime, dayStartTimes, timezone: eventTimezone, lastSaved: new Date().toISOString() }
+        }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
+      }
+    }
     
     // Emit reset event to other connected pages (like PhotoViewPage)
     console.log('📡 RunOfShow: Emitting reset all states event to other pages');
@@ -5524,7 +5603,7 @@ const RunOfShowPage: React.FC = () => {
         
       },
       onOvertimeUpdate: (data: any) => {
-        
+        if (showModeRef.current !== 'in-show') return;
         if (data && data.event_id === event?.id && data.item_id && typeof data.overtimeMinutes === 'number') {
           console.log(`✅ Overtime update validation passed - updating item ${data.item_id} to ${data.overtimeMinutes} minutes`);
           
@@ -5556,15 +5635,21 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onShowStartOvertimeUpdate: (data: { event_id: string; item_id: number; showStartOvertime: number }) => {
-        console.log('📡 Received show start overtime update:', data);
+        if (showModeRef.current !== 'in-show') return;
         if (data.event_id === event?.id) {
           setShowStartOvertime(data.showStartOvertime);
           setStartCueId(data.item_id); // Also update which cue is marked as START
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
         }
       },
+      onShowModeUpdate: (data: { event_id: string; showMode: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
+        if (data.event_id === event?.id) {
+          setShowMode(data.showMode);
+          if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+        }
+      },
       onShowStartOvertimeReset: (data: { event_id: string }) => {
-        console.log('📡 Received show start overtime reset:', data);
+        if (showModeRef.current !== 'in-show') return;
         if (data.event_id === event?.id) {
           setShowStartOvertime(0);
           console.log('✅ Show start overtime reset to 0');
@@ -6667,7 +6752,7 @@ const RunOfShowPage: React.FC = () => {
         const overtimeMinutes = Math.floor(actualDuration - scheduledDuration);
         
         // Only calculate overtime if there's a meaningful difference (at least 1 minute)
-        if (Math.abs(overtimeMinutes) >= 1) {
+        if (Math.abs(overtimeMinutes) >= 1 && showModeRef.current === 'in-show') {
           const overtimeType = overtimeMinutes > 0 ? 'over' : 'under';
           console.log(`⏰ Automatic overtime detected: ${Math.abs(overtimeMinutes)} minutes ${overtimeType} for cue ${itemId}`);
           
@@ -6848,7 +6933,7 @@ const RunOfShowPage: React.FC = () => {
             const scheduledStart = parseTimeString(scheduledStartStr);
             const actualStart = getCurrentTimeInEventTimezone(); // Use current time in event timezone for START CUE only
             
-            if (scheduledStart) {
+            if (scheduledStart && showModeRef.current === 'in-show') {
               // Convert the scheduled start time from event timezone to UTC
               const scheduledStartUTC = convertLocalTimeToUTC(scheduledStart, eventTimezone);
               
@@ -8156,6 +8241,34 @@ const RunOfShowPage: React.FC = () => {
           setShowRoleChangeModal(false);
         }}
         eventId={event?.id || ''}
+      />
+
+      {/* In-Show mode confirmation modal */}
+      <ConfirmModal
+        isOpen={showInShowConfirmModal}
+        onClose={() => setShowInShowConfirmModal(false)}
+        onConfirm={() => {
+          DatabaseService.saveShowMode(event!.id, 'in-show').then(() => setShowMode('in-show'));
+        }}
+        title="Enter Live Show Tracking Mode?"
+        message="Overtime will be tracked and the Start column will show live adjustments. Only switch when you are ready for the live show."
+        confirmLabel="Enter In-Show"
+        cancelLabel="Cancel"
+        confirmClassName="bg-green-600 hover:bg-green-500"
+      />
+
+      {/* Rehearsal mode confirmation modal (when switching back from In-Show) */}
+      <ConfirmModal
+        isOpen={showRehearsalConfirmModal}
+        onClose={() => setShowRehearsalConfirmModal(false)}
+        onConfirm={() => {
+          DatabaseService.saveShowMode(event!.id, 'rehearsal').then(() => setShowMode('rehearsal'));
+        }}
+        title="Switch back to Rehearsal mode?"
+        message="Overtime will no longer be tracked and the Start column will show scheduled times only. Continue?"
+        confirmLabel="Switch to Rehearsal"
+        cancelLabel="Stay In-Show"
+        confirmClassName="bg-amber-600 hover:bg-amber-500"
       />
 
       {/* Running Timer Popup */}
@@ -9710,12 +9823,67 @@ const RunOfShowPage: React.FC = () => {
         <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '133.33%', marginLeft: '-16.67%' }}>
           <div className="flex justify-between items-center mb-6">
             <div>
-              <h2 className="text-2xl font-bold text-white">
-                Schedule{(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''} - TRT {(() => {
-                  const trt = calculateTotalRunTime();
-                  return `${trt.hours}h ${trt.minutes}m ${trt.seconds}s`;
-                })()}
-              </h2>
+              <div className="flex items-center gap-4 flex-wrap">
+                <h2 className="text-2xl font-bold text-white">
+                  Schedule{(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''} - TRT {(() => {
+                    const trt = calculateTotalRunTime();
+                    return `${trt.hours}h ${trt.minutes}m ${trt.seconds}s`;
+                  })()}
+                </h2>
+                {currentUserRole === 'OPERATOR' && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white text-sm font-medium">Mode:</span>
+                      <div className="flex rounded-lg overflow-hidden border border-slate-600">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (showMode === 'in-show') {
+                              setShowRehearsalConfirmModal(true);
+                            } else {
+                              setShowMode('rehearsal');
+                            }
+                          }}
+                          className={`px-3 py-1.5 text-sm font-medium transition-colors ${showMode === 'rehearsal' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
+                          title="Rehearsal mode"
+                        >
+                          Rehearsal
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowInShowConfirmModal(true)}
+                          className={`px-3 py-1.5 text-sm font-medium transition-colors ${showMode === 'in-show' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
+                          title="In-Show mode"
+                        >
+                          In-Show
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      className={`flex items-center gap-2 select-none ${showMode === 'in-show' ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
+                      title={showMode !== 'in-show' ? 'Switch to In-Show to track was durations' : 'Track original duration and show "was X min" when changed'}
+                      onClick={showMode !== 'in-show' ? (e) => { e.preventDefault(); e.stopPropagation(); } : undefined}
+                      onMouseDown={showMode !== 'in-show' ? (e) => { e.preventDefault(); e.stopPropagation(); } : undefined}
+                    >
+                    <input
+                      type="checkbox"
+                      checked={trackWasDurations}
+                      onChange={(e) => {
+                        if (showMode !== 'in-show') return;
+                        const next = e.target.checked;
+                        setTrackWasDurations(next);
+                        DatabaseService.saveTrackWasDurations(event!.id, next);
+                      }}
+                        disabled={showMode !== 'in-show'}
+                        readOnly={showMode !== 'in-show'}
+                        className="rounded border-slate-500"
+                        style={showMode !== 'in-show' ? { pointerEvents: 'none', cursor: 'not-allowed' } : {}}
+                      />
+                      <span className="text-white text-sm" style={showMode !== 'in-show' ? { pointerEvents: 'none' } : {}}>Track was durations</span>
+                    </div>
+                  </>
+                )}
+              </div>
               {user && (
                 <div className="flex items-center gap-3 mt-1">
                   <button
@@ -10570,6 +10738,9 @@ const RunOfShowPage: React.FC = () => {
                         displaySpeakersText={displaySpeakersText}
                         calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                         calculateStartTime={calculateStartTime}
+                        showMode={showMode}
+                        originalDuration={originalDurations[item.id]}
+                        showWasUnderDuration={showMode === 'in-show' && trackWasDurations}
                         customColumns={customColumns}
                         visibleCustomColumns={visibleCustomColumns}
                         customColumnWidths={customColumnWidths}

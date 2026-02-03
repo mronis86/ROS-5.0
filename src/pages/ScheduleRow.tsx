@@ -46,6 +46,9 @@ export interface ScheduleRowProps {
   customColumnWidths?: Record<string, number>;
   getRowHeight?: Function;
   asFragment?: boolean;
+  showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
+  originalDuration?: { durationHours: number; durationMinutes: number; durationSeconds: number } | null;
+  showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
 }
 
 const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
@@ -93,7 +96,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   visibleCustomColumns,
   customColumnWidths,
   getRowHeight,
-  asFragment
+  asFragment,
+  showMode = 'in-show',
+  originalDuration,
+  showWasUnderDuration = false
 }) => {
   // Helper functions
   const handleSelectFocus = () => {
@@ -119,11 +125,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             <span className="text-white font-mono text-base font-bold">
               {indentedCues[item.id]
                 ? '↘'
-                : (calculateStartTimeWithOvertime
-                    ? String(calculateStartTimeWithOvertime(index))
-                    : String(index + 1))}
+                : (calculateStartTime && calculateStartTimeWithOvertime
+                    ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index))
+                    : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1)))}
             </span>
-            {!indentedCues[item.id] && (
+            {!indentedCues[item.id] && showMode !== 'rehearsal' && (
               (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) ||
                (calculateStartTime && calculateStartTimeWithOvertime &&
                 String(calculateStartTime(index)) !== String(calculateStartTimeWithOvertime(index))))
@@ -234,9 +240,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         </div>
       )}
       {/* Duration column (after Program Type) */}
-      {visibleColumns.duration && (
+      {visibleColumns.duration && (() => {
+        const durationChanged = showWasUnderDuration && originalDuration &&
+          (item.durationHours !== originalDuration.durationHours ||
+           item.durationMinutes !== originalDuration.durationMinutes ||
+           item.durationSeconds !== originalDuration.durationSeconds);
+        return (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          className="px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 gap-1"
           style={{ width: columnWidths.duration }}
         >
           <div className="flex items-center gap-2">
@@ -357,8 +368,19 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit seconds'}
             />
           </div>
+          {durationChanged && (() => {
+            const h = originalDuration!.durationHours ?? 0;
+            const m = originalDuration!.durationMinutes ?? 0;
+            const s = originalDuration!.durationSeconds ?? 0;
+            const totalSec = h * 3600 + m * 60 + s;
+            const totalMin = Math.round(totalSec / 60);
+            return (
+              <div className="text-xs text-amber-400 font-medium">was {totalMin} min</div>
+            );
+          })()}
         </div>
-      )}
+        );
+      })()}
       {/* Segment name column (after Duration) */}
       {visibleColumns.segmentName && (
         <div 
@@ -816,6 +838,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   // Start cue changes that affect badges
   if (prevProps.startCueId !== nextProps.startCueId) return false;
   if (prevProps.showStartOvertime !== nextProps.showStartOvertime) return false;
+  if (prevProps.showMode !== nextProps.showMode) return false;
+  if (prevProps.showWasUnderDuration !== nextProps.showWasUnderDuration) return false;
+  if (prevProps.originalDuration !== nextProps.originalDuration) return false;
 
   // Shallow-compare key item fields used in the row
   const fieldsToCheck = [

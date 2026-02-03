@@ -241,6 +241,32 @@ class ApiClient {
     return this.request(`/api/show-start-overtime/${eventId}`, {}, `showStartOvertime_${eventId}`, this.CACHE_TTL.completedCues);
   }
 
+  async getShowMode(eventId: string): Promise<{ showMode: 'rehearsal' | 'in-show'; trackWasDurations: boolean }> {
+    const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
+    return {
+      showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
+      trackWasDurations: result?.trackWasDurations === true
+    };
+  }
+
+  async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show') {
+    const result = await this.request(`/api/show-mode/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ showMode }),
+    });
+    this.cache.delete(`showMode_${eventId}`);
+    return result;
+  }
+
+  async saveTrackWasDurations(eventId: string, trackWasDurations: boolean) {
+    const result = await this.request(`/api/show-mode/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ trackWasDurations }),
+    });
+    this.cache.delete(`showMode_${eventId}`);
+    return result;
+  }
+
   /** Invalidate cache for Photo page 20s sync - ensures fresh overtime/schedule data every sync */
   invalidateSyncDataCache(eventId: string): void {
     this.cache.delete(`runOfShowData_${eventId}`);

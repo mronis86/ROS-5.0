@@ -355,6 +355,12 @@ const PhotoViewPage: React.FC = () => {
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [showEventSelector, setShowEventSelector] = useState(false);
+  const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+
+  useEffect(() => {
+    if (!event?.id) return;
+    DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
+  }, [event?.id]);
 
   // Filter schedule by selected day (multi-day events)
   const filteredSchedule = React.useMemo(
@@ -1092,6 +1098,9 @@ const PhotoViewPage: React.FC = () => {
       onStartCueSelectionUpdate: () => {
         // Photo page ONLY gets START cue updates every 20s - ignore WebSocket
       },
+      onShowModeUpdate: (data: { event_id: string; showMode: 'rehearsal' | 'in-show' }) => {
+        if (data.event_id === event?.id) setShowMode(data.showMode);
+      },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 PhotoView WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
       },
@@ -1102,7 +1111,9 @@ const PhotoViewPage: React.FC = () => {
       },
       onInitialSync: async () => {
         console.log('🔄 PhotoView: WebSocket initial sync triggered - loading current state');
-        
+        if (event?.id) {
+          DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
+        }
         // Load current active timer
         try {
           const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
@@ -1934,21 +1945,9 @@ const PhotoViewPage: React.FC = () => {
                       shouldHighlightIndented = parentIsLoaded || parentIsRunning;
                     }
             
-            // Calculate start time with overtime adjustments
+            // Calculate start time: rehearsal = scheduled only, in-show = with overtime
             const itemIndex = schedule.findIndex(s => s.id === item.id);
-            const startTime = calculateStartTimeWithOvertime(itemIndex);
-            
-            // Debug logging for overtime calculation
-            if (index === 0) { // Only log for first item to avoid spam
-              console.log('🔄 PhotoView: Calculating start time for first item:', {
-                itemId: item.id,
-                itemIndex,
-                startTime,
-                overtimeMinutes: overtimeMinutes[item.id] || 0,
-                showStartOvertime,
-                startCueId
-              });
-            }
+            const startTime = showMode === 'rehearsal' ? calculateStartTime(itemIndex) : calculateStartTimeWithOvertime(itemIndex);
             
             // Format duration
             const duration = `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
@@ -2017,8 +2016,8 @@ const PhotoViewPage: React.FC = () => {
                         <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>
                           {indentedCues[item.id] ? '↘' : (startTime || 'No Time')}
                         </div>
-                        {/* Overtime indicator */}
-                        {!indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(itemIndex) !== calculateStartTimeWithOvertime(itemIndex)) && (
+                        {/* Overtime indicator - only in in-show mode */}
+                        {showMode !== 'rehearsal' && !indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(itemIndex) !== calculateStartTimeWithOvertime(itemIndex)) && (
                           <div className={`text-xs font-bold px-2 py-1 rounded mt-1 ${
                             (() => {
                               // For START cue: use show start overtime only for color

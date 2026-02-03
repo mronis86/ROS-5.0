@@ -24,6 +24,7 @@ interface SocketCallbacks {
   onOvertimeReset?: (data: any) => void; // NEW! For overtime reset
   onShowStartOvertimeUpdate?: (data: any) => void; // NEW! For show start overtime
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
+  onShowModeUpdate?: (data: { event_id: string; showMode: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => void; // Global show mode and track-was-durations
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
 }
 
@@ -127,6 +128,9 @@ class SocketClient {
         case 'startCueSelectionUpdate': // NEW! For start cue selection
           console.log('📡 SocketClient: Received startCueSelectionUpdate event:', message.data);
           this.callbacks.onStartCueSelectionUpdate?.(message.data);
+          break;
+        case 'showModeUpdate': // Global show mode (rehearsal vs in-show)
+          this.callbacks.onShowModeUpdate?.(message.data);
           break;
         case 'presenceUpdated':
           console.log('📡 SocketClient: presenceUpdated', message.data?.length ?? 0, 'viewers');

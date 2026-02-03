@@ -67,6 +67,12 @@ const GreenRoomPage: React.FC = () => {
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [syncCountdown, setSyncCountdown] = useState<number>(20);
+  const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+
+  useEffect(() => {
+    if (!event?.id) return;
+    DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
+  }, [event?.id]);
 
   // Event list for selector (like PhotoViewPage)
   const [events, setEvents] = useState<Event[]>([]);
@@ -396,12 +402,17 @@ const GreenRoomPage: React.FC = () => {
             setDayStartTimes(data.settings.dayStartTimes);
           }
           
-          // Reload overtime data (cache invalidated above)
+          // Reload overtime data and show mode (cache invalidated above)
           try {
-            const overtimeData = (await DatabaseService.getOvertimeMinutes(id)) || {};
-            const showStartOvertimeData = await DatabaseService.getShowStartOvertime(id);
-            const indentedCuesData = await DatabaseService.getIndentedCues(id);
-            
+            const [overtimeData, showStartOvertimeData, indentedCuesData, showModeData] = await Promise.all([
+              DatabaseService.getOvertimeMinutes(id),
+              DatabaseService.getShowStartOvertime(id),
+              DatabaseService.getIndentedCues(id),
+              DatabaseService.getShowMode(id)
+            ]);
+            const currentShowMode = showModeData;
+            setShowMode(currentShowMode);
+            const overtimeDataMap = overtimeData || {};
             let overtimeValue = 0;
             let startCueIdValue: number | null = null;
             let indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
@@ -411,11 +422,13 @@ const GreenRoomPage: React.FC = () => {
             if (showStartOvertimeData !== null) {
               overtimeValue = (showStartOvertimeData as any).show_start_overtime ?? (showStartOvertimeData as any).overtimeMinutes ?? 0;
               startCueIdValue = (showStartOvertimeData as any).item_id ?? (showStartOvertimeData as any).itemId ?? null;
-              setShowStartOvertime(overtimeValue);
+              setShowStartOvertime(currentShowMode === 'in-show' ? overtimeValue : 0);
               if (startCueIdValue) setStartCueId(startCueIdValue);
             } else {
               setShowStartOvertime(0);
             }
+            const effectiveOvertimeData = currentShowMode === 'rehearsal' ? {} : overtimeDataMap;
+            const effectiveOvertimeValue = currentShowMode === 'rehearsal' ? 0 : overtimeValue;
             
             if (indentedCuesData && indentedCuesData.length > 0) {
               indentedCuesData.forEach((cue: any) => {
@@ -455,7 +468,7 @@ const GreenRoomPage: React.FC = () => {
               const totalMinutes = (durationHours * 60) + durationMinutes + (durationSeconds / 60);
               const duration = totalMinutes > 0 ? `${Math.round(totalMinutes)} min` : '0 min';
               
-              const startTime = calculateStartTimeWithOvertime(index, formattedSchedule, masterStartTimeFromDB, overtimeData, overtimeValue, startCueIdValue, indentedCuesMap);
+              const startTime = calculateStartTimeWithOvertime(index, formattedSchedule, masterStartTimeFromDB, effectiveOvertimeData, effectiveOvertimeValue, startCueIdValue, indentedCuesMap);
               let endTime = null;
               
               if (startTime && startTime !== '') {
@@ -463,7 +476,7 @@ const GreenRoomPage: React.FC = () => {
                 while (nextItemIndex < formattedSchedule.length) {
                   const nextItem = formattedSchedule[nextItemIndex];
                   if (nextItem && !indentedCuesMap[nextItem.id]) {
-                    const nextStartTime = calculateStartTimeWithOvertime(nextItemIndex, formattedSchedule, masterStartTimeFromDB, overtimeData, overtimeValue, startCueIdValue, indentedCuesMap);
+                    const nextStartTime = calculateStartTimeWithOvertime(nextItemIndex, formattedSchedule, masterStartTimeFromDB, effectiveOvertimeData, effectiveOvertimeValue, startCueIdValue, indentedCuesMap);
                     if (nextStartTime && nextStartTime !== '') {
                       endTime = nextStartTime;
                       break;
@@ -1234,6 +1247,12 @@ const GreenRoomPage: React.FC = () => {
       },
       onShowStartOvertimeUpdate: () => {
         // Green Room 20s-only for schedule/overtime - ignore WebSocket
+      },
+      onShowModeUpdate: (data: { event_id: string; showMode: 'rehearsal' | 'in-show' }) => {
+        if (data.event_id === event?.id) {
+          setShowMode(data.showMode);
+          runDataSyncRef.current?.();
+        }
       },
       onConnectionChange: (connected: boolean) => {
         // Removed verbose logging to prevent console spam

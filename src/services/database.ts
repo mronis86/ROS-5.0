@@ -395,6 +395,49 @@ export class DatabaseService {
     }
   }
 
+  static async getShowMode(eventId: string): Promise<'rehearsal' | 'in-show'> {
+    try {
+      const result = await apiClient.getShowMode(eventId);
+      return result?.showMode === 'in-show' ? 'in-show' : 'rehearsal';
+    } catch (error) {
+      console.error('❌ Exception getting show mode:', error);
+      return 'rehearsal';
+    }
+  }
+
+  static async getShowSettings(eventId: string): Promise<{ showMode: 'rehearsal' | 'in-show'; trackWasDurations: boolean }> {
+    try {
+      const result = await apiClient.getShowMode(eventId);
+      return {
+        showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
+        trackWasDurations: result?.trackWasDurations === true
+      };
+    } catch (error) {
+      console.error('❌ Exception getting show settings:', error);
+      return { showMode: 'rehearsal', trackWasDurations: false };
+    }
+  }
+
+  static async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show'): Promise<boolean> {
+    try {
+      await apiClient.saveShowMode(eventId, showMode);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception saving show mode:', error);
+      return false;
+    }
+  }
+
+  static async saveTrackWasDurations(eventId: string, trackWasDurations: boolean): Promise<boolean> {
+    try {
+      await apiClient.saveTrackWasDurations(eventId, trackWasDurations);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception saving track was durations:', error);
+      return false;
+    }
+  }
+
   static async saveStartCueSelection(eventId: string, itemId: number): Promise<boolean> {
     try {
       console.log('🔄 Saving START cue selection via API:', { eventId, itemId });
