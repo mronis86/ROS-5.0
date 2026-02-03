@@ -211,7 +211,9 @@ const EventListPage: React.FC = () => {
           eventName: newEvent.name,
           masterStartTime: '',
           timezone: newEvent.timezone || 'America/New_York',
-          lastSaved: new Date().toISOString()
+          lastSaved: new Date().toISOString(),
+          show_mode: 'rehearsal',
+          track_was_durations: false
         }
       }, {
         userId: user?.id || 'unknown',

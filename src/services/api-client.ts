@@ -274,6 +274,11 @@ class ApiClient {
     this.cache.delete(`showStartOvertime_${eventId}`);
   }
 
+  /** Invalidate show mode cache so refresh/reconnect gets current in-show state */
+  invalidateShowModeCache(eventId: string): void {
+    this.cache.delete(`showMode_${eventId}`);
+  }
+
   async saveStartCueSelection(eventId: string, itemId: number) {
     const result = await this.request('/api/start-cue-selection', {
       method: 'POST',

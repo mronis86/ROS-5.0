@@ -2487,7 +2487,9 @@ const RunOfShowPage: React.FC = () => {
         settings: {
           eventName,
           masterStartTime,
-          dayStartTimes
+          dayStartTimes,
+          show_mode: showMode,
+          track_was_durations: trackWasDurations
         }
       });
       console.log('✅ Schedule data backed up with settings');
@@ -4579,7 +4581,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, timezone: eventTimezone, lastSaved: new Date().toISOString() }
+          settings: { eventName, masterStartTime, dayStartTimes, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -4927,13 +4929,15 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: {
-            eventName,
-            masterStartTime,
-            dayStartTimes,
-            timezone: eventTimezone,
-            lastSaved: new Date().toISOString()
-          }
+        settings: {
+          eventName,
+          masterStartTime,
+          dayStartTimes,
+          timezone: eventTimezone,
+          lastSaved: new Date().toISOString(),
+          show_mode: showMode,
+          track_was_durations: trackWasDurations
+        }
         };
         
         
@@ -4968,7 +4972,7 @@ const RunOfShowPage: React.FC = () => {
         console.error('❌ Error auto-saving to API:', error);
       }
     }, 2000), // Debounce for 2 seconds
-    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, indentedCues]
+    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, indentedCues, showMode, trackWasDurations]
   );
 
   // Debounce utility function
@@ -5962,11 +5966,15 @@ const RunOfShowPage: React.FC = () => {
         customColumnsCount: restoredData.customColumnsData.length
       });
       
-      // Save to API
+      // Save to API (preserve show_mode/track_was_durations so restore doesn't revert In-Show)
       await DatabaseService.saveRunOfShowData({
         event_id: event.id,
         event_name: restoredData.eventData?.event_name || event?.name || 'Event',
-        settings: (restoredData as any).settings || {},
+        settings: {
+          ...((restoredData as any).settings || {}),
+          show_mode: showMode,
+          track_was_durations: trackWasDurations
+        },
         schedule_items: restoredData.scheduleData,
         custom_columns: restoredData.customColumnsData,
         event_date: restoredData.eventData?.event_date || null
@@ -10305,7 +10313,9 @@ const RunOfShowPage: React.FC = () => {
                                settings: {
                                  eventName: eventName,
                                  masterStartTime: masterStartTime,
-                                 dayStartTimes: dayStartTimes
+                                 dayStartTimes: dayStartTimes,
+                                 show_mode: showMode,
+                                 track_was_durations: trackWasDurations
                                }
                              };
                              

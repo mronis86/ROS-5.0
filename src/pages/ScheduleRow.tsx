@@ -116,7 +116,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   const Content = (
     <>
       {/* Start time, program type, and row details, mirroring RunOfShowPage*/}
-      {visibleColumns.start && (
+      {visibleColumns.start && (() => {
+        const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
+        const displayedStart = calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : null;
+        const startTimeRolled = !indentedCues[item.id] && showMode === 'in-show' && scheduledStart && displayedStart && scheduledStart !== displayedStart;
+        return (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={{ width: columnWidths.start }}
@@ -129,6 +133,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index))
                     : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1)))}
             </span>
+            {startTimeRolled && scheduledStart && (
+              <span className="text-xs text-slate-400">
+                was {scheduledStart}
+              </span>
+            )}
             {!indentedCues[item.id] && showMode !== 'rehearsal' && (
               (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) ||
                (calculateStartTime && calculateStartTimeWithOvertime &&
@@ -179,7 +188,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
       {/* Program type column (moved directly after Start) */}
       {visibleColumns.programType && (
         <div
@@ -247,8 +257,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
            item.durationSeconds !== originalDuration.durationSeconds);
         return (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 gap-1"
-          style={{ width: columnWidths.duration }}
+          className={`px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 gap-0.5 ${durationChanged ? 'bg-amber-800/50 ring-2 ring-amber-400 rounded-md' : ''}`}
+          style={{ width: columnWidths.duration, minHeight: durationChanged ? 'auto' : undefined }}
+          title={durationChanged ? 'Duration changed from original' : undefined}
         >
           <div className="flex items-center gap-2">
             <input 
@@ -373,9 +384,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             const m = originalDuration!.durationMinutes ?? 0;
             const s = originalDuration!.durationSeconds ?? 0;
             const totalSec = h * 3600 + m * 60 + s;
-            const totalMin = Math.round(totalSec / 60);
+            const wasText = totalSec >= 3600 ? `${h}h ${m}m` : totalSec >= 60 ? `${m} min` : `${s} sec`;
             return (
-              <div className="text-xs text-amber-400 font-medium">was {totalMin} min</div>
+              <div className="text-amber-300 text-base font-semibold text-center w-full" style={{ lineHeight: 1.2 }}>
+                was {wasText}
+              </div>
             );
           })()}
         </div>

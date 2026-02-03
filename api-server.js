@@ -1222,11 +1222,28 @@ app.post('/api/run-of-show-data', async (req, res) => {
       event_date,
       schedule_items,
       custom_columns,
-      settings,
+      settings: incomingSettings,
       last_modified_by,
       last_modified_by_name,
       last_modified_by_role
     } = req.body;
+
+    // Preserve show_mode and track_was_durations from DB when not in payload
+    // (schedule saves don't include them, which was overwriting In-Show state)
+    let settingsToSave = incomingSettings || {};
+    const existing = await pool.query(
+      'SELECT settings FROM run_of_show_data WHERE event_id = $1',
+      [event_id]
+    );
+    if (existing.rows.length > 0) {
+      const current = existing.rows[0].settings || {};
+      if (incomingSettings?.show_mode === undefined && (current.show_mode === 'in-show' || current.show_mode === 'rehearsal')) {
+        settingsToSave = { ...settingsToSave, show_mode: current.show_mode };
+      }
+      if (incomingSettings?.track_was_durations === undefined && typeof current.track_was_durations === 'boolean') {
+        settingsToSave = { ...settingsToSave, track_was_durations: current.track_was_durations };
+      }
+    }
 
     const result = await pool.query(
       `INSERT INTO run_of_show_data 
@@ -1252,7 +1269,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
         event_date,
         JSON.stringify(schedule_items),
         JSON.stringify(custom_columns),
-        JSON.stringify(settings),
+        JSON.stringify(settingsToSave),
         last_modified_by,
         last_modified_by_name,
         last_modified_by_role
