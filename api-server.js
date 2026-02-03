@@ -703,11 +703,11 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       ? settings.show_mode
       : 'rehearsal';
     const currentTrackWasDurations = settings.track_was_durations === true;
-    broadcastUpdate(eventId, 'showModeUpdate', {
-      event_id: eventId,
-      showMode: currentShowMode,
-      trackWasDurations: currentTrackWasDurations
-    });
+    // CRITICAL: Only include showMode in broadcast when we actually updated it.
+    // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
+    const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
+    if (showMode === 'rehearsal' || showMode === 'in-show') payload.showMode = currentShowMode;
+    broadcastUpdate(eventId, 'showModeUpdate', payload);
     res.json({ showMode: currentShowMode, trackWasDurations: currentTrackWasDurations });
   } catch (error) {
     console.error('Error updating show mode:', error);

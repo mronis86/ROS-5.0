@@ -663,6 +663,14 @@ const RunOfShowPage: React.FC = () => {
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   const originalDurationsSetForEventRef = useRef<string | null>(null);
   useEffect(() => { originalDurationsSetForEventRef.current = null; }, [event?.id]);
+  // Reset capture lock and clear originals when leaving in-show or unchecking track,
+  // so we re-capture current durations when re-entering (e.g. after rehearsal edits)
+  useEffect(() => {
+    if (showMode !== 'in-show' || !trackWasDurations) {
+      originalDurationsSetForEventRef.current = null;
+      setOriginalDurations({});
+    }
+  }, [showMode, trackWasDurations]);
   useEffect(() => {
     if (showMode !== 'in-show' || !trackWasDurations || !event?.id || !schedule.length) return;
     if (originalDurationsSetForEventRef.current === event.id) return;
@@ -5599,6 +5607,16 @@ const RunOfShowPage: React.FC = () => {
           } catch (overtimeError) {
             console.error('❌ Initial sync: Error reloading overtime data on page return:', overtimeError);
           }
+          
+          // Refetch show mode so refresh/reconnect/late-join users get current in-show state
+          try {
+            apiClient.invalidateShowModeCache(event.id);
+            const s = await DatabaseService.getShowSettings(event.id);
+            setShowMode(s.showMode);
+            setTrackWasDurations(s.trackWasDurations);
+          } catch (e) {
+            console.warn('Initial sync: could not refetch show mode', e);
+          }
         }
         
       },
@@ -5642,9 +5660,9 @@ const RunOfShowPage: React.FC = () => {
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
         }
       },
-      onShowModeUpdate: (data: { event_id: string; showMode: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
+      onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
         if (data.event_id === event?.id) {
-          setShowMode(data.showMode);
+          if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
         }
       },
@@ -9860,23 +9878,31 @@ const RunOfShowPage: React.FC = () => {
                       </div>
                     </div>
                     <div
+                      role="group"
+                      aria-label="Track was durations"
                       className={`flex items-center gap-2 select-none ${showMode === 'in-show' ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
                       title={showMode !== 'in-show' ? 'Switch to In-Show to track was durations' : 'Track original duration and show "was X min" when changed'}
-                      onClick={showMode !== 'in-show' ? (e) => { e.preventDefault(); e.stopPropagation(); } : undefined}
-                      onMouseDown={showMode !== 'in-show' ? (e) => { e.preventDefault(); e.stopPropagation(); } : undefined}
+                      onClick={(e) => {
+                        if (showMode !== 'in-show') { e.preventDefault(); e.stopPropagation(); return; }
+                        e.stopPropagation();
+                      }}
+                      onMouseDown={(e) => {
+                        if (showMode !== 'in-show') { e.preventDefault(); e.stopPropagation(); }
+                      }}
                     >
                     <input
                       type="checkbox"
                       checked={trackWasDurations}
                       onChange={(e) => {
                         if (showMode !== 'in-show') return;
+                        e.stopPropagation();
                         const next = e.target.checked;
                         setTrackWasDurations(next);
                         DatabaseService.saveTrackWasDurations(event!.id, next);
                       }}
                         disabled={showMode !== 'in-show'}
                         readOnly={showMode !== 'in-show'}
-                        className="rounded border-slate-500"
+                        className="rounded border-slate-500 w-5 h-5"
                         style={showMode !== 'in-show' ? { pointerEvents: 'none', cursor: 'not-allowed' } : {}}
                       />
                       <span className="text-white text-sm" style={showMode !== 'in-show' ? { pointerEvents: 'none' } : {}}>Track was durations</span>

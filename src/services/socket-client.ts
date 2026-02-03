@@ -24,7 +24,7 @@ interface SocketCallbacks {
   onOvertimeReset?: (data: any) => void; // NEW! For overtime reset
   onShowStartOvertimeUpdate?: (data: any) => void; // NEW! For show start overtime
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
-  onShowModeUpdate?: (data: { event_id: string; showMode: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => void; // Global show mode and track-was-durations
+  onShowModeUpdate?: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => void; // Global show mode and track-was-durations
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
 }
 

@@ -1098,8 +1098,8 @@ const PhotoViewPage: React.FC = () => {
       onStartCueSelectionUpdate: () => {
         // Photo page ONLY gets START cue updates every 20s - ignore WebSocket
       },
-      onShowModeUpdate: (data: { event_id: string; showMode: 'rehearsal' | 'in-show' }) => {
-        if (data.event_id === event?.id) setShowMode(data.showMode);
+      onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
+        if (data.event_id === event?.id && (data.showMode === 'rehearsal' || data.showMode === 'in-show')) setShowMode(data.showMode);
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 PhotoView WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
@@ -1112,6 +1112,7 @@ const PhotoViewPage: React.FC = () => {
       onInitialSync: async () => {
         console.log('🔄 PhotoView: WebSocket initial sync triggered - loading current state');
         if (event?.id) {
+          apiClient.invalidateShowModeCache(event.id);
           DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
         }
         // Load current active timer

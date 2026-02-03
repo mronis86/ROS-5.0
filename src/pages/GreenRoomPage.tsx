@@ -1248,9 +1248,9 @@ const GreenRoomPage: React.FC = () => {
       onShowStartOvertimeUpdate: () => {
         // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
-      onShowModeUpdate: (data: { event_id: string; showMode: 'rehearsal' | 'in-show' }) => {
+      onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
         if (data.event_id === event?.id) {
-          setShowMode(data.showMode);
+          if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
           runDataSyncRef.current?.();
         }
       },
@@ -1258,6 +1258,7 @@ const GreenRoomPage: React.FC = () => {
         // Removed verbose logging to prevent console spam
       },
       onInitialSync: async () => {
+        if (event?.id) apiClient.invalidateShowModeCache(event.id);
         // Use runDataSync for schedule (start/end times) - same as 20s sync
         runDataSyncRef.current?.();
       }
