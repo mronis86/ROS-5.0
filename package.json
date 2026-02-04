@@ -40,6 +40,7 @@
   "scripts": {
     "start": "vite --port 3003",
     "dev": "vite --port 3003",
+    "prebuild": "node scripts/zip-companion-module.js && node scripts/zip-python-app.js",
     "build": "vite build",
     "preview": "vite preview",
     "test": "react-scripts test",
@@ -68,6 +69,7 @@
   },
   "proxy": "",
   "devDependencies": {
+    "archiver": "^7.0.1",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",

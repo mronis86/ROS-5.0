@@ -45,7 +45,7 @@ Or use:
 
 - OSC server runs on port **57121** (UDP), same as the Electron app so you can use either app interchangeably with the same OSC clients.
 - Override with env: `OSC_LISTEN_PORT=57121` (default is 57121).
-- Same commands as the Electron app: `/set-event`, `/cue/<name>/load`, `/timer/start`, `/timer/stop`, `/timer/reset`, `/set-day`, `/get-day`, `/status`, etc.
+- Same commands as the Electron app: `/set-event`, `/cue/<name>/load`, `/timer/start`, `/timer/stop`, `/timer/reset`, `/timer/adjust/+1`, `/timer/adjust/-1`, `/timer/adjust/+5`, `/timer/adjust/-5`, `/subtimer/cue/<n>/start`, `/subtimer/cue/<n>/stop`, `/set-day`, `/get-day`, `/status`, etc.
 
 ## Differences from `websocket-python-osc`
 

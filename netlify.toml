@@ -12,6 +12,32 @@
   NPM_FLAGS = "--prefer-offline=false"
   CI = "true"
 
+# Serve zip downloads directly (must come before SPA catch-all)
+[[redirects]]
+  from = "/companion-module-runofshow.zip"
+  to = "/companion-module-runofshow.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ros-osc-python-app.zip"
+  to = "/ros-osc-python-app.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ROS-OSC-Control-portable.zip"
+  to = "/ROS-OSC-Control-portable.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/electron-osc-app.zip"
+  to = "/electron-osc-app.zip"
+  status = 200
+  force = true
+
+# SPA fallback - all other routes to index.html
 [[redirects]]
   from = "/*"
   to = "/index.html"

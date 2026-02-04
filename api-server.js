@@ -106,7 +106,8 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
               speakers.push({
                 title: speaker.fullName || speaker.name || '',
                 subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
-                photo: speaker.photoLink || ''
+                photo: speaker.photoLink || '',
+                slot: speaker.slot || 1
               });
             });
           }
@@ -132,9 +133,10 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
     ${lowerThirdsData.map(item => {
       const speakers = new Array(21).fill('');
       if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker, speakerIndex) => {
-          if (speakerIndex < 7) {
-            const baseIdx = speakerIndex * 3;
+        item.speakers.forEach((speaker) => {
+          const slot = speaker.slot || 1;
+          if (slot >= 1 && slot <= 7) {
+            const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
             speakers[baseIdx + 1] = speaker.subtitle || '';
             speakers[baseIdx + 2] = speaker.photo || '';
@@ -166,9 +168,10 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
             ? JSON.parse(item.speakersText) 
             : item.speakersText;
           if (Array.isArray(speakersArray)) {
-            speakersArray.forEach((speaker, speakerIndex) => {
-              if (speakerIndex < 7) {
-                const baseIdx = speakerIndex * 3;
+            speakersArray.forEach((speaker) => {
+              const slot = speaker.slot || 1;
+              if (slot >= 1 && slot <= 7) {
+                const baseIdx = (slot - 1) * 3;
                 speakers[baseIdx] = speaker.fullName || speaker.name || '';
                 speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join(', ');
                 speakers[baseIdx + 2] = speaker.photoLink || '';
@@ -782,7 +785,8 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
               speakers.push({
                 title: speaker.fullName || speaker.name || '',
                 subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
-                photo: speaker.photoLink || ''
+                photo: speaker.photoLink || '',
+                slot: speaker.slot || 1
               });
             });
           }
@@ -809,9 +813,10 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
     ${lowerThirdsData.map(item => {
       const speakers = new Array(21).fill('');
       if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker, speakerIndex) => {
-          if (speakerIndex < 7) {
-            const baseIdx = speakerIndex * 3;
+        item.speakers.forEach((speaker) => {
+          const slot = speaker.slot || 1;
+          if (slot >= 1 && slot <= 7) {
+            const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
             speakers[baseIdx + 1] = speaker.subtitle || '';
             speakers[baseIdx + 2] = speaker.photo || '';
@@ -1171,9 +1176,10 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
             : item.speakersText;
           
           if (Array.isArray(speakersArray)) {
-            speakersArray.forEach((speaker, speakerIndex) => {
-              if (speakerIndex < 7) {
-                const baseIdx = speakerIndex * 3;
+            speakersArray.forEach((speaker) => {
+              const slot = speaker.slot || 1;
+              if (slot >= 1 && slot <= 7) {
+                const baseIdx = (slot - 1) * 3;
                 speakers[baseIdx] = speaker.fullName || speaker.name || '';
                 speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join(', ');
                 speakers[baseIdx + 2] = speaker.photoLink || '';
@@ -1242,6 +1248,9 @@ app.post('/api/run-of-show-data', async (req, res) => {
       }
       if (incomingSettings?.track_was_durations === undefined && typeof current.track_was_durations === 'boolean') {
         settingsToSave = { ...settingsToSave, track_was_durations: current.track_was_durations };
+      }
+      if (incomingSettings?.original_durations === undefined && current.original_durations && typeof current.original_durations === 'object') {
+        settingsToSave = { ...settingsToSave, original_durations: current.original_durations };
       }
     }
 

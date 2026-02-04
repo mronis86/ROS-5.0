@@ -1,0 +1,26 @@
+{
+  "id": "runofshow",
+  "name": "Run of Show",
+  "shortname": "runofshow",
+  "description": "Control Run of Show schedule and timers via Railway API",
+  "version": "1.0.0",
+  "license": "MIT",
+  "repository": "git+https://github.com/bitfocus/companion-module-runofshow.git",
+  "bugs": "https://github.com/bitfocus/companion-module-runofshow/issues",
+  "maintainers": [
+    {
+      "name": "ROS",
+      "email": ""
+    }
+  ],
+  "runtime": {
+    "type": "node18",
+    "api": "nodejs-ipc",
+    "apiVersion": "0.0.0",
+    "entrypoint": "../src/main.js"
+  },
+  "legacyIds": [],
+  "manufacturer": "Run of Show",
+  "products": ["Run of Show"],
+  "keywords": ["run of show", "schedule", "timer", "cue"]
+}

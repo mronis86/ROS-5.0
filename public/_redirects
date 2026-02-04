@@ -1,5 +1,8 @@
-# Netlify redirects file for SPA routing
-# Netlify functions are handled automatically by Netlify
+# Netlify redirects - serve zip files directly (order matters)
+/companion-module-runofshow.zip  /companion-module-runofshow.zip  200
+/ros-osc-python-app.zip         /ros-osc-python-app.zip         200
+/ROS-OSC-Control-portable.zip   /ROS-OSC-Control-portable.zip   200
+/electron-osc-app.zip           /electron-osc-app.zip           200
 
-# Redirect all routes to React app
+# SPA: all other routes to index.html
 /*    /index.html   200

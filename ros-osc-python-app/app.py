@@ -509,6 +509,12 @@ class ROSOSCPythonApp:
 /timer/start        Start timer
 /timer/stop         Stop timer
 /timer/reset        Reset timer
+/timer/adjust/+1    +1 min
+/timer/adjust/-1    -1 min
+/timer/adjust/+5    +5 min
+/timer/adjust/-5    -5 min
+/subtimer/cue/<n>/start  Start sub-timer
+/subtimer/cue/<n>/stop   Stop sub-timer
 /set-day <1-7>      Set day
 /get-day            Get day
 /status             Status"""
@@ -1205,6 +1211,25 @@ class ROSOSCPythonApp:
                 elif action == 'reset':
                     self._reset_timer()
                     self.osc_server.send_response('/timer/reset', ['ok'], client_addr)
+                elif action == 'adjust' and len(parts) >= 3:
+                    try:
+                        adj = parts[2]  # '+1', '-1', '+5', '-5'
+                        mult = 1 if adj.startswith('+') else -1
+                        val = int(adj.lstrip('+-'))
+                        minutes = mult * val
+                        self._adjust_timer(minutes)
+                        self.osc_server.send_response('/timer/adjusted', [f'{minutes:+d} min'], client_addr)
+                    except (ValueError, IndexError):
+                        self.log_message('Timer adjust: invalid value (use +1, -1, +5, -5)', 'warning')
+            elif cmd == 'subtimer' and len(parts) >= 4 and parts[1] == 'cue':
+                cue_num = parts[2]
+                sub_action = parts[3]  # start or stop
+                if sub_action == 'start':
+                    self._start_subtimer(cue_num)
+                    self.osc_server.send_response('/subtimer/started', [cue_num], client_addr)
+                elif sub_action == 'stop':
+                    self._stop_subtimer(cue_num)
+                    self.osc_server.send_response('/subtimer/stopped', [cue_num], client_addr)
             elif cmd == 'set-day' and args:
                 try:
                     d = int(args[0])
@@ -1296,6 +1321,101 @@ class ROSOSCPythonApp:
         self.timer_progress = {}
         self._stop_timer_tick()
         self.root.after(0, self._render_schedule)
+
+    def _adjust_timer(self, minutes):
+        """Adjust active timer duration by +/- minutes (like /timer/adjust/+1, -1, +5, -5)."""
+        if not self.current_event_id or not self.active_item_id:
+            self.log_message('Timer adjust: no active timer loaded', 'warning')
+            return
+        day_items = [i for i in self.schedule_data if (i.get('day', 1)) == self.current_day]
+        item = next((i for i in day_items if i.get('id') == self.active_item_id), None)
+        if not item:
+            self.log_message('Timer adjust: active item not found', 'warning')
+            return
+        prog = self.timer_progress.get(self.active_item_id, {})
+        current_total = prog.get('total') or 0
+        if not current_total:
+            h, m, s = item.get('durationHours', 0), item.get('durationMinutes', 0), item.get('durationSeconds', 0)
+            current_total = (h or 0) * 3600 + (m or 0) * 60 + (s or 0) or 300
+        new_total = max(0, current_total + minutes * 60)
+        try:
+            requests.put(
+                f"{self.api_base_url}/api/active-timers/{self.current_event_id}/{self.active_item_id}/duration",
+                json={'duration_seconds': new_total},
+            )
+            if prog:
+                prog['total'] = new_total
+            self.log_message(f"Timer adjusted {minutes:+d} min", 'info')
+            self.root.after(0, self._render_schedule)
+        except Exception as e:
+            self.log_message(f"Timer adjust failed: {e}", 'error')
+
+    def _start_subtimer(self, cue_number):
+        """Start sub-timer for cue (by cue label or timerId, like /subtimer/cue/5/start)."""
+        if not self.current_event_id:
+            self.log_message('Sub-timer: no event loaded', 'warning')
+            return
+        day_items = [i for i in self.schedule_data if (i.get('day', 1)) == self.current_day]
+        item = next(
+            (i for i in day_items if (
+                (i.get('customFields', {}).get('cue') or '').__str__() == str(cue_number) or
+                (i.get('timerId') or '').__str__() == str(cue_number)
+            )),
+            None,
+        )
+        if not item:
+            self.log_message(f"Sub-timer: cue '{cue_number}' not found", 'warning')
+            return
+        item_id = item['id']
+        h, m, s = item.get('durationHours', 0), item.get('durationMinutes', 0), item.get('durationSeconds', 0)
+        dur = (h or 0) * 3600 + (m or 0) * 60 + (s or 0) or 300
+        row_num = next((i + 1 for i, sch in enumerate(self.schedule_data) if sch.get('id') == item_id), 1)
+        cue_display = item.get('customFields', {}).get('cue') or item.get('timerId') or f'CUE {item_id}'
+        timer_id = item.get('timerId') or f'SUB{item_id}'
+        try:
+            requests.post(f"{self.api_base_url}/api/sub-cue-timers", json={
+                'event_id': self.current_event_id,
+                'item_id': item_id,
+                'user_id': 'python-osc-app',
+                'user_name': 'Python OSC',
+                'user_role': 'OPERATOR',
+                'duration_seconds': dur,
+                'row_number': row_num,
+                'cue_display': cue_display,
+                'timer_id': timer_id,
+                'is_active': True,
+                'is_running': True,
+                'started_at': datetime.now().isoformat(),
+            })
+            self.log_message(f"Sub-timer started: {cue_display}", 'success')
+        except Exception as e:
+            self.log_message(f"Sub-timer start failed: {e}", 'error')
+
+    def _stop_subtimer(self, cue_number):
+        """Stop sub-timer for cue or all (like /subtimer/cue/5/stop)."""
+        if not self.current_event_id:
+            self.log_message('Sub-timer: no event loaded', 'warning')
+            return
+        item_id = None
+        if cue_number:
+            day_items = [i for i in self.schedule_data if (i.get('day', 1)) == self.current_day]
+            item = next(
+                (i for i in day_items if (
+                    (i.get('customFields', {}).get('cue') or '').__str__() == str(cue_number) or
+                    (i.get('timerId') or '').__str__() == str(cue_number)
+                )),
+                None,
+            )
+            if item:
+                item_id = item['id']
+        payload = {'event_id': self.current_event_id}
+        if item_id:
+            payload['item_id'] = item_id
+        try:
+            requests.put(f"{self.api_base_url}/api/sub-cue-timers/stop", json=payload)
+            self.log_message('Sub-timer stopped' + (f': {cue_number}' if cue_number else ': all'), 'success')
+        except Exception as e:
+            self.log_message(f"Sub-timer stop failed: {e}", 'error')
 
     def on_closing(self):
         self.processing_messages = False
