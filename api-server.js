@@ -6,6 +6,7 @@ const morgan = require('morgan');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { Pool } = require('pg');
+const { Readable } = require('stream');
 const multer = require('multer');
 const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
@@ -823,10 +824,10 @@ async function runWeeklyBackupToDrive() {
       const eventDate = row.event_date ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
       const safeName = (row.event_name || `Event_${row.event_id}`).replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
       const fileName = `${safeName}_${eventDate}.csv`;
-      // Use Buffer so Drive API doesn't treat body as a file path (avoids "File not found: .")
+      // Use Readable stream so Drive API doesn't treat body as a file path (avoids "File not found: .")
       await drive.files.create({
         requestBody: { name: fileName, parents: [weekFolderId] },
-        media: { mimeType: 'text/csv', body: Buffer.from(csv, 'utf8') }
+        media: { mimeType: 'text/csv', body: Readable.from([csv]) }
       });
       uploaded++;
     } catch (e) {
