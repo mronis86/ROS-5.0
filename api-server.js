@@ -13,7 +13,7 @@ const mammoth = require('mammoth');
 const { parseAgenda, findFirstTimeLineIndex } = require('./lib/agenda-parser');
 require('dotenv').config();
 
-// Force Railway rebuild - 2025-10-20 - Build #7 - Show start overtime table and star selection
+// Force Railway rebuild - 2025-02-05 - Backup error details + redeploy
 // Auth is now handled via direct database connection
 // Neon database with PostgreSQL pg library
 // Ensuring Railway picks up latest changes
@@ -855,8 +855,14 @@ app.post('/api/admin/backup-config/run-now', async (req, res) => {
     }
     res.json(result);
   } catch (err) {
-    console.error('[admin backup-config run-now] error:', err);
-    res.status(500).json({ error: err.message });
+    const msg = err && (err.message || String(err));
+    const stack = err && err.stack;
+    console.error('[admin backup-config run-now] error:', msg, stack || '');
+    res.status(500).json({
+      error: msg,
+      ok: false,
+      ...(stack && { errorDetail: stack })
+    });
   }
 });
 

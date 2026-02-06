@@ -359,22 +359,36 @@ export default function AdminPage() {
     try {
       const base = getApiBaseUrl();
       const res = await fetch(`${base}/api/admin/backup-config/run-now?key=${ADMIN_PASSWORD}`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
+      const rawText = await res.text();
+      const data = (() => {
+        try {
+          return JSON.parse(rawText) as { ok?: boolean; error?: string; errorDetail?: string };
+        } catch {
+          return {};
+        }
+      })();
+      const errMsg = (data as { error?: string }).error || (res.ok ? '' : `HTTP ${res.status}`);
+      const errDetail = (data as { errorDetail?: string }).errorDetail;
+
       if (res.status === 401) {
         setBackupConfigError('Unauthorized');
+        console.error('[Backup] Unauthorized');
+        window.alert('Backup: Unauthorized');
         return;
       }
-      if (!res.ok) {
-        setBackupConfigError((data as { error?: string }).error || `HTTP ${res.status}`);
-        return;
-      }
-      if (!(data as { ok?: boolean }).ok) {
-        setBackupConfigError((data as { error?: string }).error || 'Backup failed');
+      if (!res.ok || !(data as { ok?: boolean }).ok) {
+        const displayMsg = errMsg || 'Backup failed';
+        setBackupConfigError(displayMsg);
+        console.error('[Backup] Failed:', { status: res.status, error: errMsg, errorDetail: errDetail, raw: rawText });
+        window.alert(`Backup failed:\n\n${displayMsg}\n\n(Full details in browser console: F12 → Console)`);
         return;
       }
       await fetchBackupConfig();
     } catch (e) {
-      setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
+      const msg = e instanceof Error ? e.message : 'Request failed';
+      setBackupConfigError(msg);
+      console.error('[Backup] Error:', e);
+      window.alert(`Backup error:\n\n${msg}`);
     } finally {
       setBackupRunning(false);
     }
