@@ -753,6 +753,9 @@ async function runWeeklyBackupToDrive() {
     return { ok: false, error: 'Folder ID not set. Set and save the folder ID in Admin.' };
   }
   const folderId = String(config.gdrive_folder_id).trim();
+  if (!folderId || folderId === '.' || folderId.length < 10) {
+    return { ok: false, error: 'Invalid folder ID. Use the ID from the folder URL (e.g. drive.google.com/drive/folders/XXXXXXXX).' };
+  }
   let serviceAccountJson = null;
   try {
     const r2 = await pool.query('SELECT gdrive_service_account_json FROM public.admin_backup_config WHERE id = 1');
@@ -782,7 +785,7 @@ async function runWeeklyBackupToDrive() {
   const { google } = require('googleapis');
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: ['https://www.googleapis.com/auth/drive.file']
+    scopes: ['https://www.googleapis.com/auth/drive']
   });
   const client = await auth.getClient();
   const token = (await client.getAccessToken()).token;
