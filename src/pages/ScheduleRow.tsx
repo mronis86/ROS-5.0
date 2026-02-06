@@ -623,9 +623,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           <div
             onClick={() => {
               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                if (currentUserRole === 'OPERATOR' && item.assets) {
-                  setViewingAssetsItem && setViewingAssetsItem(item.id);
-                  setShowViewAssetsModal && setShowViewAssetsModal(true);
+                if (item.assets && setViewingAssetsItem && setShowViewAssetsModal) {
+                  setViewingAssetsItem(item.id);
+                  setShowViewAssetsModal(true);
+                  return;
+                }
+                if (!item.assets) {
+                  alert('No assets to view.');
                   return;
                 }
                 alert('Only EDITORs can edit assets. Please change your role to EDITOR.');
@@ -636,7 +640,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setShowAssetsModal && setShowAssetsModal(true);
             }}
             className="w-full px-3 py-2 border border-slate-600 rounded text-white text-base transition-colors flex items-center justify-center bg-slate-700 cursor-pointer hover:bg-slate-600"
-            title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit assets' : currentUserRole === 'OPERATOR' ? 'Click to view assets (read-only)' : 'Click to edit assets'}
+            title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Click to view assets (read-only)' : 'Click to edit assets'}
           >
             {item.assets ? (
               <div className="text-center">
@@ -659,18 +663,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           <div
             onClick={() => {
               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                if (currentUserRole === 'OPERATOR' && item.speakersText) {
-                  // Use the view modal instead of alert
-                  if (setViewingSpeakersItem && setShowViewSpeakersModal) {
-                    setViewingSpeakersItem(item.id);
-                    setShowViewSpeakersModal(true);
-                    return;
-                  }
-                  // Fallback to alert if modal functions not available
+                if (item.speakersText && setViewingSpeakersItem && setShowViewSpeakersModal) {
+                  setViewingSpeakersItem(item.id);
+                  setShowViewSpeakersModal(true);
+                  return;
+                }
+                if (item.speakersText) {
                   alert(`Speakers (View Only):\n\n${displaySpeakersText ? displaySpeakersText(item.speakersText) : String(item.speakersText)}`);
                   return;
                 }
-                alert('Only EDITORs can edit speakers. Please change your role to EDITOR.');
+                alert('No speakers to view.');
                 return;
               }
               handleModalEditing();
@@ -706,8 +708,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             type="checkbox"
             checked={!!item.isPublic}
             onChange={(e) => {
-              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                alert('Only EDITORs can change public status. Please change your role to EDITOR.');
+              if (currentUserRole === 'VIEWER') {
+                alert('Viewers cannot change public status. Please change your role to EDITOR or OPERATOR.');
                 return;
               }
               const oldValue = !!item.isPublic;
@@ -734,8 +736,61 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             }}
             className="w-5 h-5 rounded border-2 border-slate-500 bg-slate-700 text-blue-600"
             style={{ opacity: 1 }}
-            title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can change public status' : 'Toggle public visibility'}
+            title={currentUserRole === 'VIEWER' ? 'Viewers cannot change public status' : 'Toggle public visibility'}
           />
+        </div>
+      )}
+      {/* Timer column: Countdown (default) or Time of Day for Clock page */}
+      {visibleColumns.timer && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={{ width: columnWidths.timer }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <select
+            value={item.timerDisplay === 'todOnly' ? 'todOnly' : item.timerDisplay === 'countUp' ? 'countUp' : (item.timerDisplay === 'timeOfDay' || item.useTimeOfDay === true) ? 'timeOfDay' : 'countdown'}
+            onChange={(e) => {
+              if (currentUserRole === 'VIEWER') {
+                alert('Only EDITORs and OPERATORs can change Timer display. Please change your role.');
+                return;
+              }
+              const newValue = e.target.value as 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
+              const oldValue = item.timerDisplay === 'todOnly' ? 'todOnly' : item.timerDisplay === 'countUp' ? 'countUp' : (item.timerDisplay === 'timeOfDay' || item.useTimeOfDay === true) ? 'timeOfDay' : 'countdown';
+              const useTimeOfDay = newValue === 'timeOfDay' || newValue === 'todOnly';
+              setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                scheduleItem.id === item.id 
+                  ? { ...scheduleItem, timerDisplay: newValue, useTimeOfDay }
+                  : scheduleItem
+              ));
+              if (logChange) {
+                logChange('FIELD_UPDATE', `Updated Timer for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
+                  changeType: 'FIELD_CHANGE',
+                  itemId: item.id,
+                  itemName: item.segmentName,
+                  fieldName: 'timerDisplay',
+                  oldValue: oldValue,
+                  newValue: newValue,
+                  details: { fieldType: 'select' }
+                });
+              }
+              handleUserEditing();
+              if (saveToAPI) {
+                saveToAPI();
+              }
+              (e.target as HTMLSelectElement).blur();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="w-full min-w-0 max-w-full rounded border border-slate-500 bg-slate-700 text-white text-sm py-1 px-2 disabled:opacity-70 disabled:cursor-not-allowed"
+            disabled={currentUserRole === 'VIEWER'}
+            title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can change' : 'Clock page: Countdown, Count Up, Time of Day, or TOD Only'}
+          >
+            <option value="countdown">Countdown</option>
+            <option value="countUp">Count Up</option>
+            <option value="timeOfDay">Time Of Day</option>
+            <option value="todOnly">TOD Only</option>
+          </select>
         </div>
       )}
       {/* Participants column (after Public) */}

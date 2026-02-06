@@ -18,6 +18,8 @@ import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal from '../components/DisplayModal';
 import ExcelImportModal from '../components/ExcelImportModal';
 import AgendaImportModal from '../components/AgendaImportModal';
+import ImportCSVModal from '../components/ImportCSVModal';
+import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
@@ -52,6 +54,8 @@ interface ScheduleItem {
   customFields: Record<string, string>;
   isPublic: boolean;
   isIndented: boolean;
+  /** Clock page display: 'countdown' | 'countUp' | 'timeOfDay' (swap + progress bar) | 'todOnly' (time of day only) */
+  timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
 }
 
 interface CustomColumn {
@@ -639,6 +643,7 @@ const RunOfShowPage: React.FC = () => {
   const [selectedSpeakers, setSelectedSpeakers] = useState<Set<string>>(new Set());
   const [speakersToCopy, setSpeakersToCopy] = useState<Speaker[]>([]); // Original source speakers (for display)
   const [editableSpeakers, setEditableSpeakers] = useState<Speaker[]>([]); // Editable copy for target (for editing)
+  const [speakerCopyCompleted, setSpeakerCopyCompleted] = useState(false); // After copy, show Manage More / Close
   const [showParticipantsModal, setShowParticipantsModal] = useState(false);
   const [editingParticipantsItem, setEditingParticipantsItem] = useState<number | null>(null);
   const [tempSpeakers, setTempSpeakers] = useState<Speaker[]>([]);
@@ -720,6 +725,7 @@ const RunOfShowPage: React.FC = () => {
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
+  const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
@@ -732,6 +738,10 @@ const RunOfShowPage: React.FC = () => {
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   const [showAgendaImportModal, setShowAgendaImportModal] = useState(false);
+  const [showCSVImportModal, setShowCSVImportModal] = useState(false);
+  const [showImportEventModal, setShowImportEventModal] = useState(false);
+  const [showPublicBulkModal, setShowPublicBulkModal] = useState(false);
+  const [publicBulkSelectedIds, setPublicBulkSelectedIds] = useState<number[]>([]);
   const [backups, setBackups] = useState<BackupData[]>([]);
   const [backupStats, setBackupStats] = useState({
     totalBackups: 0,
@@ -755,6 +765,7 @@ const RunOfShowPage: React.FC = () => {
     participants: false, // 👈 hidden now,
     speakers: true,
     public: true,
+    timer: true,
     custom: true
   });
   const [visibleCustomColumns, setVisibleCustomColumns] = useState<Record<string, boolean>>({});
@@ -772,6 +783,7 @@ const RunOfShowPage: React.FC = () => {
     participants: 256, // w-64 = 256px
     speakers: 384, // w-96 = 384px (same as notes)
     public: 128, // w-32 = 128px
+    timer: 180, // Timer: countdown / time of day / TOD only on Clock page
   });
   const [customColumnWidths, setCustomColumnWidths] = useState<Record<string, number>>({});
   
@@ -1142,7 +1154,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
-    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showSpeakerManagerModal;
+    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showImportEventModal || showSpeakerManagerModal;
     const shouldPause = isUserEditing || anyModalOpen;
 
     if (shouldPause) {
@@ -1159,7 +1171,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showImportEventModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
   
   
   // Load user role from navigation state or localStorage
@@ -2489,7 +2501,8 @@ const RunOfShowPage: React.FC = () => {
           masterStartTime,
           dayStartTimes,
           show_mode: showMode,
-          track_was_durations: trackWasDurations
+          track_was_durations: trackWasDurations,
+          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
         }
       });
       console.log('✅ Schedule data backed up with settings');
@@ -2535,7 +2548,7 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showSpeakerManagerModal) {
+    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showImportEventModal || showSpeakerManagerModal) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -2557,7 +2570,10 @@ const RunOfShowPage: React.FC = () => {
         settings: {
           eventName: eventName,
           masterStartTime: masterStartTime,
-          dayStartTimes: dayStartTimes
+          dayStartTimes: dayStartTimes,
+          show_mode: showMode,
+          track_was_durations: trackWasDurations,
+          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
         }
       };
 
@@ -2851,6 +2867,7 @@ const RunOfShowPage: React.FC = () => {
     timerId: '',
     isPublic: false,
     isIndented: false,
+    timerDisplay: 'countdown',
     customFields: {}
   });
 
@@ -4581,7 +4598,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations }
+          settings: { eventName, masterStartTime, dayStartTimes, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }) }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -4708,13 +4725,17 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Close menus when clicking outside
+  // Close menus when clicking outside (but not when clicking inside the menu dropdown)
+  const menuDropdownContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const handleClickOutside = () => {
+    const handleClickOutside = (e: MouseEvent) => {
+      // Don't close if click was inside the menu dropdown container (allows Import & Export submenu to work)
+      if (menuDropdownContainerRef.current?.contains(e.target as Node)) return;
       setActiveItemMenu(null);
       setActiveRowMenu(null);
       setActiveJumpMenu(null);
       setShowMenuDropdown(false);
+      setShowImportExportSubmenu(false);
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
@@ -4929,15 +4950,16 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-        settings: {
-          eventName,
-          masterStartTime,
-          dayStartTimes,
-          timezone: eventTimezone,
-          lastSaved: new Date().toISOString(),
-          show_mode: showMode,
-          track_was_durations: trackWasDurations
-        }
+          settings: {
+            eventName,
+            masterStartTime,
+            dayStartTimes,
+            timezone: eventTimezone,
+            lastSaved: new Date().toISOString(),
+            show_mode: showMode,
+            track_was_durations: trackWasDurations,
+            ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
+          }
         };
         
         
@@ -4972,7 +4994,7 @@ const RunOfShowPage: React.FC = () => {
         console.error('❌ Error auto-saving to API:', error);
       }
     }, 2000), // Debounce for 2 seconds
-    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, indentedCues, showMode, trackWasDurations]
+    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, indentedCues, showMode, trackWasDurations, originalDurations]
   );
 
   // Debounce utility function
@@ -5249,14 +5271,22 @@ const RunOfShowPage: React.FC = () => {
         
         // Add small delay to ensure WebSocket updates are processed consistently
         setTimeout(() => {
-          // Update schedule items
-          if (data.schedule_items && Array.isArray(data.schedule_items)) {
-            console.log('🔍 Raw schedule data from API:', data.schedule_items.map(item => ({
+          // Update schedule items (parse if string, e.g. from timer duration update from Companion)
+          let scheduleItems = data.schedule_items;
+          if (typeof scheduleItems === 'string') {
+            try {
+              scheduleItems = JSON.parse(scheduleItems);
+            } catch (e) {
+              scheduleItems = null;
+            }
+          }
+          if (scheduleItems && Array.isArray(scheduleItems)) {
+            console.log('🔍 Raw schedule data from API:', scheduleItems.map((item: any) => ({
               id: item.id,
               cue: item.customFields?.cue,
               isIndented: item.isIndented
             })));
-            setSchedule(data.schedule_items);
+            setSchedule(scheduleItems);
             console.log('✅ Real-time: Schedule items updated');
           }
         
@@ -6024,6 +6054,39 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  const handleImportFromEvent = useCallback((result: { scheduleItems: any[]; customColumns: any[] }) => {
+    if (!event?.id) return;
+    const { scheduleItems: importedSchedule, customColumns: importedCustomCols } = result;
+    setSchedule(prev => importedSchedule.length > 0 ? importedSchedule : prev);
+    setCustomColumns(prev => importedCustomCols.length > 0 ? importedCustomCols : prev);
+    if (importedSchedule.length > 0) {
+      localStorage.setItem(`runOfShowSchedule_${event.id}`, JSON.stringify(importedSchedule));
+    }
+    if (importedCustomCols.length > 0) {
+      localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(importedCustomCols));
+    }
+    logChange('IMPORT_EVENT', `Imported from another event: ${importedSchedule.length} schedule items, ${importedCustomCols.length} custom columns`, {
+      changeType: 'IMPORT',
+      itemCount: importedSchedule.length,
+      customColumnsCount: importedCustomCols.length
+    });
+    const scheduleToSave = importedSchedule.length > 0 ? importedSchedule : schedule;
+    const customColsToSave = importedCustomCols.length > 0 ? importedCustomCols : customColumns;
+    DatabaseService.saveRunOfShowData({
+      event_id: event.id,
+      event_name: event?.name || 'Event',
+      settings: { show_mode: showMode, track_was_durations: trackWasDurations },
+      schedule_items: scheduleToSave,
+      custom_columns: customColsToSave,
+      event_date: event?.date ?? undefined
+    }, {
+      userId: user?.id || 'unknown',
+      userName: user?.full_name || user?.email || 'Unknown User',
+      userRole: currentUserRole || 'VIEWER'
+    }).catch(err => console.error('Save after import failed:', err));
+    handleUserEditing();
+    alert(`✅ Import complete!\n\nSchedule: ${importedSchedule.length} items\nCustom columns: ${importedCustomCols.length}`);
+  }, [event?.id, event?.name, event?.date, showMode, trackWasDurations, user, currentUserRole, schedule, customColumns]);
 
   // Check for changes periodically (every 10 seconds) - only when page is visible
   useEffect(() => {
@@ -6422,6 +6485,7 @@ const RunOfShowPage: React.FC = () => {
       timerId: '',
       isPublic: false,
       isIndented: false,
+      timerDisplay: 'countdown',
       customFields: {}
     });
   };
@@ -7453,10 +7517,10 @@ const RunOfShowPage: React.FC = () => {
     
     return cleaned;
   };
-  // Handle Excel import
-  const handleExcelImport = async (importedData: any[]) => {
+  // Handle Excel/CSV import (source: 'Excel' | 'CSV' for logging)
+  const handleExcelImport = async (importedData: any[], source: 'Excel' | 'CSV' = 'Excel') => {
     try {
-      console.log('📊 Processing Excel import:', importedData);
+      console.log(`📊 Processing ${source} import:`, importedData);
       
       // Confirm with user before adding data
       const confirmMessage = `This will add ${importedData.length} new items to your schedule. Continue?`;
@@ -7511,11 +7575,21 @@ const RunOfShowPage: React.FC = () => {
           timerId: row.timerId || '',
           isPublic: row.isPublic || false,
           isIndented: row.isIndented || false,
-          day: row.day || selectedDay,
-          customFields: {
-            cue: extractCueNumber(row.cue) || `CUE ${index + 1}`,
-            ...row.customFields
-          }
+          day: row.day ?? selectedDay,
+          customFields: (() => {
+            const base: Record<string, string> = {
+              cue: extractCueNumber(row.cue) || `CUE ${index + 1}`
+            };
+            if (row.customFields && typeof row.customFields === 'object') {
+              Object.entries(row.customFields).forEach(([key, value]) => {
+                if (key === 'cue') return;
+                const col = customColumns.find((c: { name: string; id: string }) => c.name === key);
+                if (col) base[col.id] = String(value ?? '');
+                else base[key] = String(value ?? '');
+              });
+            }
+            return base;
+          })()
         };
       });
       
@@ -7530,10 +7604,10 @@ const RunOfShowPage: React.FC = () => {
       })));
       
       // Log the import
-      logChange('IMPORT_EXCEL', `Imported ${newScheduleItems.length} items from Excel`, {
+      logChange('IMPORT_EXCEL', `Imported ${newScheduleItems.length} items from ${source}`, {
         changeType: 'IMPORT',
         itemCount: newScheduleItems.length,
-        source: 'Excel'
+        source
       });
       
       // Trigger auto-save mechanism
@@ -8847,11 +8921,12 @@ const RunOfShowPage: React.FC = () => {
               
               
               {/* Menu Dropdown */}
-              <div className="relative">
+              <div className="relative" ref={menuDropdownContainerRef}>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowMenuDropdown(!showMenuDropdown);
+                    if (showMenuDropdown) setShowImportExportSubmenu(false);
                   }}
                   className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
                   title="Menu"
@@ -8932,9 +9007,28 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         PhotoView
                       </button>
+                      {/* Import & Export - flyout submenu to the right */}
+                      <div className="border-t border-slate-600 my-1 pt-1 relative">
+                        <button
+                          onClick={() => setShowImportExportSubmenu(!showImportExportSubmenu)}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
+                        >
+                          <span className="flex items-center gap-3">
+                            <svg className="w-[17px] h-[17px] flex-shrink-0" fill="currentColor" viewBox="0 0 32 32" style={{ stroke: 'currentColor', strokeWidth: 0.5, paintOrder: 'stroke fill' }}>
+                              <path d="M28 24v4H4v-4H2v4l.008-.005A2 2 0 0 0 4 30h24a2 2 0 0 0 2-2v-4zm-.4-9.4L24 18.2V4h-2v14.2l-3.6-3.6L17 16l6 6l6-6zM9 4l-6 6l1.4 1.4L8 7.8V22h2V7.8l3.6 3.6L15 10z"/>
+                            </svg>
+                            Import & Export
+                          </span>
+                          <svg className={`w-4 h-4 flex-shrink-0 transition-transform ${showImportExportSubmenu ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {showImportExportSubmenu && (
+                          <div className="absolute left-full top-0 ml-1 min-w-[11rem] w-44 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
+                          setShowImportExportSubmenu(false);
                           console.log('=== CSV EXPORT ===');
                           console.log('Event:', event);
                           console.log('Schedule length:', schedule.length);
@@ -8966,15 +9060,8 @@ const RunOfShowPage: React.FC = () => {
                           const customColumnHeaders = customColumns.map(col => col.name);
                           const allHeaders = [...csvHeaders, ...customColumnHeaders];
                           
-                          // Filter schedule to only include items for the currently selected day
-                          const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
-                          
-                          // Debug: Log the filtered schedule data
-                          console.log('🔍 Filtered schedule for CSV:', filteredSchedule.map(item => ({
-                            id: item.id,
-                            cue: item.customFields?.cue,
-                            isIndented: item.isIndented
-                          })));
+                          // Include all days - sorted by day for clear grouping (Day column marks each row)
+                          const filteredSchedule = [...schedule].sort((a, b) => (a.day || 1) - (b.day || 1));
                           
                           const csvRows = filteredSchedule.map((item, index) => {
                             // Find the original index in the full schedule for accurate start time calculation
@@ -8986,22 +9073,20 @@ const RunOfShowPage: React.FC = () => {
                             let startTime = '';
                             let endTime = '';
                             
-                            // Debug logging
-                            console.log(`CSV Export - Item ${item.customFields?.cue || index + 1}: isIndented=${item.isIndented}, calculatedStartTime=${calculatedStartTime}`);
-                            
                             if (!item.isIndented) {
                               // For non-indented items, use calculated start time
                               startTime = calculatedStartTime || '';
                               
                               // Calculate end time from next non-indented row's start time
                               endTime = (() => {
-                                // Find the next non-indented item in the filtered schedule
+                                // Find the next non-indented item in the same day
                                 let nextNonIndentedItem: ScheduleItem | null = null;
                                 let nextIndex = index + 1;
+                                const itemDay = item.day || 1;
                                 
                                 while (nextIndex < filteredSchedule.length) {
                                   const nextItem = filteredSchedule[nextIndex];
-                                  console.log(`  Checking next item ${nextIndex}: ${nextItem.customFields?.cue || nextIndex + 1}, isIndented=${nextItem.isIndented}`);
+                                  if ((nextItem.day || 1) !== itemDay) break; // Stop at day boundary
                                   if (!nextItem.isIndented) {
                                     nextNonIndentedItem = nextItem;
                                     break;
@@ -9013,7 +9098,6 @@ const RunOfShowPage: React.FC = () => {
                                   // Get the next non-indented item's start time
                                   const nextOriginalIndex = schedule.findIndex(s => s.id === nextNonIndentedItem!.id);
                                   const nextStartTime = calculateStartTime(nextOriginalIndex);
-                                  console.log(`  Found next non-indented item: ${nextNonIndentedItem.customFields?.cue}, startTime=${nextStartTime}`);
                                   return nextStartTime || '';
                                 } else {
                                   // For the last non-indented row, calculate end time from duration as fallback
@@ -9032,8 +9116,6 @@ const RunOfShowPage: React.FC = () => {
                                   return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
                                 }
                               })();
-                            } else {
-                              console.log(`  Indented item - keeping startTime and endTime blank`);
                             }
                             // For indented items, startTime and endTime remain empty strings
 
@@ -9066,8 +9148,8 @@ const RunOfShowPage: React.FC = () => {
                             return [...baseRow, ...customValues];
                           });
                           
-                          // Create CSV content
-                          const csvContent = [
+                          // Create CSV content (UTF-8 BOM for Excel compatibility)
+                          const csvContent = '\uFEFF' + [
                             allHeaders.join(','),
                             ...csvRows.map(row => 
                               row.map(cell => 
@@ -9079,14 +9161,12 @@ const RunOfShowPage: React.FC = () => {
                             )
                           ].join('\n');
                           
-                          console.log('CSV Content:', csvContent);
-                          
                           // Create and download CSV file
                           const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                           const url = URL.createObjectURL(blob);
                           const link = document.createElement('a');
                           link.href = url;
-                          link.download = `${event?.name || 'RunOfShow'}_Day${selectedDay}_${new Date().toISOString().split('T')[0]}.csv`;
+                          link.download = `${event?.name || 'RunOfShow'}_AllDays_${new Date().toISOString().split('T')[0]}.csv`;
                           document.body.appendChild(link);
                           link.click();
                           document.body.removeChild(link);
@@ -9104,6 +9184,21 @@ const RunOfShowPage: React.FC = () => {
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
+                          setShowImportExportSubmenu(false);
+                          handleModalEditing();
+                          setShowCSVImportModal(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Import CSV
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMenuDropdown(false);
+                          setShowImportExportSubmenu(false);
                           handleModalEditing();
                           setShowExcelImportModal(true);
                         }}
@@ -9117,6 +9212,7 @@ const RunOfShowPage: React.FC = () => {
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
+                          setShowImportExportSubmenu(false);
                           handleModalEditing();
                           setShowAgendaImportModal(true);
                         }}
@@ -9130,6 +9226,21 @@ const RunOfShowPage: React.FC = () => {
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
+                          setShowImportExportSubmenu(false);
+                          handleModalEditing();
+                          setShowImportEventModal(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        Import from Event
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMenuDropdown(false);
+                          setShowImportExportSubmenu(false);
                           setShowBackupModal(true);
                         }}
                         className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
@@ -9139,6 +9250,9 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Backups
                       </button>
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -9792,18 +9906,46 @@ const RunOfShowPage: React.FC = () => {
                       )}
                       {visibleColumns.public && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
                           style={{ width: columnWidths.public }}
                         >
-                          <span className="text-white font-bold flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (currentUserRole === 'EDITOR') {
+                                const dayItems = schedule.filter((i: ScheduleItem) => (i.day || 1) === selectedDay);
+                                setPublicBulkSelectedIds(dayItems.filter((i: ScheduleItem) => i.isPublic).map((i: ScheduleItem) => i.id));
+                                setShowPublicBulkModal(true);
+                              }
+                            }}
+                            className={`absolute inset-0 w-full flex items-center justify-center font-bold gap-1 border-0 text-white bg-slate-700 hover:bg-slate-600 transition-colors ${currentUserRole === 'EDITOR' ? 'cursor-pointer' : 'cursor-default'}`}
+                            title={currentUserRole === 'EDITOR' ? 'Click to bulk select cues to set as public' : 'Read-only for your role'}
+                          >
                             Public
                             {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                               <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                             )}
+                          </button>
+                          <div 
+                            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity z-10"
+                            onMouseDown={(e) => { e.stopPropagation(); handleResizeStart(e, 'public'); }}
+                          />
+                        </div>
+                      )}
+                      {visibleColumns.timer && (
+                        <div 
+                          className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
+                          style={{ width: columnWidths.timer }}
+                        >
+                          <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
+                            Timer
+                            {currentUserRole === 'VIEWER' && (
+                              <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                            )}
                           </span>
                           <div 
-                            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                            onMouseDown={(e) => handleResizeStart(e, 'public')}
+                            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity z-10"
+                            onMouseDown={(e) => { e.stopPropagation(); handleResizeStart(e, 'timer'); }}
                           />
                         </div>
                       )}
@@ -10003,6 +10145,7 @@ const RunOfShowPage: React.FC = () => {
                     timerId: '',
                     isPublic: false,
                     isIndented: false,
+                    timerDisplay: 'countdown',
                     customFields: {}
                   });
                 }}
@@ -10315,7 +10458,8 @@ const RunOfShowPage: React.FC = () => {
                                  masterStartTime: masterStartTime,
                                  dayStartTimes: dayStartTimes,
                                  show_mode: showMode,
-                                 track_was_durations: trackWasDurations
+                                 track_was_durations: trackWasDurations,
+                                 ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
                                }
                              };
                              
@@ -10668,18 +10812,46 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.public && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
                       style={{ width: columnWidths.public }}
                     >
-                      <span className="text-white font-bold flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (currentUserRole === 'EDITOR') {
+                            const dayItems = schedule.filter((i: ScheduleItem) => (i.day || 1) === selectedDay);
+                            setPublicBulkSelectedIds(dayItems.filter((i: ScheduleItem) => i.isPublic).map((i: ScheduleItem) => i.id));
+                            setShowPublicBulkModal(true);
+                          }
+                        }}
+                        className={`absolute inset-0 w-full flex items-center justify-center font-bold gap-1 border-0 text-white bg-slate-700 hover:bg-slate-600 transition-colors ${currentUserRole === 'EDITOR' ? 'cursor-pointer' : 'cursor-default'}`}
+                        title={currentUserRole === 'EDITOR' ? 'Click to bulk select cues to set as public' : 'Read-only for your role'}
+                      >
                         Public
                         {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
+                      </button>
+                      <div 
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity z-10"
+                        onMouseDown={(e) => { e.stopPropagation(); handleResizeStart(e, 'public'); }}
+                      />
+                    </div>
+                  )}
+                  {visibleColumns.timer && (
+                    <div 
+                      className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
+                      style={{ width: columnWidths.timer }}
+                    >
+                      <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
+                        Timer
+                        {currentUserRole === 'VIEWER' && (
+                          <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                        )}
                       </span>
                       <div 
-                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                        onMouseDown={(e) => handleResizeStart(e, 'public')}
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity z-10"
+                        onMouseDown={(e) => { e.stopPropagation(); handleResizeStart(e, 'timer'); }}
                       />
                     </div>
                   )}
@@ -11223,7 +11395,7 @@ const RunOfShowPage: React.FC = () => {
             <div className="p-4 border-t border-slate-600">
               <div className="flex gap-2">
                 <button
-                  onClick={() => addScheduleItem(modalForm)}
+                  onClick={() => addScheduleItem({ ...modalForm, timerDisplay: (modalForm.timerDisplay || 'countdown') as 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly' })}
                   className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded transition-colors text-sm"
                 >
                   Add Item
@@ -11302,13 +11474,13 @@ const RunOfShowPage: React.FC = () => {
        {/* Notes Editor Modal */}
        {showNotesModal && editingNotesItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-           <div className="bg-slate-800 rounded-xl p-6 max-w-5xl w-full max-h-[90vh] flex flex-col">
+           <div className="bg-slate-800 rounded-xl p-6 max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden">
              <h2 className="text-2xl font-bold text-white mb-4">Edit Notes</h2>
              
-             {/* Enhanced Formatting Toolbar */}
-             <div className="mb-4 bg-slate-700 rounded-lg overflow-hidden">
+             {/* Enhanced Formatting Toolbar - flex-shrink-0 prevents clipping when modal is height-constrained */}
+             <div className="mb-4 flex-shrink-0 bg-slate-700 rounded-lg overflow-visible">
                {/* Row 1: Basic Formatting */}
-               <div className="flex items-center justify-between gap-4 p-3 border-b border-slate-600">
+               <div className="flex items-center justify-between gap-4 py-4 px-3 border-b border-slate-600">
                  <div className="flex items-center gap-2">
                    <span className="text-white text-sm font-semibold">Format:</span>
                    <div className="flex gap-1">
@@ -11433,8 +11605,8 @@ const RunOfShowPage: React.FC = () => {
                  </div>
                </div>
                
-               {/* Row 2: Colors and Highlighting */}
-               <div className="flex items-center justify-center gap-6 p-3">
+               {/* Row 2: Colors and Highlighting - extra vertical padding prevents color swatches from clipping */}
+               <div className="flex items-center justify-center gap-6 py-5 px-3">
                  <div className="flex items-center gap-2">
                    <span className="text-white text-sm font-semibold">Text Color:</span>
                    <div className="flex gap-1">
@@ -11517,14 +11689,14 @@ const RunOfShowPage: React.FC = () => {
              </div>
              
              {/* Single Rich Text Editor */}
-             <div className="flex-1 min-h-[400px] mb-6">
+             <div className="flex-shrink-0 min-h-0 mb-2">
                <label className="block text-white text-sm mb-2">Notes:</label>
                <div
                  id="notes-editor"
                  contentEditable
                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white text-base focus:outline-none focus:border-blue-500 overflow-auto"
                  style={{ 
-                   height: '400px',
+                   height: '240px',
                    lineHeight: '1.5',
                    fontFamily: 'system-ui, -apple-system, sans-serif'
                  }}
@@ -11536,7 +11708,7 @@ const RunOfShowPage: React.FC = () => {
              </div>
              
              {/* Action Buttons */}
-             <div className="flex gap-3">
+             <div className="flex flex-shrink-0 gap-3 mt-1">
                <button
                  onClick={saveNotes}
                  className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors"
@@ -12516,6 +12688,15 @@ const RunOfShowPage: React.FC = () => {
                     />
                     <span className="text-white">Public</span>
                   </label>
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns.timer}
+                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, timer: e.target.checked }))}
+                      className="rounded"
+                    />
+                    <span className="text-white">Timer</span>
+                  </label>
                   
                   {customColumns.map((column, index) => (
                     <label key={column.id} className="flex items-center gap-3">
@@ -12552,6 +12733,7 @@ const RunOfShowPage: React.FC = () => {
                       participants: false, // 👈 hidden now,
                       speakers: true,
                       public: true,
+                      timer: true,
                       custom: true
                     });
                     // Show all custom columns
@@ -12579,6 +12761,7 @@ const RunOfShowPage: React.FC = () => {
                       participants: false,
                       speakers: false,
                       public: false,
+                      timer: false,
                       custom: false
                     });
                     // Hide all custom columns
@@ -12603,6 +12786,125 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Bulk set public modal – select cues to be public without scrolling */}
+      {showPublicBulkModal && (() => {
+        const dayItems = schedule.filter((item: ScheduleItem) => (item.day || 1) === selectedDay);
+        const allDayIds = dayItems.map((i: ScheduleItem) => i.id);
+        return (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowPublicBulkModal(false)}>
+            <div
+              className="bg-slate-800 rounded-xl shadow-2xl border border-slate-600 w-full max-w-xl"
+              style={{ maxHeight: '90vh' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-slate-600 flex items-center justify-between">
+                <h2 className="text-xl font-bold text-white">Set public cues</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowPublicBulkModal(false)}
+                  className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-600 rounded"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <p className="text-slate-400 text-sm px-4 pt-2 pb-3">
+                Select which cues should be public (current day only).
+              </p>
+              <div className="overflow-y-auto border-t border-b border-slate-600" style={{ height: 'min(400px, 50vh)' }}>
+                <table className="w-full border-collapse text-left">
+                  <thead className="sticky top-0 bg-slate-700 z-10">
+                    <tr>
+                      <th className="w-10 p-2"></th>
+                      <th className="p-2 text-slate-300 text-sm font-medium">CUE</th>
+                      <th className="p-2 text-slate-300 text-sm font-medium">Segment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dayItems.map((item: ScheduleItem) => (
+                      <tr
+                        key={item.id}
+                        className="border-t border-slate-600/50 hover:bg-slate-700/50"
+                      >
+                        <td className="p-2 w-10">
+                          <input
+                            type="checkbox"
+                            checked={publicBulkSelectedIds.includes(item.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setPublicBulkSelectedIds(prev => [...prev, item.id]);
+                              } else {
+                                setPublicBulkSelectedIds(prev => prev.filter(id => id !== item.id));
+                              }
+                            }}
+                            className="w-4 h-4 rounded border-2 border-slate-500 bg-slate-700 text-blue-600 cursor-pointer"
+                          />
+                        </td>
+                        <td className="p-2 text-slate-300 text-sm whitespace-nowrap">
+                          {item.customFields?.cue != null ? `CUE ${item.customFields.cue}` : `#${item.id}`}
+                        </td>
+                        <td className="p-2 text-white truncate max-w-[200px]" title={item.segmentName || ''}>
+                          {item.segmentName || 'Untitled'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-4 border-t border-slate-600 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPublicBulkSelectedIds([...allDayIds])}
+                    className="px-3 py-2 border border-slate-500 bg-slate-700/50 hover:bg-slate-600 text-slate-200 text-sm font-medium rounded-lg"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPublicBulkSelectedIds([])}
+                    className="px-3 py-2 border border-slate-500 bg-slate-700/50 hover:bg-slate-600 text-slate-200 text-sm font-medium rounded-lg"
+                  >
+                    Deselect all
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPublicBulkModal(false)}
+                    className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                    setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => ({
+                      ...scheduleItem,
+                      isPublic: publicBulkSelectedIds.includes(scheduleItem.id)
+                    })));
+                    if (logChange) {
+                      logChange('FIELD_UPDATE', `Bulk set public: ${publicBulkSelectedIds.length} of ${allDayIds.length} cues`, {
+                        changeType: 'BULK_PUBLIC',
+                        details: { selectedCount: publicBulkSelectedIds.length, dayTotal: allDayIds.length }
+                      });
+                    }
+                    handleUserEditing();
+                    if (saveToAPI) saveToAPI();
+                    setShowPublicBulkModal(false);
+                  }}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg"
+                >
+                  Apply ({publicBulkSelectedIds.length} selected)
+                </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Time Status Toast */}
       {showTimeToast && timeToastEnabled && (
         <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
@@ -12921,6 +13223,7 @@ const RunOfShowPage: React.FC = () => {
                   setSelectedSpeakers(new Set());
                   setSpeakersToCopy([]);
                   setEditableSpeakers([]);
+                  setSpeakerCopyCompleted(false);
                 }}
                 className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
               >
@@ -12929,7 +13232,53 @@ const RunOfShowPage: React.FC = () => {
             </div>
 
             <div className="flex-1 p-4 space-y-4 overflow-hidden">
-              {/* Compact Two-Column Layout */}
+              {speakerCopyCompleted ? (
+                /* Success layout - clear confirmation after copy */
+                <div className="flex flex-col items-center justify-center py-12 space-y-6">
+                  <div className="flex items-center justify-center w-16 h-16 rounded-full bg-emerald-600/30 border-2 border-emerald-500">
+                    <span className="text-3xl text-emerald-400">✓</span>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <h3 className="text-xl font-semibold text-white">Speakers Copied Successfully</h3>
+                    <p className="text-slate-300">
+                      {editableSpeakers.length} speaker{editableSpeakers.length !== 1 ? 's' : ''} copied to{' '}
+                      <span className="text-emerald-400 font-medium">
+                        {schedule.find(s => s.id === targetRowId)?.segmentName || 'target row'}
+                      </span>
+                    </p>
+                  </div>
+                  <div className="flex gap-3 mt-4">
+                    <button
+                      onClick={() => {
+                        setSpeakerCopyCompleted(false);
+                        setSourceRowId(null);
+                        setTargetRowId(null);
+                        setSelectedSpeakers(new Set());
+                        setSpeakersToCopy([]);
+                        setEditableSpeakers([]);
+                      }}
+                      className="px-6 py-2.5 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded-lg transition-colors"
+                    >
+                      Manage More
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowSpeakerManagerModal(false);
+                        setSourceRowId(null);
+                        setTargetRowId(null);
+                        setSelectedSpeakers(new Set());
+                        setSpeakersToCopy([]);
+                        setEditableSpeakers([]);
+                        setSpeakerCopyCompleted(false);
+                      }}
+                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              ) : (
+              /* Compact Two-Column Layout */
               <div className="grid grid-cols-2 gap-6">
                 {/* Left Column: Source Selection */}
                 <div className="space-y-3">
@@ -13161,86 +13510,78 @@ const RunOfShowPage: React.FC = () => {
                   )}
                 </div>
               </div>
-
-
+              )}
             </div>
 
-            {/* Footer with Copy Button */}
-            {targetRowId && selectedSpeakers.size > 0 && (
+            {/* Footer: Copy Button (hidden when success layout is shown) */}
+            {targetRowId && selectedSpeakers.size > 0 && !speakerCopyCompleted && (
               <div className="border-t border-slate-600 p-4 bg-slate-800 rounded-b-xl">
                 <div className="flex justify-end">
-                  <button
-                    onClick={() => {
-                      if (!sourceRowId || !targetRowId || selectedSpeakers.size === 0) return;
+                    <button
+                      onClick={() => {
+                        if (!sourceRowId || !targetRowId || selectedSpeakers.size === 0) return;
 
-                      handleUserEditing();
+                        handleUserEditing();
 
-                      const targetItem = schedule.find(s => s.id === targetRowId);
-                      if (!targetItem) return;
+                        const targetItem = schedule.find(s => s.id === targetRowId);
+                        if (!targetItem) return;
 
-                      // Get selected speakers with updated slot numbers and locations from editableSpeakers
-                      const speakersToAdd = editableSpeakers.map(speaker => ({
-                        ...speaker,
-                        id: `speaker_${Date.now()}_${Math.random()}`, // New ID for copied speaker
-                      }));
+                        // Get selected speakers with updated slot numbers and locations from editableSpeakers
+                        const speakersToAdd = editableSpeakers.map(speaker => ({
+                          ...speaker,
+                          id: `speaker_${Date.now()}_${Math.random()}`, // New ID for copied speaker
+                        }));
 
-                      // Get existing speakers from target
-                      let existingSpeakers: Speaker[] = [];
-                      if (targetItem.speakersText) {
-                        try {
-                          const parsed = JSON.parse(targetItem.speakersText);
-                          existingSpeakers = Array.isArray(parsed) ? parsed : [parsed];
-                        } catch {}
-                      }
-
-                      // Combine existing and new speakers
-                      const allSpeakers = [...existingSpeakers, ...speakersToAdd];
-                      const speakersJson = JSON.stringify(allSpeakers);
-
-                      // Update the target item
-                      const oldValue = targetItem.speakersText || '';
-                      setSchedule(prev =>
-                        prev.map(item =>
-                          item.id === targetRowId
-                            ? { ...item, speakersText: speakersJson }
-                            : item
-                        )
-                      );
-
-                      // Log the change
-                      const sourceItem = schedule.find(s => s.id === sourceRowId);
-                      logChange(
-                        'COPY_SPEAKERS',
-                        `Copied ${speakersToAdd.length} speaker(s) from "${sourceItem?.segmentName}" to "${targetItem.segmentName}"`,
-                        {
-                          changeType: 'COPY_SPEAKERS',
-                          sourceItemId: sourceRowId,
-                          targetItemId: targetRowId,
-                          sourceItemName: sourceItem?.segmentName,
-                          targetItemName: targetItem.segmentName,
-                          speakersCount: speakersToAdd.length,
-                          details: {
-                            speakers: speakersToAdd.map(s => ({
-                              name: s.fullName,
-                              slot: s.slot,
-                              location: s.location
-                            }))
-                          }
+                        // Get existing speakers from target
+                        let existingSpeakers: Speaker[] = [];
+                        if (targetItem.speakersText) {
+                          try {
+                            const parsed = JSON.parse(targetItem.speakersText);
+                            existingSpeakers = Array.isArray(parsed) ? parsed : [parsed];
+                          } catch {}
                         }
-                      );
 
-                      // Close modal and reset
-                      setShowSpeakerManagerModal(false);
-                      setSourceRowId(null);
-                      setTargetRowId(null);
-                      setSelectedSpeakers(new Set());
-                      setSpeakersToCopy([]);
-                      setEditableSpeakers([]);
-                    }}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors"
-                  >
-                    Copy {selectedSpeakers.size} Speaker{selectedSpeakers.size !== 1 ? 's' : ''} to Target Row
-                  </button>
+                        // Combine existing and new speakers
+                        const allSpeakers = [...existingSpeakers, ...speakersToAdd];
+                        const speakersJson = JSON.stringify(allSpeakers);
+
+                        // Update the target item
+                        setSchedule(prev =>
+                          prev.map(item =>
+                            item.id === targetRowId
+                              ? { ...item, speakersText: speakersJson }
+                              : item
+                          )
+                        );
+
+                        // Log the change
+                        const sourceItem = schedule.find(s => s.id === sourceRowId);
+                        logChange(
+                          'COPY_SPEAKERS',
+                          `Copied ${speakersToAdd.length} speaker(s) from "${sourceItem?.segmentName}" to "${targetItem.segmentName}"`,
+                          {
+                            changeType: 'COPY_SPEAKERS',
+                            sourceItemId: sourceRowId,
+                            targetItemId: targetRowId,
+                            sourceItemName: sourceItem?.segmentName,
+                            targetItemName: targetItem.segmentName,
+                            speakersCount: speakersToAdd.length,
+                            details: {
+                              speakers: speakersToAdd.map(s => ({
+                                name: s.fullName,
+                                slot: s.slot,
+                                location: s.location
+                              }))
+                            }
+                          }
+                        );
+
+                        setSpeakerCopyCompleted(true);
+                      }}
+                      className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors"
+                    >
+                      Copy {selectedSpeakers.size} Speaker{selectedSpeakers.size !== 1 ? 's' : ''} to Target Row
+                    </button>
                 </div>
               </div>
             )}
@@ -13376,6 +13717,17 @@ const RunOfShowPage: React.FC = () => {
         onDeleteAll={handleDeleteAllScheduleItems}
       />
 
+      {/* CSV Import Modal */}
+      <ImportCSVModal
+        isOpen={showCSVImportModal}
+        onClose={() => {
+          handleModalClosed();
+          setShowCSVImportModal(false);
+        }}
+        onImport={(data) => handleExcelImport(data, 'CSV')}
+        onDeleteAll={handleDeleteAllScheduleItems}
+      />
+
       {/* Agenda Import Modal (PDF / Word) */}
       <AgendaImportModal
         isOpen={showAgendaImportModal}
@@ -13385,6 +13737,17 @@ const RunOfShowPage: React.FC = () => {
         }}
         onImport={handleExcelImport}
         onDeleteAll={handleDeleteAllScheduleItems}
+      />
+
+      {/* Import from Event Modal */}
+      <ImportEventModal
+        isOpen={showImportEventModal}
+        onClose={() => {
+          handleModalClosed();
+          setShowImportEventModal(false);
+        }}
+        currentEventId={event?.id}
+        onImport={handleImportFromEvent}
       />
 
       {/* Viewers modal – who's viewing this event */}

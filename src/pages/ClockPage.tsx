@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Clock from '../components/Clock';
 import { DatabaseService } from '../services/database';
@@ -34,6 +34,13 @@ const ClockPage: React.FC = () => {
   const [showEventSelector, setShowEventSelector] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(!!document.fullscreenElement);
 
+  // Schedule items for current event (used to know if active cue should show time-of-day instead of countdown)
+  const [scheduleItems, setScheduleItems] = useState<any[]>([]);
+
+  // Periodic schedule sync (for Clock popup to pick up Timer changes from main window): enable/disable + countdown for UI
+  const [scheduleSyncEnabled, setScheduleSyncEnabled] = useState(true);
+  const [scheduleSyncCountdown, setScheduleSyncCountdown] = useState(60);
+
   // Sync eventId from URL when it changes (e.g. user changed event via selector)
   useEffect(() => {
     if (eventIdFromUrl !== null && eventIdFromUrl !== eventId) {
@@ -41,37 +48,103 @@ const ClockPage: React.FC = () => {
     }
   }, [eventIdFromUrl, eventId]);
 
-  // Fetch events list for the event selector dropdown
-  useEffect(() => {
-    const loadEvents = async () => {
-      try {
-        setEventsLoading(true);
-        const calendarEvents = await DatabaseService.getCalendarEvents();
-        const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
-          const dateObj = new Date(calEvent.date);
-          const simpleDate = dateObj.toISOString().split('T')[0];
-          return {
-            id: calEvent.id || '',
-            name: calEvent.name,
-            date: simpleDate,
-            location: calEvent.schedule_data?.location || '',
-            numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
-            timezone: calEvent.schedule_data?.timezone,
-            created_at: calEvent.created_at,
-            updated_at: calEvent.updated_at
-          };
-        });
-        mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setEvents(mapped.filter((e) => e.id));
-      } catch (e) {
-        console.warn('ClockPage: Failed to load events for selector:', e);
-        setEvents([]);
-      } finally {
-        setEventsLoading(false);
-      }
-    };
-    loadEvents();
+  const [eventsRefreshSuccessAt, setEventsRefreshSuccessAt] = useState<number | null>(null);
+
+  // Load events list for the event selector dropdown (callable for refresh)
+  const loadEvents = useCallback(async (showSuccess = false) => {
+    try {
+      setEventsLoading(true);
+      const calendarEvents = await DatabaseService.getCalendarEvents();
+      const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
+        const dateObj = new Date(calEvent.date);
+        const simpleDate = dateObj.toISOString().split('T')[0];
+        return {
+          id: calEvent.id || '',
+          name: calEvent.name,
+          date: simpleDate,
+          location: calEvent.schedule_data?.location || '',
+          numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+          timezone: calEvent.schedule_data?.timezone,
+          created_at: calEvent.created_at,
+          updated_at: calEvent.updated_at
+        };
+      });
+      mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      setEvents(mapped.filter((e) => e.id));
+    } catch (e) {
+      console.warn('ClockPage: Failed to load events for selector:', e);
+      setEvents([]);
+    } finally {
+      setEventsLoading(false);
+      if (showSuccess) setEventsRefreshSuccessAt(Date.now());
+    }
   }, []);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  // Load run-of-show schedule for current event so Clock can show time-of-day vs countdown per cue (Timer column)
+  useEffect(() => {
+    if (!eventId) {
+      setScheduleItems([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await DatabaseService.getRunOfShowData(eventId);
+        if (!cancelled && data?.schedule_items) {
+          setScheduleItems(Array.isArray(data.schedule_items) ? data.schedule_items : []);
+        } else if (!cancelled) {
+          setScheduleItems([]);
+        }
+      } catch {
+        if (!cancelled) setScheduleItems([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [eventId]);
+
+  // Periodic refetch (60s) when enabled, plus 1s tick to drive countdown display
+  const SCHEDULE_POLL_INTERVAL_MS = 60000; // 60 seconds
+  useEffect(() => {
+    if (!eventId || !scheduleSyncEnabled) return;
+    setScheduleSyncCountdown(60);
+    const refetchInterval = setInterval(async () => {
+      try {
+        const data = await DatabaseService.getRunOfShowData(eventId);
+        if (data?.schedule_items) {
+          setScheduleItems(Array.isArray(data.schedule_items) ? data.schedule_items : []);
+        }
+        setScheduleSyncCountdown(60);
+      } catch {
+        setScheduleSyncCountdown(60);
+      }
+    }, SCHEDULE_POLL_INTERVAL_MS);
+    const countdownInterval = setInterval(() => {
+      setScheduleSyncCountdown((c) => (c <= 0 ? 60 : c - 1));
+    }, 1000);
+    return () => {
+      clearInterval(refetchInterval);
+      clearInterval(countdownInterval);
+    };
+  }, [eventId, scheduleSyncEnabled]);
+
+  // When only one event exists and no event selected, auto-select it so schedule (and Timer/Time Of Day) loads
+  useEffect(() => {
+    if (eventsLoading || eventId) return;
+    if (events.length === 1 && events[0]?.id) {
+      setEventId(events[0].id);
+      navigate(`/clock?eventId=${encodeURIComponent(events[0].id)}`, { replace: true });
+    }
+  }, [eventsLoading, eventId, events, navigate]);
+
+  useEffect(() => {
+    if (eventsRefreshSuccessAt == null) return;
+    const t = setTimeout(() => setEventsRefreshSuccessAt(null), 2500);
+    return () => clearTimeout(t);
+  }, [eventsRefreshSuccessAt]);
 
   // Track fullscreen so we can hide event selector when in fullscreen
   useEffect(() => {
@@ -313,6 +386,7 @@ const ClockPage: React.FC = () => {
         messageEnabled={messageEnabled}
         eventId={eventId}
         supabaseMessage={supabaseMessage}
+        scheduleItems={scheduleItems}
       />
 
         {/* Event Selector - left side below CURRENT TIME, fixed so it doesn't move on scroll */}
@@ -337,6 +411,26 @@ const ClockPage: React.FC = () => {
                 </select>
                 <button
                   type="button"
+                  onClick={() => loadEvents(true)}
+                  disabled={eventsLoading}
+                  className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors w-full disabled:opacity-60 flex items-center justify-center gap-1"
+                  title="Refresh events list"
+                >
+                  {eventsLoading ? (
+                    '…'
+                  ) : eventsRefreshSuccessAt ? (
+                    <>
+                      <svg className="w-3.5 h-3.5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Refreshed
+                    </>
+                  ) : (
+                    'Refresh events'
+                  )}
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowEventSelector(false)}
                   className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors w-full"
                   title="Hide event selector"
@@ -353,6 +447,28 @@ const ClockPage: React.FC = () => {
               >
                 Change event
               </button>
+            )}
+          </div>
+        )}
+
+        {/* Schedule sync - bottom right (opposite Timer Status bottom left), countdown + enable checkbox */}
+        {!isFullScreen && eventId && (
+          <div className="fixed bottom-10 right-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[140px]">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+              <input
+                type="checkbox"
+                checked={scheduleSyncEnabled}
+                onChange={(e) => setScheduleSyncEnabled(e.target.checked)}
+                className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500"
+              />
+              <span>Schedule sync</span>
+            </label>
+            {scheduleSyncEnabled ? (
+              <div className="text-sm text-gray-400 font-mono" title="Refreshes run-of-show every 60s so Timer changes from main window appear here">
+                Sync in {scheduleSyncCountdown}s
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">Sync off</div>
             )}
           </div>
         )}

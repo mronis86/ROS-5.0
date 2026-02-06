@@ -30,11 +30,11 @@ if (Test-Path $OscDist) {
     Write-Warning "ros-osc-control/dist not found. Build it first: cd ros-osc-control && npm run build:portable"
 }
 
-Write-Host "========== Building Vite app =========="
+Write-Host "========== Building Vite app (prebuild creates companion + python zips) =========="
 Push-Location $ProjectRoot
 try {
     npm install 2>$null
-    npx vite build
+    npm run build
 } finally {
     Pop-Location
 }
@@ -63,8 +63,13 @@ if (Test-Path $ZipPath) {
     Write-Host "Added ROS-OSC-Control-portable.zip for OSC modal download"
 }
 
-# Netlify config
+# Netlify config (zip downloads must be served directly before SPA fallback)
 $RedirectsContent = @"
+/companion-module-runofshow.zip  /companion-module-runofshow.zip  200
+/ros-osc-python-app.zip         /ros-osc-python-app.zip         200
+/ROS-OSC-Control-portable.zip   /ROS-OSC-Control-portable.zip   200
+/electron-osc-app.zip           /electron-osc-app.zip           200
+
 /*    /index.html   200
 "@
 Set-Content -Path (Join-Path $UploadDir '_redirects') -Value $RedirectsContent -Encoding UTF8
@@ -72,6 +77,30 @@ Set-Content -Path (Join-Path $UploadDir '_redirects') -Value $RedirectsContent -
 $TomlContent = @"
 [build]
   publish = "."
+
+[[redirects]]
+  from = "/companion-module-runofshow.zip"
+  to = "/companion-module-runofshow.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ros-osc-python-app.zip"
+  to = "/ros-osc-python-app.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ROS-OSC-Control-portable.zip"
+  to = "/ROS-OSC-Control-portable.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/electron-osc-app.zip"
+  to = "/electron-osc-app.zip"
+  status = 200
+  force = true
 
 [[redirects]]
   from = "/*"
@@ -96,4 +125,4 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
 Write-Host "========== Done =========="
 Write-Host "Upload folder: $UploadDir"
-Write-Host "Contains: site + ROS-OSC-Control-portable.zip (OSC modal download)"
+Write-Host "Contains: site + all OSC zips (portable, Python, Companion)"

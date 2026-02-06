@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
@@ -79,37 +79,47 @@ const GreenRoomPage: React.FC = () => {
   const [eventsLoading, setEventsLoading] = useState(true);
   const [showEventSelector, setShowEventSelector] = useState(false);
 
-  // Fetch events list for the event selector dropdown
-  useEffect(() => {
-    const loadEvents = async () => {
-      try {
-        setEventsLoading(true);
-        const calendarEvents = await DatabaseService.getCalendarEvents();
-        const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
-          const dateObj = new Date(calEvent.date);
-          const simpleDate = dateObj.toISOString().split('T')[0];
-          return {
-            id: calEvent.id || '',
-            name: calEvent.name,
-            date: simpleDate,
-            location: calEvent.schedule_data?.location || '',
-            numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
-            timezone: calEvent.schedule_data?.timezone,
-            created_at: calEvent.created_at,
-            updated_at: calEvent.updated_at
-          };
-        });
-        mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setEvents(mapped.filter((e) => e.id));
-      } catch (e) {
-        console.warn('GreenRoom: Failed to load events for selector:', e);
-        setEvents([]);
-      } finally {
-        setEventsLoading(false);
-      }
-    };
-    loadEvents();
+  const [eventsRefreshSuccessAt, setEventsRefreshSuccessAt] = useState<number | null>(null);
+
+  // Load events list for the event selector dropdown (callable for refresh)
+  const loadEvents = useCallback(async (showSuccess = false) => {
+    try {
+      setEventsLoading(true);
+      const calendarEvents = await DatabaseService.getCalendarEvents();
+      const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
+        const dateObj = new Date(calEvent.date);
+        const simpleDate = dateObj.toISOString().split('T')[0];
+        return {
+          id: calEvent.id || '',
+          name: calEvent.name,
+          date: simpleDate,
+          location: calEvent.schedule_data?.location || '',
+          numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+          timezone: calEvent.schedule_data?.timezone,
+          created_at: calEvent.created_at,
+          updated_at: calEvent.updated_at
+        };
+      });
+      mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      setEvents(mapped.filter((e) => e.id));
+    } catch (e) {
+      console.warn('GreenRoom: Failed to load events for selector:', e);
+      setEvents([]);
+    } finally {
+      setEventsLoading(false);
+      if (showSuccess) setEventsRefreshSuccessAt(Date.now());
+    }
   }, []);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  useEffect(() => {
+    if (eventsRefreshSuccessAt == null) return;
+    const t = setTimeout(() => setEventsRefreshSuccessAt(null), 2500);
+    return () => clearTimeout(t);
+  }, [eventsRefreshSuccessAt]);
 
   // UTC utility functions with proper timezone conversion
   const getCurrentTimeUTC = (): Date => {
@@ -1557,6 +1567,26 @@ const GreenRoomPage: React.FC = () => {
                         </option>
                       ))}
                     </select>
+                    <button
+                      type="button"
+                      onClick={() => loadEvents(true)}
+                      disabled={eventsLoading}
+                      className="w-full px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 disabled:opacity-60 flex items-center justify-center gap-1"
+                      title="Refresh events list"
+                    >
+                      {eventsLoading ? (
+                        '…'
+                      ) : eventsRefreshSuccessAt ? (
+                        <>
+                          <svg className="w-3.5 h-3.5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Refreshed
+                        </>
+                      ) : (
+                        'Refresh events'
+                      )}
+                    </button>
                     <button
                       type="button"
                       onClick={() => setShowEventSelector(false)}

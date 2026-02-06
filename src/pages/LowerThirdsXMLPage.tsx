@@ -257,7 +257,8 @@ const LowerThirdsXMLPage: React.FC = () => {
                 baseEntry.speakers = sortedSpeakers.map(speaker => ({
                   title: speaker.fullName || '',
                   subtitle: speaker.title && speaker.org ? `${speaker.title}\n${speaker.org}` : speaker.title || speaker.org || '',
-                  photo: speaker.photoLink || ''
+                  photo: speaker.photoLink || '',
+                  slot: speaker.slot || 1
                 }));
               } catch (error) {
                 console.log('Error parsing speakers JSON for item:', item.id, error);

@@ -1701,26 +1701,79 @@ app.put('/api/active-timers/stop', async (req, res) => {
   }
 });
 
-// Update timer duration
+// Update timer duration (active_timers counter and schedule row duration so the row stays in sync)
 app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
   try {
     const { eventId, itemId } = req.params;
+    const itemIdNum = parseInt(itemId, 10);
     const { duration_seconds } = req.body;
-    
+
     if (!duration_seconds || duration_seconds < 0) {
       return res.status(400).json({ error: 'duration_seconds must be a positive number' });
     }
-    
-    // Update the timer duration
+
+    // 1. Update the timer duration (counter)
     const result = await pool.query(
       'UPDATE active_timers SET duration_seconds = $1, updated_at = NOW() WHERE event_id = $2 AND item_id = $3',
-      [duration_seconds, eventId, itemId]
+      [duration_seconds, eventId, itemIdNum]
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Active timer not found' });
     }
-    
+
+    // 2. Update the schedule row duration (run_of_show_data.schedule_items) so the row shows the new duration
+    const totalSec = Math.floor(Number(duration_seconds)) || 0;
+    const durationHours = Math.floor(totalSec / 3600);
+    const durationMinutes = Math.floor((totalSec % 3600) / 60);
+    const durationSeconds = totalSec % 60;
+
+    const rowResult = await pool.query(
+      'SELECT schedule_items FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    if (rowResult.rows.length > 0 && rowResult.rows[0].schedule_items != null) {
+      let scheduleItems = rowResult.rows[0].schedule_items;
+      if (typeof scheduleItems === 'string') {
+        try {
+          scheduleItems = JSON.parse(scheduleItems);
+        } catch (e) {
+          scheduleItems = [];
+        }
+      }
+      if (Array.isArray(scheduleItems)) {
+        const idx = scheduleItems.findIndex((item) => {
+          const id = item && (item.id !== undefined && item.id !== null) ? item.id : null;
+          if (id == null) return false;
+          return String(id) === String(itemId) || Number(id) === itemIdNum || String(id) === String(itemIdNum);
+        });
+        if (idx >= 0) {
+          const updated = scheduleItems.map((it, i) =>
+            i === idx
+              ? { ...it, durationHours, durationMinutes, durationSeconds }
+              : it
+          );
+          await pool.query(
+            "UPDATE run_of_show_data SET schedule_items = $2, last_modified_by = 'companion', updated_at = NOW() WHERE event_id = $1",
+            [eventId, JSON.stringify(updated)]
+          );
+          const savedRow = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
+          if (savedRow.rows[0]) {
+            const payload = savedRow.rows[0];
+            if (typeof payload.schedule_items === 'string') {
+              try {
+                payload.schedule_items = JSON.parse(payload.schedule_items);
+              } catch (e) {}
+            }
+            broadcastUpdate(eventId, 'runOfShowDataUpdated', payload);
+            console.log('⏱️ Row duration updated and broadcast for item_id', itemId);
+          }
+        } else {
+          console.warn('⏱️ Timer duration: schedule item not found for item_id', itemId, '(schedule length:', scheduleItems.length, ')');
+        }
+      }
+    }
+
     // Get the updated timer data with server-calculated elapsed_seconds
     const timerResult = await pool.query(
       `SELECT *, 
@@ -1731,26 +1784,28 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
         END as server_elapsed_seconds
       FROM active_timers 
       WHERE event_id = $1 AND item_id = $2`,
-      [eventId, itemId]
+      [eventId, itemIdNum]
     );
-    
+
     const timerData = {
       ...timerResult.rows[0],
       elapsed_seconds: timerResult.rows[0].server_elapsed_seconds
     };
-    
-    console.log('⏱️ Timer duration updated - broadcasting:', {
+
+    console.log('⏱️ Timer duration updated (counter + row) - broadcasting:', {
       itemId,
       duration_seconds,
+      durationHours,
+      durationMinutes,
+      durationSeconds,
       elapsed_seconds: timerData.elapsed_seconds,
       is_running: timerData.is_running
     });
-    
-    // Broadcast update via WebSocket with current elapsed time
+
     broadcastUpdate(eventId, 'timerUpdated', timerData);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Timer duration updated',
       timer: timerData
     });

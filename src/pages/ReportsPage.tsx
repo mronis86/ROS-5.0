@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
@@ -56,6 +56,91 @@ const ReportsPage: React.FC = () => {
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('landscape');
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshSuccessAt, setRefreshSuccessAt] = useState<number | null>(null);
+
+  // Load schedule from localStorage (same logic as initial load)
+  const loadScheduleFromStorage = useCallback((): ScheduleItem[] => {
+    let savedSchedule = null;
+    if (event?.id) {
+      savedSchedule = localStorage.getItem(`runOfShowSchedule_${event.id}`);
+    }
+    if (!savedSchedule && eventId) {
+      savedSchedule = localStorage.getItem(`runOfShowSchedule_${eventId}`);
+    }
+    if (!savedSchedule) {
+      const keys = Object.keys(localStorage);
+      const scheduleKeys = keys.filter(key => key.startsWith('runOfShowSchedule_'));
+      if (scheduleKeys.length > 0) {
+        const latestKey = scheduleKeys[scheduleKeys.length - 1];
+        savedSchedule = localStorage.getItem(latestKey);
+      }
+    }
+    if (savedSchedule) {
+      try {
+        return JSON.parse(savedSchedule);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }, [event?.id, eventId]);
+
+  // Refresh report data: re-read localStorage and fetch master start time (and optionally schedule) from API
+  const refreshReportData = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      // 1) Try API first for latest schedule + settings
+      if (event?.id) {
+        try {
+          const data = await DatabaseService.getRunOfShowData(event.id);
+          if (data?.schedule_items && Array.isArray(data.schedule_items) && data.schedule_items.length > 0) {
+            setSchedule(data.schedule_items);
+          } else {
+            const fromStorage = loadScheduleFromStorage();
+            if (fromStorage.length > 0) setSchedule(fromStorage);
+          }
+          if (data?.settings?.masterStartTime) {
+            setMasterStartTime(data.settings.masterStartTime);
+          } else if (data?.settings?.dayStartTimes?.['1']) {
+            setMasterStartTime(data.settings.dayStartTimes['1']);
+          } else {
+            let saved = localStorage.getItem(`masterStartTime_${event.id}`);
+            if (!saved) {
+              const keys = Object.keys(localStorage).filter(k => k.startsWith('masterStartTime_'));
+              if (keys.length > 0) saved = localStorage.getItem(keys[keys.length - 1]);
+            }
+            setMasterStartTime(saved || '09:00');
+          }
+          if (data?.settings?.timezone) {
+            setEventTimezone(data.settings.timezone);
+          }
+        } catch {
+          const fromStorage = loadScheduleFromStorage();
+          if (fromStorage.length > 0) setSchedule(fromStorage);
+          let saved = event?.id ? localStorage.getItem(`masterStartTime_${event.id}`) : null;
+          if (!saved) {
+            const keys = Object.keys(localStorage).filter(k => k.startsWith('masterStartTime_'));
+            if (keys.length > 0) saved = localStorage.getItem(keys[keys.length - 1]);
+          }
+          setMasterStartTime(saved || '09:00');
+        }
+      } else {
+        const fromStorage = loadScheduleFromStorage();
+        if (fromStorage.length > 0) setSchedule(fromStorage);
+      }
+    } finally {
+      setIsRefreshing(false);
+      setRefreshSuccessAt(Date.now());
+    }
+  }, [event?.id, loadScheduleFromStorage]);
+
+  // Clear success state after a short delay
+  useEffect(() => {
+    if (refreshSuccessAt === null) return;
+    const t = setTimeout(() => setRefreshSuccessAt(null), 2500);
+    return () => clearTimeout(t);
+  }, [refreshSuccessAt]);
 
   // Format CUE display consistently
   const formatCueDisplay = (cue: string | number | undefined) => {
@@ -122,136 +207,10 @@ const ReportsPage: React.FC = () => {
     }
   };
 
-  // Load schedule data
+  // Initial load: same as refresh
   useEffect(() => {
-    console.log('=== REPORTS PAGE INITIALIZATION ===');
-    console.log('Event:', event);
-    
-    // Load schedule data
-    let savedSchedule = null;
-    
-    if (event?.id) {
-      const scheduleKey = `runOfShowSchedule_${event.id}`;
-      savedSchedule = localStorage.getItem(scheduleKey);
-    }
-    
-    if (!savedSchedule && eventId) {
-      const urlScheduleKey = `runOfShowSchedule_${eventId}`;
-      savedSchedule = localStorage.getItem(urlScheduleKey);
-    }
-    
-    if (!savedSchedule) {
-      const keys = Object.keys(localStorage);
-      const scheduleKeys = keys.filter(key => key.startsWith('runOfShowSchedule_'));
-      if (scheduleKeys.length > 0) {
-        const latestKey = scheduleKeys[scheduleKeys.length - 1];
-        savedSchedule = localStorage.getItem(latestKey);
-      }
-    }
-    
-    if (savedSchedule) {
-      try {
-        const parsedSchedule = JSON.parse(savedSchedule);
-        setSchedule(parsedSchedule);
-        console.log('Schedule loaded:', parsedSchedule);
-        console.log('First schedule item:', parsedSchedule[0]);
-        console.log('Schedule item duration fields:', parsedSchedule[0] ? {
-          durationHours: parsedSchedule[0].durationHours,
-          durationMinutes: parsedSchedule[0].durationMinutes,
-          durationSeconds: parsedSchedule[0].durationSeconds
-        } : 'No items');
-      } catch (error) {
-        console.log('Error parsing schedule:', error);
-      }
-    }
-    
-    // Load master start time from API data instead of localStorage
-    const loadMasterStartTime = async () => {
-      if (event?.id) {
-        try {
-          const data = await DatabaseService.getRunOfShowData(event.id);
-          
-          // Check for master start time in different locations
-          let masterTime = null;
-          if (data?.settings?.masterStartTime) {
-            masterTime = data.settings.masterStartTime;
-          } else if (data?.settings?.dayStartTimes?.['1']) {
-            masterTime = data.settings.dayStartTimes['1'];
-          } else if (data?.schedule_items && data.schedule_items.length > 0) {
-            // Check if the first item has a start time that might be the master start time
-            const firstItem = data.schedule_items[0];
-            if (firstItem.startTime) {
-              masterTime = firstItem.startTime;
-            }
-          }
-          
-          if (masterTime) {
-            setMasterStartTime(masterTime);
-            
-            // Also load timezone if available
-            if (data.settings.timezone) {
-              setEventTimezone(data.settings.timezone);
-            }
-          } else {
-            console.log('📥 No master start time found in API data, checking localStorage...');
-            
-            // Fallback to localStorage
-            const keys = Object.keys(localStorage);
-            const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
-            console.log('Master time keys found:', masterTimeKeys);
-            
-            // Try to get master start time for the specific event first
-            let savedMasterTime = null;
-            if (event?.id) {
-              savedMasterTime = localStorage.getItem(`masterStartTime_${event.id}`);
-              console.log(`Master time for event ${event.id}:`, savedMasterTime);
-            }
-            
-            // If not found for specific event, try the latest one
-            if (!savedMasterTime && masterTimeKeys.length > 0) {
-              const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
-              savedMasterTime = localStorage.getItem(latestMasterKey);
-              console.log('Latest master time key:', latestMasterKey, 'Value:', savedMasterTime);
-            }
-            
-            if (savedMasterTime) {
-              setMasterStartTime(savedMasterTime);
-              console.log('Master start time set to:', savedMasterTime);
-            } else {
-              console.log('No master start time found in localStorage');
-              // Set a default time for testing
-              setMasterStartTime('09:00');
-              console.log('Set default master start time to 09:00');
-            }
-          }
-        } catch (error) {
-          console.error('❌ Error loading master start time from API:', error);
-          // Fallback to localStorage
-          const keys = Object.keys(localStorage);
-          const masterTimeKeys = keys.filter(key => key.startsWith('masterStartTime_'));
-          
-          let savedMasterTime = null;
-          if (event?.id) {
-            savedMasterTime = localStorage.getItem(`masterStartTime_${event.id}`);
-          }
-          
-          if (!savedMasterTime && masterTimeKeys.length > 0) {
-            const latestMasterKey = masterTimeKeys[masterTimeKeys.length - 1];
-            savedMasterTime = localStorage.getItem(latestMasterKey);
-          }
-          
-          if (savedMasterTime) {
-            setMasterStartTime(savedMasterTime);
-          } else {
-            setMasterStartTime('09:00');
-          }
-        }
-      }
-    };
-    
-    loadMasterStartTime();
-
-  }, [event?.id, eventId]);
+    refreshReportData();
+  }, [refreshReportData]);
 
   // Format master start time to 12-hour format
   const formatMasterStartTime = (timeString: string) => {
@@ -435,15 +394,107 @@ const ReportsPage: React.FC = () => {
     return getProgramTypeColor(programType);
   };
 
-  // Normalize notes for print: preserve line breaks (\n, <br>) as \n, strip HTML, escape for HTML output
+  // Extract top-level <li>...</li> only (so nested lists don't break numbering/order)
+  const extractTopLevelLis = (content: string): string[] => {
+    const items: string[] = [];
+    const lower = content.toLowerCase();
+    let pos = 0;
+    while (true) {
+      const open = lower.indexOf('<li', pos);
+      if (open === -1) break;
+      let depth = 1;
+      let p = lower.indexOf('>', open) + 1;
+      const start = p;
+      while (depth > 0 && p < content.length) {
+        const nextLi = lower.indexOf('<li', p);
+        const nextClose = lower.indexOf('</li>', p);
+        if (nextClose === -1) break;
+        if (nextLi !== -1 && nextLi < nextClose) {
+          depth += 1;
+          p = nextLi + 1;
+        } else {
+          depth -= 1;
+          if (depth === 0) {
+            items.push(content.slice(start, nextClose).trim());
+            pos = nextClose + 5;
+            break;
+          }
+          p = nextClose + 5;
+        }
+      }
+      if (depth !== 0) break;
+    }
+    return items;
+  };
+
+  // Indent for nested lists in report notes (so "1. List item" appears on its own line under a bullet)
+  const NESTED_LIST_INDENT = '      '; // 6 spaces
+
+  // Convert inner HTML of an li to plain text, preserving nested list indentation
+  const liInnerToText = (html: string, bulletIndent = ''): string => {
+    let inner = html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<p[^>]*>/gi, '');
+    // Nested <ul><li>...</li></ul> -> newline then indented bullets
+    inner = inner.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, ulContent) => {
+      const lis = extractTopLevelLis(ulContent);
+      const block = lis
+        .map(liHtml => bulletIndent + NESTED_LIST_INDENT + '• ' + liInnerToText(liHtml, bulletIndent + NESTED_LIST_INDENT).trim())
+        .join('\n');
+      return lis.length ? '\n' + block + '\n' : '';
+    });
+    // Nested <ol><li>...</li></ol> -> newline then indented numbers (1. 2. 3.)
+    inner = inner.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, olContent) => {
+      const lis = extractTopLevelLis(olContent);
+      const block = lis
+        .map((liHtml, i) => bulletIndent + NESTED_LIST_INDENT + (i + 1) + '. ' + liInnerToText(liHtml, bulletIndent + NESTED_LIST_INDENT).trim())
+        .join('\n');
+      return lis.length ? '\n' + block + '\n' : '';
+    });
+    return inner.replace(/<[^>]*>/g, '').replace(/\n+/g, '\n').trim();
+  };
+
+  // Normalize notes for print: preserve line breaks, bullet/number lists, strip HTML, escape for HTML output
   const notesForPrint = (raw: string): string => {
     if (!raw || typeof raw !== 'string') return '';
     let s = raw
-      .replace(/<br\s*\/?>/gi, '\n')
       .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-      .replace(/<[^>]*>/g, '')
-      .trim();
+      .replace(/\r/g, '\n');
+
+    // Process <ul> BEFORE <ol> so nested <ol> inside a bullet (e.g. "adsad" then "1. List item", "2.") is
+    // handled inside liInnerToText with a newline + indent, not turned into "adsad1. List item"
+    s = s.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, content) => {
+      const items = extractTopLevelLis(content);
+      return items
+        .map(liHtml => '• ' + liInnerToText(liHtml))
+        .filter(Boolean)
+        .join('\n') + (items.length ? '\n' : '');
+    });
+
+    // Top-level <ol> (and any <ol> that wasn't inside a ul) -> numbered list (1. 2. 3.)
+    s = s.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, content) => {
+      const items = extractTopLevelLis(content);
+      return items
+        .map((liHtml, i) => {
+          const text = liInnerToText(liHtml);
+          return text ? `${i + 1}. ${text}` : `${i + 1}.`;
+        })
+        .join('\n') + (items.length ? '\n' : '');
+    });
+    // Standalone or remaining <li>...</li> (e.g. not inside ol/ul) -> bullet
+    s = s.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, inner) => '• ' + liInnerToText(inner) + '\n');
+    s = s.replace(/<\/?ul[^>]*>/gi, '');
+    s = s.replace(/<\/?ol[^>]*>/gi, '');
+
+    // Line breaks from br and p tags
+    s = s.replace(/<br\s*\/?>/gi, '\n');
+    s = s.replace(/<\/p>/gi, '\n');
+    s = s.replace(/<p[^>]*>/gi, '');
+
+    // Strip remaining HTML tags
+    s = s.replace(/<[^>]*>/g, '');
+    s = s.trim();
     return s;
   };
 
@@ -455,6 +506,35 @@ const ReportsPage: React.FC = () => {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   };
+
+  // Sanitize notes HTML for safe inclusion in report: strip script and event handlers, keep list/formatting
+  const sanitizeNotesHtml = (html: string): string => {
+    if (!html || typeof html !== 'string') return '';
+    let s = html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '')
+      .replace(/\s+on\w+\s*=\s*[^\s>]+/gi, '');
+    return s.trim();
+  };
+
+  // Use notes HTML as-is in report so formatting (lists, indent) matches the full note for that row
+  const notesHtmlForReport = (notes: string | undefined): string => {
+    if (!notes || !notes.trim() || notes === 'None' || notes === 'null' || notes === 'undefined') return escapeHtml('None');
+    return sanitizeNotesHtml(notes);
+  };
+
+  // CSS for notes cells when they contain HTML lists - same structure as in-app notes, print-friendly
+  const reportNotesListCss = `
+        .notes-content-cell, .report-notes-cell { white-space: normal; color: #000; }
+        .notes-content-cell ul, .report-notes-cell ul { list-style-type: disc; list-style-position: outside; margin: 6px 0; padding-left: 24px; }
+        .notes-content-cell ol, .report-notes-cell ol { list-style-type: decimal; list-style-position: outside; margin: 6px 0; padding-left: 28px; }
+        .notes-content-cell li, .report-notes-cell li { margin: 2px 0; line-height: 1.4; padding-left: 2px; }
+        .notes-content-cell ul ul, .report-notes-cell ul ul { list-style-type: circle; padding-left: 24px; }
+        .notes-content-cell ul ul ul, .report-notes-cell ul ul ul { list-style-type: square; padding-left: 24px; }
+        .notes-content-cell ol ol, .report-notes-cell ol ol { list-style-type: lower-alpha; padding-left: 28px; }
+        .notes-content-cell ol ol ol, .report-notes-cell ol ol ol { list-style-type: lower-roman; padding-left: 28px; }
+        .notes-content-cell p, .report-notes-cell p { margin: 4px 0; }
+  `;
 
   // Generate report content
   const generateReportContent = () => {
@@ -808,8 +888,8 @@ const ReportsPage: React.FC = () => {
           font-size: 10px;
           line-height: 1.3;
           background: #f9f9f9;
-          white-space: pre-line;
         }
+        ${reportNotesListCss}
             .modal-cell .field-label { 
               font-weight: normal; 
               font-size: 11px; 
@@ -1061,7 +1141,7 @@ const ReportsPage: React.FC = () => {
                   <td colspan="11" class="notes-header-cell">NOTES</td>
                 </tr>
                 <tr class="notes-content-row">
-                  <td colspan="11" class="notes-content-cell">${escapeHtml(notesForPrint(item.notes) || 'None')}</td>
+                  <td colspan="11" class="notes-content-cell">${notesHtmlForReport(item.notes)}</td>
                 </tr>
               </table>
             </div>
@@ -1403,8 +1483,8 @@ const ReportsPage: React.FC = () => {
           font-size: 10px;
           line-height: 1.3;
           background: #f9f9f9;
-          white-space: pre-line;
         }
+        ${reportNotesListCss}
             .modal-cell .field-label { 
               font-weight: normal; 
               font-size: 11px; 
@@ -1670,7 +1750,7 @@ const ReportsPage: React.FC = () => {
                   <td colspan="11" class="notes-header-cell">NOTES</td>
                 </tr>
                 <tr class="notes-content-row">
-                  <td colspan="11" class="notes-content-cell">${escapeHtml(notesForPrint(item.notes) || 'None')}</td>
+                  <td colspan="11" class="notes-content-cell">${notesHtmlForReport(item.notes)}</td>
                 </tr>
               </table>
             </div>
@@ -1755,6 +1835,7 @@ const ReportsPage: React.FC = () => {
               color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
+            ${reportNotesListCss}
             .footer { 
               margin-top: 30px; 
               text-align: center; 
@@ -1864,15 +1945,6 @@ const ReportsPage: React.FC = () => {
           shotPptText = '';
         }
         
-        // Clean up notes for display (preserve line breaks from Excel/editor)
-        let notesText = '';
-        if (item.notes) {
-          const cleaned = notesForPrint(item.notes);
-          if (cleaned && cleaned !== 'None' && cleaned !== 'null' && cleaned !== 'undefined') {
-            notesText = escapeHtml(cleaned);
-          }
-        }
-        
         content += `
           <tr style="background-color: ${getRowBackgroundColor(item.programType)};">
             <td>${item.programType === 'Sub Cue' ? `<span style="background-color: #9CA3AF; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : (item.programType === 'Podium' || item.programType === 'Podium Transition') ? `<span style="background-color: #8B4513; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : (item.programType === 'Panel' || item.programType === 'Panel Transition') ? `<span style="background-color: #404040; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : formatCueDisplay(item.customFields?.cue)}</td>
@@ -1881,7 +1953,7 @@ const ReportsPage: React.FC = () => {
             <td>${item.segmentName || 'Untitled Segment'}</td>
             <td>${shotPptText}</td>
             <td style="white-space: pre-line;">${speakersText}</td>
-            <td style="white-space: pre-line; font-size: 12px;">${notesText}</td>
+            <td class="report-notes-cell" style="font-size: 12px;">${notesHtmlForReport(item.notes)}</td>
           </tr>
         `;
       });
@@ -1907,8 +1979,11 @@ const ReportsPage: React.FC = () => {
     if (printWindow) {
       printWindow.document.write(content);
       printWindow.document.close();
-      printWindow.focus();
-      printWindow.print();
+      // Wait for document and all images to load before opening print dialog
+      printWindow.onload = () => {
+        printWindow.focus();
+        printWindow.print();
+      };
     }
   };
 
@@ -1972,9 +2047,9 @@ const ReportsPage: React.FC = () => {
                       onChange={(e) => setReportType(e.target.value)}
                       className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="showfile">ROS Show File</option>
-                      <option value="condensed">ROS CONDENSED</option>
+                      <option value="showfile">ROS Show</option>
                       <option value="speakers">ROS Speakers</option>
+                      <option value="condensed">ROS CONDENSED</option>
                     </select>
                   </div>
                   
@@ -2056,12 +2131,12 @@ const ReportsPage: React.FC = () => {
                 
                 {/* Right Side - Report Format Information */}
                 <div className="flex items-center justify-center h-full">
-                  <div className="bg-slate-600/30 rounded-lg p-4 border border-slate-500 w-full max-w-md">
+                  <div className="bg-slate-600/30 rounded-lg p-4 border border-slate-500 w-full max-w-[31rem]">
                     <h4 className="text-lg font-semibold text-white mb-3 text-center">Report Format Information</h4>
                     <div className="space-y-2 text-sm">
-                      <p><span className="text-blue-300 text-base">● ROS Show File:</span> Section-based format with speaker photos</p>
+                      <p><span className="text-blue-300 text-base">● ROS Show:</span> Section-based format with speaker photos</p>
+                      <p><span className="text-orange-300 text-base">● ROS Speakers:</span> Section-based format with dedicated speaker column</p>
                       <p><span className="text-green-300 text-base">● ROS CONDENSED:</span> Table format with all information</p>
-                      <p><span className="text-orange-300 text-base">● ROS Speakers:</span> Table format with dedicated speaker column</p>
                       <p><span className="text-purple-300 text-base">● Color Coding:</span> Sections colored by program type</p>
                     </div>
                   </div>
@@ -2092,6 +2167,46 @@ const ReportsPage: React.FC = () => {
               </svg>
               Download Report
             </button>
+
+            <div className="flex flex-col items-start gap-1">
+              <button
+                type="button"
+                onClick={() => refreshReportData()}
+                disabled={isRefreshing}
+                className={`px-6 py-3 font-medium rounded-lg transition-all duration-300 flex items-center gap-2 ${
+                  isRefreshing
+                    ? 'bg-slate-600 text-white opacity-60 cursor-not-allowed'
+                    : 'bg-slate-600 hover:bg-slate-500 text-white'
+                }`}
+                title="Reload schedule and settings from storage / API"
+              >
+                {isRefreshing ? (
+                  <>
+                    <span className="inline-block w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Refreshing…
+                  </>
+                ) : refreshSuccessAt ? (
+                  <>
+                    <svg className="w-5 h-5 flex-shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Refreshed!</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Refresh data
+                  </>
+                )}
+              </button>
+              {refreshSuccessAt && (
+                <span className="text-green-400 text-xs font-medium transition-opacity duration-300">
+                  Schedule and settings reloaded
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Preview */}
@@ -2102,8 +2217,8 @@ const ReportsPage: React.FC = () => {
                 <p><strong>Event:</strong> {event?.name || 'Current Event'}</p>
                 <p><strong>Total Items:</strong> {schedule.length}{(event?.numberOfDays && event.numberOfDays > 1) ? ` | <strong>Day ${selectedDay} Items:</strong> ${schedule.filter(item => (item.day || 1) === selectedDay).length}` : ''}</p>
                 <p><strong>Master Start Time:</strong> {formatMasterStartTime(masterStartTime)}</p>
-                <p><strong>Report Type:</strong> {reportType === 'showfile' ? 'ROS Show File' : reportType === 'speakers' ? 'ROS Speakers' : 'ROS CONDENSED'}</p>
-                <p><strong>Format:</strong> {reportType === 'showfile' ? 'Section-based with speaker photos' : reportType === 'speakers' ? 'Table format with dedicated speaker column' : 'Table format'}</p>
+                <p><strong>Report Type:</strong> {reportType === 'showfile' ? 'ROS Show' : reportType === 'speakers' ? 'ROS Speakers' : 'ROS CONDENSED'}</p>
+                <p><strong>Format:</strong> {reportType === 'showfile' ? 'Section-based with speaker photos' : reportType === 'speakers' ? 'Section-based with dedicated speaker column' : 'Table format'}</p>
                 <p><strong>Orientation:</strong> {printOrientation === 'landscape' ? 'Landscape (recommended for tables)' : 'Portrait'}</p>
                 <p><strong>Color Coding:</strong> Sections colored by program type</p>
               </div>

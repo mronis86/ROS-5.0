@@ -47,7 +47,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
       const speakers = new Array(21).fill('');
       if (item.speakers && item.speakers.length > 0) {
         item.speakers.forEach((speaker) => {
-          const slot = speaker.slot || 0;
+          const slot = (speaker.slot >= 1 && speaker.slot <= 7) ? speaker.slot : 1;
           if (slot >= 1 && slot <= 7) {
             const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
@@ -97,7 +97,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
       const speakers = new Array(21).fill('');
       if (item.speakers && item.speakers.length > 0) {
         item.speakers.forEach((speaker) => {
-          const slot = speaker.slot || 0;
+          const slot = (speaker.slot >= 1 && speaker.slot <= 7) ? speaker.slot : 1;
           if (slot >= 1 && slot <= 7) {
             const baseIdx = (slot - 1) * 3;
             speakers[baseIdx] = speaker.title || '';
@@ -144,7 +144,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
       const lowerThirdsData: LowerThird[] = [];
 
       scheduleItems.forEach((item: any) => {
-        const speakers: Array<{ title: string; subtitle: string; photo: string }> = [];
+        const speakers: Array<{ title: string; subtitle: string; photo: string; slot: number }> = [];
         
         if (item.speakersText) {
           try {
@@ -154,11 +154,12 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
             
             if (Array.isArray(speakersArray)) {
               speakersArray.forEach((speaker: any) => {
+                const slot = (speaker.slot >= 1 && speaker.slot <= 7) ? speaker.slot : 1;
                 speakers.push({
                   title: speaker.fullName || speaker.name || '',
                   subtitle: [speaker.title, speaker.org].filter(Boolean).join('\n'),
                   photo: speaker.photoLink || '',
-                  slot: speaker.slot || 0
+                  slot
                 });
               });
             }

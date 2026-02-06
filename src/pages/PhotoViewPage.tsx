@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
@@ -77,37 +77,47 @@ const PhotoViewPage: React.FC = () => {
     }
   }, [eventIdParam, eventNameParam, eventDateParam, eventLocationParam, location.state?.event, event?.id]);
 
-  // Fetch events list for the event selector dropdown
-  useEffect(() => {
-    const loadEvents = async () => {
-      try {
-        setEventsLoading(true);
-        const calendarEvents = await DatabaseService.getCalendarEvents();
-        const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
-          const dateObj = new Date(calEvent.date);
-          const simpleDate = dateObj.toISOString().split('T')[0];
-          return {
-            id: calEvent.id || '',
-            name: calEvent.name,
-            date: simpleDate,
-            location: calEvent.schedule_data?.location || '',
-            numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
-            timezone: calEvent.schedule_data?.timezone,
-            created_at: calEvent.created_at,
-            updated_at: calEvent.updated_at
-          };
-        });
-        mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setEvents(mapped.filter((e) => e.id));
-      } catch (e) {
-        console.warn('PhotoView: Failed to load events for selector:', e);
-        setEvents([]);
-      } finally {
-        setEventsLoading(false);
-      }
-    };
-    loadEvents();
+  const [eventsRefreshSuccessAt, setEventsRefreshSuccessAt] = useState<number | null>(null);
+
+  // Load events list for the event selector dropdown (callable for refresh)
+  const loadEvents = useCallback(async (showSuccess = false) => {
+    try {
+      setEventsLoading(true);
+      const calendarEvents = await DatabaseService.getCalendarEvents();
+      const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
+        const dateObj = new Date(calEvent.date);
+        const simpleDate = dateObj.toISOString().split('T')[0];
+        return {
+          id: calEvent.id || '',
+          name: calEvent.name,
+          date: simpleDate,
+          location: calEvent.schedule_data?.location || '',
+          numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+          timezone: calEvent.schedule_data?.timezone,
+          created_at: calEvent.created_at,
+          updated_at: calEvent.updated_at
+        };
+      });
+      mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      setEvents(mapped.filter((e) => e.id));
+    } catch (e) {
+      console.warn('PhotoView: Failed to load events for selector:', e);
+      setEvents([]);
+    } finally {
+      setEventsLoading(false);
+      if (showSuccess) setEventsRefreshSuccessAt(Date.now());
+    }
   }, []);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  useEffect(() => {
+    if (eventsRefreshSuccessAt == null) return;
+    const t = setTimeout(() => setEventsRefreshSuccessAt(null), 2500);
+    return () => clearTimeout(t);
+  }, [eventsRefreshSuccessAt]);
 
   const eventId = event?.id ?? eventIdParam ?? null;
   const eventName = event?.name ?? eventNameParam ?? null;
@@ -356,10 +366,15 @@ const PhotoViewPage: React.FC = () => {
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [showEventSelector, setShowEventSelector] = useState(false);
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const [trackWasDurations, setTrackWasDurations] = useState(false);
+  const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
 
   useEffect(() => {
     if (!event?.id) return;
-    DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
+    DatabaseService.getShowSettings(event.id).then(s => {
+      setShowMode(s.showMode);
+      setTrackWasDurations(s.trackWasDurations);
+    });
   }, [event?.id]);
 
   // Filter schedule by selected day (multi-day events)
@@ -810,6 +825,23 @@ const PhotoViewPage: React.FC = () => {
           } else {
             setIndentedCues({});
           }
+
+          const showSettings = await DatabaseService.getShowSettings(id);
+          setTrackWasDurations(showSettings.trackWasDurations);
+
+          const origDurs = data.settings?.original_durations;
+          if (origDurs && typeof origDurs === 'object') {
+            const map: Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }> = {};
+            Object.entries(origDurs).forEach(([k, v]: [string, any]) => {
+              const id = parseInt(k, 10);
+              if (!isNaN(id) && v && typeof v.durationHours === 'number' && typeof v.durationMinutes === 'number' && typeof v.durationSeconds === 'number') {
+                map[id] = { durationHours: v.durationHours, durationMinutes: v.durationMinutes, durationSeconds: v.durationSeconds };
+              }
+            });
+            setOriginalDurations(map);
+          } else {
+            setOriginalDurations({});
+          }
         }
       } catch (error) {
         console.error('❌ PhotoView: 20s sync failed:', error);
@@ -1099,7 +1131,10 @@ const PhotoViewPage: React.FC = () => {
         // Photo page ONLY gets START cue updates every 20s - ignore WebSocket
       },
       onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
-        if (data.event_id === event?.id && (data.showMode === 'rehearsal' || data.showMode === 'in-show')) setShowMode(data.showMode);
+        if (data.event_id === event?.id) {
+          if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
+          if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+        }
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 PhotoView WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
@@ -1113,7 +1148,10 @@ const PhotoViewPage: React.FC = () => {
         console.log('🔄 PhotoView: WebSocket initial sync triggered - loading current state');
         if (event?.id) {
           apiClient.invalidateShowModeCache(event.id);
-          DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
+          DatabaseService.getShowSettings(event.id).then(s => {
+            setShowMode(s.showMode);
+            setTrackWasDurations(s.trackWasDurations);
+          });
         }
         // Load current active timer
         try {
@@ -1793,6 +1831,26 @@ const PhotoViewPage: React.FC = () => {
                     </select>
                     <button
                       type="button"
+                      onClick={() => loadEvents(true)}
+                      disabled={eventsLoading}
+                      className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors disabled:opacity-60 flex items-center gap-1"
+                      title="Refresh events list"
+                    >
+                      {eventsLoading ? (
+                        '…'
+                      ) : eventsRefreshSuccessAt ? (
+                        <>
+                          <svg className="w-3.5 h-3.5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Refreshed
+                        </>
+                      ) : (
+                        'Refresh events'
+                      )}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setShowEventSelector(false)}
                       className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors"
                       title="Hide event selector"
@@ -1948,10 +2006,15 @@ const PhotoViewPage: React.FC = () => {
             
             // Calculate start time: rehearsal = scheduled only, in-show = with overtime
             const itemIndex = schedule.findIndex(s => s.id === item.id);
-            const startTime = showMode === 'rehearsal' ? calculateStartTime(itemIndex) : calculateStartTimeWithOvertime(itemIndex);
+            const scheduledStart = calculateStartTime(itemIndex);
+            const startTime = showMode === 'rehearsal' ? scheduledStart : calculateStartTimeWithOvertime(itemIndex);
+            const startTimeRolled = showMode === 'in-show' && !indentedCues[item.id] && scheduledStart && startTime && String(scheduledStart) !== String(startTime);
             
             // Format duration
             const duration = `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
+            const origDur = originalDurations[item.id];
+            const durationChanged = trackWasDurations && showMode === 'in-show' && origDur &&
+              (item.durationHours !== origDur.durationHours || item.durationMinutes !== origDur.durationMinutes || item.durationSeconds !== origDur.durationSeconds);
             
             // Format PPT/QA info
             const pptQA = [];
@@ -2017,6 +2080,9 @@ const PhotoViewPage: React.FC = () => {
                         <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>
                           {indentedCues[item.id] ? '↘' : (startTime || 'No Time')}
                         </div>
+                        {startTimeRolled && scheduledStart && (
+                          <div className="text-xs text-slate-400">was {scheduledStart}</div>
+                        )}
                         {/* Overtime indicator - only in in-show mode */}
                         {showMode !== 'rehearsal' && !indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(itemIndex) !== calculateStartTimeWithOvertime(itemIndex)) && (
                           <div className={`text-xs font-bold px-2 py-1 rounded mt-1 ${
@@ -2103,6 +2169,11 @@ const PhotoViewPage: React.FC = () => {
                       <div>
                         <div className="text-gray-400 text-xs mb-1">DURATION</div>
                         <div className={`text-base font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>{duration}</div>
+                        {durationChanged && origDur && (() => {
+                          const totalSec = (origDur.durationHours ?? 0) * 3600 + (origDur.durationMinutes ?? 0) * 60 + (origDur.durationSeconds ?? 0);
+                          const wasText = totalSec >= 3600 ? `${origDur.durationHours}h ${origDur.durationMinutes}m` : totalSec >= 60 ? `${origDur.durationMinutes} min` : `${origDur.durationSeconds} sec`;
+                          return <div className="text-xs text-amber-300">was {wasText}</div>;
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -2233,7 +2304,7 @@ const PhotoViewPage: React.FC = () => {
                           }`}>
                             <div className="text-gray-400 text-sm mb-2 font-bold">NOTES:</div>
                             <div 
-                              className={`text-sm ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'} break-words leading-relaxed`}
+                              className={`notes-display text-sm ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'} break-words leading-relaxed`}
                               style={{ whiteSpace: 'pre-line' }}
                               dangerouslySetInnerHTML={{ 
                                 __html: item.notes

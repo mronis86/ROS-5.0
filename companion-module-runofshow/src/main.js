@@ -1,4 +1,4 @@
-const { InstanceBase, runEntrypoint, InstanceStatus } = require('@companion-module/base')
+const { InstanceBase, runEntrypoint, InstanceStatus, combineRgb } = require('@companion-module/base')
 const UpgradeScripts = require('./upgrades')
 const UpdateActions = require('./actions')
 const UpdateFeedbacks = require('./feedbacks')
@@ -19,6 +19,7 @@ class RunOfShowInstance extends InstanceBase {
 		await this.fetchData()
 		this.updateActions()
 		this.updateFeedbacks()
+		this.updatePresets()
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
 		this.startPolling()
@@ -35,8 +36,10 @@ class RunOfShowInstance extends InstanceBase {
 		this.config = config
 		this.updateStatus(InstanceStatus.Connecting)
 		await this.fetchData()
+		this.startPolling() // restart with new sync interval and event ID
 		this.updateActions()
 		this.updateFeedbacks()
+		this.updatePresets()
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
 		this.updateStatus(InstanceStatus.Ok)
@@ -113,14 +116,20 @@ class RunOfShowInstance extends InstanceBase {
 
 	startPolling() {
 		if (this.pollInterval) clearInterval(this.pollInterval)
+		this.pollInterval = null
+		const seconds = Math.max(5, Math.min(600, parseInt(this.config?.syncIntervalSeconds, 10) || 60))
+		const ms = seconds * 1000
 		this.pollInterval = setInterval(() => {
 			if (this.config?.eventId) {
 				this.fetchData().then(() => {
-					this.updateVariableValues()
+					this.updateActions()
 					this.updateFeedbacks()
+					this.updatePresets()
+					this.updateVariableDefinitions()
+					this.updateVariableValues()
 				}).catch(() => {})
 			}
-		}, 5000)
+		}, ms)
 	}
 
 	async apiPost(path, body) {
@@ -184,6 +193,16 @@ class RunOfShowInstance extends InstanceBase {
 				min: 1,
 				max: 10,
 			},
+			{
+				type: 'number',
+				id: 'syncIntervalSeconds',
+				label: 'Sync interval (seconds)',
+				width: 6,
+				default: 60,
+				min: 5,
+				max: 600,
+				tooltip: 'How often to fetch schedule/timer from the API (5–600 seconds). Lower = more responsive, higher = less traffic.',
+			},
 		]
 	}
 
@@ -193,6 +212,50 @@ class RunOfShowInstance extends InstanceBase {
 
 	updateFeedbacks() {
 		UpdateFeedbacks(this)
+	}
+
+	// Ensure cue displays as "CUE 1" / "CUE 1.1" not just "1" / "1.1"
+	formatCueDisplay(raw, itemId) {
+		const s = String(raw ?? itemId ?? '').trim()
+		if (!s) return `CUE ${itemId}`
+		if (/^\d+(\.\d+)?$/.test(s)) return `CUE ${s}`
+		if (/^CUE\s+/i.test(s)) return s
+		return `CUE ${s}`
+	}
+
+	updatePresets() {
+		const presets = {}
+		const items = this.scheduleItems || []
+		for (const item of items) {
+			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
+			const fullLabel = `${cueDisplay}: ${item.segmentName || 'Untitled'}`
+			const id = `cue_${item.id}`
+			presets[id] = {
+				type: 'button',
+				category: 'Cues',
+				name: fullLabel,
+				style: {
+					text: cueDisplay,
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(40, 40, 40),
+				},
+				feedbacks: [
+					{
+						feedbackId: 'loaded_cue_is',
+						options: { itemId: String(item.id) },
+						style: { bgcolor: combineRgb(50, 100, 200), color: combineRgb(255, 255, 255) },
+					},
+				],
+				steps: [
+					{
+						down: [{ actionId: 'load_cue', options: { itemId: String(item.id) } }],
+						up: [],
+					},
+				],
+			}
+		}
+		this.setPresetDefinitions(presets)
 	}
 
 	updateVariableDefinitions() {
@@ -205,16 +268,26 @@ class RunOfShowInstance extends InstanceBase {
 
 		const event = this.events.find((e) => String(e.id) === String(eventId))
 		const currentItem = this.scheduleItems.find((s) => String(s.id) === String(this.activeTimer?.item_id))
-		const cueLabel = currentItem?.customFields?.cue ?? this.activeTimer?.cue_is ?? '—'
+		const cueLabel = currentItem ? this.formatCueDisplay(currentItem.customFields?.cue ?? this.activeTimer?.cue_is, currentItem.id) : (this.activeTimer?.cue_is ?? '—')
 		const segmentName = currentItem?.segmentName ?? '—'
+		const loadedCueValue = currentItem?.customFields?.value ?? segmentName ?? '—'
 		const timerRunning = this.activeTimer?.is_running === true
 
-		this.setVariableValues({
+		const values = {
 			current_cue: cueLabel,
 			current_segment: segmentName,
+			loaded_cue_value: loadedCueValue,
 			timer_running: timerRunning ? 'Yes' : 'No',
 			event_name: event?.name ?? '—',
-		})
+		}
+
+		// Per-cue variables: label shows CUE 1 / CUE 1.1 not just 1
+		for (const item of this.scheduleItems) {
+			values[`cue_${item.id}_label`] = this.formatCueDisplay(item.customFields?.cue, item.id)
+			values[`cue_${item.id}_value`] = item.customFields?.value ?? item.segmentName ?? '—'
+		}
+
+		this.setVariableValues(values)
 	}
 }
 

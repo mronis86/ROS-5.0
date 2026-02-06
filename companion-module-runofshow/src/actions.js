@@ -1,7 +1,7 @@
 module.exports = function (self) {
-	const cueChoices = self.scheduleItems.map((item) => {
-		const cue = item.customFields?.cue ?? `CUE ${item.id}`
-		const label = `${cue}: ${item.segmentName || 'Untitled'}`
+	const cueChoices = (self.scheduleItems || []).map((item) => {
+		const cueDisplay = self.formatCueDisplay ? self.formatCueDisplay(item.customFields?.cue, item.id) : (item.customFields?.cue ?? `CUE ${item.id}`)
+		const label = `${cueDisplay}: ${item.segmentName || 'Untitled'}`
 		return { id: String(item.id), label }
 	})
 

@@ -15,13 +15,14 @@ const HEADER_PREFIXES =
   /^(agenda|date|schedule|title|event|meeting|location|venue|time|january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\/\d{1,2}|\d{4})/i;
 
 const TIME_LINE_REGEX =
-  /^\s*[•\-]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm)?(?:\s*[-–—]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm)?)?\s*$/i;
+  /^\s*[•\-]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm|a\.m\.|p\.m\.)?(?:\s*[-–—]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm|a\.m\.|p\.m\.)?)?\s*$/i;
 
 const TIME_LINE_REGEX_NO_BULLET =
-  /^\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm)?(?:\s*[-–—]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm)?)?\s*$/i;
+  /^\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm|a\.m\.|p\.m\.)?(?:\s*[-–—]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm|a\.m\.|p\.m\.)?)?\s*$/i;
 
+// Match a.m., p.m., AM, PM (with or without periods) so they go to Start time, not segment title
 const STARTS_WITH_TIME =
-  /^\s*[•\-]?\s*(\d{1,2})\s*:\s*(\d{2})(?:\s*:\s*(\d{2}))?\s*(AM|PM|am|pm)?\s*[-–—]?\s*(.*)/i;
+  /^\s*[•\-]?\s*(\d{1,2})\s*:\s*(\d{2})(?:\s*:\s*(\d{2}))?\s*(AM|PM|am|pm|a\.m\.|p\.m\.)?\s*[-–—]?\s*(.*)/i;
 
 export interface AgendaParsedItem {
   row: number;
@@ -57,13 +58,16 @@ function normalizeLine(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-/** Strip leading time (e.g. "9:00 AM – " or "• 9:00 AM ") so only the segment name remains. */
+/** Strip leading time (e.g. "9:00 AM – " or "• 9:00 a.m. ") so only the segment name remains. */
 function stripLeadingTimeFromSegmentName(text: string): string {
   if (!text || typeof text !== 'string') return '';
   let t = text.trim();
   const timePrefix =
     /^\s*[•\-]?\s*\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm)?\s*[-–—]?\s*/i;
   t = t.replace(timePrefix, '').trim();
+  // Strip leading "a.m. ", "p.m. ", "a.m.- ", etc. (time ref that leaked into segment title)
+  const leadingAmPm = /^\s*(?:a\.m\.|p\.m\.|am|pm)\s*[-–—]?\s*/i;
+  t = t.replace(leadingAmPm, '').trim();
   // Strip "a.m. - ", "a.m.- ", "p.m. - ", "p.m.- " (with or without periods) at start
   const leftoverAmPm = /^\s*(?:a\.m\.|p\.m\.|am|pm)\s*[-–—]\s*/i;
   let prev = '';
@@ -72,7 +76,8 @@ function stripLeadingTimeFromSegmentName(text: string): string {
     t = t.replace(leftoverAmPm, '').trim();
   }
   // Also strip " - H:MM a.m.- " or " - H:MM p.m.- " (second time in range) at start
-  const secondTimeInRange = /^\s*[-–—]\s*\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*(?:a\.m\.|p\.m\.|am|pm)?\s*[-–—]\s*/i;
+  const secondTimeInRange =
+    /^\s*[-–—]\s*\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*(?:a\.m\.|p\.m\.|am|pm)?\s*[-–—]\s*/i;
   prev = '';
   while (prev !== t) {
     prev = t;
@@ -104,10 +109,12 @@ function lineHasTime(line: string): boolean {
 
 export function parseTimeToMinutes(str: string): number | null {
   if (!str || typeof str !== 'string') return null;
-  const s = str.trim().replace(/\s+/g, ' ').toUpperCase();
-  const ampmMatch = s.match(/\s*(AM|PM)\s*$/i);
+  let s = str.trim().replace(/\s+/g, ' ');
+  s = s.replace(/\s+a\.m\.\s*$/i, ' AM').replace(/\s+p\.m\.\s*$/i, ' PM');
+  const u = s.toUpperCase();
+  const ampmMatch = u.match(/\s*(AM|PM)\s*$/);
   const hasAmPm = !!ampmMatch;
-  const rest = hasAmPm ? s.replace(/\s*(AM|PM)\s*$/i, '').trim() : s;
+  const rest = hasAmPm ? u.replace(/\s*(AM|PM)\s*$/, '').trim() : u;
   const parts = rest
     .split(/[:\s]+/)
     .map((p) => parseInt(p, 10))
@@ -206,7 +213,8 @@ function buildTimeStringFromMatch(m: RegExpMatchArray): string {
   const h = m[1];
   const min = m[2];
   const sec = m[3] != null && m[3] !== '' ? `:${m[3]}` : '';
-  const ampm = (m[4] || '').trim();
+  const ampmRaw = (m[4] || '').trim();
+  const ampm = ampmRaw.replace(/^a\.m\.$/i, 'AM').replace(/^p\.m\.$/i, 'PM');
   return `${h}:${min}${sec}${ampm ? ' ' + ampm : ''}`;
 }
 
@@ -238,10 +246,10 @@ function buildBlocks(
         blocks.push({ ...current });
       }
       const bulletRemoved = trimmed.replace(/^\s*[•\-]\s*/, '');
-      const m = bulletRemoved.match(/(\d{1,2})\s*:\s*(\d{2})(?:\s*:\s*(\d{2}))?\s*(AM|PM|am|pm)?/i);
+      const m = bulletRemoved.match(/(\d{1,2})\s*:\s*(\d{2})(?:\s*:\s*(\d{2}))?\s*(AM|PM|am|pm|a\.m\.|p\.m\.)?/i);
       const timeStr = m ? buildTimeStringFromMatch(m) : trimmed;
       const endPart = trimmed.match(
-        /[-–—]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm)?/i
+        /[-–—]\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)\s*(AM|PM|am|pm|a\.m\.|p\.m\.)?/i
       );
       const endStr = endPart
         ? (endPart[1].replace(/\s+/g, ' ').trim() + (endPart[2] ? ' ' + endPart[2].trim() : '')).trim()

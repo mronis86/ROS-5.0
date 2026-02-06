@@ -13,6 +13,7 @@ interface ClockProps {
   itemId?: number; // Add itemId for drift detection
   eventId?: string; // Add eventId for Supabase message loading
   supabaseMessage?: TimerMessage | null; // Add supabaseMessage prop
+  scheduleItems?: any[]; // Run-of-show items; when active cue has timerDisplay === 'timeOfDay', show large time-of-day instead of countdown
   mainTimer?: {
     cue: string;
     segmentName: string;
@@ -36,6 +37,7 @@ const Clock: React.FC<ClockProps> = ({
   itemId,
   eventId,
   supabaseMessage = null,
+  scheduleItems,
   mainTimer = null,
   secondaryTimer = null
 }) => {
@@ -550,6 +552,47 @@ const Clock: React.FC<ClockProps> = ({
     return remaining;
   };
 
+  // Get elapsed time for count-up display
+  const getElapsedTime = () => {
+    const progress = timerProgress;
+    if (supabaseOnly && hybridTimerData?.activeTimer) {
+      const activeTimer = hybridTimerData.activeTimer;
+      if (!activeTimer.is_running || !activeTimer.is_active) {
+        return 0;
+      }
+    }
+    return progress.elapsed;
+  };
+
+  // Count-up: bar fills as elapsed increases (cap at 100%); overtime = red
+  const getCountUpBarPercentage = () => {
+    const progress = timerProgress;
+    if (supabaseOnly && hybridTimerData?.activeTimer) {
+      const activeTimer = hybridTimerData.activeTimer;
+      if (!activeTimer.is_running || !activeTimer.is_active) {
+        return 0;
+      }
+    }
+    if (progress.total <= 0) return 0;
+    return Math.min(100, (progress.elapsed / progress.total) * 100);
+  };
+
+  const getCountUpProgressBarColor = () => {
+    const progress = timerProgress;
+    const elapsed = progress.elapsed;
+    const remaining = progress.total - progress.elapsed;
+    if (supabaseOnly && hybridTimerData?.activeTimer) {
+      const activeTimer = hybridTimerData.activeTimer;
+      if (!activeTimer.is_running || !activeTimer.is_active) {
+        return '#6b7280';
+      }
+    }
+    if (elapsed > progress.total) return '#ef4444'; // Red when overtime
+    if (remaining > 120) return '#10b981';
+    if (remaining > 30) return '#f59e0b';
+    return '#ef4444';
+  };
+
   // Get remaining percentage for progress bar (same logic as RunOfShowPage)
   const getRemainingPercentage = () => {
     const progress = timerProgress;
@@ -591,16 +634,56 @@ const Clock: React.FC<ClockProps> = ({
     }
   };
 
+  // Active cue timer mode: timeOfDay = swap + progress bar; todOnly = time of day only, no progress bar or time remaining
+  const activeItemId = hybridTimerData?.activeTimer?.item_id;
+  const activeItem = scheduleItems?.length && activeItemId != null
+    ? scheduleItems.find((i: any) => i.id === activeItemId || String(i.id) === String(activeItemId) || i.id == activeItemId)
+    : null;
+  const timerDisplayValue = activeItem && (activeItem.timerDisplay ?? activeItem.timer_display ?? '');
+  const normalizedTimer = typeof timerDisplayValue === 'string' ? timerDisplayValue.replace(/_/g, '').toLowerCase() : '';
+  const isTodOnly = normalizedTimer === 'todonly';
+  const useTodOnly = !!isTodOnly;
+  const useCountUp = normalizedTimer === 'countup';
+  const useTimeOfDay = !!(activeItem && (
+    normalizedTimer === 'timeofday' ||
+    normalizedTimer === 'todonly' ||
+    activeItem.useTimeOfDay === true
+  ));
+  const showTimeRemainingAndBar = useTimeOfDay && !useTodOnly; // Time Of Day: countdown top-left + progress bar; TOD Only: hide both (minimal = large time of day only)
+  const elapsedForDisplay = getElapsedTime();
+  const isOvertimeCountUp = useCountUp && timerProgress.total > 0 && elapsedForDisplay > timerProgress.total;
+  const overtimeAmount = isOvertimeCountUp ? elapsedForDisplay - timerProgress.total : 0;
+
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
 
-      {/* Current Time - Top Left */}
-      <div className="absolute top-10 left-10 text-3xl font-mono text-white">
-        <div className="text-slate-400 text-lg mb-1">CURRENT TIME</div>
-        <div className="text-white">
-          {formatTimeOfDay(currentTime)}
+      {/* Top Left: Time Of Day = countdown (swap); Count Up = time elapsed; Countdown = current time; TOD Only = hidden (minimal) */}
+      {!useTodOnly && (
+        <div className="absolute top-10 left-10 text-3xl font-mono text-white">
+          {showTimeRemainingAndBar ? (
+            <>
+              <div className="text-slate-400 text-lg mb-1">TIME REMAINING</div>
+              <div className="text-white" style={{ color: getProgressBarColor() }}>
+                {formatTime(getRemainingTime())}
+              </div>
+            </>
+          ) : useCountUp ? (
+            <>
+              <div className="text-slate-400 text-lg mb-1">CURRENT TIME ELAPSED</div>
+              <div className="text-white">
+                {formatTimeOfDay(currentTime)}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-slate-400 text-lg mb-1">CURRENT TIME</div>
+              <div className="text-white">
+                {formatTimeOfDay(currentTime)}
+              </div>
+            </>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Current Running CUE - Top Right */}
       <div className="fixed top-10 right-10 text-3xl font-mono text-white z-50 w-80 text-right">
@@ -1192,44 +1275,107 @@ const Clock: React.FC<ClockProps> = ({
         return !hasSecondaryTimer && !hasMessage;
       })() && (
         <div className="flex-1 flex flex-col items-center justify-center">
-          {/* Overtime Indicator - -50px above timer */}
-          {getRemainingTime() < 0 && (
-            <div className="mb-[-50px]">
-              <div className="font-bold text-red-500 text-5xl">
-                OVER TIME
+          {useTimeOfDay ? (
+            /* Large Time of Day in center; progress bar only when not TOD Only */
+            <>
+              <div className="text-center">
+                <div 
+                  className="font-mono font-bold text-[8rem] md:text-[9.5rem] lg:text-[11rem] text-white"
+                >
+                  {formatTimeOfDay(currentTime)}
+                </div>
               </div>
-            </div>
+              {showTimeRemainingAndBar && (
+                <div className="w-full max-w-5xl mt-0">
+                  <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
+                    <div 
+                      className="h-full transition-all duration-1000 absolute top-0 right-0"
+                      style={{ 
+                        width: `${getRemainingPercentage()}%`,
+                        background: getProgressBarColor()
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          ) : useCountUp ? (
+            /* Count Up: elapsed time; OVER TIME + red when overtime; bar fills up */
+            <>
+              {isOvertimeCountUp && (
+                <div className="mb-[-50px] text-center">
+                  <div className="font-bold text-red-500 text-5xl">
+                    OVER TIME
+                  </div>
+                  <div className="font-mono text-red-400 text-2xl mt-1">
+                    +{formatTime(overtimeAmount)}
+                  </div>
+                </div>
+              )}
+              <div className="text-center">
+                <div 
+                  className={`font-mono font-bold ${(() => {
+                    const hours = Math.floor(Math.abs(elapsedForDisplay) / 3600);
+                    return hours === 0 
+                      ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                      : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+                  })()}`}
+                  style={{ color: getCountUpProgressBarColor() }}
+                >
+                  {formatTime(elapsedForDisplay)}
+                </div>
+              </div>
+              <div className="w-full max-w-5xl mt-0">
+                <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
+                  <div 
+                    className="h-full transition-all duration-1000 absolute top-0 left-0"
+                    style={{ 
+                      width: `${getCountUpBarPercentage()}%`,
+                      background: getCountUpProgressBarColor()
+                    }}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Overtime Indicator - -50px above timer */}
+              {getRemainingTime() < 0 && (
+                <div className="mb-[-50px]">
+                  <div className="font-bold text-red-500 text-5xl">
+                    OVER TIME
+                  </div>
+                </div>
+              )}
+              {/* Countdown Timer - Centered */}
+              <div className="text-center">
+                <div 
+                  className={`font-mono font-bold ${(() => {
+                    const remaining = getRemainingTime();
+                    const hours = Math.floor(Math.abs(remaining) / 3600);
+                    return hours === 0 
+                      ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                      : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+                  })()}`}
+                  style={{ color: getProgressBarColor() }}
+                >
+                  {formatTime(getRemainingTime())}
+                </div>
+              </div>
+              {/* Progress Bar - 0px below timer */}
+              <div className="w-full max-w-5xl mt-0">
+                <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
+                  <div 
+                    className="h-full transition-all duration-1000 absolute top-0 right-0"
+                    style={{ 
+                      width: `${getRemainingPercentage()}%`,
+                      background: getProgressBarColor()
+                    }}
+                  />
+                </div>
+              </div>
+            </>
           )}
-          
-          {/* Countdown Timer - Centered */}
-          <div className="text-center">
-            <div 
-              className={`font-mono font-bold ${(() => {
-                const remaining = getRemainingTime();
-                const hours = Math.floor(Math.abs(remaining) / 3600);
-                // Increase size by 25% when no hours (MM:SS format)
-                return hours === 0 
-                  ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]' // 25% larger
-                  : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]'; // Original size
-              })()}`}
-              style={{ color: getProgressBarColor() }}
-            >
-              {formatTime(getRemainingTime())}
-            </div>
-          </div>
-          
-          {/* Progress Bar - 0px below timer */}
-          <div className="w-full max-w-5xl mt-0">
-            <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
-              <div 
-                className="h-full transition-all duration-1000 absolute top-0 right-0"
-                style={{ 
-                  width: `${getRemainingPercentage()}%`,
-                  background: getProgressBarColor()
-                }}
-              />
-            </div>
-          </div>
         </div>
       )}
 
@@ -1270,21 +1416,39 @@ const Clock: React.FC<ClockProps> = ({
         return hasMessage && !hasSecondaryTimer;
       })() && (
         <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
-          {/* Overtime Indicator - Above main timer when message is active */}
-          {getRemainingTime() < 0 && (
-            <div className="mb-2">
-              <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">
-                OVER TIME
-              </div>
+          {useTimeOfDay ? (
+            <div className="font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white">
+              {formatTimeOfDay(currentTime)}
             </div>
+          ) : useCountUp ? (
+            <>
+              {isOvertimeCountUp && (
+                <div className="mb-2">
+                  <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
+                </div>
+              )}
+              <div 
+                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
+                style={{ color: getCountUpProgressBarColor() }}
+              >
+                {formatTime(elapsedForDisplay)}
+              </div>
+            </>
+          ) : (
+            <>
+              {getRemainingTime() < 0 && (
+                <div className="mb-2">
+                  <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
+                </div>
+              )}
+              <div 
+                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
+                style={{ color: getProgressBarColor() }}
+              >
+                {formatTime(getRemainingTime())}
+              </div>
+            </>
           )}
-          
-          <div 
-            className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-            style={{ color: getProgressBarColor() }}
-          >
-            {formatTime(getRemainingTime())}
-          </div>
         </div>
       )}
 
@@ -1325,21 +1489,39 @@ const Clock: React.FC<ClockProps> = ({
         return hasSecondaryTimer && !hasMessage;
       })() && (
         <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
-          {/* Overtime Indicator - Above main timer when secondary timer is active */}
-          {getRemainingTime() < 0 && (
-            <div className="mb-2">
-              <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">
-                OVER TIME
-              </div>
+          {useTimeOfDay ? (
+            <div className="font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white">
+              {formatTimeOfDay(currentTime)}
             </div>
+          ) : useCountUp ? (
+            <>
+              {isOvertimeCountUp && (
+                <div className="mb-2">
+                  <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
+                </div>
+              )}
+              <div 
+                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
+                style={{ color: getCountUpProgressBarColor() }}
+              >
+                {formatTime(elapsedForDisplay)}
+              </div>
+            </>
+          ) : (
+            <>
+              {getRemainingTime() < 0 && (
+                <div className="mb-2">
+                  <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
+                </div>
+              )}
+              <div 
+                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
+                style={{ color: getProgressBarColor() }}
+              >
+                {formatTime(getRemainingTime())}
+              </div>
+            </>
           )}
-          
-          <div 
-            className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-            style={{ color: getProgressBarColor() }}
-          >
-            {formatTime(getRemainingTime())}
-          </div>
         </div>
       )}
 

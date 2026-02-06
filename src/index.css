@@ -90,20 +90,22 @@ input:focus, select:focus, textarea:focus {
   background: #94a3b8;
 }
 
-/* Notes Editor List Styles */
+/* Notes Editor List Styles - numbers and bullets format correctly with indentation */
 #notes-editor ul,
 .notes-display ul {
   list-style-type: disc;
+  list-style-position: outside;
   margin: 8px 0;
-  padding-left: 20px;
+  padding-left: 24px;
   color: white;
 }
 
 #notes-editor ol,
 .notes-display ol {
   list-style-type: decimal;
+  list-style-position: outside;
   margin: 8px 0;
-  padding-left: 20px;
+  padding-left: 28px; /* enough for "10." etc. */
   color: white;
 }
 
@@ -112,24 +114,64 @@ input:focus, select:focus, textarea:focus {
   margin: 4px 0;
   line-height: 1.5;
   color: white;
+  padding-left: 2px;
 }
 
 #notes-editor ul ul,
 .notes-display ul ul {
   list-style-type: circle;
+  margin-top: 2px;
+  padding-left: 24px;
 }
 
 #notes-editor ul ul ul,
 .notes-display ul ul ul {
   list-style-type: square;
+  padding-left: 24px;
 }
 
 #notes-editor ol ol,
 .notes-display ol ol {
   list-style-type: lower-alpha;
+  padding-left: 28px;
 }
 
 #notes-editor ol ol ol,
 .notes-display ol ol ol {
   list-style-type: lower-roman;
+  padding-left: 28px;
+}
+
+/* Fix highlight (backColor) sizing - execCommand + font size causes short highlights.
+   Use pixel values: Small needs minimal padding, XL needs substantial padding for ascenders/descenders. */
+#notes-editor [style*="background-color"]:not([style*="transparent"]),
+.notes-display [style*="background-color"]:not([style*="transparent"]) {
+  padding: 1px 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  border-radius: 2px;
+  line-height: 1.5;
+}
+/* Small (font size 1) - zero vertical padding, horizontal only, size to content */
+#notes-editor [style*="background-color"]:not([style*="transparent"]):has(font[size="1"]),
+.notes-display [style*="background-color"]:not([style*="transparent"]):has(font[size="1"]),
+#notes-editor font[size="1"] [style*="background-color"]:not([style*="transparent"]),
+.notes-display font[size="1"] [style*="background-color"]:not([style*="transparent"]) {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+  line-height: 1 !important;
+  display: inline-block !important;
+}
+/* XL (font size 7) - more padding above, less below so highlight aligns with text cap height */
+#notes-editor [style*="background-color"]:not([style*="transparent"]):has(font[size="7"]),
+.notes-display [style*="background-color"]:not([style*="transparent"]):has(font[size="7"]),
+#notes-editor font[size="7"] [style*="background-color"]:not([style*="transparent"]),
+.notes-display font[size="7"] [style*="background-color"]:not([style*="transparent"]) {
+  padding-top: 20px !important;
+  padding-bottom: 8px !important;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+  line-height: 1.5 !important;
 }
