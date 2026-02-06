@@ -482,6 +482,7 @@ app.post('/api/admin/disconnect-user', (req, res) => {
 });
 
 // Admin backup config: GET (protected by ?key=1615)
+// If table does not exist (migration not run), returns default config + needsMigration so Admin page still loads
 app.get('/api/admin/backup-config', async (req, res) => {
   if (req.query.key !== '1615') {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -496,7 +497,8 @@ app.get('/api/admin/backup-config', async (req, res) => {
         folderId: '',
         lastRunAt: null,
         lastStatus: null,
-        updatedAt: null
+        updatedAt: null,
+        needsMigration: false
       });
     }
     const row = r.rows[0];
@@ -505,9 +507,22 @@ app.get('/api/admin/backup-config', async (req, res) => {
       folderId: row.gdrive_folder_id || '',
       lastRunAt: row.gdrive_last_run_at,
       lastStatus: row.gdrive_last_status || null,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      needsMigration: false
     });
   } catch (err) {
+    const isMissingTable = err.code === '42P01' || (err.message && err.message.includes('admin_backup_config') && err.message.includes('does not exist'));
+    if (isMissingTable) {
+      console.warn('[admin backup-config GET] Table admin_backup_config missing - run migration 022 on the DB used by this API (NEON_DATABASE_URL)');
+      return res.json({
+        enabled: false,
+        folderId: '',
+        lastRunAt: null,
+        lastStatus: null,
+        updatedAt: null,
+        needsMigration: true
+      });
+    }
     console.error('[admin backup-config GET] error:', err);
     res.status(500).json({ error: err.message });
   }
@@ -548,6 +563,12 @@ app.put('/api/admin/backup-config', async (req, res) => {
       updatedAt: out.updated_at
     });
   } catch (err) {
+    const isMissingTable = err.code === '42P01' || (err.message && err.message.includes('admin_backup_config') && err.message.includes('does not exist'));
+    if (isMissingTable) {
+      return res.status(400).json({
+        error: 'Table admin_backup_config does not exist. Run migration 022 on the same Neon database your API uses (Railway NEON_DATABASE_URL).'
+      });
+    }
     console.error('[admin backup-config PUT] error:', err);
     res.status(500).json({ error: err.message });
   }

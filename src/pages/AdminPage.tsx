@@ -87,7 +87,7 @@ export default function AdminPage() {
   const [runningTimersError, setRunningTimersError] = useState<string | null>(null);
   const [stoppingEventId, setStoppingEventId] = useState<string | null>(null);
   const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
-  const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
+  const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null; needsMigration?: boolean }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
   const [backupConfigLoading, setBackupConfigLoading] = useState(false);
   const [backupConfigSaving, setBackupConfigSaving] = useState(false);
   const [backupConfigError, setBackupConfigError] = useState<string | null>(null);
@@ -204,12 +204,13 @@ export default function AdminPage() {
         setBackupConfigError((err as { error?: string }).error || `HTTP ${res.status}`);
         return;
       }
-      const data = (await res.json()) as { enabled?: boolean; folderId?: string; lastRunAt?: string | null; lastStatus?: string | null };
+      const data = (await res.json()) as { enabled?: boolean; folderId?: string; lastRunAt?: string | null; lastStatus?: string | null; needsMigration?: boolean };
       setBackupConfig({
         enabled: !!data.enabled,
         folderId: data.folderId ?? '',
         lastRunAt: data.lastRunAt ?? null,
         lastStatus: data.lastStatus ?? null,
+        needsMigration: !!data.needsMigration,
       });
       setBackupFolderIdInput(data.folderId ?? '');
     } catch (e) {
@@ -655,13 +656,17 @@ export default function AdminPage() {
           <p className="text-slate-500 text-sm mb-4">
             Backs up <strong>upcoming</strong> events (event date ≥ today) to a <strong>weekly subfolder</strong> (e.g. 2026-W06) in your Drive folder. Add <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in your API environment when ready.
           </p>
+          {backupConfig.needsMigration && (
+            <div className="mb-4 px-4 py-3 rounded-lg bg-blue-900/30 border border-blue-700/50 text-blue-200 text-sm">
+              <strong>Migration required.</strong> Run <code className="bg-slate-700 px-1 rounded">migrations/022_create_admin_backup_config.sql</code> on the <strong>same Neon database your API uses</strong> (Railway → <code className="bg-slate-700 px-1 rounded">NEON_DATABASE_URL</code>). In Neon Console: SQL Editor → paste the migration → Run. Then click Refresh above.
+            </div>
+          )}
           {backupConfigError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               {backupConfigError}
-              {backupConfigError.includes('relation') && ' Run the migration: migrations/022_create_admin_backup_config.sql'}
             </div>
           )}
-          {backupConfigLoading && !backupConfig.folderId && !backupConfigError ? (
+          {backupConfigLoading && !backupConfig.folderId && !backupConfigError && !backupConfig.needsMigration ? (
             <p className="text-slate-400 text-sm">Loading…</p>
           ) : (
             <div className="space-y-4">
@@ -691,7 +696,7 @@ export default function AdminPage() {
                 <button
                   type="button"
                   onClick={saveBackupConfig}
-                  disabled={backupConfigSaving}
+                  disabled={backupConfigSaving || backupConfig.needsMigration}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   {backupConfigSaving ? 'Saving…' : 'Save settings'}
@@ -699,7 +704,7 @@ export default function AdminPage() {
                 <button
                   type="button"
                   onClick={runBackupNow}
-                  disabled={backupRunning || backupConfigSaving || !backupConfig.enabled || !backupFolderIdInput.trim()}
+                  disabled={backupRunning || backupConfigSaving || backupConfig.needsMigration || !backupConfig.enabled || !backupFolderIdInput.trim()}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
                   title={!backupConfig.enabled || !backupFolderIdInput.trim() ? 'Enable backup and set folder ID first' : 'Run backup now (upcoming events → current week folder)'}
                 >
