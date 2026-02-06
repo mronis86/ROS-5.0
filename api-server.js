@@ -800,7 +800,7 @@ async function runWeeklyBackupToDrive() {
   let weekFolderId;
   try {
     const q = encodeURIComponent(`'${folderId}' in parents and name = '${weekName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
-    const listRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+    const listRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&supportsAllDrives=true`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (!listRes.ok) {
@@ -811,7 +811,7 @@ async function runWeeklyBackupToDrive() {
     if (listData.files && listData.files.length > 0) {
       weekFolderId = listData.files[0].id;
     } else {
-      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: weekName, mimeType: 'application/vnd.google-apps.folder', parents: [folderId] })
@@ -873,7 +873,7 @@ async function runWeeklyBackupToDrive() {
         csv,
         `\r\n--${boundary}--\r\n`
       ].join('');
-      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`, {
+      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
