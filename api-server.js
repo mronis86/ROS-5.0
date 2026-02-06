@@ -834,8 +834,8 @@ async function runWeeklyBackupToDrive() {
   const upcomingResult = await pool.query(
     `SELECT event_id, event_name, event_date, schedule_items, custom_columns
      FROM run_of_show_data
-     WHERE event_date >= CURRENT_DATE
-     ORDER BY event_date ASC`
+     WHERE (event_date::date >= CURRENT_DATE)
+     ORDER BY event_date::date ASC`
   );
   const events = upcomingResult.rows || [];
   let uploaded = 0;
@@ -896,8 +896,8 @@ app.get('/api/backup/upcoming-export', async (req, res) => {
     const result = await pool.query(
       `SELECT event_id, event_name, event_date, schedule_items, custom_columns
        FROM run_of_show_data
-       WHERE event_date >= CURRENT_DATE
-       ORDER BY event_date ASC`
+       WHERE (event_date::date >= CURRENT_DATE)
+       ORDER BY event_date::date ASC`
     );
     const rows = result.rows || [];
     const events = rows.map((row) => {
