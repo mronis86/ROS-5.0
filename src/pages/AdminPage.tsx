@@ -86,6 +86,7 @@ export default function AdminPage() {
   const [runningTimersLoading, setRunningTimersLoading] = useState(false);
   const [runningTimersError, setRunningTimersError] = useState<string | null>(null);
   const [stoppingEventId, setStoppingEventId] = useState<string | null>(null);
+  const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -176,6 +177,29 @@ export default function AdminPage() {
     const interval = setInterval(fetchPresence, 15_000);
     return () => clearInterval(interval);
   }, [unlocked, fetchPresence]);
+
+  const disconnectUser = useCallback(async (eventId: string, userId: string) => {
+    if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
+    setDisconnectingUserId(userId);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/disconnect-user?key=${ADMIN_PASSWORD}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId, userId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert((err as { error?: string }).error || `Failed to disconnect (${res.status})`);
+        return;
+      }
+      await fetchPresence();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setDisconnectingUserId(null);
+    }
+  }, [fetchPresence]);
 
   const fetchRunningTimers = useCallback(async () => {
     setRunningTimersLoading(true);
@@ -486,12 +510,21 @@ export default function AdminPage() {
                   ) : (
                     <ul className="divide-y divide-slate-700/60">
                       {ev.viewers.map((v) => (
-                        <li key={v.userId} className="py-2 first:pt-0 last:pb-0 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                        <li key={v.userId} className="py-2 first:pt-0 last:pb-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                           <span className="text-white font-medium">{v.userName || v.userEmail || v.userId}</span>
                           {v.userEmail && v.userName !== v.userEmail && (
                             <span className="text-slate-400 truncate">{v.userEmail}</span>
                           )}
                           <span className="text-slate-500 text-xs px-2 py-0.5 rounded bg-slate-700/80">{v.userRole}</span>
+                          <button
+                            type="button"
+                            onClick={() => disconnectUser(ev.eventId, v.userId)}
+                            disabled={disconnectingUserId === v.userId}
+                            className="ml-auto px-2 py-1 text-xs font-medium rounded bg-amber-700/80 text-amber-200 hover:bg-amber-600 disabled:opacity-50"
+                            title="Disconnect this user from the event"
+                          >
+                            {disconnectingUserId === v.userId ? 'Disconnecting…' : 'Disconnect'}
+                          </button>
                         </li>
                       ))}
                     </ul>

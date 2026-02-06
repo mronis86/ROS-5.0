@@ -735,6 +735,7 @@ const RunOfShowPage: React.FC = () => {
   const [showOSCModal, setShowOSCModal] = useState(false);
   const [showDisplayModal, setShowDisplayModal] = useState(false);
   const [showViewersModal, setShowViewersModal] = useState(false);
+  const [showDisconnectedByAdminModal, setShowDisconnectedByAdminModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   const [showAgendaImportModal, setShowAgendaImportModal] = useState(false);
@@ -1369,7 +1370,8 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [event?.id]);
 
-  // State for popup message
+  // State for popup message (popup disabled for now; can be re-enabled or replaced with "close/hide/sign out when not active" reminder)
+  const SHOW_RUNNING_TIMER_POPUP = false;
   const [showRunningTimerPopup, setShowRunningTimerPopup] = useState(false);
   const [runningTimerInfo, setRunningTimerInfo] = useState<{
     cueName: string;
@@ -1377,13 +1379,21 @@ const RunOfShowPage: React.FC = () => {
   } | null>(null);
   const [hasCheckedRunningTimers, setHasCheckedRunningTimers] = useState(false);
 
+  // One-time reminder when Run of Show first opens: close tab / switch browser / sign out when not actively working
+  const [showInactivityReminder, setShowInactivityReminder] = useState(false);
+  const hasShownReminderRef = useRef(false);
+
   // Check for running timers AFTER schedule data is loaded (no CUE restoration)
-  // Only check once on initial load, not when schedule changes
+  // Only check once on initial load, not when schedule changes. Also show one-time reminder when page first opens.
   useEffect(() => {
     if (event?.id && schedule.length > 0 && !hasCheckedRunningTimers) {
       console.log('🔄 Schedule loaded, checking for running timers for event:', event.id);
       checkForRunningTimers();
       setHasCheckedRunningTimers(true);
+      if (!hasShownReminderRef.current) {
+        hasShownReminderRef.current = true;
+        setShowInactivityReminder(true);
+      }
     }
   }, [event?.id, schedule.length, hasCheckedRunningTimers]);
 
@@ -2292,19 +2302,16 @@ const RunOfShowPage: React.FC = () => {
     // Check if there's any timer data in the real-time subscription
     // We'll look for any timer that has started_at (indicating it's active)
     try {
-      // For now, let's just show a popup if we detect any timer activity
-      // This is a temporary solution until we fix the database function
-      console.log('🔄 Using fallback timer detection...');
-      
-      // Check if there are any active timers by looking at the real-time data
-      // Since we can see timer data in the console, let's create a simple popup
-      setRunningTimerInfo({
-        cueName: 'Timer Detected',
-        remainingTime: 'Check Console'
-      });
-      setShowRunningTimerPopup(true);
-      
-      console.log('✅ Fallback timer popup shown');
+      // Popup disabled via SHOW_RUNNING_TIMER_POPUP (may be replaced with "close/hide/sign out when not active" reminder)
+      if (SHOW_RUNNING_TIMER_POPUP) {
+        console.log('🔄 Using fallback timer detection...');
+        setRunningTimerInfo({
+          cueName: 'Timer Detected',
+          remainingTime: 'Check Console'
+        });
+        setShowRunningTimerPopup(true);
+        console.log('✅ Fallback timer popup shown');
+      }
     } catch (error) {
       console.error('❌ Error checking running timers:', error);
     }
@@ -3709,7 +3716,7 @@ const RunOfShowPage: React.FC = () => {
 
 
   const shotTypes = [
-    'Podium', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'
+    'Podium', '1-Shot', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'
   ];
 
   // Helper function to format time - handles negative values
@@ -5585,6 +5592,9 @@ const RunOfShowPage: React.FC = () => {
         }));
         console.log(`👁️ Presence: received presenceUpdated, viewers=${normalized.length}`, normalized);
         setViewers(normalized);
+      },
+      onForceDisconnect: () => {
+        setShowDisconnectedByAdminModal(true);
       },
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');
@@ -8402,6 +8412,60 @@ const RunOfShowPage: React.FC = () => {
                   Sync Timer
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disconnected by admin modal */}
+      {showDisconnectedByAdminModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+          <div className="bg-slate-800 rounded-lg p-8 max-w-md w-full mx-4 border-2 border-amber-500 shadow-xl">
+            <div className="text-center">
+              <div className="text-amber-400 text-xl font-bold mb-3">
+                Disconnected by admin
+              </div>
+              <p className="text-slate-200 text-base mb-6">
+                You have been disconnected from this event by an administrator. You can return to the events list or sign out.
+              </p>
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={() => {
+                    setShowDisconnectedByAdminModal(false);
+                    navigate('/');
+                  }}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+                >
+                  Back to events
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* One-time reminder when page first opens: close / hide tab / sign out when not actively working */}
+      {showInactivityReminder && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-lg p-8 max-w-2xl w-full mx-4 border-2 border-blue-500 shadow-xl">
+            <div className="text-blue-400 text-2xl font-bold mb-3 text-center">
+              When you&apos;re not actively working on this event
+            </div>
+            <p className="text-slate-300 text-base mb-4 text-center">
+              Please do one of the following so others see accurate presence:
+            </p>
+            <ul className="text-slate-200 text-base mb-6 list-disc list-inside space-y-2 pl-2">
+              <li><strong>Close</strong> this browser tab</li>
+              <li><strong>Switch</strong> to another browser tab or window</li>
+              <li><strong>Sign out</strong> from the app</li>
+            </ul>
+            <div className="text-center">
+              <button
+                onClick={() => setShowInactivityReminder(false)}
+                className="px-6 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors"
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         </div>

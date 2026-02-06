@@ -442,6 +442,45 @@ app.post('/api/admin/stop-timer', async (req, res) => {
   }
 });
 
+// Admin force-disconnect a user (protected by ?key=1615)
+// Requires presenceByEvent and socketToEvent from Socket section (defined later in file)
+app.post('/api/admin/disconnect-user', (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const { eventId, userId } = req.body || {};
+  if (!eventId || !userId) {
+    return res.status(400).json({ error: 'eventId and userId required' });
+  }
+  try {
+    const m = presenceByEvent.get(String(eventId));
+    if (!m) {
+      return res.json({ ok: true, disconnected: 0, message: 'No viewers for this event' });
+    }
+    const toDisconnect = [];
+    for (const [sid, v] of m.entries()) {
+      if (String(v.userId) === String(userId)) toDisconnect.push(sid);
+    }
+    for (const sid of toDisconnect) {
+      const sock = io.sockets.sockets.get(sid);
+      if (sock) {
+        sock.emit('forceDisconnect', { reason: 'admin' });
+        sock.disconnect(true);
+        m.delete(sid);
+        socketToEvent.delete(sid);
+      }
+    }
+    if (toDisconnect.length > 0) {
+      broadcastPresence(String(eventId));
+    }
+    console.log(`[admin disconnect-user] eventId=${eventId} userId=${userId} disconnected=${toDisconnect.length}`);
+    res.json({ ok: true, disconnected: toDisconnect.length });
+  } catch (err) {
+    console.error('[admin disconnect-user] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Test endpoint to verify Upstash is working
 app.get('/api/test-upstash', async (req, res) => {
   try {

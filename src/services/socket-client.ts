@@ -26,6 +26,7 @@ interface SocketCallbacks {
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
   onShowModeUpdate?: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => void; // Global show mode and track-was-durations
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
+  onForceDisconnect?: () => void; // Admin forced disconnect – show message and do not reconnect
 }
 
 class SocketClient {
@@ -34,6 +35,7 @@ class SocketClient {
   private callbacks: SocketCallbacks = {};
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
+  private disconnectedByAdmin = false;
 
   connect(eventId: string, callbacks: SocketCallbacks) {
     if (this.socket && this.eventId === eventId) {
@@ -58,6 +60,8 @@ class SocketClient {
       transports: ['websocket', 'polling'],
       timeout: 10000,
     });
+
+    this.disconnectedByAdmin = false;
 
     this.socket.on('connect', () => {
       console.log(`✅ Socket.IO connected for event: ${eventId}`);
@@ -146,10 +150,19 @@ class SocketClient {
       this.callbacks.onServerTime?.(data);
     });
 
+    this.socket.on('forceDisconnect', (data: { reason?: string }) => {
+      console.log('🔌 Socket: Force disconnect by admin', data);
+      this.disconnectedByAdmin = true;
+      this.callbacks.onForceDisconnect?.();
+      this.socket?.disconnect();
+    });
+
     this.socket.on('disconnect', (reason) => {
       console.log(`❌ Socket.IO disconnected: ${reason}`);
       this.callbacks.onConnectionChange?.(false);
-      
+      if (this.disconnectedByAdmin) {
+        return; // Do not reconnect when admin forced disconnect
+      }
       // Attempt to reconnect if it wasn't intentional
       if (reason !== 'io client disconnect' && this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts++;
