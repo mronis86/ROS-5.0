@@ -6,7 +6,6 @@ const morgan = require('morgan');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { Pool } = require('pg');
-const { Readable } = require('stream');
 const multer = require('multer');
 const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
@@ -785,22 +784,41 @@ async function runWeeklyBackupToDrive() {
     credentials,
     scopes: ['https://www.googleapis.com/auth/drive.file']
   });
-  const drive = google.drive({ version: 'v3', auth });
+  const client = await auth.getClient();
+  const token = (await client.getAccessToken()).token;
+  if (!token) {
+    await pool.query(
+      `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+      ['Error: Could not get Drive access token']
+    );
+    return { ok: false, error: 'Could not get Drive access token' };
+  }
   const weekName = getISOWeekString(new Date());
   let weekFolderId;
   try {
-    const listRes = await drive.files.list({
-      q: `'${folderId}' in parents and name = '${weekName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-      fields: 'files(id,name)'
+    const q = encodeURIComponent(`'${folderId}' in parents and name = '${weekName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
+    const listRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+      headers: { Authorization: `Bearer ${token}` }
     });
-    if (listRes.data.files && listRes.data.files.length > 0) {
-      weekFolderId = listRes.data.files[0].id;
+    if (!listRes.ok) {
+      const errBody = await listRes.text();
+      throw new Error(`Drive list: ${listRes.status} ${errBody}`);
+    }
+    const listData = await listRes.json();
+    if (listData.files && listData.files.length > 0) {
+      weekFolderId = listData.files[0].id;
     } else {
-      const createRes = await drive.files.create({
-        requestBody: { name: weekName, mimeType: 'application/vnd.google-apps.folder', parents: [folderId] },
-        fields: 'id'
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: weekName, mimeType: 'application/vnd.google-apps.folder', parents: [folderId] })
       });
-      weekFolderId = createRes.data.id;
+      if (!createRes.ok) {
+        const errBody = await createRes.text();
+        throw new Error(`Drive create folder: ${createRes.status} ${errBody}`);
+      }
+      const createData = await createRes.json();
+      weekFolderId = createData.id;
     }
   } catch (e) {
     const msg = e.message || String(e);
@@ -824,11 +842,32 @@ async function runWeeklyBackupToDrive() {
       const eventDate = row.event_date ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
       const safeName = (row.event_name || `Event_${row.event_id}`).replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
       const fileName = `${safeName}_${eventDate}.csv`;
-      // Use Readable stream so Drive API doesn't treat body as a file path (avoids "File not found: .")
-      await drive.files.create({
-        requestBody: { name: fileName, parents: [weekFolderId] },
-        media: { mimeType: 'text/csv', body: Readable.from([csv]) }
+      const boundary = `ros_backup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const metaPart = [
+        `--${boundary}`,
+        'Content-Type: application/json; charset=UTF-8',
+        '',
+        JSON.stringify({ name: fileName, parents: [weekFolderId] }),
+        '',
+        `--${boundary}`,
+        'Content-Type: text/csv; charset=UTF-8',
+        '',
+        csv,
+        '',
+        `--${boundary}--`
+      ].join('\r\n');
+      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`
+        },
+        body: metaPart
       });
+      if (!uploadRes.ok) {
+        const errBody = await uploadRes.text();
+        throw new Error(`Upload: ${uploadRes.status} ${errBody}`);
+      }
       uploaded++;
     } catch (e) {
       console.error('[backup] upload failed for event', row.event_id, e.message);

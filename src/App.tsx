@@ -45,6 +45,7 @@ function AppContent() {
       
       <AuthGuard>
         <Routes>
+          <Route path="/admin" element={null} />
           <Route path="/" element={<EventListPage />} />
           <Route path="/run-of-show" element={<RunOfShowPage />} />
           <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
