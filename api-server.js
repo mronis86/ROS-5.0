@@ -886,6 +886,39 @@ async function runWeeklyBackupToDrive() {
   return { ok: true, weekFolder: weekName, uploaded, total: events.length };
 }
 
+// Export upcoming events as JSON (for Google Apps Script or other schedulers to fetch and save to Drive)
+// GET /api/backup/upcoming-export?key=1615 → { events: [ { eventId, eventName, eventDate, csv }, ... ] }
+app.get('/api/backup/upcoming-export', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT event_id, event_name, event_date, schedule_items, custom_columns
+       FROM run_of_show_data
+       WHERE event_date >= CURRENT_DATE
+       ORDER BY event_date ASC`
+    );
+    const rows = result.rows || [];
+    const events = rows.map((row) => {
+      const csv = buildRunOfShowCSV(row);
+      const eventDate = row.event_date
+        ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10))
+        : new Date().toISOString().slice(0, 10);
+      return {
+        eventId: row.event_id,
+        eventName: row.event_name || `Event_${row.event_id}`,
+        eventDate,
+        csv
+      };
+    });
+    res.json({ events });
+  } catch (err) {
+    console.error('[backup/upcoming-export] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/admin/backup-config/run-now', async (req, res) => {
   if (req.query.key !== '1615') {
     return res.status(401).json({ error: 'Unauthorized' });

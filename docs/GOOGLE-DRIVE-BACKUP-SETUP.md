@@ -2,6 +2,8 @@
 
 The Admin backup feature uploads **upcoming** run-of-show events (event date ≥ today) to a Google Drive folder, in **weekly subfolders** (e.g. `2026-W06`). You can run it manually with **Run backup now** (works with or without "Enable weekly backup" checked) or enable weekly backups for automatic runs.
 
+**Alternative (no Drive API from webapp):** If you hit errors (e.g. "File not found") with the in-app backup, use **[Backup via Google Apps Script](BACKUP-VIA-GOOGLE-APPS-SCRIPT.md)** instead: a scheduled script fetches from your API and writes CSVs to your Drive using your own Google account.
+
 ## What you need
 
 1. **Google Cloud project** with Drive API enabled  

@@ -791,6 +791,7 @@ export default function AdminPage() {
               <p><strong className="text-slate-300">3. Credentials:</strong> Paste the JSON key in <strong>Service account JSON</strong> below and Save, or set <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in API env (e.g. Railway).</p>
               <p><strong className="text-slate-300">4. Admin:</strong> Paste the folder ID → Save → use <strong>Run backup now</strong> (works with or without &quot;Enable weekly backup&quot;).</p>
               <p className="text-xs text-slate-500">Full steps: <code className="bg-slate-700 px-1 rounded">docs/GOOGLE-DRIVE-BACKUP-SETUP.md</code></p>
+              <p className="text-xs text-slate-500 mt-1">Alternative (no Drive API from app): use a scheduled Google Apps Script — see <code className="bg-slate-700 px-1 rounded">docs/BACKUP-VIA-GOOGLE-APPS-SCRIPT.md</code> and paste <code className="bg-slate-700 px-1 rounded">docs/ros-weekly-backup-to-drive.gs</code> into script.google.com.</p>
             </div>
           </details>
           {backupConfig.needsMigration && (
