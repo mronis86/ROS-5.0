@@ -848,31 +848,30 @@ async function runWeeklyBackupToDrive() {
       const eventDate = row.event_date ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
       const safeName = (row.event_name || `Event_${row.event_id}`).replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
       const fileName = `${safeName}_${eventDate}.csv`;
-      const boundary = `ros_backup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const metaPart = [
-        `--${boundary}`,
-        'Content-Type: application/json; charset=UTF-8',
-        '',
-        JSON.stringify({ name: fileName, parents: [weekFolderId] }),
-        '',
-        `--${boundary}`,
-        'Content-Type: text/csv; charset=UTF-8',
-        '',
-        csv,
-        '',
-        `--${boundary}--`
-      ].join('\r\n');
-      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`, {
+      const mediaRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=media&fields=id', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
-          'Content-Type': `multipart/related; boundary=${boundary}`
+          'Content-Type': 'text/csv; charset=UTF-8'
         },
-        body: metaPart
+        body: csv
       });
-      if (!uploadRes.ok) {
-        const errBody = await uploadRes.text();
-        throw new Error(`Upload: ${uploadRes.status} ${errBody}`);
+      if (!mediaRes.ok) {
+        const errBody = await mediaRes.text();
+        throw new Error(`Media upload: ${mediaRes.status} ${errBody}`);
+      }
+      const { id: fileId } = await mediaRes.json();
+      const patchRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${encodeURIComponent(weekFolderId)}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: fileName })
+      });
+      if (!patchRes.ok) {
+        const errBody = await patchRes.text();
+        throw new Error(`Patch name/parent: ${patchRes.status} ${errBody}`);
       }
       uploaded++;
     } catch (e) {
