@@ -93,6 +93,7 @@ export default function AdminPage() {
   const [backupConfigError, setBackupConfigError] = useState<string | null>(null);
   const [backupFolderIdInput, setBackupFolderIdInput] = useState('');
   const [backupRunning, setBackupRunning] = useState(false);
+  const [backupTableCheck, setBackupTableCheck] = useState<{ exists?: boolean; error?: string } | null>(null);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -253,6 +254,19 @@ export default function AdminPage() {
       setBackupConfigSaving(false);
     }
   }, [backupConfig.enabled, backupFolderIdInput]);
+
+  const checkBackupTable = useCallback(async () => {
+    setBackupTableCheck(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/backup-config/check-table?key=${ADMIN_PASSWORD}`);
+      const data = (await res.json()) as { exists?: boolean; error?: string };
+      setBackupTableCheck({ exists: data.exists, error: data.error });
+      if (data.exists) await fetchBackupConfig();
+    } catch (e) {
+      setBackupTableCheck({ exists: false, error: e instanceof Error ? e.message : 'Request failed' });
+    }
+  }, [fetchBackupConfig]);
 
   const runBackupNow = useCallback(async () => {
     setBackupRunning(true);
@@ -657,8 +671,26 @@ export default function AdminPage() {
             Backs up <strong>upcoming</strong> events (event date ≥ today) to a <strong>weekly subfolder</strong> (e.g. 2026-W06) in your Drive folder. Add <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in your API environment when ready.
           </p>
           {backupConfig.needsMigration && (
-            <div className="mb-4 px-4 py-3 rounded-lg bg-blue-900/30 border border-blue-700/50 text-blue-200 text-sm">
-              <strong>Migration required.</strong> Run <code className="bg-slate-700 px-1 rounded">migrations/022_create_admin_backup_config.sql</code> on the <strong>same Neon database your API uses</strong> (Railway → <code className="bg-slate-700 px-1 rounded">NEON_DATABASE_URL</code>). In Neon Console: SQL Editor → paste the migration → Run. Then click Refresh above.
+            <div className="mb-4 px-4 py-3 rounded-lg bg-blue-900/30 border border-blue-700/50 text-blue-200 text-sm space-y-2">
+              <p>
+                <strong>Migration required.</strong> Run <code className="bg-slate-700 px-1 rounded">migrations/022_create_admin_backup_config.sql</code> on the <strong>same Neon database your API uses</strong> (Railway → <code className="bg-slate-700 px-1 rounded">NEON_DATABASE_URL</code>). In Neon Console: SQL Editor → paste the migration → Run.
+              </p>
+              <p className="text-slate-400 text-xs">
+                If Neon already shows the table, run it on the <strong>exact project and branch</strong> in your Railway connection string. Then click &quot;Verify table&quot; below.
+              </p>
+              <button
+                type="button"
+                onClick={checkBackupTable}
+                className="mt-2 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition-colors"
+              >
+                Verify table
+              </button>
+              {backupTableCheck !== null && (
+                <p className="text-xs mt-1">
+                  API sees table: <strong>{backupTableCheck.exists ? 'Yes' : 'No'}</strong>
+                  {backupTableCheck.error && ` — ${backupTableCheck.error}`}
+                </p>
+              )}
             </div>
           )}
           {backupConfigError && (

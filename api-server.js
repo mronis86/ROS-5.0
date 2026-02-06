@@ -481,6 +481,21 @@ app.post('/api/admin/disconnect-user', (req, res) => {
   }
 });
 
+// Admin backup config: check if table exists (for debugging "migration required" when Neon says it's there)
+app.get('/api/admin/backup-config/check-table', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const r = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'admin_backup_config') AS "exists"`
+    );
+    res.json({ exists: !!r.rows[0]?.exists });
+  } catch (err) {
+    res.json({ exists: false, error: err.message || String(err) });
+  }
+});
+
 // Admin backup config: GET (protected by ?key=1615)
 // If table does not exist (migration not run), returns default config + needsMigration so Admin page still loads
 app.get('/api/admin/backup-config', async (req, res) => {
@@ -489,7 +504,7 @@ app.get('/api/admin/backup-config', async (req, res) => {
   }
   try {
     const r = await pool.query(
-      'SELECT gdrive_enabled, gdrive_folder_id, gdrive_last_run_at, gdrive_last_status, updated_at FROM admin_backup_config WHERE id = 1'
+      'SELECT gdrive_enabled, gdrive_folder_id, gdrive_last_run_at, gdrive_last_status, updated_at FROM public.admin_backup_config WHERE id = 1'
     );
     if (r.rows.length === 0) {
       return res.json({
@@ -511,9 +526,10 @@ app.get('/api/admin/backup-config', async (req, res) => {
       needsMigration: false
     });
   } catch (err) {
-    const isMissingTable = err.code === '42P01' || (err.message && err.message.includes('admin_backup_config') && err.message.includes('does not exist'));
+    const msg = err.message || '';
+    const isMissingTable = err.code === '42P01' || (msg.includes('admin_backup_config') && (msg.includes('does not exist') || msg.includes('doesn\'t exist')));
     if (isMissingTable) {
-      console.warn('[admin backup-config GET] Table admin_backup_config missing - run migration 022 on the DB used by this API (NEON_DATABASE_URL)');
+      console.warn('[admin backup-config GET] Table missing. Code:', err.code, 'Message:', msg);
       return res.json({
         enabled: false,
         folderId: '',
@@ -536,7 +552,7 @@ app.put('/api/admin/backup-config', async (req, res) => {
   const { enabled, folderId } = req.body || {};
   try {
     const existing = await pool.query(
-      'SELECT gdrive_enabled, gdrive_folder_id FROM admin_backup_config WHERE id = 1'
+      'SELECT gdrive_enabled, gdrive_folder_id FROM public.admin_backup_config WHERE id = 1'
     );
     const row = existing.rows[0];
     const newEnabled = enabled !== undefined ? !!enabled : (row && row.gdrive_enabled);
@@ -545,7 +561,7 @@ app.put('/api/admin/backup-config', async (req, res) => {
       : (row && row.gdrive_folder_id);
 
     await pool.query(
-      `INSERT INTO admin_backup_config (id, gdrive_enabled, gdrive_folder_id, updated_at)
+      `INSERT INTO public.admin_backup_config (id, gdrive_enabled, gdrive_folder_id, updated_at)
        VALUES (1, $1, $2, NOW())
        ON CONFLICT (id) DO UPDATE SET
          gdrive_enabled = $1,
@@ -554,7 +570,7 @@ app.put('/api/admin/backup-config', async (req, res) => {
       [newEnabled, newFolderId]
     );
     const r = await pool.query(
-      'SELECT gdrive_enabled, gdrive_folder_id, updated_at FROM admin_backup_config WHERE id = 1'
+      'SELECT gdrive_enabled, gdrive_folder_id, updated_at FROM public.admin_backup_config WHERE id = 1'
     );
     const out = r.rows[0] || {};
     res.json({
@@ -563,7 +579,8 @@ app.put('/api/admin/backup-config', async (req, res) => {
       updatedAt: out.updated_at
     });
   } catch (err) {
-    const isMissingTable = err.code === '42P01' || (err.message && err.message.includes('admin_backup_config') && err.message.includes('does not exist'));
+    const msg = err.message || '';
+    const isMissingTable = err.code === '42P01' || (msg.includes('admin_backup_config') && (msg.includes('does not exist') || msg.includes('doesn\'t exist')));
     if (isMissingTable) {
       return res.status(400).json({
         error: 'Table admin_backup_config does not exist. Run migration 022 on the same Neon database your API uses (Railway NEON_DATABASE_URL).'
@@ -651,7 +668,7 @@ function buildRunOfShowCSV(row) {
 
 async function runWeeklyBackupToDrive() {
   const configResult = await pool.query(
-    'SELECT gdrive_enabled, gdrive_folder_id FROM admin_backup_config WHERE id = 1'
+    'SELECT gdrive_enabled, gdrive_folder_id FROM public.admin_backup_config WHERE id = 1'
   );
   const config = configResult.rows[0];
   if (!config || !config.gdrive_enabled || !config.gdrive_folder_id) {
@@ -661,7 +678,7 @@ async function runWeeklyBackupToDrive() {
   const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!serviceAccountJson) {
     await pool.query(
-      `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+      `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
       ['Error: GOOGLE_SERVICE_ACCOUNT_JSON not set']
     );
     return { ok: false, error: 'GOOGLE_SERVICE_ACCOUNT_JSON not set' };
@@ -671,7 +688,7 @@ async function runWeeklyBackupToDrive() {
     credentials = typeof serviceAccountJson === 'string' ? JSON.parse(serviceAccountJson) : serviceAccountJson;
   } catch (e) {
     await pool.query(
-      `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+      `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
       ['Error: Invalid GOOGLE_SERVICE_ACCOUNT_JSON']
     );
     return { ok: false, error: 'Invalid GOOGLE_SERVICE_ACCOUNT_JSON' };
@@ -701,7 +718,7 @@ async function runWeeklyBackupToDrive() {
   } catch (e) {
     const msg = e.message || String(e);
     await pool.query(
-      `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+      `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
       [`Drive error: ${msg}`]
     );
     return { ok: false, error: msg };
@@ -733,7 +750,7 @@ async function runWeeklyBackupToDrive() {
     ? 'No upcoming events'
     : `Uploaded ${uploaded}/${events.length} to ${weekName}`;
   await pool.query(
-    `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+    `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
     [status]
   );
   return { ok: true, weekFolder: weekName, uploaded, total: events.length };
