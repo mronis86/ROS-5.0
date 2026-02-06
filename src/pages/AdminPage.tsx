@@ -87,11 +87,12 @@ export default function AdminPage() {
   const [runningTimersError, setRunningTimersError] = useState<string | null>(null);
   const [stoppingEventId, setStoppingEventId] = useState<string | null>(null);
   const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
-  const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null; needsMigration?: boolean }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
+  const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null; needsMigration?: boolean; hasServiceAccount?: boolean }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
   const [backupConfigLoading, setBackupConfigLoading] = useState(false);
   const [backupConfigSaving, setBackupConfigSaving] = useState(false);
   const [backupConfigError, setBackupConfigError] = useState<string | null>(null);
   const [backupFolderIdInput, setBackupFolderIdInput] = useState('');
+  const [backupServiceAccountInput, setBackupServiceAccountInput] = useState('');
   const [backupRunning, setBackupRunning] = useState(false);
   const [backupTableCheck, setBackupTableCheck] = useState<{ exists?: boolean; error?: string } | null>(null);
   const [backupCreatingTable, setBackupCreatingTable] = useState(false);
@@ -206,13 +207,14 @@ export default function AdminPage() {
         setBackupConfigError((err as { error?: string }).error || `HTTP ${res.status}`);
         return;
       }
-      const data = (await res.json()) as { enabled?: boolean; folderId?: string; lastRunAt?: string | null; lastStatus?: string | null; needsMigration?: boolean };
+      const data = (await res.json()) as { enabled?: boolean; folderId?: string; lastRunAt?: string | null; lastStatus?: string | null; needsMigration?: boolean; hasServiceAccount?: boolean };
       setBackupConfig({
         enabled: !!data.enabled,
         folderId: data.folderId ?? '',
         lastRunAt: data.lastRunAt ?? null,
         lastStatus: data.lastStatus ?? null,
         needsMigration: !!data.needsMigration,
+        hasServiceAccount: !!data.hasServiceAccount,
       });
       setBackupFolderIdInput(data.folderId ?? '');
     } catch (e) {
@@ -232,10 +234,17 @@ export default function AdminPage() {
     setBackupConfigError(null);
     try {
       const base = getApiBaseUrl();
+      const body: { enabled: boolean; folderId: string | null; serviceAccountJson?: string | null } = {
+        enabled: backupConfig.enabled,
+        folderId: backupFolderIdInput.trim() || null,
+      };
+      if (backupServiceAccountInput.trim() !== '') {
+        body.serviceAccountJson = backupServiceAccountInput.trim();
+      }
       const res = await fetch(`${base}/api/admin/backup-config?key=${ADMIN_PASSWORD}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: backupConfig.enabled, folderId: backupFolderIdInput.trim() || null }),
+        body: JSON.stringify(body),
       });
       if (res.status === 401) {
         setBackupConfigError('Unauthorized');
@@ -249,12 +258,42 @@ export default function AdminPage() {
       const data = (await res.json()) as { enabled?: boolean; folderId?: string };
       setBackupConfig((prev) => ({ ...prev, enabled: !!data.enabled, folderId: data.folderId ?? '' }));
       setBackupFolderIdInput(data.folderId ?? '');
+      if (backupServiceAccountInput.trim() !== '') {
+        setBackupConfig((prev) => ({ ...prev, hasServiceAccount: true }));
+        setBackupServiceAccountInput('');
+      }
+      await fetchBackupConfig();
     } catch (e) {
       setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
     } finally {
       setBackupConfigSaving(false);
     }
-  }, [backupConfig.enabled, backupFolderIdInput]);
+  }, [backupConfig.enabled, backupFolderIdInput, backupServiceAccountInput, fetchBackupConfig]);
+
+  const clearBackupCredentials = useCallback(async () => {
+    if (!confirm('Clear stored service account JSON? Backup will use GOOGLE_SERVICE_ACCOUNT_JSON from API env if set.')) return;
+    setBackupConfigSaving(true);
+    setBackupConfigError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/backup-config?key=${ADMIN_PASSWORD}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceAccountJson: null }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBackupConfigError((err as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      setBackupServiceAccountInput('');
+      await fetchBackupConfig();
+    } catch (e) {
+      setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setBackupConfigSaving(false);
+    }
+  }, [fetchBackupConfig]);
 
   const checkBackupTable = useCallback(async () => {
     setBackupTableCheck(null);
@@ -691,8 +730,20 @@ export default function AdminPage() {
             </button>
           </div>
           <p className="text-slate-500 text-sm mb-4">
-            Backs up <strong>upcoming</strong> events (event date ≥ today) to a <strong>weekly subfolder</strong> (e.g. 2026-W06) in your Drive folder. Add <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in your API environment when ready.
+            Backs up <strong>upcoming</strong> events (event date ≥ today) to a <strong>weekly subfolder</strong> (e.g. 2026-W06) in your Drive folder. <strong>Run backup now</strong> works with or without the weekly checkbox—you only need folder ID and API credentials.
           </p>
+          <details className="mb-4 text-sm">
+            <summary className="cursor-pointer text-slate-400 hover:text-slate-300 focus:outline-none focus:text-slate-300">
+              How to set up Google Drive and the API
+            </summary>
+            <div className="mt-2 pl-4 border-l-2 border-slate-600 text-slate-400 space-y-2">
+              <p><strong className="text-slate-300">1. Google Cloud:</strong> Create a project → enable <strong>Google Drive API</strong> → Credentials → Create <strong>Service account</strong> → Add key (JSON). Note the <code className="bg-slate-700 px-1 rounded">client_email</code> from the JSON.</p>
+              <p><strong className="text-slate-300">2. Drive folder:</strong> Create a folder in Google Drive → <strong>Share</strong> it with the service account email (Editor). Folder ID is in the URL: <code className="bg-slate-700 px-1 rounded">drive.google.com/drive/folders/FOLDER_ID</code>.</p>
+              <p><strong className="text-slate-300">3. Credentials:</strong> Paste the JSON key in <strong>Service account JSON</strong> below and Save, or set <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in API env (e.g. Railway).</p>
+              <p><strong className="text-slate-300">4. Admin:</strong> Paste the folder ID → Save → use <strong>Run backup now</strong> (works with or without &quot;Enable weekly backup&quot;).</p>
+              <p className="text-xs text-slate-500">Full steps: <code className="bg-slate-700 px-1 rounded">docs/GOOGLE-DRIVE-BACKUP-SETUP.md</code></p>
+            </div>
+          </details>
           {backupConfig.needsMigration && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-blue-900/30 border border-blue-700/50 text-blue-200 text-sm space-y-2">
               <p>
@@ -759,6 +810,31 @@ export default function AdminPage() {
                   From the folder URL: drive.google.com/drive/folders/<strong className="text-slate-400">FOLDER_ID</strong>
                 </p>
               </div>
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">
+                  Service account JSON {backupConfig.hasServiceAccount && <span className="text-emerald-400 font-normal">(set)</span>}
+                </label>
+                <textarea
+                  value={backupServiceAccountInput}
+                  onChange={(e) => setBackupServiceAccountInput(e.target.value)}
+                  placeholder="Paste JSON key from Google Cloud (not shown after save). Leave empty to keep current."
+                  rows={4}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 font-mono text-xs"
+                />
+                <p className="text-slate-500 text-xs mt-1">
+                  Optional: paste here and click Save. Otherwise set <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in API env.
+                </p>
+                {backupConfig.hasServiceAccount && (
+                  <button
+                    type="button"
+                    onClick={clearBackupCredentials}
+                    disabled={backupConfigSaving}
+                    className="mt-2 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-slate-300 text-xs rounded transition-colors"
+                  >
+                    Clear stored credentials
+                  </button>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -771,9 +847,9 @@ export default function AdminPage() {
                 <button
                   type="button"
                   onClick={runBackupNow}
-                  disabled={backupRunning || backupConfigSaving || backupConfig.needsMigration || !backupConfig.enabled || !backupFolderIdInput.trim()}
+                  disabled={backupRunning || backupConfigSaving || backupConfig.needsMigration || !backupFolderIdInput.trim()}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-                  title={!backupConfig.enabled || !backupFolderIdInput.trim() ? 'Enable backup and set folder ID first' : 'Run backup now (upcoming events → current week folder)'}
+                  title={!backupFolderIdInput.trim() ? 'Set and save folder ID first' : 'Run backup now (upcoming events → current week folder)'}
                 >
                   {backupRunning ? 'Running…' : 'Run backup now'}
                 </button>

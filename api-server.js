@@ -509,6 +509,7 @@ app.post('/api/admin/backup-config/create-table', async (req, res) => {
         gdrive_folder_id TEXT,
         gdrive_last_run_at TIMESTAMPTZ,
         gdrive_last_status TEXT,
+        gdrive_service_account_json TEXT,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
@@ -516,6 +517,9 @@ app.post('/api/admin/backup-config/create-table', async (req, res) => {
       INSERT INTO public.admin_backup_config (id, gdrive_enabled, gdrive_folder_id, updated_at)
       VALUES (1, false, NULL, NOW())
       ON CONFLICT (id) DO NOTHING
+    `);
+    await pool.query(`
+      ALTER TABLE public.admin_backup_config ADD COLUMN IF NOT EXISTS gdrive_service_account_json TEXT
     `);
     console.log('[admin backup-config] create-table: table created');
     res.json({ ok: true, message: 'Table created' });
@@ -542,17 +546,26 @@ app.get('/api/admin/backup-config', async (req, res) => {
         lastRunAt: null,
         lastStatus: null,
         updatedAt: null,
-        needsMigration: false
+        needsMigration: false,
+        hasServiceAccount: false
       });
     }
     const row = r.rows[0];
+    let hasServiceAccount = false;
+    try {
+      const r2 = await pool.query(
+        `SELECT (gdrive_service_account_json IS NOT NULL AND TRIM(COALESCE(gdrive_service_account_json,'')) != '') AS has FROM public.admin_backup_config WHERE id = 1`
+      );
+      if (r2.rows[0]) hasServiceAccount = !!r2.rows[0].has;
+    } catch (_) { /* column may not exist before migration 023 */ }
     res.json({
       enabled: !!row.gdrive_enabled,
       folderId: row.gdrive_folder_id || '',
       lastRunAt: row.gdrive_last_run_at,
       lastStatus: row.gdrive_last_status || null,
       updatedAt: row.updated_at,
-      needsMigration: false
+      needsMigration: false,
+      hasServiceAccount
     });
   } catch (err) {
     const msg = err.message || '';
@@ -565,7 +578,8 @@ app.get('/api/admin/backup-config', async (req, res) => {
         lastRunAt: null,
         lastStatus: null,
         updatedAt: null,
-        needsMigration: true
+        needsMigration: true,
+        hasServiceAccount: false
       });
     }
     console.error('[admin backup-config GET] error:', err);
@@ -574,11 +588,12 @@ app.get('/api/admin/backup-config', async (req, res) => {
 });
 
 // Admin backup config: PUT (protected by ?key=1615). Partial update: only provided fields are updated.
+// serviceAccountJson: set from Admin (never returned by GET). Send null or '' to clear.
 app.put('/api/admin/backup-config', async (req, res) => {
   if (req.query.key !== '1615') {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  const { enabled, folderId } = req.body || {};
+  const { enabled, folderId, serviceAccountJson } = req.body || {};
   try {
     const existing = await pool.query(
       'SELECT gdrive_enabled, gdrive_folder_id FROM public.admin_backup_config WHERE id = 1'
@@ -598,6 +613,20 @@ app.put('/api/admin/backup-config', async (req, res) => {
          updated_at = NOW()`,
       [newEnabled, newFolderId]
     );
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'serviceAccountJson')) {
+      const jsonVal = serviceAccountJson == null || String(serviceAccountJson).trim() === ''
+        ? null
+        : String(serviceAccountJson).trim();
+      try {
+        await pool.query(
+          'UPDATE public.admin_backup_config SET gdrive_service_account_json = $1, updated_at = NOW() WHERE id = 1',
+          [jsonVal]
+        );
+      } catch (e) {
+        if (e.code === '42703') { /* column does not exist */ }
+        else throw e;
+      }
+    }
     const r = await pool.query(
       'SELECT gdrive_enabled, gdrive_folder_id, updated_at FROM public.admin_backup_config WHERE id = 1'
     );
@@ -700,17 +729,25 @@ async function runWeeklyBackupToDrive() {
     'SELECT gdrive_enabled, gdrive_folder_id FROM public.admin_backup_config WHERE id = 1'
   );
   const config = configResult.rows[0];
-  if (!config || !config.gdrive_enabled || !config.gdrive_folder_id) {
-    return { ok: false, error: 'Backup not enabled or folder ID not set' };
+  if (!config || !config.gdrive_folder_id || !String(config.gdrive_folder_id).trim()) {
+    return { ok: false, error: 'Folder ID not set. Set and save the folder ID in Admin.' };
   }
-  const folderId = config.gdrive_folder_id.trim();
-  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  const folderId = String(config.gdrive_folder_id).trim();
+  let serviceAccountJson = null;
+  try {
+    const r2 = await pool.query('SELECT gdrive_service_account_json FROM public.admin_backup_config WHERE id = 1');
+    if (r2.rows[0] && r2.rows[0].gdrive_service_account_json) {
+      const s = String(r2.rows[0].gdrive_service_account_json).trim();
+      if (s) serviceAccountJson = s;
+    }
+  } catch (_) { /* column may not exist before migration 023 */ }
+  if (!serviceAccountJson) serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!serviceAccountJson) {
     await pool.query(
       `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
-      ['Error: GOOGLE_SERVICE_ACCOUNT_JSON not set']
+      ['Error: Set service account JSON in Admin (paste below) or set GOOGLE_SERVICE_ACCOUNT_JSON in API env']
     );
-    return { ok: false, error: 'GOOGLE_SERVICE_ACCOUNT_JSON not set' };
+    return { ok: false, error: 'Set service account JSON in Admin or set GOOGLE_SERVICE_ACCOUNT_JSON in API env' };
   }
   let credentials;
   try {
@@ -718,9 +755,9 @@ async function runWeeklyBackupToDrive() {
   } catch (e) {
     await pool.query(
       `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
-      ['Error: Invalid GOOGLE_SERVICE_ACCOUNT_JSON']
+      ['Error: Invalid service account JSON']
     );
-    return { ok: false, error: 'Invalid GOOGLE_SERVICE_ACCOUNT_JSON' };
+    return { ok: false, error: 'Invalid service account JSON' };
   }
   const { google } = require('googleapis');
   const auth = new google.auth.GoogleAuth({
