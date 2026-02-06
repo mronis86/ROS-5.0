@@ -832,55 +832,71 @@ async function runWeeklyBackupToDrive() {
     return { ok: false, error: msg };
   }
   const upcomingResult = await pool.query(
-    `SELECT * FROM (
-       SELECT DISTINCT ON (event_id) event_id, event_name, event_date, schedule_items, custom_columns
-       FROM run_of_show_data
-       WHERE (event_date::date >= CURRENT_DATE)
-       ORDER BY event_id, updated_at DESC NULLS LAST
-     ) sub
+    `SELECT event_id, event_name, event_date, schedule_items, custom_columns
+     FROM run_of_show_data
+     WHERE (event_date::date >= CURRENT_DATE)
      ORDER BY event_date::date ASC`
   );
-  const events = upcomingResult.rows || [];
+  const rows = upcomingResult.rows || [];
+  const seen = new Map();
+  for (const row of rows) {
+    const eventDate = row.event_date
+      ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10))
+      : '';
+    const name = String(row.event_name || '').trim();
+    const key = `${name}|${eventDate}`;
+    if (!key || key === '|') continue;
+    if (!seen.has(key)) seen.set(key, row);
+  }
+  const events = Array.from(seen.values()).sort((a, b) => {
+    const dA = a.event_date ? (typeof a.event_date === 'string' ? a.event_date : a.event_date.toISOString().slice(0, 10)) : '';
+    const dB = b.event_date ? (typeof b.event_date === 'string' ? b.event_date : b.event_date.toISOString().slice(0, 10)) : '';
+    return dA.localeCompare(dB);
+  });
+
   let uploaded = 0;
+  const uploadErrors = [];
   for (const row of events) {
     try {
       const csv = buildRunOfShowCSV(row);
       const eventDate = row.event_date ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
       const safeName = (row.event_name || `Event_${row.event_id}`).replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
       const fileName = `${safeName}_${eventDate}.csv`;
-      const mediaRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=media&fields=id', {
+      const boundary = '----ROSBackup_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+      const metaPart = JSON.stringify({ name: fileName, parents: [weekFolderId] });
+      const body = [
+        `--${boundary}\r\n`,
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+        metaPart,
+        `\r\n--${boundary}\r\n`,
+        'Content-Type: text/csv; charset=UTF-8\r\n\r\n',
+        csv,
+        `\r\n--${boundary}--\r\n`
+      ].join('');
+      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'text/csv; charset=UTF-8'
+          'Content-Type': `multipart/related; boundary=${boundary}`
         },
-        body: csv
+        body
       });
-      if (!mediaRes.ok) {
-        const errBody = await mediaRes.text();
-        throw new Error(`Media upload: ${mediaRes.status} ${errBody}`);
-      }
-      const { id: fileId } = await mediaRes.json();
-      const patchRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${encodeURIComponent(weekFolderId)}`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ name: fileName })
-      });
-      if (!patchRes.ok) {
-        const errBody = await patchRes.text();
-        throw new Error(`Patch name/parent: ${patchRes.status} ${errBody}`);
+      if (!uploadRes.ok) {
+        const errBody = await uploadRes.text();
+        throw new Error(`${uploadRes.status}: ${errBody.slice(0, 200)}`);
       }
       uploaded++;
     } catch (e) {
-      console.error('[backup] upload failed for event', row.event_id, e.message);
+      const msg = e.message || String(e);
+      console.error('[backup] upload failed for event', row.event_id, msg);
+      uploadErrors.push((row.event_name || row.event_id) + ': ' + msg);
     }
   }
   const status = events.length === 0
     ? 'No upcoming events'
-    : `Uploaded ${uploaded}/${events.length} to ${weekName}`;
+    : uploadErrors.length === events.length && events.length > 0
+      ? `Found ${events.length} event(s) but upload failed: ${uploadErrors[0]}`
+      : `Uploaded ${uploaded}/${events.length} to ${weekName}`;
   await pool.query(
     `UPDATE public.admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
     [status]
