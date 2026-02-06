@@ -56,7 +56,7 @@ function App() {
   ];
 
   const shotTypes = [
-    'Podium', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot'
+    'Podium', '1-Shot', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'
   ];
 
   // Helper function to format time

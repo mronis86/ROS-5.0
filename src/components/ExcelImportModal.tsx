@@ -28,10 +28,12 @@ const normalizeShotTypeForAlias = (s: string) =>
 
 /** Exact alias -> canonical Shot Type. */
 const SHOT_TYPE_ALIASES = (() => {
-  const canonical = ['Podium', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'] as const;
+  const canonical = ['Podium', '1-Shot', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'] as const;
   const aliasList: [string, string][] = [
     ['pod', 'Podium'],
     ['p', 'Podium'],
+    ['1sh', '1-Shot'],
+    ['oneshot', '1-Shot'],
     ['2sh', '2-Shot'],
     ['twoshot', '2-Shot'],
     ['3sh', '3-Shot'],
@@ -55,6 +57,9 @@ const SHOT_TYPE_ALIASES = (() => {
 
 /** Pattern-based: e.g. "2 shot lav", "2shot lavalier", "3shot" -> N-Shot. Number alone is not matched. */
 const SHOT_TYPE_PATTERNS: { pattern: RegExp; canonical: string }[] = [
+  { pattern: /^1(shot|sh|lav|lavalier)/, canonical: '1-Shot' },
+  { pattern: /^oneshot/, canonical: '1-Shot' },
+  { pattern: /^one(shot|sh|lav|lavalier)/, canonical: '1-Shot' },
   { pattern: /^2(shot|sh|lav|lavalier)/, canonical: '2-Shot' },
   { pattern: /^twoshot/, canonical: '2-Shot' },
   { pattern: /^two(shot|sh|lav|lavalier)/, canonical: '2-Shot' },
@@ -646,7 +651,7 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
               <ul className="text-gray-300 text-sm space-y-1">
                 <li>• Headers should be in row 11, data should start from row 12</li>
                 <li>• Expected columns: A=CUE, C=Program Type, D=Duration, J=Segment Name, K=Shot Type+PPT+QA, L=Notes, N=Assets, V-AB=Speakers</li>
-                <li>• Shot Type (K): Use Podium, 2-Shot … 7-Shot, Ted-Talk. Shorthand OK: POD, 2shot, 2 shot, 2 shot lav, 2shot lavalier, 3shot, etc.</li>
+                <li>• Shot Type (K): Use Podium, 1-Shot, 2-Shot … 7-Shot, Ted-Talk. Shorthand OK: POD, 1shot, 2shot, 2 shot lav, etc.</li>
                 <li>• "Pod Transition" will be converted to "Podium Transition"</li>
                 <li>• Excel decimal time format (0.002083...) will be converted to HH:MM:SS</li>
                 <li>• Speaker format: Name, Title, [Org], Photo URL (with line breaks). Use *P* (Podium), *M* (Moderator), *V* (Virtual) prefixes</li>

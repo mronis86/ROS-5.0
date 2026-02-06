@@ -42,7 +42,13 @@ Bitfocus Companion v3 module for Run of Show (ROS). Controls your ROS schedule v
 
 ## Presets (drag and drop, auto-update by Event ID)
 
-After you set **Event ID** and the module syncs, open the **Presets** tab in Companion. Under **Run of Show** → **Cues** you'll see one preset per cue (e.g. "CUE 1: Opening", "CUE 2: Keynote"). Preset button text is set to **CUE 1** or **CUE 1.1** (never just "1"). Each preset runs **Load Cue** for that cue and uses **Loaded cue is** feedback. Drag a preset onto a button to use it. The preset list updates when the schedule changes.
+After you set **Event ID** and the module syncs, open the **Presets** tab in Companion.
+
+- **Cues** – One preset per **regular** (non-indented) cue only (e.g. "CUE 1: Opening", "CUE 2: Keynote"). Each runs **Load Cue** and uses **Loaded cue is** feedback. Sub-cues are not listed here.
+- **Timer** – Presets: **Start Timer**, **Stop Timer**, **Reset Timer**, **Timer +1 min**, **Timer -1 min**, **Timer +5 min**, **Timer -5 min**, **Stop all sub-timers**. Drag onto buttons for one-tap timer control.
+- **Sub-Timers** – One preset per **sub-cue** (indented row) only for **Start Sub-Timer** (e.g. "Sub: CUE 1.1 – Intro"). Regular cues are not listed here.
+
+The preset list updates when the schedule changes.
 
 **Button text from cue (when not using presets):** Add the **Button text from cue** feedback to a button. Pick a **Cue** from the same dropdown as Load Cue, and **Show as**: **Cue** (e.g. CUE 1 or CUE 1.1) or **Segment** (e.g. Opening). The button text is set from that dropdown so you can show "CUE 1" or "Opening" without using a preset.
 

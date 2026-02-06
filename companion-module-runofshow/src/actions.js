@@ -125,7 +125,6 @@ module.exports = function (self) {
 				}
 			},
 		},
-		// Sub-timer actions (like OSC /subtimer/cue/5/start and /subtimer/cue/5/stop)
 		start_subtimer: {
 			name: 'Start Sub-Timer',
 			options: [
@@ -207,7 +206,6 @@ module.exports = function (self) {
 				}
 			},
 		},
-		// Timer duration adjust (+/- 1 min, +/- 5 min) - like web UI buttons
 		adjust_timer_plus_1: {
 			name: 'Timer +1 min',
 			options: [],

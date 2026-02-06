@@ -155,7 +155,12 @@ export default function AdminPage() {
         return;
       }
       const data = await res.json().catch(() => ({}));
-      setPresence(Array.isArray(data.events) ? data.events : []);
+      const raw = Array.isArray(data.events) ? data.events : [];
+      setPresence(raw.map((ev: { eventId?: string; eventName?: string; viewers?: PresenceViewer[] }) => ({
+        eventId: String(ev.eventId ?? ''),
+        eventName: String(ev.eventName ?? ''),
+        viewers: Array.isArray(ev.viewers) ? ev.viewers : [],
+      })));
     } catch (e) {
       setPresenceError(e instanceof Error ? e.message : 'Request failed');
       setPresence([]);
@@ -505,12 +510,12 @@ export default function AdminPage() {
                     {ev.eventName}
                     <span className="text-slate-500 font-normal text-sm ml-2">({ev.eventId})</span>
                   </div>
-                  {ev.viewers.length === 0 ? (
+                  {(ev.viewers ?? []).length === 0 ? (
                     <p className="text-slate-500 text-sm">No viewers</p>
                   ) : (
                     <ul className="divide-y divide-slate-700/60">
-                      {ev.viewers.map((v) => (
-                        <li key={v.userId} className="py-2 first:pt-0 last:pb-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                      {(ev.viewers ?? []).map((v, i) => (
+                        <li key={`${ev.eventId}-${v.userId}-${i}`} className="py-2 first:pt-0 last:pb-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                           <span className="text-white font-medium">{v.userName || v.userEmail || v.userId}</span>
                           {v.userEmail && v.userName !== v.userEmail && (
                             <span className="text-slate-400 truncate">{v.userEmail}</span>

@@ -97,13 +97,11 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
-              {/* Bitfocus Companion Module - GitHub raw URL for reliable download */}
+              {/* Bitfocus Companion Module - full zip */}
               <div className="text-center mb-4">
                 <a
-                  href="https://raw.githubusercontent.com/mronis86/ROS-5.0/master/public/companion-module-runofshow.zip"
-                  download="companion-module-runofshow.zip"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href="/companion-module-runofshow-full.zip"
+                  download="companion-module-runofshow-full.zip"
                   className="block bg-purple-600 hover:bg-purple-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
                   🎛️ Bitfocus Companion Module
@@ -138,7 +136,12 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                     <div>/timer/start</div>
                     <div>/timer/stop</div>
                     <div>/timer/reset</div>
+                    <div>/timer/adjust/+1</div>
+                    <div>/timer/adjust/-1</div>
+                    <div>/timer/adjust/+5</div>
+                    <div>/timer/adjust/-5</div>
                   </div>
+                  <div className="text-slate-500 text-xs mt-1">Adjust: ±1 min, ±5 min (while timer running)</div>
                 </div>
                 <div>
                   <div className="font-semibold text-slate-300 mb-2">Sub-Timer Commands (Day-Aware):</div>

@@ -226,11 +226,15 @@ class RunOfShowInstance extends InstanceBase {
 	updatePresets() {
 		const presets = {}
 		const items = this.scheduleItems || []
-		for (const item of items) {
+		// Regular cues = not indented (main CUE rows). Sub-cues = indented (sub-rows under a CUE).
+		const regularCues = items.filter((item) => !item.isIndented)
+		const subCues = items.filter((item) => item.isIndented === true)
+
+		// One preset per regular cue only (Load Cue + feedback)
+		for (const item of regularCues) {
 			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
 			const fullLabel = `${cueDisplay}: ${item.segmentName || 'Untitled'}`
-			const id = `cue_${item.id}`
-			presets[id] = {
+			presets[`cue_${item.id}`] = {
 				type: 'button',
 				category: 'Cues',
 				name: fullLabel,
@@ -255,6 +259,82 @@ class RunOfShowInstance extends InstanceBase {
 				],
 			}
 		}
+
+		// Timer control presets (Start, Stop, Reset, +/- 1 min, +/- 5 min)
+		const timerPresets = {
+			start_timer: { name: 'Start Timer', actionId: 'start_timer', text: 'Start', bgcolor: combineRgb(0, 120, 0) },
+			stop_timer: { name: 'Stop Timer', actionId: 'stop_timer', text: 'Stop', bgcolor: combineRgb(120, 0, 0) },
+			reset_timer: { name: 'Reset Timer', actionId: 'reset_timer', text: 'Reset', bgcolor: combineRgb(80, 80, 0) },
+			timer_plus_1: { name: 'Timer +1 min', actionId: 'adjust_timer_plus_1', text: '+1', bgcolor: combineRgb(40, 60, 80) },
+			timer_minus_1: { name: 'Timer -1 min', actionId: 'adjust_timer_minus_1', text: '-1', bgcolor: combineRgb(40, 60, 80) },
+			timer_plus_5: { name: 'Timer +5 min', actionId: 'adjust_timer_plus_5', text: '+5', bgcolor: combineRgb(40, 60, 80) },
+			timer_minus_5: { name: 'Timer -5 min', actionId: 'adjust_timer_minus_5', text: '-5', bgcolor: combineRgb(40, 60, 80) },
+		}
+		for (const [id, def] of Object.entries(timerPresets)) {
+			presets[id] = {
+				type: 'button',
+				category: 'Timer',
+				name: def.name,
+				style: {
+					text: def.text,
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: def.bgcolor,
+				},
+				feedbacks: [],
+				steps: [
+					{
+						down: [{ actionId: def.actionId, options: {} }],
+						up: [],
+					},
+				],
+			}
+		}
+
+		// Stop all sub-timers (single preset)
+		presets.stop_subtimer_all = {
+			type: 'button',
+			category: 'Timer',
+			name: 'Stop all sub-timers',
+			style: {
+				text: 'Stop subs',
+				size: 'auto',
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(100, 50, 0),
+			},
+			feedbacks: [],
+			steps: [
+				{
+					down: [{ actionId: 'stop_subtimer', options: { itemId: '' } }],
+					up: [],
+				},
+			],
+		}
+
+		// One preset per sub-cue only for Start Sub-Timer
+		for (const item of subCues) {
+			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
+			const fullLabel = `Sub: ${cueDisplay} – ${item.segmentName || 'Untitled'}`
+			presets[`sub_${item.id}`] = {
+				type: 'button',
+				category: 'Sub-Timers',
+				name: fullLabel,
+				style: {
+					text: `Sub ${cueDisplay}`,
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(60, 40, 80),
+				},
+				feedbacks: [],
+				steps: [
+					{
+						down: [{ actionId: 'start_subtimer', options: { itemId: String(item.id) } }],
+						up: [],
+					},
+				],
+			}
+		}
+
 		this.setPresetDefinitions(presets)
 	}
 

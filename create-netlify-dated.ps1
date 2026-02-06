@@ -62,13 +62,20 @@ if (Test-Path $ZipPath) {
     Copy-Item -Path $ZipPath -Destination (Join-Path $UploadDir 'ROS-OSC-Control-portable.zip') -Force
     Write-Host "Added ROS-OSC-Control-portable.zip for OSC modal download"
 }
+# Companion full zip (from public, Vite copies to dist; ensure redirect exists)
+$CompanionFullZip = Join-Path $publicDir 'companion-module-runofshow-full.zip'
+if (Test-Path $CompanionFullZip) {
+    Copy-Item -Path $CompanionFullZip -Destination (Join-Path $UploadDir 'companion-module-runofshow-full.zip') -Force
+    Write-Host "Added companion-module-runofshow-full.zip for OSC modal download"
+}
 
 # Netlify config (zip downloads must be served directly before SPA fallback)
 $RedirectsContent = @"
-/companion-module-runofshow.zip  /companion-module-runofshow.zip  200
-/ros-osc-python-app.zip         /ros-osc-python-app.zip         200
-/ROS-OSC-Control-portable.zip   /ROS-OSC-Control-portable.zip   200
-/electron-osc-app.zip           /electron-osc-app.zip           200
+/companion-module-runofshow.zip       /companion-module-runofshow.zip       200
+/companion-module-runofshow-full.zip /companion-module-runofshow-full.zip 200
+/ros-osc-python-app.zip              /ros-osc-python-app.zip              200
+/ROS-OSC-Control-portable.zip        /ROS-OSC-Control-portable.zip        200
+/electron-osc-app.zip                /electron-osc-app.zip                200
 
 /*    /index.html   200
 "@
@@ -81,6 +88,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/companion-module-runofshow.zip"
   to = "/companion-module-runofshow.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/companion-module-runofshow-full.zip"
+  to = "/companion-module-runofshow-full.zip"
   status = 200
   force = true
 
