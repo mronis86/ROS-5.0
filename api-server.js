@@ -496,6 +496,35 @@ app.get('/api/admin/backup-config/check-table', async (req, res) => {
   }
 });
 
+// Admin backup config: create table in API's DB (same as migration 022) - use when "API sees table: No"
+app.post('/api/admin/backup-config/create-table', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public.admin_backup_config (
+        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        gdrive_enabled BOOLEAN NOT NULL DEFAULT false,
+        gdrive_folder_id TEXT,
+        gdrive_last_run_at TIMESTAMPTZ,
+        gdrive_last_status TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      INSERT INTO public.admin_backup_config (id, gdrive_enabled, gdrive_folder_id, updated_at)
+      VALUES (1, false, NULL, NOW())
+      ON CONFLICT (id) DO NOTHING
+    `);
+    console.log('[admin backup-config] create-table: table created');
+    res.json({ ok: true, message: 'Table created' });
+  } catch (err) {
+    console.error('[admin backup-config create-table] error:', err);
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
 // Admin backup config: GET (protected by ?key=1615)
 // If table does not exist (migration not run), returns default config + needsMigration so Admin page still loads
 app.get('/api/admin/backup-config', async (req, res) => {

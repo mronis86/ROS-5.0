@@ -94,6 +94,7 @@ export default function AdminPage() {
   const [backupFolderIdInput, setBackupFolderIdInput] = useState('');
   const [backupRunning, setBackupRunning] = useState(false);
   const [backupTableCheck, setBackupTableCheck] = useState<{ exists?: boolean; error?: string } | null>(null);
+  const [backupCreatingTable, setBackupCreatingTable] = useState(false);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -267,6 +268,28 @@ export default function AdminPage() {
       setBackupTableCheck({ exists: false, error: e instanceof Error ? e.message : 'Request failed' });
     }
   }, [fetchBackupConfig]);
+
+  const createBackupTable = useCallback(async () => {
+    setBackupCreatingTable(true);
+    setBackupConfigError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/backup-config/create-table?key=${ADMIN_PASSWORD}`, { method: 'POST' });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setBackupConfigError((data as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      if ((data as { ok?: boolean }).ok) {
+        await checkBackupTable();
+        await fetchBackupConfig();
+      }
+    } catch (e) {
+      setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setBackupCreatingTable(false);
+    }
+  }, [checkBackupTable, fetchBackupConfig]);
 
   const runBackupNow = useCallback(async () => {
     setBackupRunning(true);
@@ -678,13 +701,25 @@ export default function AdminPage() {
               <p className="text-slate-400 text-xs">
                 If Neon already shows the table, run it on the <strong>exact project and branch</strong> in your Railway connection string. Then click &quot;Verify table&quot; below.
               </p>
-              <button
-                type="button"
-                onClick={checkBackupTable}
-                className="mt-2 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition-colors"
-              >
-                Verify table
-              </button>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={checkBackupTable}
+                  className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition-colors"
+                >
+                  Verify table
+                </button>
+                {backupTableCheck !== null && !backupTableCheck.exists && (
+                  <button
+                    type="button"
+                    onClick={createBackupTable}
+                    disabled={backupCreatingTable}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs rounded transition-colors"
+                  >
+                    {backupCreatingTable ? 'Creating…' : 'Create table now'}
+                  </button>
+                )}
+              </div>
               {backupTableCheck !== null && (
                 <p className="text-xs mt-1">
                   API sees table: <strong>{backupTableCheck.exists ? 'Yes' : 'No'}</strong>
