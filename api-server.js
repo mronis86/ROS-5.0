@@ -502,29 +502,49 @@ app.post('/api/admin/backup-config/create-table', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS public.admin_backup_config (
-        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-        gdrive_enabled BOOLEAN NOT NULL DEFAULT false,
-        gdrive_folder_id TEXT,
-        gdrive_last_run_at TIMESTAMPTZ,
-        gdrive_last_status TEXT,
-        gdrive_service_account_json TEXT,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
-    await pool.query(`
-      INSERT INTO public.admin_backup_config (id, gdrive_enabled, gdrive_folder_id, updated_at)
-      VALUES (1, false, NULL, NOW())
-      ON CONFLICT (id) DO NOTHING
-    `);
-    await pool.query(`
-      ALTER TABLE public.admin_backup_config ADD COLUMN IF NOT EXISTS gdrive_service_account_json TEXT
-    `);
+    await runBackupConfigSyncTable(pool);
     console.log('[admin backup-config] create-table: table created');
     res.json({ ok: true, message: 'Table created' });
   } catch (err) {
     console.error('[admin backup-config create-table] error:', err);
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// Full sync: create table if missing with all columns, or add any missing columns. Safe to run anytime.
+async function runBackupConfigSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.admin_backup_config (
+      id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      gdrive_enabled BOOLEAN NOT NULL DEFAULT false,
+      gdrive_folder_id TEXT,
+      gdrive_last_run_at TIMESTAMPTZ,
+      gdrive_last_status TEXT,
+      gdrive_service_account_json TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`
+    INSERT INTO public.admin_backup_config (id, gdrive_enabled, gdrive_folder_id, updated_at)
+    VALUES (1, false, NULL, NOW())
+    ON CONFLICT (id) DO NOTHING
+  `);
+  await db.query(`
+    ALTER TABLE public.admin_backup_config ADD COLUMN IF NOT EXISTS gdrive_service_account_json TEXT
+  `);
+}
+
+// Admin backup config: sync table (create if not exists, add missing columns). Use when Neon branch schema is wrong.
+app.post('/api/admin/backup-config/sync-table', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    await runBackupConfigSyncTable(pool);
+    console.log('[admin backup-config] sync-table: schema synced');
+    res.json({ ok: true, message: 'Table created or updated with correct schema' });
+  } catch (err) {
+    console.error('[admin backup-config sync-table] error:', err);
     res.status(500).json({ error: err.message || String(err) });
   }
 });

@@ -96,6 +96,7 @@ export default function AdminPage() {
   const [backupRunning, setBackupRunning] = useState(false);
   const [backupTableCheck, setBackupTableCheck] = useState<{ exists?: boolean; error?: string } | null>(null);
   const [backupCreatingTable, setBackupCreatingTable] = useState(false);
+  const [backupSyncingTable, setBackupSyncingTable] = useState(false);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -327,6 +328,28 @@ export default function AdminPage() {
       setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
     } finally {
       setBackupCreatingTable(false);
+    }
+  }, [checkBackupTable, fetchBackupConfig]);
+
+  const syncBackupTable = useCallback(async () => {
+    setBackupSyncingTable(true);
+    setBackupConfigError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/backup-config/sync-table?key=${ADMIN_PASSWORD}`, { method: 'POST' });
+      const data = (await res.json()) as { ok?: boolean; error?: string; message?: string };
+      if (!res.ok) {
+        setBackupConfigError((data as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      if ((data as { ok?: boolean }).ok) {
+        await checkBackupTable();
+        await fetchBackupConfig();
+      }
+    } catch (e) {
+      setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setBackupSyncingTable(false);
     }
   }, [checkBackupTable, fetchBackupConfig]);
 
@@ -732,6 +755,18 @@ export default function AdminPage() {
           <p className="text-slate-500 text-sm mb-4">
             Backs up <strong>upcoming</strong> events (event date ≥ today) to a <strong>weekly subfolder</strong> (e.g. 2026-W06) in your Drive folder. <strong>Run backup now</strong> works with or without the weekly checkbox—you only need folder ID and API credentials.
           </p>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="text-slate-400 text-sm">Table schema (API&apos;s DB / Neon branch):</span>
+            <button
+              type="button"
+              onClick={syncBackupTable}
+              disabled={backupSyncingTable}
+              className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+              title="Create table if missing, or add missing columns (e.g. gdrive_service_account_json). Safe to run anytime."
+            >
+              {backupSyncingTable ? 'Syncing…' : 'Sync table (create or update schema)'}
+            </button>
+          </div>
           <details className="mb-4 text-sm">
             <summary className="cursor-pointer text-slate-400 hover:text-slate-300 focus:outline-none focus:text-slate-300">
               How to set up Google Drive and the API
@@ -747,10 +782,7 @@ export default function AdminPage() {
           {backupConfig.needsMigration && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-blue-900/30 border border-blue-700/50 text-blue-200 text-sm space-y-2">
               <p>
-                <strong>Migration required.</strong> Run <code className="bg-slate-700 px-1 rounded">migrations/022_create_admin_backup_config.sql</code> on the <strong>same Neon database your API uses</strong> (Railway → <code className="bg-slate-700 px-1 rounded">NEON_DATABASE_URL</code>). In Neon Console: SQL Editor → paste the migration → Run.
-              </p>
-              <p className="text-slate-400 text-xs">
-                If Neon already shows the table, run it on the <strong>exact project and branch</strong> in your Railway connection string. Then click &quot;Verify table&quot; below.
+                <strong>API doesn&apos;t see the table yet.</strong> Click <strong>Sync table (create or update schema)</strong> above to create or fix the table in the API&apos;s database (same as running migrations 022 + 023). Or run the SQL in Neon on the correct branch, then Verify.
               </p>
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 <button
