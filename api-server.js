@@ -832,9 +832,12 @@ async function runWeeklyBackupToDrive() {
     return { ok: false, error: msg };
   }
   const upcomingResult = await pool.query(
-    `SELECT event_id, event_name, event_date, schedule_items, custom_columns
-     FROM run_of_show_data
-     WHERE (event_date::date >= CURRENT_DATE)
+    `SELECT * FROM (
+       SELECT DISTINCT ON (event_id) event_id, event_name, event_date, schedule_items, custom_columns
+       FROM run_of_show_data
+       WHERE (event_date::date >= CURRENT_DATE)
+       ORDER BY event_id, updated_at DESC NULLS LAST
+     ) sub
      ORDER BY event_date::date ASC`
   );
   const events = upcomingResult.rows || [];
@@ -894,9 +897,12 @@ app.get('/api/backup/upcoming-export', async (req, res) => {
   }
   try {
     const result = await pool.query(
-      `SELECT event_id, event_name, event_date, schedule_items, custom_columns
-       FROM run_of_show_data
-       WHERE (event_date::date >= CURRENT_DATE)
+      `SELECT * FROM (
+         SELECT DISTINCT ON (event_id) event_id, event_name, event_date, schedule_items, custom_columns
+         FROM run_of_show_data
+         WHERE (event_date::date >= CURRENT_DATE)
+         ORDER BY event_id, updated_at DESC NULLS LAST
+       ) sub
        ORDER BY event_date::date ASC`
     );
     const rows = result.rows || [];
