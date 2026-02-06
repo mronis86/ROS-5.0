@@ -903,13 +903,17 @@ app.get('/api/backup/upcoming-export', async (req, res) => {
        ORDER BY event_date::date ASC`
     );
     const rows = result.rows || [];
-    const byEventId = new Map();
+    const seen = new Map();
     for (const row of rows) {
-      const id = String(row.event_id || '');
-      if (!id) continue;
-      if (!byEventId.has(id)) byEventId.set(id, row);
+      const eventDate = row.event_date
+        ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10))
+        : '';
+      const name = String(row.event_name || '').trim();
+      const key = `${name}|${eventDate}`;
+      if (!key || key === '|') continue;
+      if (!seen.has(key)) seen.set(key, row);
     }
-    const uniqueRows = Array.from(byEventId.values()).sort((a, b) => {
+    const uniqueRows = Array.from(seen.values()).sort((a, b) => {
       const dA = a.event_date ? (typeof a.event_date === 'string' ? a.event_date : a.event_date.toISOString().slice(0, 10)) : '';
       const dB = b.event_date ? (typeof b.event_date === 'string' ? b.event_date : b.event_date.toISOString().slice(0, 10)) : '';
       return dA.localeCompare(dB);
