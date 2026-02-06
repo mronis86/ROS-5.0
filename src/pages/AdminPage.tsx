@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Database, Server, Zap, Users, Timer, Square } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 
 const ADMIN_PASSWORD = '1615';
@@ -87,6 +87,12 @@ export default function AdminPage() {
   const [runningTimersError, setRunningTimersError] = useState<string | null>(null);
   const [stoppingEventId, setStoppingEventId] = useState<string | null>(null);
   const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
+  const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
+  const [backupConfigLoading, setBackupConfigLoading] = useState(false);
+  const [backupConfigSaving, setBackupConfigSaving] = useState(false);
+  const [backupConfigError, setBackupConfigError] = useState<string | null>(null);
+  const [backupFolderIdInput, setBackupFolderIdInput] = useState('');
+  const [backupRunning, setBackupRunning] = useState(false);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -182,6 +188,97 @@ export default function AdminPage() {
     const interval = setInterval(fetchPresence, 15_000);
     return () => clearInterval(interval);
   }, [unlocked, fetchPresence]);
+
+  const fetchBackupConfig = useCallback(async () => {
+    setBackupConfigLoading(true);
+    setBackupConfigError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/backup-config?key=${ADMIN_PASSWORD}`);
+      if (res.status === 401) {
+        setBackupConfigError('Unauthorized');
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBackupConfigError((err as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      const data = (await res.json()) as { enabled?: boolean; folderId?: string; lastRunAt?: string | null; lastStatus?: string | null };
+      setBackupConfig({
+        enabled: !!data.enabled,
+        folderId: data.folderId ?? '',
+        lastRunAt: data.lastRunAt ?? null,
+        lastStatus: data.lastStatus ?? null,
+      });
+      setBackupFolderIdInput(data.folderId ?? '');
+    } catch (e) {
+      setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setBackupConfigLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    fetchBackupConfig();
+  }, [unlocked, fetchBackupConfig]);
+
+  const saveBackupConfig = useCallback(async () => {
+    setBackupConfigSaving(true);
+    setBackupConfigError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/backup-config?key=${ADMIN_PASSWORD}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: backupConfig.enabled, folderId: backupFolderIdInput.trim() || null }),
+      });
+      if (res.status === 401) {
+        setBackupConfigError('Unauthorized');
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBackupConfigError((err as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      const data = (await res.json()) as { enabled?: boolean; folderId?: string };
+      setBackupConfig((prev) => ({ ...prev, enabled: !!data.enabled, folderId: data.folderId ?? '' }));
+      setBackupFolderIdInput(data.folderId ?? '');
+    } catch (e) {
+      setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setBackupConfigSaving(false);
+    }
+  }, [backupConfig.enabled, backupFolderIdInput]);
+
+  const runBackupNow = useCallback(async () => {
+    setBackupRunning(true);
+    setBackupConfigError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/backup-config/run-now?key=${ADMIN_PASSWORD}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        setBackupConfigError('Unauthorized');
+        return;
+      }
+      if (!res.ok) {
+        setBackupConfigError((data as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      if (!(data as { ok?: boolean }).ok) {
+        setBackupConfigError((data as { error?: string }).error || 'Backup failed');
+        return;
+      }
+      await fetchBackupConfig();
+    } catch (e) {
+      setBackupConfigError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setBackupRunning(false);
+    }
+  }, [fetchBackupConfig]);
 
   const disconnectUser = useCallback(async (eventId: string, userId: string) => {
     if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
@@ -537,6 +634,85 @@ export default function AdminPage() {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <FolderOpen className="w-5 h-5 text-slate-400" />
+              Google Drive weekly backup
+            </h2>
+            <button
+              type="button"
+              onClick={fetchBackupConfig}
+              disabled={backupConfigLoading}
+              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {backupConfigLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          <p className="text-slate-500 text-sm mb-4">
+            Backs up <strong>upcoming</strong> events (event date ≥ today) to a <strong>weekly subfolder</strong> (e.g. 2026-W06) in your Drive folder. Add <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in your API environment when ready.
+          </p>
+          {backupConfigError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              {backupConfigError}
+              {backupConfigError.includes('relation') && ' Run the migration: migrations/022_create_admin_backup_config.sql'}
+            </div>
+          )}
+          {backupConfigLoading && !backupConfig.folderId && !backupConfigError ? (
+            <p className="text-slate-400 text-sm">Loading…</p>
+          ) : (
+            <div className="space-y-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={backupConfig.enabled}
+                  onChange={(e) => setBackupConfig((c) => ({ ...c, enabled: e.target.checked }))}
+                  className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-white text-sm">Enable weekly backup to Google Drive</span>
+              </label>
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">Drive folder ID</label>
+                <input
+                  type="text"
+                  value={backupFolderIdInput}
+                  onChange={(e) => setBackupFolderIdInput(e.target.value)}
+                  placeholder="e.g. 1ABC123xyz..."
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 font-mono text-sm"
+                />
+                <p className="text-slate-500 text-xs mt-1">
+                  From the folder URL: drive.google.com/drive/folders/<strong className="text-slate-400">FOLDER_ID</strong>
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={saveBackupConfig}
+                  disabled={backupConfigSaving}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  {backupConfigSaving ? 'Saving…' : 'Save settings'}
+                </button>
+                <button
+                  type="button"
+                  onClick={runBackupNow}
+                  disabled={backupRunning || backupConfigSaving || !backupConfig.enabled || !backupFolderIdInput.trim()}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                  title={!backupConfig.enabled || !backupFolderIdInput.trim() ? 'Enable backup and set folder ID first' : 'Run backup now (upcoming events → current week folder)'}
+                >
+                  {backupRunning ? 'Running…' : 'Run backup now'}
+                </button>
+              </div>
+              {(backupConfig.lastRunAt || backupConfig.lastStatus) && (
+                <div className="text-slate-400 text-xs pt-2 border-t border-slate-700">
+                  {backupConfig.lastRunAt && <span>Last run: {new Date(backupConfig.lastRunAt).toLocaleString()}</span>}
+                  {backupConfig.lastStatus && <span className="ml-2">· {backupConfig.lastStatus}</span>}
+                </div>
+              )}
+            </div>
           )}
         </section>
       </main>

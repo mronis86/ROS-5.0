@@ -481,6 +481,259 @@ app.post('/api/admin/disconnect-user', (req, res) => {
   }
 });
 
+// Admin backup config: GET (protected by ?key=1615)
+app.get('/api/admin/backup-config', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const r = await pool.query(
+      'SELECT gdrive_enabled, gdrive_folder_id, gdrive_last_run_at, gdrive_last_status, updated_at FROM admin_backup_config WHERE id = 1'
+    );
+    if (r.rows.length === 0) {
+      return res.json({
+        enabled: false,
+        folderId: '',
+        lastRunAt: null,
+        lastStatus: null,
+        updatedAt: null
+      });
+    }
+    const row = r.rows[0];
+    res.json({
+      enabled: !!row.gdrive_enabled,
+      folderId: row.gdrive_folder_id || '',
+      lastRunAt: row.gdrive_last_run_at,
+      lastStatus: row.gdrive_last_status || null,
+      updatedAt: row.updated_at
+    });
+  } catch (err) {
+    console.error('[admin backup-config GET] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin backup config: PUT (protected by ?key=1615). Partial update: only provided fields are updated.
+app.put('/api/admin/backup-config', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const { enabled, folderId } = req.body || {};
+  try {
+    const existing = await pool.query(
+      'SELECT gdrive_enabled, gdrive_folder_id FROM admin_backup_config WHERE id = 1'
+    );
+    const row = existing.rows[0];
+    const newEnabled = enabled !== undefined ? !!enabled : (row && row.gdrive_enabled);
+    const newFolderId = folderId !== undefined
+      ? (folderId != null && String(folderId).trim() ? String(folderId).trim() : null)
+      : (row && row.gdrive_folder_id);
+
+    await pool.query(
+      `INSERT INTO admin_backup_config (id, gdrive_enabled, gdrive_folder_id, updated_at)
+       VALUES (1, $1, $2, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         gdrive_enabled = $1,
+         gdrive_folder_id = $2,
+         updated_at = NOW()`,
+      [newEnabled, newFolderId]
+    );
+    const r = await pool.query(
+      'SELECT gdrive_enabled, gdrive_folder_id, updated_at FROM admin_backup_config WHERE id = 1'
+    );
+    const out = r.rows[0] || {};
+    res.json({
+      enabled: !!out.gdrive_enabled,
+      folderId: out.gdrive_folder_id || '',
+      updatedAt: out.updated_at
+    });
+  } catch (err) {
+    console.error('[admin backup-config PUT] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Weekly backup to Google Drive (upcoming events, weekly subfolders) ---
+function getISOWeekString(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const mon = new Date(d);
+  mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  const y = mon.getFullYear();
+  const jan1 = new Date(y, 0, 1);
+  const w = 1 + Math.floor((mon - jan1) / (7 * 24 * 3600 * 1000));
+  return `${y}-W${String(w).padStart(2, '0')}`;
+}
+
+function escapeCsvCell(val) {
+  if (val == null) return '';
+  const s = String(val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function buildRunOfShowCSV(row) {
+  let scheduleItems = row.schedule_items;
+  if (typeof scheduleItems === 'string') scheduleItems = JSON.parse(scheduleItems || '[]');
+  if (!Array.isArray(scheduleItems)) scheduleItems = [];
+  const customColumns = row.custom_columns || [];
+  const customColumnHeaders = (Array.isArray(customColumns) ? customColumns : []).map((c) => c.name || c.id || '');
+  const csvHeaders = [
+    'ROW', 'CUE', 'Program Type', 'Shot Type', 'Segment Name', 'Duration',
+    'Start Time', 'End Time', 'Notes', 'Assets', 'Speakers', 'Has PPT', 'Has QA',
+    'Timer ID', 'Is Public', 'Is Indented', 'Day'
+  ].concat(customColumnHeaders);
+  const cleanNotes = (html) => {
+    if (!html) return '';
+    return String(html).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+  const rows = scheduleItems.map((item, index) => {
+    const durH = item.durationHours ?? 0;
+    const durM = item.durationMinutes ?? 0;
+    const durS = item.durationSeconds ?? 0;
+    const duration = `${durH}:${String(durM).padStart(2, '0')}:${String(durS).padStart(2, '0')}`;
+    const programType = item.programType === 'Break F&B/B2B' ? 'Break' : (item.programType || '');
+    const base = [
+      index + 1,
+      item.customFields?.cue || `CUE ${index + 1}`,
+      programType,
+      item.shotType || '',
+      item.segmentName || '',
+      duration,
+      '', // Start Time - leave empty for backup
+      '', // End Time
+      cleanNotes(item.notes),
+      item.assets || '',
+      item.speakersText || '',
+      item.hasPPT ? 'Yes' : 'No',
+      item.hasQA ? 'Yes' : 'No',
+      item.timerId || '',
+      item.isPublic ? 'Yes' : 'No',
+      item.isIndented ? 'Yes' : 'No',
+      item.day ?? 1
+    ];
+    const customVals = customColumnHeaders.map(() => '');
+    if (item.customFields && Array.isArray(customColumns)) {
+      customColumns.forEach((col, i) => {
+        const id = col.id ?? col.name;
+        if (id != null) {
+          const v = item.customFields[id] ?? item.customFields[String(id)];
+          customVals[i] = v != null ? String(v) : '';
+        }
+      });
+    }
+    return base.concat(customVals).map(escapeCsvCell).join(',');
+  });
+  const headerLine = csvHeaders.map(escapeCsvCell).join(',');
+  return '\uFEFF' + [headerLine, ...rows].join('\n');
+}
+
+async function runWeeklyBackupToDrive() {
+  const configResult = await pool.query(
+    'SELECT gdrive_enabled, gdrive_folder_id FROM admin_backup_config WHERE id = 1'
+  );
+  const config = configResult.rows[0];
+  if (!config || !config.gdrive_enabled || !config.gdrive_folder_id) {
+    return { ok: false, error: 'Backup not enabled or folder ID not set' };
+  }
+  const folderId = config.gdrive_folder_id.trim();
+  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (!serviceAccountJson) {
+    await pool.query(
+      `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+      ['Error: GOOGLE_SERVICE_ACCOUNT_JSON not set']
+    );
+    return { ok: false, error: 'GOOGLE_SERVICE_ACCOUNT_JSON not set' };
+  }
+  let credentials;
+  try {
+    credentials = typeof serviceAccountJson === 'string' ? JSON.parse(serviceAccountJson) : serviceAccountJson;
+  } catch (e) {
+    await pool.query(
+      `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+      ['Error: Invalid GOOGLE_SERVICE_ACCOUNT_JSON']
+    );
+    return { ok: false, error: 'Invalid GOOGLE_SERVICE_ACCOUNT_JSON' };
+  }
+  const { google } = require('googleapis');
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/drive.file']
+  });
+  const drive = google.drive({ version: 'v3', auth });
+  const weekName = getISOWeekString(new Date());
+  let weekFolderId;
+  try {
+    const listRes = await drive.files.list({
+      q: `'${folderId}' in parents and name = '${weekName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id,name)'
+    });
+    if (listRes.data.files && listRes.data.files.length > 0) {
+      weekFolderId = listRes.data.files[0].id;
+    } else {
+      const createRes = await drive.files.create({
+        requestBody: { name: weekName, mimeType: 'application/vnd.google-apps.folder', parents: [folderId] },
+        fields: 'id'
+      });
+      weekFolderId = createRes.data.id;
+    }
+  } catch (e) {
+    const msg = e.message || String(e);
+    await pool.query(
+      `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+      [`Drive error: ${msg}`]
+    );
+    return { ok: false, error: msg };
+  }
+  const upcomingResult = await pool.query(
+    `SELECT event_id, event_name, event_date, schedule_items, custom_columns
+     FROM run_of_show_data
+     WHERE event_date >= CURRENT_DATE
+     ORDER BY event_date ASC`
+  );
+  const events = upcomingResult.rows || [];
+  let uploaded = 0;
+  for (const row of events) {
+    try {
+      const csv = buildRunOfShowCSV(row);
+      const eventDate = row.event_date ? (typeof row.event_date === 'string' ? row.event_date : row.event_date.toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
+      const safeName = (row.event_name || `Event_${row.event_id}`).replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
+      const fileName = `${safeName}_${eventDate}.csv`;
+      await drive.files.create({
+        requestBody: { name: fileName, parents: [weekFolderId] },
+        media: { mimeType: 'text/csv', body: csv }
+      });
+      uploaded++;
+    } catch (e) {
+      console.error('[backup] upload failed for event', row.event_id, e.message);
+    }
+  }
+  const status = events.length === 0
+    ? 'No upcoming events'
+    : `Uploaded ${uploaded}/${events.length} to ${weekName}`;
+  await pool.query(
+    `UPDATE admin_backup_config SET gdrive_last_run_at = NOW(), gdrive_last_status = $1 WHERE id = 1`,
+    [status]
+  );
+  return { ok: true, weekFolder: weekName, uploaded, total: events.length };
+}
+
+app.post('/api/admin/backup-config/run-now', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const result = await runWeeklyBackupToDrive();
+    if (!result.ok) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('[admin backup-config run-now] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Test endpoint to verify Upstash is working
 app.get('/api/test-upstash', async (req, res) => {
   try {
