@@ -1,6 +1,0 @@
-# Netlify redirects file for SPA routing
-# Netlify functions should work automatically without redirects
-
-# Redirect all routes to React app, but Netlify functions are handled separately
-/*    /index.html   200
-
