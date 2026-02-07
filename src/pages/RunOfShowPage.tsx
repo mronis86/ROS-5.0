@@ -16,6 +16,7 @@ import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal from '../components/DisplayModal';
+import PinNotesColumnModal from '../components/PinNotesColumnModal';
 import ExcelImportModal from '../components/ExcelImportModal';
 import AgendaImportModal from '../components/AgendaImportModal';
 import ImportCSVModal from '../components/ImportCSVModal';
@@ -728,6 +729,9 @@ const RunOfShowPage: React.FC = () => {
   const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
+  const [pinNotesWindow, setPinNotesWindow] = useState<Window | null>(null);
+  const [pinNotesColumns, setPinNotesColumns] = useState<{ type: 'notes' | 'custom'; id: string; name: string }[]>([]);
+  const [showPinNotesColumnModal, setShowPinNotesColumnModal] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [messageEnabled, setMessageEnabled] = useState(false);
@@ -6399,9 +6403,6 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [activeTimers, timerProgress, activeItemId, schedule, masterStartTime, eventName, fullScreenTimerWindow, secondaryTimer]);
 
-
-
-
   const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string }) => {
     // Generate random Timer ID
     const generateRandomTimerId = () => {
@@ -8028,6 +8029,42 @@ const RunOfShowPage: React.FC = () => {
   // Memoized filtered schedule
   const filteredSchedule = useMemo(() => getFilteredSchedule(), [schedule, selectedDay]);
 
+  // Pin-Notes popout: send schedule + current cue + selected columns (and available columns for selector)
+  const sendPinNotesUpdate = useCallback(() => {
+    if (!pinNotesWindow || pinNotesWindow.closed || pinNotesColumns.length === 0) return;
+    const currentId = hybridTimerData?.activeTimer?.item_id ?? activeItemId;
+    const availableColumns: { type: 'notes' | 'custom'; id: string; name: string }[] = [
+      { type: 'notes', id: 'notes', name: 'Notes' },
+      ...customColumns.map((c) => ({ type: 'custom' as const, id: c.id, name: c.name })),
+    ];
+    pinNotesWindow.postMessage(
+      {
+        type: 'PIN_NOTES_UPDATE',
+        eventId: event?.id ?? null,
+        schedule: filteredSchedule,
+        activeItemId: currentId != null ? Number(currentId) : null,
+        columns: pinNotesColumns,
+        availableColumns,
+      },
+      '*'
+    );
+  }, [pinNotesWindow, pinNotesColumns, filteredSchedule, hybridTimerData?.activeTimer?.item_id, activeItemId, customColumns]);
+
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => {
+      if (e.data?.type === 'PIN_NOTES_READY') sendPinNotesUpdate();
+      if (e.data?.type === 'PIN_NOTES_SET_COLUMNS' && Array.isArray(e.data?.columns) && e.data.columns.length > 0) {
+        setPinNotesColumns(e.data.columns);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [sendPinNotesUpdate]);
+
+  useEffect(() => {
+    sendPinNotesUpdate();
+  }, [sendPinNotesUpdate, schedule, selectedDay, activeItemId, hybridTimerData?.activeTimer?.item_id]);
+
   // Precompute row class names for main rows
   const rowClassNames = useMemo(() => {
     const classNames = new Map<number, string>();
@@ -9014,6 +9051,19 @@ const RunOfShowPage: React.FC = () => {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                         </svg>
                         Display Timer
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMenuDropdown(false);
+                          setShowPinNotesColumnModal(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                        title="Open a movable window showing Notes or a custom column (current + next 3 rows)"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Notes popout
                       </button>
                       <button
                         onClick={() => {
@@ -13062,6 +13112,25 @@ const RunOfShowPage: React.FC = () => {
         onSelectFullscreenTimer={openFullScreenTimer}
         onSelectClock={openClock}
       />
+
+      {/* Pin-Notes popout: choose one or more columns, then open movable window */}
+      {showPinNotesColumnModal && (
+        <PinNotesColumnModal
+          customColumns={customColumns}
+          onClose={() => setShowPinNotesColumnModal(false)}
+          onOpen={(selected) => {
+            setPinNotesColumns(selected);
+            const popoutUrl = `${window.location.origin}/pin-notes-popout?eventId=${event?.id || ''}`;
+            const win = window.open(
+              popoutUrl,
+              'pinNotesPopout',
+              'width=900,height=700,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes'
+            );
+            setPinNotesWindow(win);
+            setShowPinNotesColumnModal(false);
+          }}
+        />
+      )}
 
       {/* Backup Modal */}
       {showBackupModal && (
