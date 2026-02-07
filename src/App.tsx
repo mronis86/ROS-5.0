@@ -23,10 +23,12 @@ import PhotoViewPage from './pages/PhotoViewPage';
 import ScriptsFollowPage from './pages/ScriptsFollowPage';
 import TeleprompterPage from './pages/TeleprompterPage';
 import AdminPage from './pages/AdminPage';
+import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 
 function AppContent() {
   const location = useLocation();
   const isFullScreenTimer = location.pathname === '/fullscreen-timer';
+  const isPinNotesPopout = location.pathname === '/pin-notes-popout';
   const isClock = location.pathname === '/clock';
   const isGreenRoom = location.pathname === '/green-room';
   const isPhotoView = location.pathname === '/photo-view';
@@ -41,26 +43,29 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && <AppHeader />}
       
-      <AuthGuard>
-        <Routes>
-          <Route path="/admin" element={null} />
-          <Route path="/" element={<EventListPage />} />
-          <Route path="/run-of-show" element={<RunOfShowPage />} />
-          <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
-          <Route path="/graphics-links" element={<GraphicsLinksPage />} />
-          <Route path="/reports" element={<ReportsPage />} />
-          <Route path="/green-room" element={<GreenRoomPage />} />
-          <Route path="/photo-view" element={<PhotoViewPage />} />
-          <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
-          <Route path="/teleprompter" element={<TeleprompterPage />} />
-        </Routes>
-      </AuthGuard>
-      
-      {/* Pages that work without authentication */}
+      {!isPinNotesPopout && (
+        <AuthGuard>
+          <Routes>
+            <Route path="/admin" element={null} />
+            <Route path="/" element={<EventListPage />} />
+            <Route path="/run-of-show" element={<RunOfShowPage />} />
+            <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
+            <Route path="/graphics-links" element={<GraphicsLinksPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/green-room" element={<GreenRoomPage />} />
+            <Route path="/photo-view" element={<PhotoViewPage />} />
+            <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
+            <Route path="/teleprompter" element={<TeleprompterPage />} />
+          </Routes>
+        </AuthGuard>
+      )}
+
+      {/* Pages that work without authentication (popout loads without auth) */}
       <Routes>
         <Route path="/admin" element={<AdminPage />} />
+        <Route path="/pin-notes-popout" element={<PinNotesPopoutPage />} />
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
