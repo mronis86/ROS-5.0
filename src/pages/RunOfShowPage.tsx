@@ -730,7 +730,7 @@ const RunOfShowPage: React.FC = () => {
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
   const [pinNotesWindow, setPinNotesWindow] = useState<Window | null>(null);
-  const [pinNotesColumns, setPinNotesColumns] = useState<{ type: 'notes' | 'custom'; id: string; name: string }[]>([]);
+  const [pinNotesColumns, setPinNotesColumns] = useState<{ type: 'notes' | 'custom' | 'cue'; id: string; name: string }[]>([]);
   const [showPinNotesColumnModal, setShowPinNotesColumnModal] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [messageText, setMessageText] = useState('');
@@ -8036,7 +8036,7 @@ const RunOfShowPage: React.FC = () => {
   const sendPinNotesUpdate = useCallback(() => {
     if (!pinNotesWindow || pinNotesWindow.closed || pinNotesColumns.length === 0) return;
     const currentId = hybridTimerData?.activeTimer?.item_id ?? activeItemId;
-    const availableColumns: { type: 'notes' | 'custom'; id: string; name: string }[] = [
+    const availableColumns: { type: 'notes' | 'custom' | 'cue'; id: string; name: string }[] = [
       { type: 'notes', id: 'notes', name: 'Notes' },
       ...customColumns.map((c) => ({ type: 'custom' as const, id: c.id, name: c.name })),
     ];

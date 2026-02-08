@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export type PinNotesColumn = { type: 'notes' | 'custom'; id: string; name: string };
+export type PinNotesColumn = { type: 'notes' | 'custom' | 'cue'; id: string; name: string };
 
 interface PinNotesColumnModalProps {
   customColumns: { id: string; name: string }[];
