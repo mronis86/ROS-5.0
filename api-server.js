@@ -1105,16 +1105,49 @@ app.post('/api/parse-agenda-from-text', async (req, res) => {
 // Users are automatically synced to neon_auth.users_sync table
 // No custom authentication endpoints needed
 
-// Calendar Events endpoints
+// Calendar Events endpoints – ensure schedule_data is always an object for consumers
+function normalizeCalendarEvent(row) {
+  if (!row) return row;
+  const sd = row.schedule_data;
+  if (typeof sd === 'string') {
+    try {
+      row.schedule_data = JSON.parse(sd);
+    } catch (e) {
+      row.schedule_data = {};
+    }
+  } else if (sd == null || typeof sd !== 'object') {
+    row.schedule_data = row.schedule_data || {};
+  }
+  return row;
+}
+
 app.get('/api/calendar-events', async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM calendar_events ORDER BY date DESC'
     );
-    res.json(result.rows);
+    const rows = (result.rows || []).map(normalizeCalendarEvent);
+    res.json(rows);
   } catch (error) {
     console.error('Error fetching calendar events:', error);
     res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
+
+app.get('/api/calendar-events/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM calendar_events WHERE id = $1',
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    res.json(normalizeCalendarEvent(result.rows[0]));
+  } catch (error) {
+    console.error('Error fetching calendar event:', error);
+    res.status(500).json({ error: 'Failed to fetch calendar event' });
   }
 });
 

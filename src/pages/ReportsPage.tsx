@@ -30,26 +30,96 @@ const ReportsPage: React.FC = () => {
   
   // Get event data from URL parameters or location state
   const urlParams = new URLSearchParams(location.search);
-  const eventId = urlParams.get('eventId');
-  const eventName = urlParams.get('eventName');
-  
-  const event: Event = location.state?.event || {
-    id: eventId || '',
-    name: eventName || 'Current Event',
-    date: '',
-    location: '',
-    schedule: []
-  };
-  
-  // Debug logging
-  console.log('ReportsPage event data:', {
-    fromState: !!location.state?.event,
-    eventId,
-    eventName,
-    finalEvent: event,
-    userRole: localStorage.getItem('currentUserRole')
+  const eventIdParam = urlParams.get('eventId');
+  const eventNameParam = urlParams.get('eventName');
+
+  const [event, setEvent] = useState<Event>(() => {
+    const fromState = location.state?.event as Event | undefined;
+    if (fromState?.id) return fromState;
+    return {
+      id: eventIdParam || '',
+      name: eventNameParam || 'Current Event',
+      date: '',
+      location: '',
+      numberOfDays: 1
+    };
   });
-  
+
+  const eventId = event?.id || eventIdParam || '';
+  const eventName = event?.name || eventNameParam || '';
+
+  // Load full event (location, date) from calendar when we have eventId but missing location/date
+  useEffect(() => {
+    const fromState = location.state?.event as Event | undefined;
+    if (fromState?.id && fromState.id === event?.id) {
+      setEvent(fromState);
+      return;
+    }
+    const id = eventIdParam || event?.id;
+    const nameForMatch = (event?.name || eventNameParam || '').trim().toLowerCase();
+    if (!id || (event?.location && event?.date)) return;
+    let cancelled = false;
+    const parseScheduleData = (raw: any): { location?: string; numberOfDays?: number } | null => {
+      if (raw == null) return null;
+      if (typeof raw === 'object') return raw;
+      if (typeof raw === 'string') {
+        try {
+          return JSON.parse(raw) as { location?: string; numberOfDays?: number };
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    };
+    const applyCalendarEvent = (calEvent: any) => {
+      if (cancelled || !calEvent) return;
+      const scheduleData = parseScheduleData(calEvent.schedule_data);
+      const loc = scheduleData?.location ?? calEvent.location ?? '';
+      const dateObj = calEvent.date ? new Date(calEvent.date) : null;
+      const simpleDate = dateObj ? dateObj.toISOString().split('T')[0] : '';
+      setEvent((prev) => ({
+        ...prev,
+        id: prev?.id || calEvent.id || id,
+        name: prev?.name || calEvent.name || 'Current Event',
+        date: prev?.date || simpleDate,
+        location: prev?.location || loc,
+        numberOfDays: prev?.numberOfDays ?? scheduleData?.numberOfDays ?? 1
+      }));
+    };
+    const fetchListAndApply = () => {
+      DatabaseService.getCalendarEvents()
+        .then((list) => {
+          if (cancelled || !list?.length) return;
+          let found = list.find((e: any) => String(e.id) === String(id));
+          if (!found && nameForMatch) {
+            found = list.find((e: any) => (e.name || '').trim().toLowerCase() === nameForMatch);
+          }
+          applyCalendarEvent(found || null);
+        })
+        .catch(() => {});
+    };
+    // Try single-event endpoint first (works after Railway deploy)
+    DatabaseService.getCalendarEvent(id)
+      .then((calEvent: any) => {
+        if (cancelled) return;
+        const scheduleData = parseScheduleData(calEvent?.schedule_data);
+        const hasLocation = !!(scheduleData?.location ?? calEvent?.location);
+        if (calEvent && hasLocation) {
+          applyCalendarEvent(calEvent);
+        } else if (calEvent && !hasLocation) {
+          // Event returned but no location (e.g. from localStorage fallback) – fetch list to get server data
+          fetchListAndApply();
+        } else {
+          applyCalendarEvent(calEvent);
+        }
+      })
+      .catch(() => {
+        // Fallback: fetch full list and find by id or name (works before GET :id is deployed)
+        fetchListAndApply();
+      });
+    return () => { cancelled = true; };
+  }, [eventIdParam, event?.id, event?.name, eventNameParam, event?.location, event?.date, location.state?.event]);
+
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [masterStartTime, setMasterStartTime] = useState('');
   const [reportType, setReportType] = useState('showfile');
@@ -115,6 +185,18 @@ const ReportsPage: React.FC = () => {
           if (data?.settings?.timezone) {
             setEventTimezone(data.settings.timezone);
           }
+          // Enrich event for report headers (condensed/full): date, name, location from run-of-show data
+          const rosDate = data.event_date
+            ? (typeof data.event_date === 'string' && data.event_date.length >= 10
+                ? data.event_date.slice(0, 10)
+                : new Date(data.event_date).toISOString().split('T')[0])
+            : '';
+          setEvent((prev) => ({
+            ...prev,
+            name: data.event_name ?? prev?.name ?? 'Current Event',
+            date: rosDate || prev?.date || '',
+            location: (data as any).event_location || data.settings?.location || prev?.location || ''
+          }));
         } catch {
           const fromStorage = loadScheduleFromStorage();
           if (fromStorage.length > 0) setSchedule(fromStorage);
@@ -153,6 +235,18 @@ const ReportsPage: React.FC = () => {
     if (cueStr.match(/^CUE\d+$/)) return cueStr.replace(/^CUE(\d+)$/, 'CUE $1');
     // For plain numbers or other formats, add "CUE " prefix
     return `CUE ${cueStr}`;
+  };
+
+  // Program type display label (HTML-safe); two-line labels so badge stays narrow (like Full-Stage Ted-Talk)
+  const formatProgramTypeLabel = (programType: string) => {
+    if (!programType) return '';
+    const twoLine: Record<string, string> = {
+      'Full-Stage/Ted-Talk': 'Full-Stage<br>Ted-Talk',
+      'Podium Transition': 'Podium<br>Transition',
+      'Panel Transition': 'Panel<br>Transition',
+      'Breakout Session': 'Breakout<br>Session',
+    };
+    return twoLine[programType] ?? programType;
   };
 
   // UTC conversion functions (same as other pages)
@@ -368,10 +462,11 @@ const ReportsPage: React.FC = () => {
       'PreShow/End': '#8B5CF6',        // Bright Purple
       'Podium Transition': '#8B4513',  // Dark Brown
       'Panel Transition': '#404040',   // Darker Grey
+      'Full-Stage/Ted-Talk': '#EA580C', // Bright Orange (matches RunOfShowPage)
       'Sub Cue': '#F3F4F6',           // White with border
       'No Transition': '#059669',      // Bright Teal
       'Video': '#F59E0B',              // Bright Yellow/Orange
-      'Panel+Remote': '#1E40AF',       // Darker Blue
+      'Panel+Remote': '#1E40AF',       // Dark blue (remote panel)
       'Remote Only': '#60A5FA',        // Light Blue
       'Break F&B/B2B': '#EC4899',              // Bright Pink
       'Breakout Session': '#20B2AA',           // Seafoam
@@ -383,15 +478,45 @@ const ReportsPage: React.FC = () => {
     return colors[programType] || '#D3D3D3'; // Light gray default
   };
 
-  // Get row background color (white for Panel/Podium, colored for others)
+  // Program type labels for condensed report color legend (same order as Run of Show program type dropdown)
+  const condensedColorLegend: { label: string; key: string }[] = [
+    { label: 'PreShow/End', key: 'PreShow/End' },
+    { label: 'Podium Transition', key: 'Podium Transition' },
+    { label: 'Panel Transition', key: 'Panel Transition' },
+    { label: 'Full Stage / Ted Talk', key: 'Full-Stage/Ted-Talk' },
+    { label: 'Sub Cue', key: 'Sub Cue' },
+    { label: 'No Transition', key: 'No Transition' },
+    { label: 'Video', key: 'Video' },
+    { label: 'Panel + Remote', key: 'Panel+Remote' },
+    { label: 'Remote Only', key: 'Remote Only' },
+    { label: 'Break F&B / B2B', key: 'Break F&B/B2B' },
+    { label: 'Breakout Session', key: 'Breakout Session' },
+    { label: 'TBD', key: 'TBD' },
+    { label: 'KILLED', key: 'KILLED' },
+  ];
+
+  // Get row background color (white for types that only highlight CUE badge; others = full row highlight)
   const getRowBackgroundColor = (programType: string) => {
-    // Panel Transition and Podium Transition should have white backgrounds
-    if (programType === 'Panel Transition' || programType === 'Podium Transition' || 
-        programType === 'Panel' || programType === 'Podium') {
-      return '#FFFFFF'; // White background
+    if (programType === 'Panel Transition' || programType === 'Podium Transition' ||
+        programType === 'Panel' || programType === 'Podium' ||
+        programType === 'Panel+Remote' || programType === 'Full-Stage/Ted-Talk') {
+      return '#FFFFFF'; // White background; CUE column has colored badge
     }
-    // All other types get their program type color as background
     return getProgramTypeColor(programType);
+  };
+
+  // Color used in the legend and in the CUE badge for each type (identifying color)
+  const getLegendOrBadgeColor = (programType: string) => {
+    const badgeColors: Record<string, string> = {
+      'Panel': '#404040',
+      'Panel Transition': '#404040',
+      'Podium': '#8B4513',
+      'Podium Transition': '#8B4513',
+      'Panel+Remote': '#1E40AF',
+      'Full-Stage/Ted-Talk': '#EA580C',
+      'Sub Cue': '#9CA3AF',
+    };
+    return badgeColors[programType] ?? getProgramTypeColor(programType);
   };
 
   // Extract top-level <li>...</li> only (so nested lists don't break numbering/order)
@@ -723,6 +848,14 @@ const ReportsPage: React.FC = () => {
           font-weight: normal; 
           text-align: center;
           font-size: 10px;
+        }
+        /* Fixed CUE column (first column) for print */
+        .simple-table td:nth-child(1),
+        .simple-table tr:first-child td:nth-child(1) {
+          width: 105px;
+          min-width: 105px;
+          max-width: 105px;
+          box-sizing: border-box;
         }
         .stacked-header {
           width: 300px;
@@ -1058,7 +1191,7 @@ const ReportsPage: React.FC = () => {
                 <tr>
                   <td>
                     <div style="margin-bottom: 4px;">${formatCueDisplay(item.customFields?.cue) || `CUE ${index + 1}`}</div>
-                    <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${item.programType || 'Unknown'}</div>
+                    <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; width: fit-content; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${formatProgramTypeLabel(item.programType) || 'Unknown'}</div>
                   </td>
                   <td class="times-cell">
                     <div class="times-content">
@@ -1318,6 +1451,14 @@ const ReportsPage: React.FC = () => {
           font-weight: normal; 
           text-align: center;
           font-size: 10px;
+        }
+        /* Fixed CUE column (first column) for print */
+        .simple-table td:nth-child(1),
+        .simple-table tr:first-child td:nth-child(1) {
+          width: 105px;
+          min-width: 105px;
+          max-width: 105px;
+          box-sizing: border-box;
         }
         .stacked-header {
           width: 300px;
@@ -1649,7 +1790,7 @@ const ReportsPage: React.FC = () => {
                 <tr>
                   <td class="times-cell">
                     <div style="margin-bottom: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue) || `CUE ${index + 1}`}</div>
-                    <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${item.programType || 'Unknown'}</div>
+                    <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; width: fit-content; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${formatProgramTypeLabel(item.programType) || 'Unknown'}</div>
                     <div class="times-content" style="margin-top: 6px;">
                       <div class="start-time">
                         <span class="time-label">Start:</span> ${startTime}
@@ -1801,6 +1942,29 @@ const ReportsPage: React.FC = () => {
               margin-bottom: 20px; 
               font-size: 12px;
             }
+            .color-legend {
+              margin-bottom: 20px;
+              padding: 12px 15px;
+              background: #fafafa;
+              border: 1px solid #e5e5e5;
+              border-radius: 5px;
+              font-size: 11px;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .color-legend-title { margin: 0 0 10px 0; color: #333; }
+            .color-legend-rows {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 8px 12px;
+            }
+            .color-legend-row {
+              padding: 6px 12px;
+              border-radius: 4px;
+              font-weight: 500;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
             table { 
               width: 100%; 
               border-collapse: collapse; 
@@ -1868,8 +2032,20 @@ const ReportsPage: React.FC = () => {
             <p><strong>Event:</strong> ${event?.name || 'Current Event'} | 
                <strong>Date:</strong> ${event?.date || 'Not specified'} | 
                <strong>Location:</strong> ${event?.location || 'Not specified'} | 
-               <strong>Start Time:</strong> ${masterStartTime || 'Not set'} | 
+               <strong>Start Time:</strong> ${formatMasterStartTime(masterStartTime)} | 
                <strong>Total Items:</strong> ${schedule.length}</p>
+          </div>
+          
+          <div class="color-legend">
+            <p class="color-legend-title"><strong>Color coding</strong> — CUE label/badge color or row background (matches table below):</p>
+            <div class="color-legend-rows">
+              ${condensedColorLegend.map(({ label, key }) => {
+                const legendColor = getLegendOrBadgeColor(key);
+                const isLight = legendColor === '#FFFFFF' || legendColor === '#F3F4F6' || legendColor === '#D3D3D3' || legendColor === '#F59E0B';
+                const textColor = isLight ? '#333' : '#fff';
+                return `<div class="color-legend-row" style="background-color: ${legendColor}; color: ${textColor}; border: 1px solid #999;">${label}</div>`;
+              }).join('')}
+            </div>
           </div>
           
           <table>
@@ -1945,9 +2121,21 @@ const ReportsPage: React.FC = () => {
           shotPptText = '';
         }
         
+        const cueDisplay = formatCueDisplay(item.customFields?.cue);
+        const cueBadge = item.programType === 'Sub Cue'
+          ? `<span style="background-color: #9CA3AF; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
+          : (item.programType === 'Podium' || item.programType === 'Podium Transition')
+            ? `<span style="background-color: #8B4513; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
+            : (item.programType === 'Panel' || item.programType === 'Panel Transition')
+              ? `<span style="background-color: #404040; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
+              : item.programType === 'Panel+Remote'
+                ? `<span style="background-color: ${programColor}; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
+                : item.programType === 'Full-Stage/Ted-Talk'
+                  ? `<span style="background-color: #EA580C; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
+                  : cueDisplay;
         content += `
           <tr style="background-color: ${getRowBackgroundColor(item.programType)};">
-            <td>${item.programType === 'Sub Cue' ? `<span style="background-color: #9CA3AF; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : (item.programType === 'Podium' || item.programType === 'Podium Transition') ? `<span style="background-color: #8B4513; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : (item.programType === 'Panel' || item.programType === 'Panel Transition') ? `<span style="background-color: #404040; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue)}</span>` : formatCueDisplay(item.customFields?.cue)}</td>
+            <td>${cueBadge}</td>
             <td>${startTime}</td>
             <td>${duration}</td>
             <td>${item.segmentName || 'Untitled Segment'}</td>
