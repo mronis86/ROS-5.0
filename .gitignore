@@ -119,3 +119,8 @@ venv/
 
 # Local development files
 *.local
+
+# Temp / comparison files (so git does not show as uncommitted)
+diff_app.txt
+temp_runofshow_was.txt
+temp_*.txt
