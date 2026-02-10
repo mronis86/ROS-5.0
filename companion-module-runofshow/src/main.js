@@ -11,7 +11,9 @@ class RunOfShowInstance extends InstanceBase {
 		this.scheduleItems = []
 		this.activeTimer = null
 		this.pollInterval = null
+		this.autoDisableTimeout = null
 		this.refreshStartedAt = null
+		this.syncPausedByTimer = false
 	}
 
 	async init(config) {
@@ -24,14 +26,13 @@ class RunOfShowInstance extends InstanceBase {
 		this.updatePresets()
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
-		this.startPolling()
+		if (this.getSyncIntervalEnabled()) this.startPolling()
 		this.updateStatus(InstanceStatus.Ok)
 	}
 
 	async destroy() {
-		if (this.pollInterval) {
-			clearInterval(this.pollInterval)
-		}
+		if (this.pollInterval) clearInterval(this.pollInterval)
+		if (this.autoDisableTimeout) clearTimeout(this.autoDisableTimeout)
 	}
 
 	async configUpdated(config) {
@@ -39,7 +40,7 @@ class RunOfShowInstance extends InstanceBase {
 		this.refreshStartedAt = Date.now()
 		this.updateStatus(InstanceStatus.Connecting)
 		await this.fetchData()
-		this.startPolling() // restart with new sync interval and event ID
+		if (this.getSyncIntervalEnabled()) this.startPolling()
 		this.updateActions()
 		this.updateFeedbacks()
 		this.updatePresets()
@@ -117,33 +118,62 @@ class RunOfShowInstance extends InstanceBase {
 		}
 	}
 
+	getSyncIntervalEnabled() {
+		const v = this.config?.syncIntervalEnabled
+		return v !== false && v !== 'false'
+	}
+
+	// Hours after which to auto-disconnect sync. 0 = never. From single "Auto-disable sync after (hours)" field.
+	getAutoDisableHours() {
+		const h = parseInt(this.config?.autoDisableSyncAfterHours, 10)
+		if (Number.isFinite(h) && h >= 0) return Math.min(168, h)
+		return 0
+	}
+
 	startPolling() {
 		if (this.pollInterval) clearInterval(this.pollInterval)
+		if (this.autoDisableTimeout) clearTimeout(this.autoDisableTimeout)
 		this.pollInterval = null
+		this.autoDisableTimeout = null
+		this.syncPausedByTimer = false
+		if (!this.getSyncIntervalEnabled()) return
 		this.refreshStartedAt = Date.now()
+		const autoDisableHours = this.getAutoDisableHours()
+		if (autoDisableHours > 0) {
+			this.log('info', `Starting Auto Disable Sync: will turn off after ${autoDisableHours} hour(s)`)
+			const self = this
+			const limitMs = autoDisableHours * 60 * 60 * 1000
+			this.autoDisableTimeout = setTimeout(function onAutoDisable() {
+				self.autoDisableTimeout = null
+				if (self.pollInterval) {
+					clearInterval(self.pollInterval)
+					self.pollInterval = null
+				}
+				self.syncPausedByTimer = true
+				self.log('info', `Auto-disable sync: sync interval turned off after ${autoDisableHours} hour(s)`)
+				self.updateStatus(InstanceStatus.Ok)
+				self.updateVariableValues()
+				try {
+					self.saveConfig({ ...self.config, syncIntervalEnabled: false })
+				} catch (e) {
+					self.log('warn', 'Could not update config: ' + (e && e.message))
+				}
+			}, limitMs)
+		}
 		const seconds = Math.max(5, Math.min(600, parseInt(this.config?.syncIntervalSeconds, 10) || 60))
 		const ms = seconds * 1000
-		this.pollInterval = setInterval(() => {
-			if (!this.config?.eventId) return
-			const stopAfterEnabled = this.config.stopRefreshAfterEnabled === true || this.config.stopRefreshAfterEnabled === 'true'
-			if (stopAfterEnabled && this.refreshStartedAt != null) {
-				const hours = Math.max(1, Math.min(72, parseInt(this.config.stopRefreshAfterHours, 10) || 4))
-				const limitMs = hours * 3600 * 1000
-				if ((Date.now() - this.refreshStartedAt) >= limitMs) {
-					clearInterval(this.pollInterval)
-					this.pollInterval = null
-					this.updateStatus(InstanceStatus.Warning, `Refresh stopped after ${hours}h (time limit)`)
-					return
-				}
-			}
-			this.fetchData().then(() => {
-				this.updateActions()
-				this.updateFeedbacks()
-				this.updatePresets()
-				this.updateVariableDefinitions()
-				this.updateVariableValues()
+		const self = this
+		this.pollInterval = setInterval(function tick() {
+			if (!self.config?.eventId) return
+			self.fetchData().then(() => {
+				self.updateActions()
+				self.updateFeedbacks()
+				self.updatePresets()
+				self.updateVariableDefinitions()
+				self.updateVariableValues()
 			}).catch(() => {})
 		}, ms)
+		this.updateVariableValues()
 	}
 
 	async apiPost(path, body) {
@@ -208,6 +238,14 @@ class RunOfShowInstance extends InstanceBase {
 				max: 10,
 			},
 			{
+				type: 'checkbox',
+				id: 'syncIntervalEnabled',
+				label: 'Enable sync interval',
+				width: 12,
+				default: true,
+				tooltip: 'When ON: fetch schedule/timer every "Sync interval (seconds)". When OFF: no periodic fetch (Load cue / Start timer still work). Turn back on or use "Resume sync" to sync again.',
+			},
+			{
 				type: 'number',
 				id: 'syncIntervalSeconds',
 				label: 'Sync interval (seconds)',
@@ -215,25 +253,17 @@ class RunOfShowInstance extends InstanceBase {
 				default: 60,
 				min: 5,
 				max: 600,
-				tooltip: 'How often to fetch schedule/timer from the API (5–600 seconds). Lower = more responsive, higher = less traffic.',
-			},
-			{
-				type: 'checkbox',
-				id: 'stopRefreshAfterEnabled',
-				label: 'Stop refresh after set hours',
-				width: 12,
-				default: false,
-				tooltip: 'When enabled, the module will stop polling the API after the number of hours set below. Restart the instance or change config to resume.',
+				tooltip: 'How often to fetch from API (5–600). Used only when "Enable sync interval" is ON.',
 			},
 			{
 				type: 'number',
-				id: 'stopRefreshAfterHours',
-				label: 'Stop after (hours)',
+				id: 'autoDisableSyncAfterHours',
+				label: 'Auto-disable sync after (hours)',
 				width: 6,
-				default: 4,
-				min: 1,
-				max: 72,
-				tooltip: 'Stop fetching schedule/timer after this many hours (only if "Stop refresh after set hours" is enabled).',
+				default: 0,
+				min: 0,
+				max: 168,
+				tooltip: '0 = never. 1+ = turn off sync after that many hours; use "Enable sync interval" to resume.',
 			},
 		]
 	}
@@ -290,6 +320,26 @@ class RunOfShowInstance extends InstanceBase {
 					},
 				],
 			}
+		}
+
+		// Resume sync (when sync was stopped by "Stop sync after X hours")
+		presets.resume_sync = {
+			type: 'button',
+			category: 'Sync',
+			name: 'Resume sync',
+			style: {
+				text: 'Resume sync',
+				size: 'auto',
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(80, 80, 120),
+			},
+			feedbacks: [],
+			steps: [
+				{
+					down: [{ actionId: 'resume_sync', options: {} }],
+					up: [],
+				},
+			],
 		}
 
 		// Timer control presets (Start, Stop, Reset, +/- 1 min, +/- 5 min)
@@ -375,8 +425,12 @@ class RunOfShowInstance extends InstanceBase {
 	}
 
 	updateVariableValues() {
+		const syncActive = this.pollInterval != null ? 'Yes' : 'No'
 		const eventId = this.config?.eventId
-		if (!eventId) return
+		if (!eventId) {
+			this.setVariableValues({ sync_active: syncActive })
+			return
+		}
 
 		const event = this.events.find((e) => String(e.id) === String(eventId))
 		const currentItem = this.scheduleItems.find((s) => String(s.id) === String(this.activeTimer?.item_id))
@@ -386,6 +440,7 @@ class RunOfShowInstance extends InstanceBase {
 		const timerRunning = this.activeTimer?.is_running === true
 
 		const values = {
+			sync_active: syncActive,
 			current_cue: cueLabel,
 			current_segment: segmentName,
 			loaded_cue_value: loadedCueValue,

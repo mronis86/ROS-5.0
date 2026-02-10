@@ -1,5 +1,6 @@
 module.exports = function (self) {
 	const base = [
+		{ variableId: 'sync_active', name: 'Sync active (Yes/No)' },
 		{ variableId: 'current_cue', name: 'Current Cue' },
 		{ variableId: 'current_segment', name: 'Current Segment Name' },
 		{ variableId: 'loaded_cue_value', name: 'Loaded Cue Value' },

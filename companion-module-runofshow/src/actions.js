@@ -1,3 +1,5 @@
+const { InstanceStatus } = require('@companion-module/base')
+
 module.exports = function (self) {
 	const cueChoices = (self.scheduleItems || []).map((item) => {
 		const cueDisplay = self.formatCueDisplay ? self.formatCueDisplay(item.customFields?.cue, item.id) : (item.customFields?.cue ?? `CUE ${item.id}`)
@@ -232,6 +234,20 @@ module.exports = function (self) {
 			options: [],
 			callback: async () => {
 				await adjustTimerDuration(self, -300)
+			},
+		},
+		resume_sync: {
+			name: 'Resume sync',
+			options: [],
+			callback: async () => {
+				if (self.startPolling) {
+					self.startPolling()
+					self.updateStatus(InstanceStatus.Ok)
+					self.updateActions()
+					self.updateFeedbacks()
+					self.updateVariableValues()
+					self.log('info', 'Sync interval resumed')
+				}
 			},
 		},
 	})
