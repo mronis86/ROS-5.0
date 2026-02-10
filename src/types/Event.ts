@@ -5,6 +5,8 @@ export interface Event {
   location: string;
   numberOfDays: number;
   timezone?: string; // Event timezone
+  eventType?: string;
+  recordStreaming?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -15,7 +17,22 @@ export interface EventFormData {
   location: string;
   numberOfDays: number;
   timezone?: string;
+  eventType?: string;
+  recordStreaming?: string;
 }
+
+export const EVENT_TYPE_OPTIONS = [
+  { value: 'Staged Production', label: 'Staged Production', color: 'bg-amber-500' },
+  { value: 'Studio Hit', label: 'Studio Hit', color: 'bg-cyan-500' },
+  { value: 'General Meeting', label: 'General Meeting', color: 'bg-emerald-500' },
+  { value: 'Hollow Square', label: 'Hollow Square', color: 'bg-violet-500' },
+];
+
+export const RECORD_STREAMING_OPTIONS = [
+  { value: 'Record', label: 'Record', color: 'bg-red-500' },
+  { value: 'Streaming', label: 'Streaming', color: 'bg-green-700' },
+  { value: 'None', label: 'None', color: 'bg-slate-500' },
+];
 
 export const LOCATION_OPTIONS = [
   { value: 'Great Hall', label: 'Great Hall', color: 'bg-blue-600' },

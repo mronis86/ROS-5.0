@@ -27,6 +27,10 @@ public/build-info.txt
 Netlify-Build-*/
 netlify-build-*/
 ROS-5.0-Netlify-Build-*/
+OLD NETLIFY BUILDS/
+ROS-Netlify-Pro/
+ROS-5.0-Netlify-Fresh-*/
+ROS-5.0-Netlify-Complete-*/
 # netlify-upload built contents (keep netlify.toml, _redirects, README.md)
 netlify-upload/index.html
 netlify-upload/assets/

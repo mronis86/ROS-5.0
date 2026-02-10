@@ -97,11 +97,11 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
-              {/* Bitfocus Companion Module - full zip */}
+              {/* Bitfocus Companion Module - same zip updated by prebuild / zip-companion-module.js */}
               <div className="text-center mb-4">
                 <a
-                  href="/companion-module-runofshow-full.zip"
-                  download="companion-module-runofshow-full.zip"
+                  href="/companion-module-runofshow.zip"
+                  download="companion-module-runofshow.zip"
                   className="block bg-purple-600 hover:bg-purple-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
                   🎛️ Bitfocus Companion Module
@@ -112,7 +112,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
               </div>
               
               <div className="text-xs text-slate-500 mt-2 text-center leading-tight">
-                <strong>Portable:</strong> <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code>. <strong>Python:</strong> <code className="bg-slate-600 px-1 rounded">create-ros-osc-python-app-zip.bat</code>. <strong>Companion:</strong> <code className="bg-slate-600 px-1 rounded">create-companion-module-zip.bat</code>. Then deploy.
+                <strong>Zips</strong> (updated by <code className="bg-slate-600 px-1 rounded">npm run prebuild</code> or <code className="bg-slate-600 px-1 rounded">node scripts/zip-companion-module.js</code> / <code className="bg-slate-600 px-1 rounded">zip-python-app.js</code>). Portable: <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code>. Then deploy.
               </div>
             </div>
           </div>

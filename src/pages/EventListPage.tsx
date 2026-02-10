@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS } from '../types/Event';
+import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS, EVENT_TYPE_OPTIONS, RECORD_STREAMING_OPTIONS } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,14 +21,18 @@ const EventListPage: React.FC = () => {
     date: '',
     location: 'Great Hall',
     numberOfDays: 1,
-    timezone: 'America/New_York'
+    timezone: 'America/New_York',
+    eventType: 'Staged Production',
+    recordStreaming: 'None'
   });
   const [formData, setFormData] = useState<EventFormData>({
     name: '',
     date: '',
     location: 'Great Hall',
     numberOfDays: 1,
-    timezone: 'America/New_York'
+    timezone: 'America/New_York',
+    eventType: 'Staged Production',
+    recordStreaming: 'None'
   });
   
   // Role selection state
@@ -94,6 +98,8 @@ const EventListPage: React.FC = () => {
             location: calEvent.schedule_data?.location || 'Great Hall',
             numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
             timezone: calEvent.schedule_data?.timezone || 'America/New_York',
+            eventType: calEvent.schedule_data?.eventType || 'Staged Production',
+            recordStreaming: calEvent.schedule_data?.recordStreaming || 'None',
             created_at: calEvent.created_at || new Date().toISOString(),
             updated_at: calEvent.updated_at || new Date().toISOString()
           };
@@ -171,13 +177,16 @@ const EventListPage: React.FC = () => {
       date: formData.date,
       location: formData.location,
       numberOfDays: formData.numberOfDays,
+      timezone: formData.timezone || 'America/New_York',
+      eventType: formData.eventType || 'Staged Production',
+      recordStreaming: formData.recordStreaming || 'None',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
     // Close modal first to prevent layout shift
     setShowAddModal(false);
-    setFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1 });
+    setFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
     
     // Add event to local list immediately
     setEvents(prev => [...prev, newEvent]);
@@ -193,7 +202,10 @@ const EventListPage: React.FC = () => {
         schedule_data: {
           location: newEvent.location,
           numberOfDays: newEvent.numberOfDays,
-          eventId: newEvent.id
+          eventId: newEvent.id,
+          timezone: newEvent.timezone,
+          eventType: newEvent.eventType,
+          recordStreaming: newEvent.recordStreaming
         }
       };
       
@@ -250,6 +262,8 @@ const EventListPage: React.FC = () => {
       location: editFormData.location,
       numberOfDays: editFormData.numberOfDays,
       timezone: editFormData.timezone,
+      eventType: editFormData.eventType,
+      recordStreaming: editFormData.recordStreaming,
       updated_at: new Date().toISOString()
     };
 
@@ -266,7 +280,7 @@ const EventListPage: React.FC = () => {
 
     // Close modal first
     setEditingEvent(null);
-    setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York' });
+    setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
     
     // Update local list immediately for instant feedback
     setEvents(prev => prev.map(event => 
@@ -307,7 +321,9 @@ const EventListPage: React.FC = () => {
             location: updatedEvent.location,         // Then override with new values
             numberOfDays: updatedEvent.numberOfDays,
             eventId: updatedEvent.id,
-            timezone: updatedEvent.timezone
+            timezone: updatedEvent.timezone,
+            eventType: updatedEvent.eventType,
+            recordStreaming: updatedEvent.recordStreaming
           }
         };
         
@@ -411,7 +427,9 @@ const EventListPage: React.FC = () => {
       date: event.date,
       location: event.location,
       numberOfDays: event.numberOfDays,
-      timezone: event.timezone || 'America/New_York'
+      timezone: event.timezone || 'America/New_York',
+      eventType: event.eventType || 'Staged Production',
+      recordStreaming: event.recordStreaming || 'None'
     });
   };
 
@@ -442,6 +460,33 @@ const EventListPage: React.FC = () => {
     }
   };
 
+
+  const getEventTypeColor = (eventType: string) => {
+    const opt = EVENT_TYPE_OPTIONS.find(o => o.value === eventType);
+    return opt?.color ?? 'bg-slate-500';
+  };
+
+  const getRecordStreamingColor = (recordStreaming: string) => {
+    const opt = RECORD_STREAMING_OPTIONS.find(o => o.value === recordStreaming);
+    return opt?.color ?? 'bg-slate-500';
+  };
+
+  // Short labels for Event Type (pill style) and Broadcast Options (compact)
+  const getEventTypeShortLabel = (eventType: string) => {
+    const map: Record<string, string> = {
+      'Staged Production': 'Staged',
+      'Studio Hit': 'Studio',
+      'General Meeting': 'Meeting',
+      'Hollow Square': 'Hollow',
+    };
+    return map[eventType] ?? eventType;
+  };
+
+  const getRecordStreamingShort = (recordStreaming: string) => {
+    if (recordStreaming === 'Record') return { label: 'Rec', title: 'Record' };
+    if (recordStreaming === 'Streaming') return { label: 'Stream', title: 'Streaming' };
+    return { label: 'None', title: 'None' };
+  };
 
   const getLocationColor = (location: string) => {
     const locationOption = LOCATION_OPTIONS.find(opt => opt.value === location);
@@ -571,32 +616,29 @@ const EventListPage: React.FC = () => {
         </div>
       </div>
       
-      {/* Header */}
-      <div className="text-center py-8 mt-10">
-        <h1 className="text-4xl font-bold text-white mb-2">
+      {/* Header - compact, with top padding so title isn't clipped by fixed bar */}
+      <div className="text-center py-3 pt-14 mt-0">
+        <h1 className="text-xl font-bold text-white mb-0.5">
           📅 Event List Calendar
         </h1>
-        <p className="text-xl text-slate-400 mb-4">
+        <p className="text-sm text-slate-400 mb-1">
           Manage your events and schedules
         </p>
-        
         {user && (
-          <div className="text-center mb-6">
-            <p className="text-white font-medium text-lg">
-              Welcome back, {user.user_metadata?.full_name || user.email}!
-            </p>
-          </div>
+          <p className="text-white font-medium text-sm mb-0">
+            Welcome back, {user.user_metadata?.full_name || user.email}!
+          </p>
         )}
       </div>
 
       {/* Main Content */}
       <div className="max-w-6xl mx-auto px-6">
-        {/* Tabs */}
-        <div className="flex justify-center mb-8">
-          <div className="bg-slate-800 rounded-lg p-1 flex">
+        {/* Tabs + Add New Event on one row */}
+        <div className="flex flex-wrap items-center justify-center gap-3 mb-3">
+          <div className="bg-slate-800 rounded-lg p-0.5 flex">
             <button
               onClick={() => setActiveTab('upcoming')}
-              className={`px-6 py-3 rounded-md font-semibold transition-colors ${
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
                 activeTab === 'upcoming'
                   ? 'bg-green-600 text-white'
                   : 'text-slate-400 hover:text-white'
@@ -606,7 +648,7 @@ const EventListPage: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('past')}
-              className={`px-6 py-3 rounded-md font-semibold transition-colors ${
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
                 activeTab === 'past'
                   ? 'bg-orange-600 text-white'
                   : 'text-slate-400 hover:text-white'
@@ -615,29 +657,35 @@ const EventListPage: React.FC = () => {
               📋 Past Events
             </button>
           </div>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
+          >
+            + Add New Event
+          </button>
         </div>
 
         {/* Search and Filter */}
-        <div className="flex justify-center mb-6">
-          <div className="bg-slate-800 rounded-lg p-4 w-full max-w-4xl">
-            <div className="flex items-center gap-6 justify-between">
-              <div className="flex items-center gap-6">
+        <div className="flex justify-center mb-4">
+          <div className="bg-slate-800 rounded-lg p-3 w-full max-w-4xl">
+            <div className="flex items-center gap-4 justify-between">
+              <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
-                  <span className="text-white font-semibold">🔍 Search:</span>
+                  <span className="text-white font-semibold text-sm">🔍 Search:</span>
                   <input
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     placeholder="Search events by name or location..."
-                    className="w-80 px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                    className="w-80 px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-white font-semibold">📍 Filter by location:</span>
+                  <span className="text-white font-semibold text-sm">📍 Filter by location:</span>
                   <select
                     value={filterLocation}
                     onChange={(e) => setFilterLocation(e.target.value)}
-                    className="px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                    className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                   >
                     <option value="all">All Locations</option>
                     {LOCATION_OPTIONS.map((option) => (
@@ -656,7 +704,7 @@ const EventListPage: React.FC = () => {
                   loadEventsFromSupabase();
                 }}
                 disabled={isLoading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm"
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm text-white"
                 title="Refresh events list"
               >
                 {isLoading ? '🔄 Refreshing...' : '🔄 Refresh'}
@@ -664,7 +712,7 @@ const EventListPage: React.FC = () => {
             </div>
             
             {/* Info message below search bar */}
-            <div className="mt-3 text-center">
+            <div className="mt-2 text-center">
               <p className="text-xs text-slate-400">
                 ℹ️ Events don't auto-refresh. Click "Refresh" to check for new events.
               </p>
@@ -672,21 +720,11 @@ const EventListPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Add Event Button */}
-        <div className="flex justify-center mb-8">
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
-          >
-            + Add New Event
-          </button>
-        </div>
-
         {/* Events List */}
-        <div className="bg-slate-800 rounded-xl p-6 shadow-2xl">
+        <div className="bg-slate-800 rounded-xl p-4 shadow-2xl">
           {isLoading && (
-            <div className="text-center py-4 mb-4">
-              <div className="text-blue-400 text-lg">🔄 Loading events...</div>
+            <div className="text-center py-2 mb-2">
+              <div className="text-blue-400 text-sm">🔄 Loading events...</div>
             </div>
           )}
           <div className="bg-slate-800 rounded-lg overflow-hidden border border-slate-600">
@@ -694,18 +732,20 @@ const EventListPage: React.FC = () => {
               <table className="w-full">
                 <thead className="bg-slate-700">
                   <tr>
-                    <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Event Name</th>
-                    <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Date</th>
-                    <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Location</th>
-                    <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Duration</th>
-                    <th className="px-4 py-3 text-left text-slate-300 font-semibold border-r border-slate-600">Timezone</th>
-                    <th className="px-4 py-3 text-center text-slate-300 font-semibold">Actions</th>
+                    <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[220px] w-[28%]">Event Name</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Date</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Location</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Type</th>
+                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]" title="Broadcast Options">Broadcast</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Duration</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredEvents.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-12 text-center">
+                      <td colSpan={8} className="px-4 py-12 text-center">
                         <div className="text-6xl mb-4">
                           {activeTab === 'upcoming' ? '📅' : '📋'}
                         </div>
@@ -723,30 +763,43 @@ const EventListPage: React.FC = () => {
                   ) : (
                     filteredEvents.map((event) => (
                       <tr key={event.id} className="border-b border-slate-600">
-                        <td className="px-4 py-3 text-white font-medium border-r border-slate-600">
+                        <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[220px] w-[28%]">
                           {event.name}
                         </td>
-                        <td className="px-4 py-3 text-slate-300 border-r border-slate-600">
+                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600">
                           {formatDate(event.date)}
                         </td>
-                        <td className="px-4 py-3 border-r border-slate-600">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-3 h-3 rounded-full ${getLocationColor(event.location)}`}></div>
-                            <span className="text-slate-300">{event.location}</span>
+                        <td className="px-3 py-2 border-r border-slate-600">
+                          <div className="flex items-center gap-1.5">
+                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${getLocationColor(event.location)}`}></div>
+                            <span className="text-slate-300 text-sm">{event.location}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-slate-300 border-r border-slate-600">
+                        <td className="px-3 py-2 border-r border-slate-600">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getEventTypeColor(event.eventType || 'Staged Production')}`}
+                            title={event.eventType || 'Staged Production'}
+                          >
+                            {getEventTypeShortLabel(event.eventType || 'Staged Production')}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 border-r border-slate-600 min-w-[5.5rem] text-center">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
+                            title={getRecordStreamingShort(event.recordStreaming || 'None').title}
+                          >
+                            {getRecordStreamingShort(event.recordStreaming || 'None').label}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
                           {event.numberOfDays} day{event.numberOfDays > 1 ? 's' : ''}
                         </td>
-                        <td className="px-4 py-3 text-slate-300 border-r border-slate-600">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs">🌍</span>
-                            <span className="text-xs font-mono">
-                              {event.timezone || 'America/New_York'}
-                            </span>
-                          </div>
+                        <td className="px-3 py-2 text-slate-300 border-r border-slate-600">
+                          <span className="text-xs font-mono">
+                            {event.timezone || 'America/New_York'}
+                          </span>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-2">
                           <div className="flex gap-2 justify-center">
                             <button
                               onClick={() => launchRunOfShow(event)}
@@ -781,12 +834,12 @@ const EventListPage: React.FC = () => {
       {/* Add Event Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-4 max-w-sm w-full">
-            <h2 className="text-lg font-bold text-white mb-4">
+          <div className="bg-slate-800 rounded-lg p-4 max-w-2xl w-full max-h-[90vh] flex flex-col">
+            <h2 className="text-lg font-bold text-white mb-3 shrink-0">
               <span style={{ filter: 'brightness(0) invert(1)' }}>📅</span> Add New Event
             </h2>
-            <div className="space-y-3">
-              <div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 overflow-y-auto min-h-0 flex-1 pr-1">
+              <div className="col-span-2">
                 <label className="block text-slate-300 text-sm font-medium mb-1">Event Name</label>
                 <input
                   type="text"
@@ -823,6 +876,34 @@ const EventListPage: React.FC = () => {
                 </select>
               </div>
               <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">Event Type</label>
+                <select
+                  value={formData.eventType || 'Staged Production'}
+                  onChange={(e) => setFormData(prev => ({ ...prev, eventType: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                >
+                  {EVENT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">Broadcast Options</label>
+                <select
+                  value={formData.recordStreaming || 'None'}
+                  onChange={(e) => setFormData(prev => ({ ...prev, recordStreaming: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                >
+                  {RECORD_STREAMING_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Duration</label>
                 <select
                   value={formData.numberOfDays}
@@ -836,24 +917,38 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">Timezone</label>
+                <select
+                  value={formData.timezone || 'America/New_York'}
+                  onChange={(e) => setFormData(prev => ({ ...prev, timezone: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                >
+                  {TIMEZONE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="flex gap-2 mt-4">
+            <footer className="mt-4 pt-4 border-t border-slate-600 shrink-0 flex gap-3">
               <button
                 onClick={() => {
                   setShowAddModal(false);
-                  setFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1 });
+                  setFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
                 }}
-                className="flex-1 px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm font-medium"
+                className="flex-1 px-4 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={addEvent}
-                className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-medium"
+                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
               >
                 Add Event
               </button>
-            </div>
+            </footer>
           </div>
         </div>
       )}
@@ -861,12 +956,12 @@ const EventListPage: React.FC = () => {
       {/* Edit Event Modal */}
       {editingEvent && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-4 max-w-sm w-full">
-            <h2 className="text-lg font-bold text-white mb-4">
+          <div className="bg-slate-800 rounded-lg p-4 max-w-2xl w-full max-h-[90vh] flex flex-col">
+            <h2 className="text-lg font-bold text-white mb-3 shrink-0">
               <span style={{ filter: 'brightness(0) invert(1)' }}>✏️</span> Edit Event
             </h2>
-            <div className="space-y-3">
-              <div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 overflow-y-auto min-h-0 flex-1 pr-1">
+              <div className="col-span-2">
                 <label className="block text-slate-300 text-sm font-medium mb-1">Event Name</label>
                 <input
                   type="text"
@@ -903,6 +998,34 @@ const EventListPage: React.FC = () => {
                 </select>
               </div>
               <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">Event Type</label>
+                <select
+                  value={editFormData.eventType || 'Staged Production'}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, eventType: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                >
+                  {EVENT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1">Broadcast Options</label>
+                <select
+                  value={editFormData.recordStreaming || 'None'}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, recordStreaming: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                >
+                  {RECORD_STREAMING_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Duration</label>
                 <select
                   value={editFormData.numberOfDays}
@@ -931,23 +1054,23 @@ const EventListPage: React.FC = () => {
                 </select>
               </div>
             </div>
-            <div className="flex gap-2 mt-4">
+            <footer className="mt-4 pt-4 border-t border-slate-600 shrink-0 flex gap-3">
               <button
                 onClick={() => {
                   setEditingEvent(null);
-                  setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York' });
+                  setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
                 }}
-                className="flex-1 px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm font-medium"
+                className="flex-1 px-4 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={editEvent}
-                className="flex-1 px-3 py-2 bg-green-600 hover:bg-green-500 text-white rounded text-sm font-medium"
+                className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors"
               >
                 Update Event
               </button>
-            </div>
+            </footer>
           </div>
         </div>
       )}

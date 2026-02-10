@@ -2511,6 +2511,7 @@ const RunOfShowPage: React.FC = () => {
           eventName,
           masterStartTime,
           dayStartTimes,
+          numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
           ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
@@ -2582,6 +2583,7 @@ const RunOfShowPage: React.FC = () => {
           eventName: eventName,
           masterStartTime: masterStartTime,
           dayStartTimes: dayStartTimes,
+          numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
           ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
@@ -4609,7 +4611,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }) }
+          settings: { eventName, masterStartTime, dayStartTimes, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }) }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -4965,6 +4967,7 @@ const RunOfShowPage: React.FC = () => {
             eventName,
             masterStartTime,
             dayStartTimes,
+            numberOfDays: event?.numberOfDays,
             timezone: eventTimezone,
             lastSaved: new Date().toISOString(),
             show_mode: showMode,
@@ -6089,7 +6092,7 @@ const RunOfShowPage: React.FC = () => {
     DatabaseService.saveRunOfShowData({
       event_id: event.id,
       event_name: event?.name || 'Event',
-      settings: { show_mode: showMode, track_was_durations: trackWasDurations },
+      settings: { show_mode: showMode, track_was_durations: trackWasDurations, numberOfDays: event?.numberOfDays },
       schedule_items: scheduleToSave,
       custom_columns: customColsToSave,
       event_date: event?.date ?? undefined
@@ -10574,6 +10577,7 @@ const RunOfShowPage: React.FC = () => {
                                  eventName: eventName,
                                  masterStartTime: masterStartTime,
                                  dayStartTimes: dayStartTimes,
+                                 numberOfDays: event?.numberOfDays,
                                  show_mode: showMode,
                                  track_was_durations: trackWasDurations,
                                  ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })

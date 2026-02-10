@@ -125,6 +125,39 @@ const ReportsPage: React.FC = () => {
   const [reportType, setReportType] = useState('showfile');
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('landscape');
+
+  // Number of report days: use event.numberOfDays, or max day in schedule, or settings from API (whichever is highest)
+  const scheduleMaxDay = schedule.length ? Math.max(...schedule.map(s => s.day || 1)) : 0;
+  const reportDaysCount = Math.max(
+    1,
+    event?.numberOfDays || 0,
+    scheduleMaxDay
+  );
+  // Options for date/day selector: calendar date + Day N when we have event.date
+  const reportDayOptions = (() => {
+    const base = event?.date;
+    const opts: { value: number; label: string }[] = [];
+    for (let d = 1; d <= reportDaysCount; d++) {
+      let label = `Day ${d}`;
+      if (base && d >= 1) {
+        try {
+          const date = new Date(base + 'T12:00:00');
+          if (!isNaN(date.getTime())) {
+            date.setDate(date.getDate() + (d - 1));
+            const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            label = `${formatted} (Day ${d})`;
+          }
+        } catch { /* keep Day N */ }
+      }
+      opts.push({ value: d, label });
+    }
+    return opts;
+  })();
+
+  // Keep selectedDay in range when report days change (e.g. after refresh)
+  useEffect(() => {
+    if (selectedDay > reportDaysCount) setSelectedDay(reportDaysCount);
+  }, [reportDaysCount, selectedDay]);
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshSuccessAt, setRefreshSuccessAt] = useState<number | null>(null);
@@ -158,12 +191,13 @@ const ReportsPage: React.FC = () => {
 
   // Refresh report data: re-read localStorage and fetch master start time (and optionally schedule) from API
   const refreshReportData = useCallback(async () => {
+    const eventIdForFetch = event?.id || eventIdParam;
     setIsRefreshing(true);
     try {
-      // 1) Try API first for latest schedule + settings
-      if (event?.id) {
+      // 1) Try API first for latest schedule + settings (use URL param if event.id not set yet)
+      if (eventIdForFetch) {
         try {
-          const data = await DatabaseService.getRunOfShowData(event.id);
+          const data = await DatabaseService.getRunOfShowData(eventIdForFetch);
           if (data?.schedule_items && Array.isArray(data.schedule_items) && data.schedule_items.length > 0) {
             setSchedule(data.schedule_items);
           } else {
@@ -175,7 +209,7 @@ const ReportsPage: React.FC = () => {
           } else if (data?.settings?.dayStartTimes?.['1']) {
             setMasterStartTime(data.settings.dayStartTimes['1']);
           } else {
-            let saved = localStorage.getItem(`masterStartTime_${event.id}`);
+            let saved = localStorage.getItem(`masterStartTime_${eventIdForFetch}`);
             if (!saved) {
               const keys = Object.keys(localStorage).filter(k => k.startsWith('masterStartTime_'));
               if (keys.length > 0) saved = localStorage.getItem(keys[keys.length - 1]);
@@ -185,7 +219,7 @@ const ReportsPage: React.FC = () => {
           if (data?.settings?.timezone) {
             setEventTimezone(data.settings.timezone);
           }
-          // Enrich event for report headers (condensed/full): date, name, location from run-of-show data
+          // Enrich event for report headers (condensed/full): date, name, location, numberOfDays from run-of-show data
           const rosDate = data.event_date
             ? (typeof data.event_date === 'string' && data.event_date.length >= 10
                 ? data.event_date.slice(0, 10)
@@ -193,14 +227,16 @@ const ReportsPage: React.FC = () => {
             : '';
           setEvent((prev) => ({
             ...prev,
+            id: prev?.id || eventIdForFetch,
             name: data.event_name ?? prev?.name ?? 'Current Event',
             date: rosDate || prev?.date || '',
-            location: (data as any).event_location || data.settings?.location || prev?.location || ''
+            location: (data as any).event_location || data.settings?.location || prev?.location || '',
+            numberOfDays: data?.settings?.numberOfDays ?? (data as any).numberOfDays ?? prev?.numberOfDays ?? 1
           }));
         } catch {
           const fromStorage = loadScheduleFromStorage();
           if (fromStorage.length > 0) setSchedule(fromStorage);
-          let saved = event?.id ? localStorage.getItem(`masterStartTime_${event.id}`) : null;
+          let saved = eventIdForFetch ? localStorage.getItem(`masterStartTime_${eventIdForFetch}`) : null;
           if (!saved) {
             const keys = Object.keys(localStorage).filter(k => k.startsWith('masterStartTime_'));
             if (keys.length > 0) saved = localStorage.getItem(keys[keys.length - 1]);
@@ -215,7 +251,7 @@ const ReportsPage: React.FC = () => {
       setIsRefreshing(false);
       setRefreshSuccessAt(Date.now());
     }
-  }, [event?.id, loadScheduleFromStorage]);
+  }, [event?.id, eventIdParam, loadScheduleFromStorage]);
 
   // Clear success state after a short delay
   useEffect(() => {
@@ -670,6 +706,22 @@ const ReportsPage: React.FC = () => {
     // Filter schedule by selected day (fallback to day 1 if no day field)
     const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
     
+    // For multi-day events, show the calendar date for the selected day (Day 1 = event date, Day 2 = +1, etc.)
+    const displayDate = (() => {
+      const base = event?.date;
+      if (!base || selectedDay < 2) return base || 'Not specified';
+      const n = event?.numberOfDays ?? 1;
+      if (n < 2) return base;
+      try {
+        const d = new Date(base + 'T12:00:00');
+        if (isNaN(d.getTime())) return base;
+        d.setDate(d.getDate() + (selectedDay - 1));
+        return d.toISOString().slice(0, 10);
+      } catch {
+        return base;
+      }
+    })();
+    
     console.log('=== GENERATING REPORT ===');
     console.log('Report type:', reportType);
     console.log('Selected day:', selectedDay);
@@ -1117,6 +1169,9 @@ const ReportsPage: React.FC = () => {
           <div class="header">
             <h1>ROS SHOW FILE</h1>
             <h2>${event?.name || 'Event'}${(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''}</h2>
+          </div>
+          <div class="event-info">
+            <p><strong>Date:</strong> ${displayDate} | <strong>Location:</strong> ${event?.location || 'Not specified'} | <strong>Start Time:</strong> ${formatMasterStartTime(masterStartTime)} | <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
           </div>
           
       `;
@@ -1726,6 +1781,9 @@ const ReportsPage: React.FC = () => {
             <h1>ROS SPEAKERS</h1>
             <h2>${event?.name || 'Event'}${(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''}</h2>
           </div>
+          <div class="event-info">
+            <p><strong>Date:</strong> ${displayDate} | <strong>Location:</strong> ${event?.location || 'Not specified'} | <strong>Start Time:</strong> ${formatMasterStartTime(masterStartTime)} | <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
+          </div>
           
       `;
       
@@ -1924,7 +1982,7 @@ const ReportsPage: React.FC = () => {
             }
             .header { 
               text-align: center; 
-              margin-bottom: 30px; 
+              margin-bottom: 16px; 
             }
             .header h1 { 
               font-size: 24px; 
@@ -1939,11 +1997,13 @@ const ReportsPage: React.FC = () => {
               background: #f5f5f5; 
               padding: 15px; 
               border-radius: 5px; 
-              margin-bottom: 20px; 
+              margin-bottom: 12px; 
               font-size: 12px;
+              text-align: center;
             }
             .color-legend {
               margin-bottom: 20px;
+              margin-top: 0;
               padding: 12px 15px;
               background: #fafafa;
               border: 1px solid #e5e5e5;
@@ -2023,17 +2083,15 @@ const ReportsPage: React.FC = () => {
         </head>
         <body>
           <div class="header">
-            <h1>RUN OF SHOW REPORT</h1>
+            <h1>RUN OF SHOW REPORT - CONDENSED</h1>
             <h2>${event?.name || 'Event'}${(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''}</h2>
-            <h3>ROS CONDENSED</h3>
           </div>
           
           <div class="event-info">
-            <p><strong>Event:</strong> ${event?.name || 'Current Event'} | 
-               <strong>Date:</strong> ${event?.date || 'Not specified'} | 
+            <p><strong>Date:</strong> ${displayDate} | 
                <strong>Location:</strong> ${event?.location || 'Not specified'} | 
                <strong>Start Time:</strong> ${formatMasterStartTime(masterStartTime)} | 
-               <strong>Total Items:</strong> ${schedule.length}</p>
+               <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
           </div>
           
           <div class="color-legend">
@@ -2299,22 +2357,20 @@ const ReportsPage: React.FC = () => {
                     </p>
                   </div>
                   
-                  {(event?.numberOfDays && event.numberOfDays > 1) && (
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-2">
-                        Select Day
-                      </label>
-                      <select
-                        value={selectedDay}
-                        onChange={(e) => setSelectedDay(parseInt(e.target.value))}
-                        className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        {Array.from({ length: event.numberOfDays }, (_, i) => (
-                          <option key={i + 1} value={i + 1}>Day {i + 1}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Select date / day
+                    </label>
+                    <select
+                      value={Math.min(selectedDay, reportDaysCount)}
+                      onChange={(e) => setSelectedDay(parseInt(e.target.value))}
+                      className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {reportDayOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 
                 {/* Right Side - Report Format Information */}

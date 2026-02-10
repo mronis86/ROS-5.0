@@ -11,10 +11,12 @@ class RunOfShowInstance extends InstanceBase {
 		this.scheduleItems = []
 		this.activeTimer = null
 		this.pollInterval = null
+		this.refreshStartedAt = null
 	}
 
 	async init(config) {
 		this.config = config
+		this.refreshStartedAt = Date.now()
 		this.updateStatus(InstanceStatus.Connecting)
 		await this.fetchData()
 		this.updateActions()
@@ -34,6 +36,7 @@ class RunOfShowInstance extends InstanceBase {
 
 	async configUpdated(config) {
 		this.config = config
+		this.refreshStartedAt = Date.now()
 		this.updateStatus(InstanceStatus.Connecting)
 		await this.fetchData()
 		this.startPolling() // restart with new sync interval and event ID
@@ -117,18 +120,29 @@ class RunOfShowInstance extends InstanceBase {
 	startPolling() {
 		if (this.pollInterval) clearInterval(this.pollInterval)
 		this.pollInterval = null
+		this.refreshStartedAt = Date.now()
 		const seconds = Math.max(5, Math.min(600, parseInt(this.config?.syncIntervalSeconds, 10) || 60))
 		const ms = seconds * 1000
 		this.pollInterval = setInterval(() => {
-			if (this.config?.eventId) {
-				this.fetchData().then(() => {
-					this.updateActions()
-					this.updateFeedbacks()
-					this.updatePresets()
-					this.updateVariableDefinitions()
-					this.updateVariableValues()
-				}).catch(() => {})
+			if (!this.config?.eventId) return
+			const stopAfterEnabled = this.config.stopRefreshAfterEnabled === true || this.config.stopRefreshAfterEnabled === 'true'
+			if (stopAfterEnabled && this.refreshStartedAt != null) {
+				const hours = Math.max(1, Math.min(72, parseInt(this.config.stopRefreshAfterHours, 10) || 4))
+				const limitMs = hours * 3600 * 1000
+				if ((Date.now() - this.refreshStartedAt) >= limitMs) {
+					clearInterval(this.pollInterval)
+					this.pollInterval = null
+					this.updateStatus(InstanceStatus.Warning, `Refresh stopped after ${hours}h (time limit)`)
+					return
+				}
 			}
+			this.fetchData().then(() => {
+				this.updateActions()
+				this.updateFeedbacks()
+				this.updatePresets()
+				this.updateVariableDefinitions()
+				this.updateVariableValues()
+			}).catch(() => {})
 		}, ms)
 	}
 
@@ -202,6 +216,24 @@ class RunOfShowInstance extends InstanceBase {
 				min: 5,
 				max: 600,
 				tooltip: 'How often to fetch schedule/timer from the API (5–600 seconds). Lower = more responsive, higher = less traffic.',
+			},
+			{
+				type: 'checkbox',
+				id: 'stopRefreshAfterEnabled',
+				label: 'Stop refresh after set hours',
+				width: 12,
+				default: false,
+				tooltip: 'When enabled, the module will stop polling the API after the number of hours set below. Restart the instance or change config to resume.',
+			},
+			{
+				type: 'number',
+				id: 'stopRefreshAfterHours',
+				label: 'Stop after (hours)',
+				width: 6,
+				default: 4,
+				min: 1,
+				max: 72,
+				tooltip: 'Stop fetching schedule/timer after this many hours (only if "Stop refresh after set hours" is enabled).',
 			},
 		]
 	}
