@@ -20,6 +20,12 @@
   force = true
 
 [[redirects]]
+  from = "/companion-module-runofshow-full.zip"
+  to = "/companion-module-runofshow-full.zip"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/ros-osc-python-app.zip"
   to = "/ros-osc-python-app.zip"
   status = 200

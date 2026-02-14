@@ -105,7 +105,7 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
             speakersArray.forEach((speaker) => {
               speakers.push({
                 title: speaker.fullName || speaker.name || '',
-                subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
+                subtitle: [speaker.title, speaker.org].filter(Boolean).join('\n'),
                 photo: speaker.photoLink || '',
                 slot: speaker.slot || 1
               });
@@ -173,7 +173,7 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
               if (slot >= 1 && slot <= 7) {
                 const baseIdx = (slot - 1) * 3;
                 speakers[baseIdx] = speaker.fullName || speaker.name || '';
-                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join('\n');
                 speakers[baseIdx + 2] = speaker.photoLink || '';
               }
             });
@@ -1349,7 +1349,7 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
             speakersArray.forEach((speaker) => {
               speakers.push({
                 title: speaker.fullName || speaker.name || '',
-                subtitle: [speaker.title, speaker.org].filter(Boolean).join(', '),
+                subtitle: [speaker.title, speaker.org].filter(Boolean).join('\n'),
                 photo: speaker.photoLink || '',
                 slot: speaker.slot || 1
               });
@@ -1746,7 +1746,7 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
               if (slot >= 1 && slot <= 7) {
                 const baseIdx = (slot - 1) * 3;
                 speakers[baseIdx] = speaker.fullName || speaker.name || '';
-                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join('\n');
                 speakers[baseIdx + 2] = speaker.photoLink || '';
               }
             });

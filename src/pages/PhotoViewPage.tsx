@@ -2215,23 +2215,22 @@ const PhotoViewPage: React.FC = () => {
                       <div key={slotNumber} className={`col-span-1 ${slotNumber < 7 ? 'border-r border-slate-600' : ''} p-3 flex flex-col justify-center`}>
                         {speakerForSlot ? (
                           <div className="text-center h-full flex flex-col justify-center">
-                            {/* Speaker Photo - Larger and optimized for portrait */}
-                            {speakerForSlot.photoLink && (
-                              <div className="mb-3 flex justify-center">
-                                <img 
-                                  src={speakerForSlot.photoLink} 
-                                  alt={speakerForSlot.fullName}
-                                  className="w-24 h-32 rounded-lg object-cover border-2 border-slate-400 shadow-lg"
-                                  style={{
-                                    objectFit: 'cover',
-                                    objectPosition: 'center top'
-                                  }}
-                                  onError={(e) => {
-                                    e.currentTarget.style.display = 'none';
-                                  }}
-                                />
-                              </div>
-                            )}
+                            {/* Speaker Photo - placeholder when no URL for Photo Page */}
+                            <div className="mb-3 flex justify-center">
+                              <img
+                                src={speakerForSlot.photoLink || '/speaker-placeholder.svg'}
+                                alt={speakerForSlot.fullName || 'Speaker'}
+                                className="w-24 h-32 rounded-lg object-cover border-2 border-slate-400 shadow-lg"
+                                style={{
+                                  objectFit: 'cover',
+                                  objectPosition: 'center top'
+                                }}
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src = '/speaker-placeholder.svg';
+                                }}
+                              />
+                            </div>
                             {/* Speaker Name - 2-line format with dynamic sizing */}
                             {(() => {
                               const nameResult = formatNameForTwoLines(speakerForSlot.fullName || 'Unnamed');

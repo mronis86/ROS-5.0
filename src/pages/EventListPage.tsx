@@ -39,6 +39,19 @@ const EventListPage: React.FC = () => {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Delete confirmation modal: require user to type generated code to confirm
+  const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [deleteConfirmCode, setDeleteConfirmCode] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const generateDeleteCode = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+    return code;
+  };
   
   // Server toggle state
   const [forceLocal, setForceLocal] = useState(() => {
@@ -388,35 +401,41 @@ const EventListPage: React.FC = () => {
     }
   };
 
-  const deleteEvent = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this event?')) {
-      // Remove from local list immediately
-      setEvents(prev => prev.filter(event => event.id !== id));
+  const openDeleteConfirmModal = (event: Event) => {
+    setEventToDelete(event);
+    setDeleteConfirmInput('');
+    setDeleteConfirmCode(generateDeleteCode());
+  };
 
-      // Delete from Supabase automatically - both calendar event AND Run of Show data
-      try {
-        // Find the event to get its details
-        const eventToDelete = events.find(event => event.id === id);
-        if (eventToDelete) {
-          // Delete Run of Show data first
-          await DatabaseService.deleteRunOfShowData(id);
-          console.log('Run of Show data deleted from Supabase automatically');
+  const closeDeleteConfirmModal = () => {
+    setEventToDelete(null);
+    setDeleteConfirmInput('');
+    setDeleteConfirmCode('');
+  };
 
-          // Try to find and delete the corresponding calendar event
-          const calendarEvents = await DatabaseService.getCalendarEvents();
-          const matchingCalendarEvent = calendarEvents.find(calEvent => 
-            calEvent.schedule_data?.eventId === id || calEvent.name === eventToDelete.name
-          );
-          
-          if (matchingCalendarEvent?.id) {
-            await DatabaseService.deleteCalendarEvent(matchingCalendarEvent.id);
-            console.log('Calendar event deleted from Supabase automatically');
-          }
-        }
-      } catch (error) {
-        console.error('Error auto-deleting event from Supabase:', error);
-        // Don't show error to user since the event was still deleted locally
+  const deleteConfirmPhrase = deleteConfirmCode ? `DELETE ${deleteConfirmCode}` : '';
+  const deleteConfirmMatch = deleteConfirmPhrase.length > 0 && deleteConfirmInput.trim() === deleteConfirmPhrase;
+
+  const performDeleteEvent = async () => {
+    if (!eventToDelete || !deleteConfirmMatch) return;
+    const id = eventToDelete.id;
+    const name = eventToDelete.name;
+    setIsDeleting(true);
+    closeDeleteConfirmModal();
+    setEvents(prev => prev.filter(event => event.id !== id));
+    try {
+      await DatabaseService.deleteRunOfShowData(id);
+      const calendarEvents = await DatabaseService.getCalendarEvents();
+      const matchingCalendarEvent = calendarEvents.find(calEvent =>
+        calEvent.schedule_data?.eventId === id || calEvent.name === name
+      );
+      if (matchingCalendarEvent?.id) {
+        await DatabaseService.deleteCalendarEvent(matchingCalendarEvent.id);
       }
+    } catch (error) {
+      console.error('Error auto-deleting event from Supabase:', error);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -814,7 +833,7 @@ const EventListPage: React.FC = () => {
                               Edit
                             </button>
                             <button
-                              onClick={() => deleteEvent(event.id)}
+                              onClick={() => openDeleteConfirmModal(event)}
                               className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
                             >
                               Delete
@@ -949,6 +968,49 @@ const EventListPage: React.FC = () => {
                 Add Event
               </button>
             </footer>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal - must type phrase to confirm */}
+      {eventToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-lg p-6 max-w-md w-full border border-slate-600 shadow-xl">
+            <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+              <span className="text-red-400">⚠️</span> Delete Event
+            </h2>
+            <p className="text-slate-300 text-sm mb-3">
+              This will permanently delete <strong className="text-white">{eventToDelete.name}</strong> and its Run of Show data. This cannot be undone.
+            </p>
+            <p className="text-slate-400 text-xs mb-2">
+              Copy or type the phrase below to confirm:
+            </p>
+            <code className="block mb-3 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-amber-300 text-sm font-mono tracking-wider select-all">
+              DELETE {deleteConfirmCode}
+            </code>
+            <input
+              type="text"
+              value={deleteConfirmInput}
+              onChange={(e) => setDeleteConfirmInput(e.target.value)}
+              placeholder="Paste or type the phrase above"
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white placeholder-slate-500 focus:border-red-500 focus:outline-none text-sm mb-4"
+              autoComplete="off"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={closeDeleteConfirmModal}
+                className="flex-1 px-4 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performDeleteEvent}
+                disabled={!deleteConfirmMatch}
+                className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                Delete Permanently
+              </button>
+            </div>
           </div>
         </div>
       )}

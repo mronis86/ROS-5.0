@@ -97,17 +97,17 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
-              {/* Bitfocus Companion Module - same zip updated by prebuild / zip-companion-module.js */}
+              {/* Bitfocus Companion Module - full zip with node_modules (~18MB), built in Netlify via zip-companion-module-full.js */}
               <div className="text-center mb-4">
                 <a
-                  href="/companion-module-runofshow.zip"
-                  download="companion-module-runofshow.zip"
+                  href="/companion-module-runofshow-full.zip"
+                  download="companion-module-runofshow-full.zip"
                   className="block bg-purple-600 hover:bg-purple-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
-                  🎛️ Bitfocus Companion Module
+                  🎛️ Bitfocus Companion Module (full)
                 </a>
                 <div className="text-xs text-purple-400 mt-2">
-                  Native API control • No Electron/Python • Load cue, timer, sub-timer
+                  Native API control • No Electron/Python • Load cue, timer, sub-timer • Includes node_modules
                 </div>
               </div>
               

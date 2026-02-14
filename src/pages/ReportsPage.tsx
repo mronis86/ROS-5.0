@@ -702,6 +702,7 @@ const ReportsPage: React.FC = () => {
     const isShowFile = reportType === 'showfile';
     const isSpeakers = reportType === 'speakers';
     const orientation = printOrientation;
+    const placeholderPhotoUrl = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin + '/speaker-placeholder.svg' : '';
     
     // Filter schedule by selected day (fallback to day 1 if no day field)
     const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
@@ -1299,7 +1300,7 @@ const ReportsPage: React.FC = () => {
             let slotContent = `
               <div class="slot-container">
                 <div class="slot-top">
-                  <div class="slot-photo">${photoLink ? `<img src="${photoLink}" alt="${fullName}" class="slot-photo-img" />` : ''}</div>
+                  <div class="slot-photo"><img src="${photoLink || placeholderPhotoUrl}" alt="${fullName}" class="slot-photo-img" /></div>
                   <div class="slot-text">
                     <div class="${nameClass}">${nameResult.html}</div>
                     <div class="slot-title">${truncatedTitle}...</div>
@@ -1924,7 +1925,7 @@ const ReportsPage: React.FC = () => {
             let slotContent = `
               <div class="slot-container">
                 <div class="slot-top">
-                  <div class="slot-photo">${photoLink ? `<img src="${photoLink}" alt="${fullName}" class="slot-photo-img" />` : ''}</div>
+                  <div class="slot-photo"><img src="${photoLink || placeholderPhotoUrl}" alt="${fullName}" class="slot-photo-img" /></div>
                 </div>
                 <div class="slot-role">${location}</div>
               </div>

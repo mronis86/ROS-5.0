@@ -26,6 +26,7 @@ class RunOfShowInstance extends InstanceBase {
 		this.updatePresets()
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
+		this.checkAllFeedbacks()
 		if (this.getSyncIntervalEnabled()) this.startPolling()
 		this.updateStatus(InstanceStatus.Ok)
 	}
@@ -46,6 +47,7 @@ class RunOfShowInstance extends InstanceBase {
 		this.updatePresets()
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
+		this.checkAllFeedbacks()
 		this.updateStatus(InstanceStatus.Ok)
 	}
 
@@ -171,6 +173,7 @@ class RunOfShowInstance extends InstanceBase {
 				self.updatePresets()
 				self.updateVariableDefinitions()
 				self.updateVariableValues()
+				self.checkAllFeedbacks()
 			}).catch(() => {})
 		}, ms)
 		this.updateVariableValues()
@@ -274,6 +277,12 @@ class RunOfShowInstance extends InstanceBase {
 
 	updateFeedbacks() {
 		UpdateFeedbacks(this)
+	}
+
+	// Ask Companion to re-evaluate all feedback values (button highlight state). Call after any data refresh
+	// so buttons update without the user toggling. Does not trigger API poll by itself.
+	checkAllFeedbacks() {
+		this.checkFeedbacks('timer_running', 'cue_loaded', 'loaded_cue_is', 'button_text_from_cue')
 	}
 
 	// Ensure cue displays as "CUE 1" / "CUE 1.1" not just "1" / "1.1"

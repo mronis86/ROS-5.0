@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Noto Color Emoji (Google) – consistent emoji style for location icons */
+@font-face {
+  font-family: 'Noto Color Emoji';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://cdn.jsdelivr.net/fontsource/fonts/noto-color-emoji@latest/emoji-400-normal.woff2) format('woff2'),
+       url(https://cdn.jsdelivr.net/fontsource/fonts/noto-color-emoji@latest/emoji-400-normal.woff) format('woff');
+}
+
+.noto-emoji {
+  font-family: 'Noto Color Emoji', sans-serif;
+}
+
 /* Custom scrollbar styles */
 .overflow-x-auto::-webkit-scrollbar {
   height: 12px;

@@ -42,6 +42,7 @@ module.exports = function (self) {
 					await self.fetchActiveTimer(eventId)
 					self.updateVariableValues()
 					self.updateFeedbacks()
+					self.checkAllFeedbacks()
 					self.log('info', `Loaded cue ${cueIs}`)
 				} catch (err) {
 					self.log('error', `Load Cue failed: ${err.message}`)
@@ -72,6 +73,7 @@ module.exports = function (self) {
 					await self.fetchActiveTimer(eventId)
 					self.updateVariableValues()
 					self.updateFeedbacks()
+					self.checkAllFeedbacks()
 					self.log('info', 'Timer started')
 				} catch (err) {
 					self.log('error', `Start Timer failed: ${err.message}`)
@@ -101,6 +103,7 @@ module.exports = function (self) {
 					await self.fetchActiveTimer(eventId)
 					self.updateVariableValues()
 					self.updateFeedbacks()
+					self.checkAllFeedbacks()
 					self.log('info', 'Timer stopped')
 				} catch (err) {
 					self.log('error', `Stop Timer failed: ${err.message}`)
@@ -121,6 +124,7 @@ module.exports = function (self) {
 					await self.fetchActiveTimer(eventId)
 					self.updateVariableValues()
 					self.updateFeedbacks()
+					self.checkAllFeedbacks()
 					self.log('info', 'Timer reset')
 				} catch (err) {
 					self.log('error', `Reset Timer failed: ${err.message}`)
@@ -171,6 +175,7 @@ module.exports = function (self) {
 					})
 					self.updateVariableValues()
 					self.updateFeedbacks()
+					self.checkAllFeedbacks()
 					self.log('info', `Sub-timer started: ${cueDisplay}`)
 				} catch (err) {
 					self.log('error', `Start Sub-Timer failed: ${err.message}`)
@@ -202,6 +207,7 @@ module.exports = function (self) {
 					})
 					self.updateVariableValues()
 					self.updateFeedbacks()
+					self.checkAllFeedbacks()
 					self.log('info', itemId ? 'Sub-timer stopped' : 'All sub-timers stopped')
 				} catch (err) {
 					self.log('error', `Stop Sub-Timer failed: ${err.message}`)
@@ -246,6 +252,7 @@ module.exports = function (self) {
 					self.updateActions()
 					self.updateFeedbacks()
 					self.updateVariableValues()
+					self.checkAllFeedbacks()
 					self.log('info', 'Sync interval resumed')
 				}
 			},
@@ -279,6 +286,7 @@ async function adjustTimerDuration(self, secondsDelta) {
 		await self.fetchActiveTimer(eventId)
 		self.updateVariableValues()
 		self.updateFeedbacks()
+		self.checkAllFeedbacks()
 		const sign = secondsDelta > 0 ? '+' : ''
 		self.log('info', `Timer adjusted ${sign}${Math.abs(secondsDelta / 60)} min`)
 	} catch (err) {

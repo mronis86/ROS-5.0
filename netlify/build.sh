@@ -28,11 +28,16 @@ npm ci
 npm run build:portable
 cd ..
 
-# Step 2: Install root deps and run Vite build.
-# prebuild (see package.json) runs automatically before "npm run build" and
-# zips ros-osc-control/dist to public/ROS-OSC-Control-portable.zip.
-echo "========== Installing root deps and building Vite app =========="
+# Step 2: Install root deps (needed for archiver in zip script).
+echo "========== Installing root deps =========="
 npm ci
+
+# Step 3: Full Companion module zip (with node_modules, ~18MB) for OSC modal download.
+echo "========== Building full Companion module zip =========="
+node scripts/zip-companion-module-full.js
+
+# Step 4: Vite build. prebuild zips companion (slim) + python app; Vite copies public/ (including full zip) to dist.
+echo "========== Building Vite app =========="
 npm run build
 
 echo "========== Netlify build finished =========="

@@ -12294,19 +12294,18 @@ const RunOfShowPage: React.FC = () => {
                        {speakers.map((speaker, index) => (
                          <div key={index} className="bg-slate-700 rounded-lg p-4 border border-slate-600">
                            <div className="flex gap-4">
-                             {/* Photo on the left */}
-                             {speaker.photoLink && (
-                               <div className="flex-shrink-0">
-                                 <img 
-                                   src={speaker.photoLink} 
-                                   alt={speaker.fullName || 'Speaker'}
-                                   className="w-24 h-32 rounded-lg object-cover border-2 border-slate-500"
-                                   onError={(e) => {
-                                     e.currentTarget.style.display = 'none';
-                                   }}
-                                 />
-                               </div>
-                             )}
+                             {/* Photo on the left - placeholder for viewers/operators when no photo */}
+                             <div className="flex-shrink-0">
+                               <img
+                                 src={speaker.photoLink || '/speaker-placeholder.svg'}
+                                 alt={speaker.fullName || 'Speaker'}
+                                 className="w-24 h-32 rounded-lg object-cover border-2 border-slate-500"
+                                 onError={(e) => {
+                                   e.currentTarget.onerror = null;
+                                   e.currentTarget.src = '/speaker-placeholder.svg';
+                                 }}
+                               />
+                             </div>
                              
                              {/* Info on the right */}
                              <div className="flex-1 space-y-2">
@@ -12320,9 +12319,9 @@ const RunOfShowPage: React.FC = () => {
                                  {speaker.location && (
                                    <div className="text-slate-300 text-base flex items-center gap-1">
                                      {speaker.location === 'Podium' && <span>🎤</span>}
-                                     {speaker.location === 'Seat' && <span>🪑</span>}
+                                     {speaker.location === 'Seat' && <span className="noto-emoji" title="Seat">🪑</span>}
                                      {speaker.location === 'Virtual' && <span>📺</span>}
-                                     {speaker.location === 'Moderator' && <span>🎙️</span>}
+                                     {speaker.location === 'Moderator' && <span>📢</span>}
                                      {!['Podium', 'Seat', 'Virtual', 'Moderator'].includes(speaker.location) && <span>📍</span>}
                                      <span>{speaker.location}</span>
                                    </div>
@@ -12518,7 +12517,7 @@ const RunOfShowPage: React.FC = () => {
                            )}
                          </div>
                        </div>
-                     </div>
+                       </div>
                    </div>
                  ))}
                  
@@ -13537,9 +13536,9 @@ const RunOfShowPage: React.FC = () => {
                                     <span>•</span>
                                     <span>
                                       {speaker.location === 'Podium' && '🎤'}
-                                      {speaker.location === 'Seat' && '🪑'}
+                                      {speaker.location === 'Seat' && <span className="noto-emoji">🪑</span>}
                                       {speaker.location === 'Virtual' && '📺'}
-                                      {speaker.location === 'Moderator' && '🎙️'}
+                                      {speaker.location === 'Moderator' && '📢'}
                                       {speaker.location}
                                     </span>
                                   </div>
