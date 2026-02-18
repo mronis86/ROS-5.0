@@ -5,6 +5,9 @@ module.exports = function (self) {
 		{ variableId: 'current_segment', name: 'Current Segment Name' },
 		{ variableId: 'loaded_cue_value', name: 'Loaded Cue Value' },
 		{ variableId: 'timer_running', name: 'Timer Running (Yes/No)' },
+		{ variableId: 'timer_elapsed', name: 'Timer Elapsed (M:SS)' },
+		{ variableId: 'timer_remaining', name: 'Timer Remaining (M:SS)' },
+		{ variableId: 'timer_duration', name: 'Timer Duration (M:SS)' },
 		{ variableId: 'event_name', name: 'Event Name' },
 	]
 	// Per-cue variables: use $(runofshow:cue_<itemId>_label) and $(runofshow:cue_<itemId>_value) in button text

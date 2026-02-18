@@ -27,6 +27,24 @@ module.exports = function (self) {
 					return
 				}
 				try {
+					// Stop current timer first (same as Electron app / Run of Show) – ensures elapsed/overtime is saved
+					await self.fetchActiveTimer(eventId)
+					if (self.activeTimer?.item_id != null) {
+						try {
+							await self.apiPost('/api/timers/stop', {
+								event_id: eventId,
+								item_id: parseInt(self.activeTimer.item_id),
+							})
+							self.log('info', 'Stopped current timer before load')
+						} catch (stopErr) {
+							self.log('warn', `Stop before load: ${stopErr.message}`)
+						}
+						try {
+							await self.apiPut('/api/sub-cue-timers/stop', { event_id: eventId })
+						} catch (subErr) {
+							self.log('warn', `Stop sub-timers before load: ${subErr.message}`)
+						}
+					}
 					const item = self.scheduleItems.find((s) => String(s.id) === String(itemId))
 					const cueIs = item?.customFields?.cue ?? `CUE ${itemId}`
 					const dur = item
@@ -37,7 +55,7 @@ module.exports = function (self) {
 						item_id: parseInt(itemId),
 						user_id: 'companion',
 						cue_is: cueIs,
-						duration_seconds: dur || 300,
+						duration_seconds: dur ?? 300,
 					})
 					await self.fetchActiveTimer(eventId)
 					self.updateVariableValues()
@@ -155,7 +173,8 @@ module.exports = function (self) {
 						self.log('warn', 'Start Sub-Timer: Cue not found')
 						return
 					}
-					const dur = (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0) || 300
+					const dur = (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
+					const durationSeconds = (dur != null && dur >= 0 ? dur : 300)
 					const rowNumber = self.scheduleItems.findIndex((s) => String(s.id) === String(itemId)) + 1
 					const cueDisplay = item.customFields?.cue ?? `CUE ${itemId}`
 					const timerId = item.timerId || `SUB${itemId}`
@@ -165,7 +184,7 @@ module.exports = function (self) {
 						user_id: 'companion',
 						user_name: 'Companion',
 						user_role: 'OPERATOR',
-						duration_seconds: dur,
+						duration_seconds: durationSeconds,
 						row_number: rowNumber,
 						cue_display: cueDisplay,
 						timer_id: timerId,

@@ -632,7 +632,7 @@ const GreenRoomPage: React.FC = () => {
             ...prev,
             [data.item_id]: {
               elapsed: data.elapsed_seconds || 0,
-              total: data.duration_seconds || 300,
+              total: data.duration_seconds ?? 300,
               startedAt: data.started_at ? new Date(data.started_at) : null
             }
           }));
@@ -763,7 +763,7 @@ const GreenRoomPage: React.FC = () => {
               setTimerProgress({
                 [parseInt(activeTimer.item_id)]: {
                   elapsed: activeTimer.elapsed_seconds || 0,
-                  total: activeTimer.duration_seconds || 300,
+                  total: activeTimer.duration_seconds ?? 300,
                   startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
                 }
               });

@@ -93,5 +93,98 @@ module.exports = async function (self) {
 				return { text }
 			},
 		},
+		// Display timer elapsed / remaining / duration as button text (with label prefix)
+		button_text_timer_elapsed: {
+			name: 'Button text: Timer elapsed',
+			type: 'advanced',
+			label: 'Button text: Timer elapsed',
+			options: [],
+			callback: () => {
+				const v = self.getTimerDisplayValues ? self.getTimerDisplayValues() : { elapsed: '—' }
+				return { text: `Elapsed: ${v.elapsed}` }
+			},
+		},
+		button_text_timer_remaining: {
+			name: 'Button text: Timer remaining',
+			type: 'advanced',
+			label: 'Button text: Timer remaining',
+			options: [],
+			callback: () => {
+				const v = self.getTimerDisplayValues ? self.getTimerDisplayValues() : { remaining: '—' }
+				return { text: `Remaining: ${v.remaining}` }
+			},
+		},
+		button_text_timer_duration: {
+			name: 'Button text: Timer duration',
+			type: 'advanced',
+			label: 'Button text: Timer duration',
+			options: [],
+			callback: () => {
+				const v = self.getTimerDisplayValues ? self.getTimerDisplayValues() : { duration: '—' }
+				return { text: `Duration: ${v.duration}` }
+			},
+		},
+		// Adaptive timer: Duration when loaded, Remaining when running, Overtime when over. Two-line: label (small) \n value (large)
+		button_text_timer_adaptive: {
+			name: 'Button text: Timer (adaptive)',
+			type: 'advanced',
+			label: 'Timer adaptive (Duration / Remaining / Overtime)',
+			options: [
+				{
+					id: 'labelStyle',
+					type: 'dropdown',
+					label: 'Label style',
+					default: 'short',
+					choices: [
+						{ id: 'short', label: 'Short (Dur, Rem, OT) – less visual weight at top' },
+						{ id: 'full', label: 'Full (Duration, Remaining, Overtime)' },
+					],
+					tooltip: 'Short labels take less space so the timer value stands out',
+				},
+				{
+					id: 'overtimeColor',
+					type: 'dropdown',
+					label: 'Overtime color',
+					default: 'red',
+					choices: [
+						{ id: 'red', label: 'Red' },
+						{ id: 'amber', label: 'Amber' },
+						{ id: 'same', label: 'Same as normal' },
+					],
+					tooltip: 'Button background color when timer is in overtime',
+				},
+			],
+			callback: (feedback) => {
+				const v = self.getTimerDisplayValues ? self.getTimerDisplayValues() : {}
+				const overtimeColor = feedback.options?.overtimeColor || 'red'
+				const labelStyle = feedback.options?.labelStyle || 'short'
+				let label = '—'
+				let value = '—'
+				if (self.activeTimer && self.activeTimer.item_id != null) {
+					if (v.isOvertime) {
+						label = labelStyle === 'short' ? 'OT' : 'Overtime'
+						value = v.overtimeFormatted || '—'
+					} else if (self.activeTimer.is_running === true) {
+						label = labelStyle === 'short' ? 'Rem' : 'Remaining'
+						value = v.remaining || '—'
+					} else {
+						label = labelStyle === 'short' ? 'Dur' : 'Duration'
+						value = v.duration || '—'
+					}
+				}
+				const text = `${label}\n${value}`
+				const result = { text }
+				if (v.isOvertime && overtimeColor !== 'same') {
+					if (overtimeColor === 'red') {
+						result.bgcolor = combineRgb(160, 0, 0)
+						result.color = combineRgb(255, 255, 255)
+					} else if (overtimeColor === 'amber') {
+						result.bgcolor = combineRgb(200, 120, 0)
+						result.color = combineRgb(0, 0, 0)
+					}
+				}
+				return result
+			},
+		},
 	})
 }

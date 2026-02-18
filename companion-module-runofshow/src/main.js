@@ -12,6 +12,7 @@ class RunOfShowInstance extends InstanceBase {
 		this.activeTimer = null
 		this.pollInterval = null
 		this.autoDisableTimeout = null
+		this.timerTickInterval = null
 		this.refreshStartedAt = null
 		this.syncPausedByTimer = false
 	}
@@ -28,12 +29,14 @@ class RunOfShowInstance extends InstanceBase {
 		this.updateVariableValues()
 		this.checkAllFeedbacks()
 		if (this.getSyncIntervalEnabled()) this.startPolling()
+		this.startTimerTick()
 		this.updateStatus(InstanceStatus.Ok)
 	}
 
 	async destroy() {
 		if (this.pollInterval) clearInterval(this.pollInterval)
 		if (this.autoDisableTimeout) clearTimeout(this.autoDisableTimeout)
+		if (this.timerTickInterval) clearInterval(this.timerTickInterval)
 	}
 
 	async configUpdated(config) {
@@ -48,7 +51,20 @@ class RunOfShowInstance extends InstanceBase {
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
 		this.checkAllFeedbacks()
+		this.startTimerTick()
 		this.updateStatus(InstanceStatus.Ok)
+	}
+
+	// Update timer display variables and adaptive timer feedback every second when timer is running
+	startTimerTick() {
+		if (this.timerTickInterval) clearInterval(this.timerTickInterval)
+		const self = this
+		this.timerTickInterval = setInterval(() => {
+			if (self.activeTimer?.is_running === true) {
+				self.updateVariableValues()
+				self.checkFeedbacks('button_text_timer_adaptive')
+			}
+		}, 1000)
 	}
 
 	getApiUrl() {
@@ -282,7 +298,50 @@ class RunOfShowInstance extends InstanceBase {
 	// Ask Companion to re-evaluate all feedback values (button highlight state). Call after any data refresh
 	// so buttons update without the user toggling. Does not trigger API poll by itself.
 	checkAllFeedbacks() {
-		this.checkFeedbacks('timer_running', 'cue_loaded', 'loaded_cue_is', 'button_text_from_cue')
+		this.checkFeedbacks('timer_running', 'cue_loaded', 'loaded_cue_is', 'button_text_from_cue', 'button_text_timer_elapsed', 'button_text_timer_remaining', 'button_text_timer_duration', 'button_text_timer_adaptive')
+	}
+
+	// Return formatted timer display values for variables/feedbacks
+	getTimerDisplayValues() {
+		let elapsed = '—'
+		let remaining = '—'
+		let duration = '—'
+		let isOvertime = false
+		let overtimeFormatted = ''
+		let elapsedSec = 0
+		let remainingSec = 0
+		let durSec = 300
+		if (this.activeTimer && this.activeTimer.item_id != null) {
+			durSec = this.activeTimer.duration_seconds ?? 300
+			duration = this.formatTimerSeconds(durSec)
+			if (this.activeTimer.is_running === true && this.activeTimer.started_at) {
+				elapsedSec = Math.floor((Date.now() - new Date(this.activeTimer.started_at).getTime()) / 1000)
+			} else {
+				elapsedSec = this.activeTimer.elapsed_seconds ?? 0
+			}
+			remainingSec = durSec - elapsedSec
+			elapsed = this.formatTimerSeconds(elapsedSec)
+			remaining = this.formatTimerSeconds(Math.max(0, remainingSec))
+			if (this.activeTimer.is_running === true && remainingSec < 0) {
+				isOvertime = true
+				overtimeFormatted = '+' + this.formatTimerSeconds(-remainingSec)
+			}
+		}
+		return { elapsed, remaining, duration, isOvertime, overtimeFormatted, elapsedSec, remainingSec, durSec }
+	}
+
+	// Format seconds as M:SS or H:MM:SS (for durations >= 1 hour)
+	formatTimerSeconds(seconds) {
+		const s = Math.max(0, Math.floor(Number(seconds) || 0))
+		if (s >= 3600) {
+			const h = Math.floor(s / 3600)
+			const m = Math.floor((s % 3600) / 60)
+			const sec = s % 60
+			return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+		}
+		const m = Math.floor(s / 60)
+		const sec = s % 60
+		return `${m}:${String(sec).padStart(2, '0')}`
 	}
 
 	// Ensure cue displays as "CUE 1" / "CUE 1.1" not just "1" / "1.1"
@@ -402,6 +461,27 @@ class RunOfShowInstance extends InstanceBase {
 			],
 		}
 
+		// Timer display preset: adaptive – Duration (loaded) / Remaining (running) / Overtime (over). Two-line: label (small) \n value (large)
+		presets.timer_display_adaptive = {
+			type: 'button',
+			category: 'Timer',
+			name: 'Timer (Adaptive)',
+			style: {
+				text: 'Duration\n—',
+				size: 'auto',
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(50, 50, 70),
+			},
+			feedbacks: [
+				{
+					feedbackId: 'button_text_timer_adaptive',
+					options: { overtimeColor: 'red', labelStyle: 'short' },
+					style: {},
+				},
+			],
+			steps: [{ down: [], up: [] }],
+		}
+
 		// One preset per sub-cue only for Start Sub-Timer
 		for (const item of subCues) {
 			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
@@ -447,6 +527,7 @@ class RunOfShowInstance extends InstanceBase {
 		const segmentName = currentItem?.segmentName ?? '—'
 		const loadedCueValue = currentItem?.customFields?.value ?? segmentName ?? '—'
 		const timerRunning = this.activeTimer?.is_running === true
+		const timerDisplay = this.getTimerDisplayValues()
 
 		const values = {
 			sync_active: syncActive,
@@ -454,6 +535,9 @@ class RunOfShowInstance extends InstanceBase {
 			current_segment: segmentName,
 			loaded_cue_value: loadedCueValue,
 			timer_running: timerRunning ? 'Yes' : 'No',
+			timer_elapsed: timerDisplay.elapsed,
+			timer_remaining: timerDisplay.remaining,
+			timer_duration: timerDisplay.duration,
 			event_name: event?.name ?? '—',
 		}
 
