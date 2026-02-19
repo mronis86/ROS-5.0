@@ -584,27 +584,24 @@ const EventListPage: React.FC = () => {
 
   const filteredEvents = getFilteredEvents();
 
-  // Determine which server to use based on toggle
+  // Determine which server to use for display (must match api-client getApiBaseUrl logic)
   const getApiBaseUrl = () => {
-    if (forceLocal) {
-      return 'http://localhost:3002';
-    }
-    return import.meta.env.VITE_API_BASE_URL || 
-      (import.meta.env.PROD ? 'https://ros-50-production.up.railway.app' : 'http://localhost:3002');
+    if (forceLocal) return 'http://localhost:3001';
+    return 'https://ros-50-production.up.railway.app';
   };
-  
   const apiBaseUrl = getApiBaseUrl();
   const isUsingLocal = apiBaseUrl.includes('localhost');
   
-  // Save toggle state and override API URL
+  // Save toggle state and override API base URL in api-client / socket-client
   useEffect(() => {
     localStorage.setItem('forceLocalServer', forceLocal.toString());
-    // Force override the API base URL in the services
     if (forceLocal) {
       (window as any).__FORCE_LOCAL_API__ = true;
-      (window as any).__LOCAL_API_URL__ = 'http://localhost:3002';
+      (window as any).__LOCAL_API_URL__ = 'http://localhost:3001';
+      (window as any).__USE_RAILWAY__ = false;
     } else {
       (window as any).__FORCE_LOCAL_API__ = false;
+      (window as any).__USE_RAILWAY__ = true;
     }
   }, [forceLocal]);
 

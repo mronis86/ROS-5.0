@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 
 const ADMIN_PASSWORD = '1615';
@@ -97,6 +97,11 @@ export default function AdminPage() {
   const [backupTableCheck, setBackupTableCheck] = useState<{ exists?: boolean; error?: string } | null>(null);
   const [backupCreatingTable, setBackupCreatingTable] = useState(false);
   const [backupSyncingTable, setBackupSyncingTable] = useState(false);
+  const [approvedDomains, setApprovedDomains] = useState<string[]>([]);
+  const [approvedDomainsLoading, setApprovedDomainsLoading] = useState(false);
+  const [approvedDomainsError, setApprovedDomainsError] = useState<string | null>(null);
+  const [addDomainInput, setAddDomainInput] = useState('');
+  const [addDomainLoading, setAddDomainLoading] = useState(false);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -393,6 +398,96 @@ export default function AdminPage() {
       setBackupRunning(false);
     }
   }, [fetchBackupConfig]);
+
+  const fetchApprovedDomains = useCallback(async () => {
+    setApprovedDomainsLoading(true);
+    setApprovedDomainsError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/approved-domains?key=${ADMIN_PASSWORD}`);
+      if (res.status === 401) {
+        setApprovedDomainsError('Unauthorized');
+        setApprovedDomains([]);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setApprovedDomainsError((err as { error?: string }).error || `HTTP ${res.status}`);
+        setApprovedDomains([]);
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { domains?: string[] };
+      setApprovedDomains(Array.isArray(data.domains) ? data.domains : []);
+    } catch (e) {
+      setApprovedDomainsError(e instanceof Error ? e.message : 'Request failed');
+      setApprovedDomains([]);
+    } finally {
+      setApprovedDomainsLoading(false);
+    }
+  }, []);
+
+  const addApprovedDomain = useCallback(async () => {
+    const domain = addDomainInput.trim().toLowerCase();
+    if (!domain) return;
+    setAddDomainLoading(true);
+    setApprovedDomainsError(null);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/approved-domains?key=${ADMIN_PASSWORD}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain }),
+      });
+      if (res.status === 401) {
+        setApprovedDomainsError('Unauthorized');
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; domains?: string[]; error?: string };
+      if (!res.ok) {
+        setApprovedDomainsError(data.error || `HTTP ${res.status}`);
+        return;
+      }
+      if (data.ok && Array.isArray(data.domains)) {
+        setApprovedDomains(data.domains);
+        setAddDomainInput('');
+      }
+    } catch (e) {
+      setApprovedDomainsError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setAddDomainLoading(false);
+    }
+  }, [addDomainInput, fetchApprovedDomains]);
+
+  const removeApprovedDomain = useCallback(async (domain: string) => {
+    if (!confirm(`Remove domain "${domain}" from the approved list?`)) return;
+    setApprovedDomainsError(null);
+    try {
+      const base = getApiBaseUrl();
+      const encoded = encodeURIComponent(domain);
+      const res = await fetch(`${base}/api/admin/approved-domains/${encoded}?key=${ADMIN_PASSWORD}`, {
+        method: 'DELETE',
+      });
+      if (res.status === 401) {
+        setApprovedDomainsError('Unauthorized');
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; domains?: string[]; error?: string };
+      if (!res.ok) {
+        setApprovedDomainsError(data.error || `HTTP ${res.status}`);
+        return;
+      }
+      if (data.ok && Array.isArray(data.domains)) {
+        setApprovedDomains(data.domains);
+      }
+    } catch (e) {
+      setApprovedDomainsError(e instanceof Error ? e.message : 'Request failed');
+    }
+  }, [fetchApprovedDomains]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    fetchApprovedDomains();
+  }, [unlocked, fetchApprovedDomains]);
 
   const disconnectUser = useCallback(async (eventId: string, userId: string) => {
     if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
@@ -745,6 +840,70 @@ export default function AdminPage() {
                       ))}
                     </ul>
                   )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Mail className="w-5 h-5 text-slate-400" />
+              Approved email domains
+            </h2>
+            <button
+              type="button"
+              onClick={fetchApprovedDomains}
+              disabled={approvedDomainsLoading}
+              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {approvedDomainsLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          <p className="text-slate-500 text-sm mb-4">
+            Only users with these email domains can sign in. Empty = allow all.
+          </p>
+          {approvedDomainsError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              {approvedDomainsError}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2 mb-4">
+            <input
+              type="text"
+              value={addDomainInput}
+              onChange={(e) => setAddDomainInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addApprovedDomain())}
+              placeholder="e.g. company.com"
+              className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 font-mono text-sm w-48"
+            />
+            <button
+              type="button"
+              onClick={addApprovedDomain}
+              disabled={addDomainLoading || !addDomainInput.trim()}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {addDomainLoading ? 'Adding…' : 'Add domain'}
+            </button>
+          </div>
+          {approvedDomainsLoading && approvedDomains.length === 0 && !approvedDomainsError ? (
+            <p className="text-slate-400 text-sm">Loading…</p>
+          ) : approvedDomains.length === 0 ? (
+            <p className="text-slate-400 text-sm">No domains configured. All email domains are allowed.</p>
+          ) : (
+            <ul className="flex flex-wrap gap-2">
+              {approvedDomains.map((d) => (
+                <li key={d} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-700/80 border border-slate-600 text-white text-sm font-mono">
+                  {d}
+                  <button
+                    type="button"
+                    onClick={() => removeApprovedDomain(d)}
+                    className="text-slate-400 hover:text-red-400 focus:outline-none"
+                    title={`Remove ${d}`}
+                  >
+                    ×
+                  </button>
                 </li>
               ))}
             </ul>

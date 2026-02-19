@@ -22,14 +22,18 @@ require('dotenv').config();
 
 const app = express();
 const server = createServer(app);
+// In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
+const isProduction = process.env.NODE_ENV === 'production';
 const io = new Server(server, {
   cors: {
-    origin: [
-      "http://localhost:3003", 
-      "http://localhost:3000",
-      "https://your-app.netlify.app", // Replace with your actual Netlify URL
-      "https://your-app.vercel.app"   // Replace with your actual Vercel URL
-    ],
+    origin: isProduction
+      ? [
+          "http://localhost:3003",
+          "http://localhost:3000",
+          "https://your-app.netlify.app",
+          "https://your-app.vercel.app"
+        ]
+      : true, // allow any origin when not in production (local + other computers on LAN)
     methods: ["GET", "POST"]
   }
 });
@@ -283,7 +287,11 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+// In development allow any origin (so other computers on LAN can POST e.g. to /api/auth/check-domain)
+const corsOptions = process.env.NODE_ENV === 'production'
+  ? {}
+  : { origin: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] };
+app.use(cors(corsOptions));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
@@ -477,6 +485,114 @@ app.post('/api/admin/disconnect-user', (req, res) => {
     res.json({ ok: true, disconnected: toDisconnect.length });
   } catch (err) {
     console.error('[admin disconnect-user] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Approved Email Domains (User Domain Admin Auth) ---
+
+// Public: check if email domain is allowed (no auth required)
+app.post('/api/auth/check-domain', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const domain = typeof email === 'string' ? email.split('@')[1]?.trim().toLowerCase() : null;
+    if (!domain || !email.includes('@') || email.includes(' ')) {
+      return res.json({ allowed: false, message: 'Invalid email' });
+    }
+    const count = await pool.query('SELECT COUNT(*)::int AS n FROM public.admin_approved_domains');
+    const total = count.rows[0]?.n ?? 0;
+    if (total === 0) {
+      return res.json({ allowed: true });
+    }
+    const r = await pool.query(
+      'SELECT 1 FROM public.admin_approved_domains WHERE LOWER(domain) = $1',
+      [domain]
+    );
+    if (r.rows.length > 0) {
+      return res.json({ allowed: true });
+    }
+    return res.json({
+      allowed: false,
+      message: 'Your email domain is not on the approved list. Contact an administrator.'
+    });
+  } catch (err) {
+    console.error('[auth check-domain] error:', err);
+    res.status(500).json({ allowed: false, message: 'Unable to verify domain. Please try again.' });
+  }
+});
+
+// Admin: list approved domains
+app.get('/api/admin/approved-domains', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const r = await pool.query(
+      'SELECT domain FROM public.admin_approved_domains ORDER BY LOWER(domain)'
+    );
+    const domains = (r.rows || []).map((row) => row.domain || '').filter(Boolean);
+    res.json({ domains });
+  } catch (err) {
+    const msg = err.message || '';
+    const missing = err.code === '42P01' || msg.includes('admin_approved_domains') && (msg.includes('does not exist') || msg.includes('doesn\'t exist'));
+    if (missing) {
+      return res.json({ domains: [] });
+    }
+    console.error('[admin approved-domains GET] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: add a domain
+app.post('/api/admin/approved-domains', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const { domain: raw } = req.body || {};
+  const domain = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (!domain || domain.includes(' ') || !domain.includes('.')) {
+    return res.status(400).json({ error: 'Valid domain required (e.g. company.com)' });
+  }
+  try {
+    await pool.query(
+      'INSERT INTO public.admin_approved_domains (domain) VALUES ($1) ON CONFLICT (domain) DO NOTHING',
+      [domain]
+    );
+    const r = await pool.query('SELECT domain FROM public.admin_approved_domains ORDER BY LOWER(domain)');
+    const domains = (r.rows || []).map((row) => row.domain || '').filter(Boolean);
+    res.json({ ok: true, domains });
+  } catch (err) {
+    const msg = err.message || '';
+    const missing = err.code === '42P01' || (msg.includes('admin_approved_domains') && (msg.includes('does not exist') || msg.includes('doesn\'t exist')));
+    if (missing) {
+      return res.status(400).json({ error: 'Table admin_approved_domains does not exist. Run migration 024 on Neon.' });
+    }
+    console.error('[admin approved-domains POST] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: remove a domain (domain in URL path)
+app.delete('/api/admin/approved-domains/:domain', async (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const domain = typeof req.params.domain === 'string' ? req.params.domain.trim().toLowerCase() : '';
+  if (!domain) {
+    return res.status(400).json({ error: 'Domain required' });
+  }
+  try {
+    await pool.query('DELETE FROM public.admin_approved_domains WHERE LOWER(domain) = $1', [domain]);
+    const r = await pool.query('SELECT domain FROM public.admin_approved_domains ORDER BY LOWER(domain)');
+    const domains = (r.rows || []).map((row) => row.domain || '').filter(Boolean);
+    res.json({ ok: true, domains });
+  } catch (err) {
+    const msg = err.message || '';
+    const missing = err.code === '42P01' || (msg.includes('admin_approved_domains') && (msg.includes('does not exist') || msg.includes('doesn\'t exist')));
+    if (missing) {
+      return res.status(400).json({ error: 'Table admin_approved_domains does not exist. Run migration 024 on Neon.' });
+    }
+    console.error('[admin approved-domains DELETE] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -48,7 +48,8 @@
     "eject": "react-scripts eject",
     "netlify-build": "npm run build",
     "api": "node api-server.js",
-    "api:dev": "nodemon api-server.js"
+    "api:dev": "nodemon api-server.js",
+    "free-ports": "npx --yes kill-port 3001 3003"
   },
   "eslintConfig": {
     "extends": [

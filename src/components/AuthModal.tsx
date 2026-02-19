@@ -79,6 +79,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => 
             placeholder="Enter your email"
             required
           />
+          <p className="text-slate-500 text-xs mt-1">Your email domain must be on the approved list.</p>
         </div>
 
         {error && (

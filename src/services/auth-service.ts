@@ -1,6 +1,8 @@
 // Simple authentication service that works with our API
 // For now, we'll use localStorage for user sessions
 
+import { getApiBaseUrl } from './api-client';
+
 interface User {
   id: string;
   email: string;
@@ -54,6 +56,21 @@ class AuthService {
 
   async signIn(email: string, fullName: string): Promise<{ error: any }> {
     try {
+      // Domain check: only allow sign-in if email domain is approved (or list is empty)
+      const base = getApiBaseUrl();
+      const checkRes = await fetch(`${base}/api/auth/check-domain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const checkData = await checkRes.json().catch(() => ({}));
+      if (!checkData.allowed) {
+        return { error: { message: checkData.message || 'Your email domain is not on the approved list. Contact an administrator.' } };
+      }
+      if (!checkRes.ok) {
+        return { error: { message: 'Unable to verify domain. Please try again.' } };
+      }
+
       // Simple user identification - no password needed
       // This is just for tracking who made changes
       const user: User = {

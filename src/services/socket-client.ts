@@ -1,10 +1,6 @@
 // src/services/socket-client.ts
 import { io, Socket } from 'socket.io-client';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (import.meta.env.PROD 
-    ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
-    : 'http://localhost:3001');  // FIXED: Match api-server.js port!
+import { getApiBaseUrl } from './api-client';
 
 interface SocketCallbacks {
   onRunOfShowDataUpdated?: (data: any) => void;
@@ -55,8 +51,8 @@ class SocketClient {
 
     this.eventId = eventId;
     this.callbacks = callbacks;
-    
-    this.socket = io(API_BASE_URL, {
+    const apiBaseUrl = getApiBaseUrl();
+    this.socket = io(apiBaseUrl, {
       transports: ['websocket', 'polling'],
       timeout: 10000,
     });
