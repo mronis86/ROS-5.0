@@ -1,9 +1,35 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
+import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
 
 const ADMIN_PASSWORD = '1615';
 const ADMIN_UNLOCK_KEY = 'ros_admin_unlocked';
+
+// All 12 colors for the puzzle (must match server ADMIN_PUZZLE_COLORS subset). Names are lowercase for API.
+const PUZZLE_ALL_COLORS = [
+  { name: 'red', bg: 'bg-red-500', border: 'border-red-400' },
+  { name: 'green', bg: 'bg-green-500', border: 'border-green-400' },
+  { name: 'blue', bg: 'bg-blue-500', border: 'border-blue-400' },
+  { name: 'orange', bg: 'bg-orange-500', border: 'border-orange-400' },
+  { name: 'purple', bg: 'bg-purple-500', border: 'border-purple-400' },
+  { name: 'yellow', bg: 'bg-yellow-500', border: 'border-yellow-400' },
+  { name: 'pink', bg: 'bg-pink-500', border: 'border-pink-400' },
+  { name: 'teal', bg: 'bg-teal-500', border: 'border-teal-400' },
+  { name: 'brown', bg: 'bg-amber-700', border: 'border-amber-500' },
+  { name: 'gray', bg: 'bg-gray-500', border: 'border-gray-400' },
+  { name: 'navy', bg: 'bg-blue-900', border: 'border-blue-600' },
+  { name: 'coral', bg: 'bg-red-400', border: 'border-red-300' },
+].slice(0, 12);
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
 
 interface ServiceStatus {
   connected?: boolean;
@@ -77,6 +103,12 @@ export default function AdminPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [showPuzzle, setShowPuzzle] = useState(false);
+  const [puzzleCount, setPuzzleCount] = useState(3);
+  const [puzzleSelected, setPuzzleSelected] = useState<string[]>([]);
+  const [puzzleShuffled, setPuzzleShuffled] = useState<typeof PUZZLE_ALL_COLORS>([]);
+  const [puzzleVerifying, setPuzzleVerifying] = useState(false);
+  const [puzzleError, setPuzzleError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [presence, setPresence] = useState<PresenceEvent[]>([]);
@@ -102,6 +134,7 @@ export default function AdminPage() {
   const [approvedDomainsError, setApprovedDomainsError] = useState<string | null>(null);
   const [addDomainInput, setAddDomainInput] = useState('');
   const [addDomainLoading, setAddDomainLoading] = useState(false);
+  const [scriptCopied, setScriptCopied] = useState(false);
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -566,33 +599,84 @@ export default function AdminPage() {
     }
   }, [fetchRunningTimers]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     if (password !== ADMIN_PASSWORD) {
       setError('Invalid password');
       return;
     }
-    sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
-    setUnlocked(true);
+    let count = 3;
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/puzzle-config?key=${encodeURIComponent(ADMIN_PASSWORD)}`);
+      const data = await res.json().catch(() => ({}));
+      if (data.count) count = Math.max(1, Math.min(12, Number(data.count)));
+    } catch {
+      // Use default count
+    }
+    setPuzzleCount(count);
+    setPuzzleShuffled(shuffleArray(PUZZLE_ALL_COLORS));
+    setPuzzleSelected([]);
+    setPuzzleError(null);
+    setShowPuzzle(true);
     setPassword('');
+  };
+
+  const handlePuzzleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPuzzleError(null);
+    if (puzzleSelected.length !== puzzleCount) return;
+    setPuzzleVerifying(true);
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/admin/puzzle-verify?key=${encodeURIComponent(ADMIN_PASSWORD)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colors: puzzleSelected }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
+        setUnlocked(true);
+        setShowPuzzle(false);
+        setPuzzleSelected([]);
+        return;
+      }
+      setPuzzleError('Wrong selection. Try again.');
+    } catch {
+      setPuzzleError('Request failed. Try again.');
+    } finally {
+      setPuzzleVerifying(false);
+    }
+  };
+
+  const togglePuzzleColor = (colorName: string) => {
+    setPuzzleSelected((prev) => {
+      if (prev.includes(colorName)) return prev.filter((c) => c !== colorName);
+      if (prev.length >= puzzleCount) return prev;
+      return [...prev, colorName];
+    });
   };
 
   const handleLock = () => {
     sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
     setUnlocked(false);
     setPassword('');
+    setShowPuzzle(false);
+    setPuzzleSelected([]);
     setError(null);
+    setPuzzleError(null);
   };
 
-  if (!unlocked) {
+  if (!unlocked && !showPuzzle) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
         <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
           <h2 className="text-xl font-bold text-white text-center mb-6">
             Admin
           </h2>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handlePasswordSubmit} className="space-y-4">
             <div>
               <label className="block text-slate-300 text-sm font-medium mb-2">
                 Password
@@ -616,6 +700,47 @@ export default function AdminPage() {
               className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
             >
               Continue
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (!unlocked && showPuzzle) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
+          <h2 className="text-xl font-bold text-white text-center mb-2">Admin</h2>
+          <p className="text-slate-400 text-sm text-center mb-6">
+            Select the {puzzleCount} correct colors
+          </p>
+          <form onSubmit={handlePuzzleSubmit} className="space-y-6">
+            <div className="grid grid-cols-4 gap-3">
+              {puzzleShuffled.map(({ name, bg, border }) => {
+                const selected = puzzleSelected.includes(name);
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => togglePuzzleColor(name)}
+                    className={`aspect-square rounded-xl transition-all ${bg} border-2 ${selected ? `${border} ring-2 ring-white ring-offset-2 ring-offset-slate-800` : 'border-transparent opacity-90 hover:opacity-100'}`}
+                    title={name}
+                  />
+                );
+              })}
+            </div>
+            {puzzleError && (
+              <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-2 rounded-lg text-sm text-center">
+                {puzzleError}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={puzzleSelected.length !== puzzleCount || puzzleVerifying}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+            >
+              {puzzleVerifying ? 'Checking…' : `Submit (${puzzleSelected.length}/${puzzleCount})`}
             </button>
           </form>
         </div>
@@ -950,7 +1075,46 @@ export default function AdminPage() {
               <p><strong className="text-slate-300">3. Credentials:</strong> Paste the JSON key in <strong>Service account JSON</strong> below and Save, or set <code className="bg-slate-700 px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code> in API env (e.g. Railway).</p>
               <p><strong className="text-slate-300">4. Admin:</strong> Paste the folder ID → Save → use <strong>Run backup now</strong> (works with or without &quot;Enable weekly backup&quot;).</p>
               <p className="text-xs text-slate-500">Full steps: <code className="bg-slate-700 px-1 rounded">docs/GOOGLE-DRIVE-BACKUP-SETUP.md</code></p>
-              <p className="text-xs text-slate-500 mt-1">Alternative (no Drive API from app): use a scheduled Google Apps Script — see <code className="bg-slate-700 px-1 rounded">docs/BACKUP-VIA-GOOGLE-APPS-SCRIPT.md</code> and paste <code className="bg-slate-700 px-1 rounded">docs/ros-weekly-backup-to-drive.gs</code> into script.google.com.</p>
+              <p className="text-xs text-slate-500 mt-1">Alternative (no Drive API from app): use a scheduled Google Apps Script — see the section below.</p>
+            </div>
+          </details>
+          <details className="mb-4 text-sm bg-emerald-900/20 border border-emerald-700/40 rounded-lg overflow-hidden">
+            <summary className="cursor-pointer px-4 py-3 text-emerald-200 hover:text-emerald-100 focus:outline-none font-medium">
+              Weekly backup via Google Apps Script (no Drive API / no service account)
+            </summary>
+            <div className="px-4 pb-4 pt-1 border-t border-emerald-700/30 text-slate-300 space-y-3">
+              <p className="text-sm">
+                Use a <strong className="text-white">Google Apps Script</strong> that runs on a schedule (e.g. weekly). The script calls your Railway API, gets upcoming events, and writes CSV files to your Google Drive using your own Google account. No service account, no folder sharing with a bot.
+              </p>
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">Setup</p>
+              <ol className="list-decimal list-inside space-y-2 text-sm">
+                <li>Go to <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">script.google.com</a> → <strong>New project</strong>.</li>
+                <li>Delete the default code and paste the script below (use <strong>Copy script</strong>).</li>
+                <li>At the top of the script, set <strong>CONFIG</strong>: <code className="bg-slate-700 px-1 rounded">API_BASE_URL</code> (your Railway API URL), <code className="bg-slate-700 px-1 rounded">API_KEY</code> (same as Admin key), and optionally <code className="bg-slate-700 px-1 rounded">DRIVE_FOLDER_ID</code> (leave empty for My Drive root).</li>
+                <li>Run <strong>testBackupConnection</strong> once (dropdown → testBackupConnection → Run). Check View → Logs; you should see e.g. &quot;OK: API returned N upcoming event(s).&quot;</li>
+                <li>Run <strong>runBackupToDrive</strong> once and authorize Drive when prompted. Check your Drive for a weekly folder (e.g. 2026-W06) with CSVs.</li>
+                <li><strong className="text-emerald-200">Set the timed trigger:</strong> Click the <strong>Triggers</strong> (clock) icon in the left sidebar → <strong>Add Trigger</strong> → Function: <code className="bg-slate-700 px-1 rounded">runBackupToDrive</code> → Event: <strong>Time-driven</strong> → Type: <strong>Week timer</strong> → Choose day and time (e.g. Monday 6:00 am). Save.</li>
+              </ol>
+              <div className="relative">
+                <pre className="bg-slate-900 border border-slate-600 rounded-lg p-4 text-xs text-slate-300 overflow-x-auto max-h-80 overflow-y-auto font-mono whitespace-pre">
+                  <code>{GOOGLE_APPS_SCRIPT_BACKUP_SOURCE}</code>
+                </pre>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_BACKUP_SOURCE);
+                    setScriptCopied(true);
+                    setTimeout(() => setScriptCopied(false), 2000);
+                  }}
+                  className="absolute top-2 right-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded border border-slate-600 transition-colors"
+                >
+                  {scriptCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {scriptCopied ? 'Copied' : 'Copy script'}
+                </button>
+              </div>
+              <p className="text-slate-500 text-xs">
+                Full guide: <code className="bg-slate-700 px-1 rounded">docs/BACKUP-VIA-GOOGLE-APPS-SCRIPT.md</code> (in repo).
+              </p>
             </div>
           </details>
           {backupConfig.needsMigration && (

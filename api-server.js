@@ -389,6 +389,40 @@ app.get('/api/admin/presence', async (req, res) => {
   }
 });
 
+// Admin puzzle (2nd gate): config and verify. Set ADMIN_PUZZLE_COLORS=red,green,blue in env to enable.
+const ADMIN_PUZZLE_COLORS_RAW = process.env.ADMIN_PUZZLE_COLORS || '';
+const ADMIN_PUZZLE_COLORS = ADMIN_PUZZLE_COLORS_RAW
+  ? ADMIN_PUZZLE_COLORS_RAW.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+  : [];
+
+app.get('/api/admin/puzzle-config', (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (ADMIN_PUZZLE_COLORS.length === 0) {
+    return res.json({ enabled: false });
+  }
+  res.json({ enabled: true, count: ADMIN_PUZZLE_COLORS.length });
+});
+
+app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
+  if (req.query.key !== '1615') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (ADMIN_PUZZLE_COLORS.length === 0) {
+    return res.json({ ok: true });
+  }
+  const submitted = (req.body.colors || [])
+    .map((c) => String(c).trim().toLowerCase())
+    .filter(Boolean);
+  const expected = [...ADMIN_PUZZLE_COLORS].sort();
+  const got = [...submitted].sort();
+  if (got.length !== expected.length || expected.some((c, i) => c !== got[i])) {
+    return res.status(401).json({ error: 'Puzzle incorrect' });
+  }
+  res.json({ ok: true });
+});
+
 // Admin running timers: list events with running timers (protected by ?key=1615)
 app.get('/api/admin/running-timers', async (req, res) => {
   if (req.query.key !== '1615') {
