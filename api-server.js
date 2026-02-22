@@ -409,10 +409,11 @@ app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
   if (req.query.key !== '1615') {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  // Require ADMIN_PUZZLE_COLORS to be set; otherwise reject so wrong colors never get in
   if (ADMIN_PUZZLE_COLORS.length === 0) {
-    return res.json({ ok: true });
+    return res.status(401).json({ error: 'Puzzle not configured. Set ADMIN_PUZZLE_COLORS on the server.' });
   }
-  const submitted = (req.body.colors || [])
+  const submitted = (req.body && req.body.colors ? req.body.colors : [])
     .map((c) => String(c).trim().toLowerCase())
     .filter(Boolean);
   const expected = [...ADMIN_PUZZLE_COLORS].sort();

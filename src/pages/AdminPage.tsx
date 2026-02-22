@@ -643,7 +643,7 @@ export default function AdminPage() {
         setPuzzleSelected([]);
         return;
       }
-      setPuzzleError('Wrong selection. Try again.');
+      setPuzzleError(data.error || 'Wrong selection. Try again.');
     } catch {
       setPuzzleError('Request failed. Try again.');
     } finally {
