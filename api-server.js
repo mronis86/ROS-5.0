@@ -411,7 +411,9 @@ app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
   }
   // Require ADMIN_PUZZLE_COLORS to be set; otherwise reject so wrong colors never get in
   if (ADMIN_PUZZLE_COLORS.length === 0) {
-    return res.status(401).json({ error: 'Puzzle not configured. Set ADMIN_PUZZLE_COLORS on the server.' });
+    return res.status(401).json({
+      error: 'Puzzle not configured. In Railway (API service), add variable ADMIN_PUZZLE_COLORS with value: red,green,blue then redeploy.'
+    });
   }
   const submitted = (req.body && req.body.colors ? req.body.colors : [])
     .map((c) => String(c).trim().toLowerCase())
