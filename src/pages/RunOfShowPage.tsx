@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event, LOCATION_OPTIONS } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
-import { apiClient } from '../services/api-client';
+import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
 import { NeonBackupService, BackupData } from '../services/neon-backup-service';
 
@@ -745,9 +745,14 @@ const RunOfShowPage: React.FC = () => {
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   const [showAgendaImportModal, setShowAgendaImportModal] = useState(false);
   const [showCSVImportModal, setShowCSVImportModal] = useState(false);
+  const [showGoogleSheetExportModal, setShowGoogleSheetExportModal] = useState(false);
   const [showImportEventModal, setShowImportEventModal] = useState(false);
   const [showPublicBulkModal, setShowPublicBulkModal] = useState(false);
   const [publicBulkSelectedIds, setPublicBulkSelectedIds] = useState<number[]>([]);
+  const [showMoveRowsModal, setShowMoveRowsModal] = useState(false);
+  const [moveRowsStep, setMoveRowsStep] = useState<1 | 2>(1);
+  const [moveRowsSelectedIds, setMoveRowsSelectedIds] = useState<Set<number>>(new Set());
+  const [moveRowsTargetPosition, setMoveRowsTargetPosition] = useState(0); // 0-based index in movable parent list (insert after this index)
   const [backups, setBackups] = useState<BackupData[]>([]);
   const [backupStats, setBackupStats] = useState({
     totalBackups: 0,
@@ -1160,7 +1165,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
-    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showImportEventModal || showSpeakerManagerModal;
+    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal;
     const shouldPause = isUserEditing || anyModalOpen;
 
     if (shouldPause) {
@@ -1177,7 +1182,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showImportEventModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
   
   
   // Load user role from navigation state or localStorage
@@ -2561,7 +2566,7 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showImportEventModal || showSpeakerManagerModal) {
+    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -5612,12 +5617,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Load current completed cues
         try {
-          const envAny = (import.meta as any)?.env || {};
-          const apiBase = envAny.VITE_API_BASE_URL || 
-            (envAny.PROD 
-              ? 'https://ros-50-production.up.railway.app'  // Railway production URL
-              : 'http://localhost:3001');  // Local development
-          const completedCuesResponse = await fetch(`${apiBase}/api/completed-cues/${event?.id}`);
+          const completedCuesResponse = await fetch(`${getApiBaseUrl()}/api/completed-cues/${event?.id}`);
           if (completedCuesResponse.ok) {
             const completedCuesArray = await completedCuesResponse.json();
             console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);
@@ -7744,6 +7744,68 @@ const RunOfShowPage: React.FC = () => {
     setActiveRowMenu(null);
   };
 
+  // Move-rows modal: boundary = index of current loaded or running row (in filtered schedule). Only rows BELOW that can be reordered.
+  // movable = all rows below boundary; movableParents = only top-level (non-indented) rows for selection; indented move with parent.
+  const moveRowsBoundaryAndMovable = useMemo(() => {
+    const filtered = schedule.filter(item => (item.day || 1) === selectedDay);
+    let boundaryIndex = -1;
+    if (activeItemId != null) {
+      const idx = filtered.findIndex(item => item.id === activeItemId);
+      if (idx !== -1) boundaryIndex = Math.max(boundaryIndex, idx);
+    }
+    Object.keys(activeTimers).forEach(timerId => {
+      if (activeTimers[parseInt(timerId)]) {
+        const idx = filtered.findIndex(item => item.id === parseInt(timerId));
+        if (idx !== -1) boundaryIndex = Math.max(boundaryIndex, idx);
+      }
+    });
+    const movable = boundaryIndex >= 0 ? filtered.slice(boundaryIndex + 1) : [];
+    const movableParents = movable.filter(item => !item.isIndented);
+    // Blocks: each block = [parent, ...consecutive indented] for reordering
+    const blocks: ScheduleItem[][] = [];
+    for (const item of movable) {
+      if (!item.isIndented) blocks.push([item]);
+      else if (blocks.length > 0) blocks[blocks.length - 1].push(item);
+    }
+    return { boundaryIndex, movable, movableParents, blocks, filtered };
+  }, [schedule, selectedDay, activeItemId, activeTimers]);
+
+  const applyMoveRowsReorder = () => {
+    const { blocks, movable, movableParents, boundaryIndex, filtered } = moveRowsBoundaryAndMovable;
+    if (blocks.length === 0 || moveRowsSelectedIds.size === 0) return;
+    const targetPos = Math.max(0, Math.min(moveRowsTargetPosition, movableParents.length));
+    const selectedBlocks = blocks.filter(block => moveRowsSelectedIds.has(block[0].id));
+    if (selectedBlocks.length === 0) return;
+    const beforeBlocks = blocks.slice(0, targetPos).filter(block => !moveRowsSelectedIds.has(block[0].id));
+    const afterBlocks = blocks.slice(targetPos).filter(block => !moveRowsSelectedIds.has(block[0].id));
+    const reorderedBlocks = [...beforeBlocks, ...selectedBlocks, ...afterBlocks];
+    const reordered = reorderedBlocks.flat();
+    const movableIds = new Set(movable.map(m => m.id));
+    const scheduleWithoutMovable = schedule.filter(s => !((s.day || 1) === selectedDay && movableIds.has(s.id)));
+    const boundaryItemId = boundaryIndex >= 0 ? filtered[boundaryIndex].id : null;
+    let insertAt: number;
+    if (boundaryItemId != null) {
+      const idx = scheduleWithoutMovable.findIndex(s => s.id === boundaryItemId);
+      insertAt = idx === -1 ? 0 : idx + 1;
+    } else {
+      insertAt = scheduleWithoutMovable.findIndex(s => (s.day || 1) === selectedDay);
+      if (insertAt === -1) insertAt = scheduleWithoutMovable.length;
+    }
+    const newSchedule = [...scheduleWithoutMovable];
+    newSchedule.splice(insertAt, 0, ...reordered);
+    setSchedule(newSchedule);
+    const totalRows = reordered.length;
+    logChange('MOVE_ITEMS', `Reordered ${selectedBlocks.length} block(s) (${totalRows} row(s)) below current cue`, {
+      changeType: 'MOVE_ROWS',
+      details: { blockCount: selectedBlocks.length, rowCount: totalRows, targetPosition: targetPos }
+    });
+    setShowMoveRowsModal(false);
+    setMoveRowsStep(1);
+    setMoveRowsSelectedIds(new Set());
+    setMoveRowsTargetPosition(0);
+    handleUserEditing();
+  };
+
   const duplicateScheduleItem = (itemId: number) => {
     const itemToDuplicate = schedule.find(item => item.id === itemId);
     if (!itemToDuplicate) return;
@@ -7905,6 +7967,109 @@ const RunOfShowPage: React.FC = () => {
       minute: '2-digit',
       hour12: true 
     });
+  };
+
+  // Export current event schedule as CSV (used by menu and Google Sheet modal shortcut)
+  const handleExportCSV = () => {
+    const csvHeaders = [
+      'ROW',
+      'CUE',
+      'Program Type',
+      'Shot Type',
+      'Segment Name',
+      'Duration',
+      'Start Time',
+      'End Time',
+      'Notes',
+      'Assets',
+      'Speakers',
+      'Has PPT',
+      'Has QA',
+      'Timer ID',
+      'Is Public',
+      'Is Indented',
+      'Day'
+    ];
+    const customColumnHeaders = customColumns.map(col => col.name);
+    const allHeaders = [...csvHeaders, ...customColumnHeaders];
+    const filteredSchedule = [...schedule].sort((a, b) => (a.day || 1) - (b.day || 1));
+    const csvRows = filteredSchedule.map((item, index) => {
+      const originalIndex = schedule.findIndex(s => s.id === item.id);
+      const calculatedStartTime = calculateStartTime(originalIndex);
+      const duration = `${item.durationHours}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
+      let startTime = '';
+      let endTime = '';
+      if (!item.isIndented) {
+        startTime = calculatedStartTime || '';
+        endTime = (() => {
+          let nextNonIndentedItem: ScheduleItem | null = null;
+          let nextIndex = index + 1;
+          const itemDay = item.day || 1;
+          while (nextIndex < filteredSchedule.length) {
+            const nextItem = filteredSchedule[nextIndex];
+            if ((nextItem.day || 1) !== itemDay) break;
+            if (!nextItem.isIndented) {
+              nextNonIndentedItem = nextItem;
+              break;
+            }
+            nextIndex++;
+          }
+          if (nextNonIndentedItem) {
+            const nextOriginalIndex = schedule.findIndex(s => s.id === nextNonIndentedItem!.id);
+            return calculateStartTime(nextOriginalIndex) || '';
+          }
+          if (!calculatedStartTime) return '';
+          const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
+          const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
+          let totalSeconds = (hours * 3600 + minutes * 60 + seconds) + (durHours * 3600 + durMinutes * 60 + durSeconds);
+          const endHours = Math.floor(totalSeconds / 3600);
+          const endMinutes = Math.floor((totalSeconds % 3600) / 60);
+          const endSecs = totalSeconds % 60;
+          return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
+        })();
+      }
+      const exportProgramType = item.programType === 'Break F&B/B2B' ? 'Break' : (item.programType || '');
+      const baseRow = [
+        index + 1,
+        item.customFields?.cue || `CUE ${index + 1}`,
+        exportProgramType,
+        item.shotType || '',
+        item.segmentName || '',
+        duration,
+        startTime,
+        endTime,
+        cleanNotesForCSV(item.notes) || '',
+        item.assets || '',
+        item.speakersText || '',
+        item.hasPPT ? 'Yes' : 'No',
+        item.hasQA ? 'Yes' : 'No',
+        item.timerId || '',
+        item.isPublic ? 'Yes' : 'No',
+        item.isIndented ? 'Yes' : 'No',
+        item.day || 1
+      ];
+      const customValues = customColumns.map(col => item.customFields[col.id] || '');
+      return [...baseRow, ...customValues];
+    });
+    const csvContent = '\uFEFF' + [
+      allHeaders.join(','),
+      ...csvRows.map(row =>
+        row.map(cell =>
+          typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))
+            ? `"${cell.replace(/"/g, '""')}"`
+            : cell
+        ).join(',')
+      )
+    ].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${event?.name || 'RunOfShow'}_AllDays_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Calculate start time with automatic overtime adjustments
@@ -8424,6 +8589,197 @@ const RunOfShowPage: React.FC = () => {
         cancelLabel="Stay In-Show"
         confirmClassName="bg-amber-600 hover:bg-amber-500"
       />
+
+      {/* Move Rows modal - reorder rows below current loaded/running cue (step 1: select, step 2: confirm) */}
+      {showMoveRowsModal && (() => {
+        const { boundaryIndex, filtered, movable, movableParents, blocks } = moveRowsBoundaryAndMovable;
+        const selectedBlocks = blocks.filter(block => moveRowsSelectedIds.has(block[0].id));
+        const totalRowsToMove = selectedBlocks.reduce((sum, b) => sum + b.length, 0);
+        const targetLabel = movableParents.length === 0
+          ? ''
+          : moveRowsTargetPosition === 0
+            ? 'at start (before first row below cue)'
+            : moveRowsTargetPosition >= movableParents.length
+              ? `at end (after row ${boundaryIndex + 1 + movable.length})`
+              : (() => {
+                  const rowNum = boundaryIndex + 2 + blocks.slice(0, moveRowsTargetPosition).reduce((acc, b) => acc + b.length, 0);
+                  const parent = movableParents[moveRowsTargetPosition - 1];
+                  const cuePart = parent?.customFields?.cue ? ` CUE ${parent.customFields.cue}` : '';
+                  return `after row ${rowNum}${cuePart}`;
+                })();
+        return (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]">
+            <div className="bg-slate-800 rounded-xl border border-slate-600 shadow-2xl max-w-lg w-full mx-4 max-h-[85vh] flex flex-col">
+              <div className="p-4 border-b border-slate-600">
+                <h3 className="text-lg font-bold text-white">Move Rows {moveRowsStep === 2 ? '— Confirm' : ''}</h3>
+                <p className="text-slate-400 text-sm mt-1">
+                  {moveRowsStep === 1
+                    ? 'Reorder rows below the current loaded/running cue. Select one or more rows (indented sub-cues move with their parent), then choose where to move them.'
+                    : 'You are moving rows during a live program. This will reorder the run of show for everyone. Confirm below.'}
+                </p>
+                {boundaryIndex >= 0 && filtered[boundaryIndex] && (() => {
+                  const current = filtered[boundaryIndex];
+                  const currentRow = boundaryIndex + 1;
+                  const currentCue = current.customFields?.cue ? `CUE ${current.customFields.cue}` : '—';
+                  const isRunning = current.id != null && activeTimers[current.id];
+                  return (
+                    <div className="mt-3 px-3 py-2 rounded-lg bg-green-900/40 border border-green-700/60">
+                      <p className="text-green-200 text-xs font-medium uppercase tracking-wide">Current loaded{isRunning ? ' / running' : ''}</p>
+                      <p className="text-white text-sm mt-0.5">
+                        <span className="font-mono text-amber-400">{currentCue}</span>
+                        <span className="text-slate-400 mx-2">·</span>
+                        <span className="font-mono text-slate-300">Row {currentRow}</span>
+                        <span className="text-slate-400 mx-2">·</span>
+                        <span className="truncate">{current.segmentName || '—'}</span>
+                      </p>
+                    </div>
+                  );
+                })()}
+                {boundaryIndex < 0 && (
+                  <div className="mt-3 px-3 py-2 rounded-lg bg-slate-700/60 border border-slate-600 text-slate-400 text-sm">
+                    Load or run a cue first. Only rows below the current loaded/running cue can be reordered.
+                  </div>
+                )}
+              </div>
+              <div className="p-4 overflow-y-auto flex-1">
+                {moveRowsStep === 1 ? (
+                  movableParents.length === 0 ? (
+                    <p className="text-slate-400">No rows below the current cue to reorder.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-slate-300 text-sm font-medium">Select row(s) to move (indented sub-cues move with parent):</p>
+                      {movableParents.map((item, i) => {
+                        const displayRow = boundaryIndex + 2 + blocks.slice(0, i).reduce((acc, b) => acc + b.length, 0);
+                        const cueLabel = item.customFields?.cue ? `CUE ${item.customFields.cue}` : '—';
+                        const subCount = blocks[i]?.length > 1 ? blocks[i].length - 1 : 0;
+                        return (
+                          <label key={item.id} className="flex items-center gap-3 p-2 rounded-lg bg-slate-700/80 hover:bg-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={moveRowsSelectedIds.has(item.id)}
+                              onChange={() => {
+                                setMoveRowsSelectedIds(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(item.id)) next.delete(item.id);
+                                  else next.add(item.id);
+                                  return next;
+                                });
+                              }}
+                              className="rounded border-slate-500"
+                            />
+                            <span className="text-amber-400 font-mono text-sm font-semibold w-14 shrink-0" title="Cue number">{cueLabel}</span>
+                            <span className="text-slate-400 font-mono text-xs w-10 shrink-0">Row {displayRow}</span>
+                            <span className="text-white truncate min-w-0">{item.segmentName || '—'}</span>
+                            {subCount > 0 && <span className="text-slate-500 text-xs shrink-0">+{subCount} sub</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )
+                ) : (
+                  <div className="space-y-3">
+                    <div className="px-4 py-3 rounded-lg bg-red-950/90 border-2 border-red-500 text-red-100">
+                      <p className="text-red-200 font-semibold text-sm uppercase tracking-wide mb-1.5">⚠️ Warning — Live program</p>
+                      <p className="text-sm">
+                        You are moving rows during a live program. This change will reorder the run of show for all users immediately.
+                      </p>
+                    </div>
+                    <div className="px-4 py-3 rounded-lg bg-slate-700/80 border border-slate-600 space-y-3">
+                      <div>
+                        <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1">Moving to</p>
+                        <p className="text-white font-semibold">{targetLabel}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5">
+                          Rows being moved ({totalRowsToMove} row{totalRowsToMove !== 1 ? 's' : ''}, {selectedBlocks.length} block{selectedBlocks.length !== 1 ? 's' : ''})
+                        </p>
+                        <ul className="space-y-1.5 text-sm">
+                          {selectedBlocks.map(block => {
+                            const parent = block[0];
+                            const cueLabel = parent.customFields?.cue ? `CUE ${parent.customFields.cue}` : '—';
+                            const subCount = block.length - 1;
+                            return (
+                              <li key={parent.id} className="flex items-center gap-2 text-slate-200">
+                                <span className="font-mono text-amber-400 w-14 shrink-0">{cueLabel}</span>
+                                <span className="truncate">{parent.segmentName || '—'}</span>
+                                {subCount > 0 && <span className="text-slate-500 text-xs">+{subCount} sub-cue{subCount !== 1 ? 's' : ''}</span>}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="p-4 border-t border-slate-600 flex flex-col gap-3">
+                {moveRowsStep === 1 && movableParents.length > 0 && (
+                  <div>
+                    <label className="block text-slate-300 text-sm font-medium mb-1">Move selected to position:</label>
+                    <select
+                      value={moveRowsTargetPosition}
+                      onChange={e => setMoveRowsTargetPosition(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white"
+                    >
+                      <option value={0}>At start (before first row below cue)</option>
+                      {movableParents.slice(0, -1).map((item, i) => {
+                        const rowNum = boundaryIndex + 2 + blocks.slice(0, i + 1).reduce((acc, b) => acc + b.length, 0) - 1;
+                        const cueLabel = item.customFields?.cue ? ` CUE ${item.customFields.cue}` : '';
+                        return (
+                          <option key={item.id} value={i + 1}>After row {rowNum}{cueLabel}</option>
+                        );
+                      })}
+                      {movableParents.length > 0 && (
+                        <option value={movableParents.length}>At end (after row {boundaryIndex + 1 + movable.length})</option>
+                      )}
+                    </select>
+                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  {moveRowsStep === 1 ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => { setShowMoveRowsModal(false); setMoveRowsStep(1); setMoveRowsSelectedIds(new Set()); }}
+                        className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg"
+                      >
+                        Cancel
+                      </button>
+                      {movableParents.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setMoveRowsStep(2)}
+                          disabled={moveRowsSelectedIds.size === 0}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg"
+                        >
+                          Continue
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setMoveRowsStep(1)}
+                        className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applyMoveRowsReorder}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+                      >
+                        Apply
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Running Timer Popup */}
       {showRunningTimerPopup && runningTimerInfo && (
@@ -9184,150 +9540,7 @@ const RunOfShowPage: React.FC = () => {
                         onClick={() => {
                           setShowMenuDropdown(false);
                           setShowImportExportSubmenu(false);
-                          console.log('=== CSV EXPORT ===');
-                          console.log('Event:', event);
-                          console.log('Schedule length:', schedule.length);
-                          console.log('Full schedule:', schedule);
-                          console.log('Master start time:', masterStartTime);
-                          
-                          // Generate CSV data - include all important columns
-                          const csvHeaders = [
-                            'ROW',
-                            'CUE',
-                            'Program Type',
-                            'Shot Type',
-                            'Segment Name',
-                            'Duration',
-                            'Start Time',
-                            'End Time',
-                            'Notes',
-                            'Assets',
-                            'Speakers',
-                            'Has PPT',
-                            'Has QA',
-                            'Timer ID',
-                            'Is Public',
-                            'Is Indented',
-                            'Day'
-                          ];
-                          
-                          // Add custom columns to headers
-                          const customColumnHeaders = customColumns.map(col => col.name);
-                          const allHeaders = [...csvHeaders, ...customColumnHeaders];
-                          
-                          // Include all days - sorted by day for clear grouping (Day column marks each row)
-                          const filteredSchedule = [...schedule].sort((a, b) => (a.day || 1) - (b.day || 1));
-                          
-                          const csvRows = filteredSchedule.map((item, index) => {
-                            // Find the original index in the full schedule for accurate start time calculation
-                            const originalIndex = schedule.findIndex(s => s.id === item.id);
-                            const calculatedStartTime = calculateStartTime(originalIndex);
-                            const duration = `${item.durationHours}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
-                            
-                            // Handle indented items - blank start and end times
-                            let startTime = '';
-                            let endTime = '';
-                            
-                            if (!item.isIndented) {
-                              // For non-indented items, use calculated start time
-                              startTime = calculatedStartTime || '';
-                              
-                              // Calculate end time from next non-indented row's start time
-                              endTime = (() => {
-                                // Find the next non-indented item in the same day
-                                let nextNonIndentedItem: ScheduleItem | null = null;
-                                let nextIndex = index + 1;
-                                const itemDay = item.day || 1;
-                                
-                                while (nextIndex < filteredSchedule.length) {
-                                  const nextItem = filteredSchedule[nextIndex];
-                                  if ((nextItem.day || 1) !== itemDay) break; // Stop at day boundary
-                                  if (!nextItem.isIndented) {
-                                    nextNonIndentedItem = nextItem;
-                                    break;
-                                  }
-                                  nextIndex++;
-                                }
-                                
-                                if (nextNonIndentedItem) {
-                                  // Get the next non-indented item's start time
-                                  const nextOriginalIndex = schedule.findIndex(s => s.id === nextNonIndentedItem!.id);
-                                  const nextStartTime = calculateStartTime(nextOriginalIndex);
-                                  return nextStartTime || '';
-                                } else {
-                                  // For the last non-indented row, calculate end time from duration as fallback
-                                  if (!calculatedStartTime) return '';
-                                  
-                                  const [hours, minutes, seconds] = calculatedStartTime.split(':').map(Number);
-                                  const [durHours, durMinutes, durSeconds] = duration.split(':').map(Number);
-                                  
-                                  let totalSeconds = (hours * 3600 + minutes * 60 + seconds) + 
-                                                   (durHours * 3600 + durMinutes * 60 + durSeconds);
-                                  
-                                  const endHours = Math.floor(totalSeconds / 3600);
-                                  const endMinutes = Math.floor((totalSeconds % 3600) / 60);
-                                  const endSecs = totalSeconds % 60;
-                                  
-                                  return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`;
-                                }
-                              })();
-                            }
-                            // For indented items, startTime and endTime remain empty strings
-
-                            // Map program type for CSV export (convert Break F&B/B2B back to Break, keep Breakout Session as is)
-                            const exportProgramType = item.programType === 'Break F&B/B2B' ? 'Break' : (item.programType || '');
-                            
-                            const baseRow = [
-                              index + 1, // ROW number
-                              item.customFields?.cue || `CUE ${index + 1}`, // CUE
-                              exportProgramType,
-                              item.shotType || '',
-                              item.segmentName || '',
-                              duration,
-                              startTime,
-                              endTime,
-                              cleanNotesForCSV(item.notes) || '',
-                              item.assets || '',
-                              item.speakersText || '',
-                              item.hasPPT ? 'Yes' : 'No',
-                              item.hasQA ? 'Yes' : 'No',
-                              item.timerId || '',
-                              item.isPublic ? 'Yes' : 'No',
-                              item.isIndented ? 'Yes' : 'No',
-                              item.day || 1
-                            ];
-                            
-                            // Add custom column values
-                            const customValues = customColumns.map(col => item.customFields[col.id] || '');
-                            
-                            return [...baseRow, ...customValues];
-                          });
-                          
-                          // Create CSV content (UTF-8 BOM for Excel compatibility)
-                          const csvContent = '\uFEFF' + [
-                            allHeaders.join(','),
-                            ...csvRows.map(row => 
-                              row.map(cell => 
-                                // Escape commas and quotes in CSV
-                                typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))
-                                  ? `"${cell.replace(/"/g, '""')}"`
-                                  : cell
-                              ).join(',')
-                            )
-                          ].join('\n');
-                          
-                          // Create and download CSV file
-                          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                          const url = URL.createObjectURL(blob);
-                          const link = document.createElement('a');
-                          link.href = url;
-                          link.download = `${event?.name || 'RunOfShow'}_AllDays_${new Date().toISOString().split('T')[0]}.csv`;
-                          document.body.appendChild(link);
-                          link.click();
-                          document.body.removeChild(link);
-                          URL.revokeObjectURL(url);
-                          
-                          console.log('=== END CSV EXPORT ===');
+                          handleExportCSV();
                         }}
                         className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
                       >
@@ -9335,6 +9548,20 @@ const RunOfShowPage: React.FC = () => {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                         Export CSV
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMenuDropdown(false);
+                          setShowImportExportSubmenu(false);
+                          handleModalEditing();
+                          setShowGoogleSheetExportModal(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Export to Google Sheet
                       </button>
                       <button
                         onClick={() => {
@@ -9652,6 +9879,21 @@ const RunOfShowPage: React.FC = () => {
                       {isSyncing ? 'Syncing...' : `Next sync in ${countdown}s`}
                     </span>
                   </div>
+                )}
+                {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && showMode === 'in-show' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMoveRowsStep(1);
+                      setMoveRowsSelectedIds(new Set());
+                      setMoveRowsTargetPosition(0);
+                      setShowMoveRowsModal(true);
+                    }}
+                    className="px-3 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition-colors"
+                    title="Reorder rows below the current loaded/running cue"
+                  >
+                    ↕ Move Rows
+                  </button>
                 )}
               </div>
               
@@ -10203,7 +10445,7 @@ const RunOfShowPage: React.FC = () => {
                 )}
               </div>
               {user && (
-                <div className="flex items-center gap-3 mt-1">
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
                   <button
                     onClick={() => setShowChangeLog(true)}
                     className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded transition-colors"
@@ -13284,6 +13526,47 @@ const RunOfShowPage: React.FC = () => {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export to Google Sheet Modal - embedded Web App */}
+      {showGoogleSheetExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-lg w-full max-w-4xl max-h-[93vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 border-b border-slate-600 shrink-0 gap-4">
+              <h2 className="text-xl font-bold text-white">Export to Google Sheet</h2>
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-end gap-0.5">
+                  <button
+                    type="button"
+                    onClick={handleExportCSV}
+                    className="flex items-center gap-2 px-3 py-2 rounded bg-slate-600 hover:bg-slate-500 text-white transition-colors text-base"
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Export CSV
+                  </button>
+                  <span className="text-xs text-slate-400">Export CSV first, then use Import CSV below</span>
+                </div>
+                <button
+                  onClick={() => setShowGoogleSheetExportModal(false)}
+                  className="text-slate-400 hover:text-white text-2xl font-bold p-1"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 p-4">
+              <iframe
+                title="Run of Show — Sheet Creator"
+                src="https://script.google.com/macros/s/AKfycbzbZTPxg-NvRWZV2T3fRmt7laoBOTzrECkA2Hia_q3RCN63-q5PBrKh10t__CuMMScD9g/exec"
+                className="w-full h-full min-h-[65vh] rounded border border-slate-600 bg-white"
+                allow="clipboard-write"
+              />
             </div>
           </div>
         </div>
