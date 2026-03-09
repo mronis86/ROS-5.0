@@ -125,3 +125,11 @@ venv/
 diff_app.txt
 temp_runofshow_was.txt
 temp_*.txt
+
+# Local-only backup/ref folders (kept for reference, not pushed to GitHub)
+OLD XML REF/
+src/pages/OTHERS/
+src/components/OTHERS/
+RunOfShowPage_reverted.tsx
+src/contexts/AuthContext-new.tsx
+src/contexts/AuthContext-old.tsx
