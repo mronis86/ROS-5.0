@@ -60,10 +60,10 @@ All project documentation has been organized in the **[docs/](./docs/)** folder:
 ROS-5.0/
 ├── docs/                    # All documentation
 ├── ros-osc-control/         # Electron OSC control app
-├── websocket-python-osc/    # Python OSC GUI
+├── ros-osc-python-app/      # Python OSC GUI (packaged for download)
 ├── src/                     # React web application
-├── api-server.js           # Local API server
-└── server.js               # Main web server
+├── api-server.js            # Local API server
+└── companion-module-runofshow/  # Bitfocus Companion module
 ```
 
 ## 📖 More Information
