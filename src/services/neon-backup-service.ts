@@ -1,10 +1,7 @@
 import { DatabaseService } from './database';
+import { getApiBaseUrl } from './api-client';
 
-// API Base URL for direct fetch calls
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (import.meta.env.PROD 
-    ? 'https://ros-50-production.up.railway.app'  // Your Railway URL
-    : 'http://localhost:3002');
+const API_BASE_URL = getApiBaseUrl();
 
 export interface BackupData {
   id: number;

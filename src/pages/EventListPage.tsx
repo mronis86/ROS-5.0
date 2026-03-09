@@ -52,47 +52,10 @@ const EventListPage: React.FC = () => {
     for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
     return code;
   };
-  
-  // Server toggle state (saved preference; may be corrected on load if local is down)
-  const [forceLocal, setForceLocal] = useState(() => {
-    const saved = localStorage.getItem('forceLocalServer');
-    return saved === 'true';
-  });
-  const [switchServerMessage, setSwitchServerMessage] = useState<string | null>(null);
-  const [isCheckingLocal, setIsCheckingLocal] = useState(false);
-  // Confirm dialog: 'railway' | 'local' | null
-  const [switchConfirmTarget, setSwitchConfirmTarget] = useState<'railway' | 'local' | null>(null);
-  // Error message shown inside the switch confirmation popup (e.g. local not detected)
-  const [switchPopupError, setSwitchPopupError] = useState<string | null>(null);
 
-  // On load: if preference is Local but local server is not running, switch to Railway
+  // Clear any legacy local-server preference (app uses Railway only)
   useEffect(() => {
-    if (!forceLocal) return;
-    let cancelled = false;
-    const check = async () => {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
-        const res = await fetch('http://localhost:3001/health', { signal: controller.signal });
-        clearTimeout(timeout);
-        const data = await res.json().catch(() => ({}));
-        if (cancelled) return;
-        if (!res.ok || data?.status !== 'healthy') {
-          setForceLocal(false);
-          localStorage.setItem('forceLocalServer', 'false');
-          (window as any).__FORCE_LOCAL_API__ = false;
-          (window as any).__USE_RAILWAY__ = true;
-        }
-      } catch {
-        if (cancelled) return;
-        setForceLocal(false);
-        localStorage.setItem('forceLocalServer', 'false');
-        (window as any).__FORCE_LOCAL_API__ = false;
-        (window as any).__USE_RAILWAY__ = true;
-      }
-    };
-    check();
-    return () => { cancelled = true; };
+    localStorage.removeItem('forceLocalServer');
   }, []);
 
   // Load events from Supabase and localStorage on component mount
@@ -619,143 +582,10 @@ const EventListPage: React.FC = () => {
 
   const filteredEvents = getFilteredEvents();
 
-  // Determine which server to use for display (must match api-client getApiBaseUrl logic)
-  const getApiBaseUrl = () => {
-    if (forceLocal) return 'http://localhost:3001';
-    return 'https://ros-50-production.up.railway.app';
-  };
-  const apiBaseUrl = getApiBaseUrl();
-  const isUsingLocal = apiBaseUrl.includes('localhost');
-  
-  // Save toggle state and override API base URL in api-client / socket-client
-  useEffect(() => {
-    localStorage.setItem('forceLocalServer', forceLocal.toString());
-    if (forceLocal) {
-      (window as any).__FORCE_LOCAL_API__ = true;
-      (window as any).__LOCAL_API_URL__ = 'http://localhost:3001';
-      (window as any).__USE_RAILWAY__ = false;
-    } else {
-      (window as any).__FORCE_LOCAL_API__ = false;
-      (window as any).__USE_RAILWAY__ = true;
-    }
-  }, [forceLocal]);
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 pt-16">
-      {/* Subtle Server Status Indicator */}
-      <div className="fixed top-16 left-0 right-0 z-40 bg-slate-800 border-b border-slate-700">
-        <div className="max-w-6xl mx-auto px-6 py-2 flex items-center justify-end gap-3">
-          <div className="flex items-center gap-2 text-xs">
-            <div className={`w-1.5 h-1.5 rounded-full ${isUsingLocal ? 'bg-green-400' : 'bg-blue-400'} animate-pulse`}></div>
-            <span className="text-slate-400">
-              {isUsingLocal ? '🏠 Local' : '☁️ Railway'}
-            </span>
-          </div>
-          
-          <button
-            onClick={() => {
-              setSwitchServerMessage(null);
-              setSwitchPopupError(null);
-              setSwitchConfirmTarget(forceLocal ? 'railway' : 'local');
-            }}
-            disabled={isCheckingLocal}
-            className={`px-3 py-1 ${isUsingLocal ? 'bg-green-600 hover:bg-green-500' : 'bg-blue-600 hover:bg-blue-500'} text-white rounded text-xs font-medium transition-colors disabled:opacity-70`}
-            title={isUsingLocal ? 'Switch to Railway' : 'Switch to Local (only if API is running on port 3001)'}
-          >
-            Switch Server
-          </button>
-          {switchServerMessage && (
-            <span className="text-amber-400 text-xs max-w-xs" title={switchServerMessage}>
-              {switchServerMessage}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Switch server confirmation */}
-      {switchConfirmTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => { setSwitchConfirmTarget(null); setSwitchPopupError(null); }}>
-          <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-xl p-6 max-w-sm mx-4" onClick={e => e.stopPropagation()}>
-            {switchPopupError ? (
-              <>
-                <p className="text-amber-400 mb-4">{switchPopupError}</p>
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => { setSwitchConfirmTarget(null); setSwitchPopupError(null); }}
-                    className="px-4 py-2 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500 text-sm font-medium"
-                  >
-                    Close
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-slate-200 mb-4">
-                  {switchConfirmTarget === 'railway'
-                    ? 'Do you want to switch to Railway?'
-                    : 'Do you want to switch to Local? (Only possible if the API is running on this computer.)'}
-                </p>
-                <div className="flex gap-3 justify-end">
-                  <button
-                    type="button"
-                    onClick={() => { setSwitchConfirmTarget(null); setSwitchPopupError(null); }}
-                    className="px-4 py-2 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500 text-sm font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const target = switchConfirmTarget;
-                      if (target === 'railway') {
-                        setSwitchConfirmTarget(null);
-                        setForceLocal(false);
-                        localStorage.setItem('forceLocalServer', 'false');
-                        (window as any).__FORCE_LOCAL_API__ = false;
-                        (window as any).__USE_RAILWAY__ = true;
-                        window.location.reload();
-                        return;
-                      }
-                      // target === 'local': only switch if local server is reachable
-                      setIsCheckingLocal(true);
-                      try {
-                        const controller = new AbortController();
-                        const timeout = setTimeout(() => controller.abort(), 3000);
-                        const res = await fetch('http://localhost:3001/health', { signal: controller.signal });
-                        clearTimeout(timeout);
-                        const data = await res.json().catch(() => ({}));
-                        if (res.ok && data?.status === 'healthy') {
-                          setSwitchConfirmTarget(null);
-                          setForceLocal(true);
-                          localStorage.setItem('forceLocalServer', 'true');
-                          (window as any).__FORCE_LOCAL_API__ = true;
-                          (window as any).__LOCAL_API_URL__ = 'http://localhost:3001';
-                          (window as any).__USE_RAILWAY__ = false;
-                          window.location.reload();
-                        } else {
-                          setSwitchPopupError('Local isn\'t available right now. You can try again later or continue using Railway.');
-                        }
-                      } catch {
-                        setSwitchPopupError('Local isn\'t available right now. You can try again later or continue using Railway.');
-                      } finally {
-                        setIsCheckingLocal(false);
-                      }
-                    }}
-                    disabled={isCheckingLocal}
-                    className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 text-sm font-medium disabled:opacity-70"
-                  >
-                    {isCheckingLocal ? 'Checking...' : (switchConfirmTarget === 'local' ? 'Check & switch' : 'Confirm')}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      
-      {/* Header - compact, with top padding so title isn't clipped by fixed bar */}
-      <div className="text-center py-3 pt-14 mt-0">
+      {/* Header */}
+      <div className="text-center py-3 pt-4 mt-0">
         <h1 className="text-xl font-bold text-white mb-0.5">
           📅 Event List Calendar
         </h1>

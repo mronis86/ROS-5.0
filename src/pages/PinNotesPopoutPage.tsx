@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { socketClient } from '../services/socket-client';
+import { getApiBaseUrl } from '../services/api-client';
 
 const RESIZE_HANDLE_WIDTH = 6;
 const MIN_COLUMN_FRACTION = 0.08; // each column at least ~8% of width
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+const API_BASE = getApiBaseUrl();
 
 const ZOOM_STORAGE_KEY = 'pin-notes-popout-zoom';
 const ZOOM_MIN = 0.5;

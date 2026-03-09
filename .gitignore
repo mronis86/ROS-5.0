@@ -54,6 +54,7 @@ netlify-upload/start-*
 
 # netlify dated deploy folders (build artifacts - use create-netlify-dated.bat to regenerate)
 netlify-*-V2/
+netlify-20*/
 
 # netlify-deploy built contents (keep README.md)
 netlify-deploy/index.html

@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
+import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
-import { apiClient } from '../services/api-client';
+import { apiClient, getApiBaseUrl } from '../services/api-client';
 
 interface ScheduleItem {
   id: number;
@@ -747,7 +748,7 @@ const GreenRoomPage: React.FC = () => {
         
         // Load current active timer
         try {
-          const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
+          const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`);
           if (activeTimerResponse.ok) {
             const activeTimers = await activeTimerResponse.json();
             // Removed verbose logging to prevent console spam
@@ -1510,11 +1511,7 @@ const GreenRoomPage: React.FC = () => {
     }
   };
 
-  const handleEventChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    if (!id) return;
-    const selected = events.find(ev => ev.id === id);
-    if (!selected) return;
+  const handleEventSelect = (selected: Event) => {
     setShowEventSelector(false);
     setError(null);
     setIsLoading(true);
@@ -1526,8 +1523,8 @@ const GreenRoomPage: React.FC = () => {
 
   return (
     <>
-      <div className="w-full h-screen text-white overflow-hidden relative" style={{ aspectRatio: '9/16' }}>
-      {/* Video Background */}
+      <div className="w-full h-screen text-white relative" style={{ aspectRatio: '9/16' }}>
+      {/* Video Background - overflow hidden only on video so event dropdown can expand */}
       <video
         autoPlay
         loop
@@ -1543,30 +1540,25 @@ const GreenRoomPage: React.FC = () => {
       </video>
       
       {/* Content Overlay */}
-      <div className="relative z-10">
+      <div className="relative z-10 overflow-visible">
         {/* Back to Event List, Event Selector, Fullscreen, Day - Hidden in Fullscreen */}
         {!isFullscreen && (
-          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[180px]">
-            {/* Event selector (like PhotoViewPage) */}
+          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[180px] overflow-visible z-50">
+            {/* Event selector (like PhotoViewPage) - overflow-visible so native dropdown can expand */}
             {events.length > 1 && (
-              <div className="space-y-1">
+              <div className="space-y-1 overflow-visible">
                 {showEventSelector ? (
                   <>
                     <label className="text-xs text-gray-400 block">Event:</label>
-                    <select
-                      value={event?.id ?? ''}
-                      onChange={handleEventChange}
-                      className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:ring-2 focus:ring-blue-500"
+                    <EventSelectorDropdown
+                      events={events}
+                      value={event?.id ?? null}
+                      onChange={handleEventSelect}
                       disabled={eventsLoading}
-                      title="Select which event to view"
-                    >
-                      <option value="">{eventsLoading ? 'Loading…' : 'Select event…'}</option>
-                      {events.map((ev) => (
-                        <option key={ev.id} value={ev.id}>
-                          {ev.name} {ev.date ? `(${ev.date})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      loading={eventsLoading}
+                      placeholder="Select event…"
+                      listMaxHeight="200px"
+                    />
                     <button
                       type="button"
                       onClick={() => loadEvents(true)}

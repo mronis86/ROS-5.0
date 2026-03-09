@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
-import { apiClient } from '../services/api-client';
+import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { Event } from '../types/Event';
+import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { supabase } from '../services/supabase'; // REMOVED: Using WebSocket-only approach
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
@@ -876,7 +877,7 @@ const PhotoViewPage: React.FC = () => {
     const loadActiveTimerState = async () => {
       try {
         console.log('🔄 PhotoView: Loading active timer state on mount...');
-        const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event.id}`);
+        const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);
         
         if (activeTimerResponse.ok) {
           const activeTimerResponseData = await activeTimerResponse.json();
@@ -1155,7 +1156,7 @@ const PhotoViewPage: React.FC = () => {
         }
         // Load current active timer
         try {
-          const activeTimerResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/active-timers/${event?.id}`);
+          const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`);
           if (activeTimerResponse.ok) {
             const activeTimerResponseData = await activeTimerResponse.json();
             console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerResponseData);
@@ -1783,11 +1784,7 @@ const PhotoViewPage: React.FC = () => {
     }
   };
 
-  const handleEventChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    if (!id) return;
-    const selected = events.find(ev => ev.id === id);
-    if (!selected) return;
+  const handleEventSelect = (selected: Event) => {
     setEvent(selected);
     setSelectedDay(1);
     setShowEventSelector(false);
@@ -1811,24 +1808,20 @@ const PhotoViewPage: React.FC = () => {
             <span className="text-sm text-gray-300">{currentTime.toLocaleTimeString()}</span>
             <span className="text-xs text-slate-400" title="Overtime, start time, and duration update every 20 seconds">Sync in: {syncCountdown}s</span>
             {events.length > 1 && (
-              <>
+              <div className="overflow-visible relative z-50">
                 {showEventSelector ? (
                   <>
                     <label className="text-sm text-gray-400">Event:</label>
-                    <select
-                      value={event?.id ?? ''}
-                      onChange={handleEventChange}
-                      className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[180px] max-w-[280px]"
+                    <EventSelectorDropdown
+                      events={events}
+                      value={event?.id ?? null}
+                      onChange={handleEventSelect}
                       disabled={eventsLoading}
-                      title="Select which event to view"
-                    >
-                      <option value="">{eventsLoading ? 'Loading…' : 'Select event…'}</option>
-                      {events.map((ev) => (
-                        <option key={ev.id} value={ev.id}>
-                          {ev.name} {ev.date ? `(${ev.date})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      loading={eventsLoading}
+                      placeholder="Select event…"
+                      selectClassName="min-w-[180px] max-w-[280px]"
+                      listMaxHeight="200px"
+                    />
                     <button
                       type="button"
                       onClick={() => loadEvents(true)}
@@ -1868,7 +1861,7 @@ const PhotoViewPage: React.FC = () => {
                     Change event
                   </button>
                 )}
-              </>
+              </div>
             )}
             {(event?.numberOfDays ?? 1) > 1 && (
               <>

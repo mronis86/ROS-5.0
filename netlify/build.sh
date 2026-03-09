@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Netlify full build script. Runs on every deploy so the site is always rebuilt.
 # This file is run by netlify.toml [build] command. Do not skip steps.
+# BUILD_VERSION: 2026-02-20 — Bump this date when you want to force a full rebuild (no skip/cache).
 
 set -e
 
 echo "========== Netlify build started =========="
+echo "BUILD_VERSION=2026-02-20 (full rebuild)"
 echo "COMMIT_REF=${COMMIT_REF:-unknown}"
 echo "NODE_VERSION=$(node -v 2>/dev/null || echo 'n/a')"
 
@@ -20,8 +22,8 @@ echo "Wrote $BUILD_INFO_DIR/build-info.txt"
 rm -rf node_modules/.cache 2>/dev/null || true
 rm -rf dist 2>/dev/null || true
 
-# Step 1: Build the portable Electron app (Windows .exe) in ros-osc-control.
-# This creates ros-osc-control/dist/ which prebuild will zip into public/.
+# Step 1: Build the portable Electron app (Windows .exe + win-unpacked) in ros-osc-control.
+# build:portable runs "electron-builder --win portable dir --x64" so dist has portable exe + win-unpacked/.
 echo "========== Building portable Electron app (ros-osc-control) =========="
 cd ros-osc-control
 npm ci
@@ -32,11 +34,15 @@ cd ..
 echo "========== Installing root deps =========="
 npm ci
 
-# Step 3: Full Companion module zip (with node_modules, ~18MB) for OSC modal download.
+# Step 3: Zip only win-unpacked to public/ROS-OSC-Control-portable.zip (for OSC modal download).
+echo "========== Creating portable zip (win-unpacked only) =========="
+node scripts/zip-portable.js
+
+# Step 4: Full Companion module zip (with node_modules, ~18MB) for OSC modal download.
 echo "========== Building full Companion module zip =========="
 node scripts/zip-companion-module-full.js
 
-# Step 4: Vite build. prebuild zips companion (slim) + python app; Vite copies public/ (including full zip) to dist.
+# Step 5: Vite build. prebuild zips companion (slim) + python app; Vite copies public/ (including full zip) to dist.
 echo "========== Building Vite app =========="
 npm run build
 

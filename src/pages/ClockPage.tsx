@@ -4,6 +4,7 @@ import Clock from '../components/Clock';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { Event } from '../types/Event';
+import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 
 const ClockPage: React.FC = () => {
   const location = useLocation();
@@ -367,11 +368,7 @@ const ClockPage: React.FC = () => {
     }
   };
 
-  const handleEventChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    if (!id) return;
-    const selected = events.find(ev => ev.id === id);
-    if (!selected) return;
+  const handleEventSelect = (selected: Event) => {
     setEventId(selected.id);
     setShowEventSelector(false);
     navigate(`/clock?eventId=${encodeURIComponent(selected.id)}`, { replace: true });
@@ -389,26 +386,22 @@ const ClockPage: React.FC = () => {
         scheduleItems={scheduleItems}
       />
 
-        {/* Event Selector - left side below CURRENT TIME, fixed so it doesn't move on scroll */}
+        {/* Event Selector - left side below CURRENT TIME, fixed so it doesn't move on scroll; overflow-visible so dropdown can expand */}
         {!isFullScreen && events.length > 1 && (
-          <div className="fixed top-[115px] left-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2">
+          <div className="fixed top-[115px] left-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 overflow-visible">
             {showEventSelector ? (
-              <>
+              <div className="overflow-visible">
                 <label className="text-sm text-gray-400 block mb-1">Event:</label>
-                <select
-                  value={eventId ?? ''}
-                  onChange={handleEventChange}
-                  className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[160px] max-w-[240px]"
+                <EventSelectorDropdown
+                  events={events}
+                  value={eventId ?? null}
+                  onChange={handleEventSelect}
                   disabled={eventsLoading}
-                  title="Select which event for clock"
-                >
-                  <option value="">{eventsLoading ? 'Loading…' : 'Select event…'}</option>
-                  {events.map((ev) => (
-                    <option key={ev.id} value={ev.id}>
-                      {ev.name} {ev.date ? `(${ev.date})` : ''}
-                    </option>
-                  ))}
-                </select>
+                  loading={eventsLoading}
+                  placeholder="Select event…"
+                  selectClassName="min-w-[160px] max-w-[240px] px-3 py-2"
+                  listMaxHeight="200px"
+                />
                 <button
                   type="button"
                   onClick={() => loadEvents(true)}
@@ -437,7 +430,7 @@ const ClockPage: React.FC = () => {
                 >
                   Hide
                 </button>
-              </>
+              </div>
             ) : (
               <button
                 type="button"

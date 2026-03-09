@@ -55,34 +55,23 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
             <div className="bg-slate-700 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-white mb-3 text-center">📥 Download OSC Apps</h3>
               
-              {/* ROS-OSC-Control Portable (recommended) */}
+              {/* Bitfocus Companion Module - PREFERRED (first) */}
               <div className="text-center mb-4">
+                <div className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-emerald-700 text-emerald-100 mb-2">
+                  PREFERRED
+                </div>
                 <a
-                  href="/ROS-OSC-Control-portable.zip"
-                  download="ROS-OSC-Control-portable.zip"
-                  className="block bg-amber-600 hover:bg-amber-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                  href="/companion-module-runofshow-full.zip"
+                  download="companion-module-runofshow-full.zip"
+                  className="block bg-purple-600 hover:bg-purple-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
-                  ⚡ ROS-OSC-Control (Portable)
+                  🎛️ Bitfocus Companion Module (full)
                 </a>
-                <div className="text-xs text-amber-400 mt-2">
-                  Recommended • Single .exe • No install • ros-osc-control dist
+                <div className="text-xs text-purple-400 mt-2">
+                  Native API control • No Electron/Python • Load cue, timer, sub-timer • Includes node_modules
                 </div>
               </div>
 
-              {/* Electron OSC App */}
-              <div className="text-center mb-4">
-                <a
-                  href="/electron-osc-app.zip"
-                  download="electron-osc-app.zip"
-                  className="block bg-blue-600 hover:bg-blue-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
-                >
-                  🖥️ Electron OSC App (Desktop)
-                </a>
-                <div className="text-xs text-blue-400 mt-2">
-                  Event list • Run of Show • OSC Log
-                </div>
-              </div>
-              
               {/* Python OSC App (ros-osc-python-app) */}
               <div className="text-center mb-4">
                 <a
@@ -97,17 +86,31 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
-              {/* Bitfocus Companion Module - full zip with node_modules (~18MB), built in Netlify via zip-companion-module-full.js */}
-              <div className="text-center mb-4">
-                <a
-                  href="/companion-module-runofshow-full.zip"
-                  download="companion-module-runofshow-full.zip"
-                  className="block bg-purple-600 hover:bg-purple-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
-                >
-                  🎛️ Bitfocus Companion Module (full)
-                </a>
-                <div className="text-xs text-purple-400 mt-2">
-                  Native API control • No Electron/Python • Load cue, timer, sub-timer • Includes node_modules
+              {/* Electron: Portable (left) + Full/Desktop (right) side by side */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div className="text-center">
+                  <a
+                    href="/ROS-OSC-Control-portable.zip"
+                    download="ROS-OSC-Control-portable.zip"
+                    className="block bg-amber-600 hover:bg-amber-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                  >
+                    ⚡ ROS-OSC-Control (Portable)
+                  </a>
+                  <div className="text-xs text-amber-400 mt-2">
+                    Single .exe • No install • ros-osc-control dist
+                  </div>
+                </div>
+                <div className="text-center">
+                  <a
+                    href="/electron-osc-app.zip"
+                    download="electron-osc-app.zip"
+                    className="block bg-blue-600 hover:bg-blue-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                  >
+                    🖥️ Electron OSC App (Desktop)
+                  </a>
+                  <div className="text-xs text-blue-400 mt-2">
+                    Event list • Run of Show • OSC Log
+                  </div>
                 </div>
               </div>
               

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
+import { getApiBaseUrl } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -694,7 +695,7 @@ const ScriptsFollowPage: React.FC = () => {
     if (currentScriptId) {
       try {
         // Update the script in database
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${currentScriptId}`, {
+        const response = await fetch(`${getApiBaseUrl()}/api/scripts/${currentScriptId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -710,7 +711,7 @@ const ScriptsFollowPage: React.FC = () => {
           for (const comment of adjustedComments) {
             const originalComment = comments.find(c => c.id === comment.id);
             if (originalComment && originalComment.lineNumber !== comment.lineNumber) {
-              await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments/${comment.id}`, {
+              await fetch(`${getApiBaseUrl()}/api/script-comments/${comment.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
@@ -758,7 +759,7 @@ const ScriptsFollowPage: React.FC = () => {
   // Load list of saved scripts
   const loadSavedScripts = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts`);
+      const response = await fetch(`${getApiBaseUrl()}/api/scripts`);
       const data = await response.json();
       setSavedScripts(data);
     } catch (error) {
@@ -779,8 +780,8 @@ const ScriptsFollowPage: React.FC = () => {
     setIsSaving(true);
     try {
       const url = currentScriptId 
-        ? `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${currentScriptId}`
-        : `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts`;
+        ? `${getApiBaseUrl()}/api/scripts/${currentScriptId}`
+        : `${getApiBaseUrl()}/api/scripts`;
       
       const method = currentScriptId ? 'PUT' : 'POST';
       
@@ -802,14 +803,14 @@ const ScriptsFollowPage: React.FC = () => {
       console.log('💾 Saving comments for script:', savedScript.id, '- Total comments:', comments.length);
       
       // Delete all existing comments for this script
-      await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments/script/${savedScript.id}`, {
+      await fetch(`${getApiBaseUrl()}/api/script-comments/script/${savedScript.id}`, {
         method: 'DELETE'
       });
       console.log('🗑️ Deleted existing comments');
       
       // Add current comments
       for (const comment of comments) {
-        await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/script-comments`, {
+        await fetch(`${getApiBaseUrl()}/api/script-comments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -836,7 +837,7 @@ const ScriptsFollowPage: React.FC = () => {
   // Load a script from database
   const loadScriptFromDatabase = async (scriptId: string) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${scriptId}`);
+      const response = await fetch(`${getApiBaseUrl()}/api/scripts/${scriptId}`);
       const data = await response.json();
       
       setScriptText(data.script.script_text);
@@ -869,7 +870,7 @@ const ScriptsFollowPage: React.FC = () => {
     }
 
     try {
-      await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'}/api/scripts/${scriptId}`, {
+      await fetch(`${getApiBaseUrl()}/api/scripts/${scriptId}`, {
         method: 'DELETE'
       });
       

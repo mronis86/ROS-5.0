@@ -1,5 +1,6 @@
 # Netlify configuration - repository root (for Git-triggered deploys)
 # For UPLOAD deploy: upload netlify-YYYY-MM-DD-V2 folder; that has its own netlify.toml
+# Config bump: 2026-02-20 — change this date to force Netlify to run a fresh build (avoids skip).
 
 [build]
   ignore = "exit 1"

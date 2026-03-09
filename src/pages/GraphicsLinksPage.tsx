@@ -49,6 +49,30 @@ const GraphicsLinksPage: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  const openBrandLowerThirdColorUpdater = () => {
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brand Lower Third Color Updater</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto; }
+    h1 { color: #1e293b; }
+    p { color: #475569; }
+  </style>
+</head>
+<body>
+  <h1>Brand Lower Third Color Updater</h1>
+  <p>This page opens locally in your browser. Replace this content with your color updater UI.</p>
+</body>
+</html>`;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    URL.revokeObjectURL(url);
+  };
+
   // Initialize schedule data - optimized for minimal egress
   useEffect(() => {
     const loadInitialData = async () => {
@@ -521,13 +545,18 @@ const GraphicsLinksPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Downloads Section */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="mb-6">
-          <h2 className="text-3xl font-bold text-white mb-2">📥 Downloads & Tools</h2>
-          <p className="text-gray-400">Desktop applications and local server packages for offline use</p>
+      {/* Top: Event ID + Brand Lower Third + nav to Downloads */}
+      <div id="graphics-top" className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+          <h2 className="text-lg font-bold text-white">Quick access</h2>
+          <button
+            type="button"
+            onClick={() => document.getElementById('downloads-section')?.scrollIntoView({ behavior: 'smooth' })}
+            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition-colors"
+          >
+            ↓ Jump to Downloads
+          </button>
         </div>
-
         {/* Event ID Card */}
         <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-4 shadow-lg border border-blue-400 mb-4">
           <div className="flex items-center justify-between gap-4">
@@ -562,53 +591,19 @@ const GraphicsLinksPage: React.FC = () => {
             </button>
           </div>
         </div>
-
-        {/* Download Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Python Desktop App */}
-          <div className="bg-green-800 rounded-lg p-5 shadow-lg border border-green-600 hover:shadow-xl transition-shadow">
-            <h3 className="text-lg font-bold text-white mb-2">🐍 Python Desktop App</h3>
-            <p className="text-green-200 text-xs mb-3">Standalone graphics generator with GUI server toggle</p>
-            
-            <div className="bg-green-900/30 rounded p-2 mb-3">
-              <ul className="text-green-100 text-xs space-y-0.5">
-                <li>• GUI toggle: Railway or Local</li>
-                <li>• CSV files every 10 seconds</li>
-                <li>• WebSocket real-time updates</li>
-              </ul>
+        {/* Brand Lower Third Color Updater */}
+        <div className="bg-gradient-to-r from-amber-600 to-amber-700 rounded-lg p-4 shadow-lg border border-amber-400">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 flex-1">
+              <h3 className="text-lg font-bold text-white whitespace-nowrap">🎨 Brand Lower Third Color Updater:</h3>
+              <p className="text-amber-100 text-sm">Open in a new tab to update brand colors for lower thirds</p>
             </div>
-            
-            <a
-              href="/OptimizedGraphicsGenerator-Python.zip"
-              download="OptimizedGraphicsGenerator-Python.zip"
-              className="block w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
+            <button
+              onClick={openBrandLowerThirdColorUpdater}
+              className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg transition-colors font-semibold whitespace-nowrap text-sm"
             >
-              📥 Download Python App
-            </a>
-            <p className="text-green-300 text-xs text-center mt-2">~2 MB • Requires Python 3.8+</p>
-          </div>
-
-          {/* Local Server Package */}
-          <div className="bg-purple-800 rounded-lg p-5 shadow-lg border border-purple-600 hover:shadow-xl transition-shadow">
-            <h3 className="text-lg font-bold text-white mb-2">💻 Node.js Local Server</h3>
-            <p className="text-purple-200 text-xs mb-3">Standalone API + WebSocket server for local use</p>
-            
-            <div className="bg-purple-900/30 rounded p-2 mb-3">
-              <ul className="text-purple-100 text-xs space-y-0.5">
-                <li>• API + WebSocket (port 3002)</li>
-                <li>• All VMIX XML/CSV endpoints</li>
-                <li>• One-click start • Node.js only</li>
-              </ul>
-            </div>
-            
-            <a
-              href="/ROS-Local-Server-NodeJS.zip"
-              download="ROS-Local-Server-NodeJS.zip"
-              className="block w-full bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
-            >
-              📥 Download Local Server
-            </a>
-            <p className="text-purple-300 text-xs text-center mt-2">~50 KB • Requires Node.js 18+</p>
+              Open
+            </button>
           </div>
         </div>
       </div>
@@ -840,6 +835,72 @@ const GraphicsLinksPage: React.FC = () => {
                 <strong>🚀 Performance Optimized:</strong> This page now uses WebSocket for real-time updates and localStorage caching to minimize data usage and improve performance
               </p>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Downloads & Tools - bottom of page */}
+      <div id="downloads-section" className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-12">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 className="text-3xl font-bold text-white mb-2">📥 Downloads & Tools</h2>
+            <p className="text-gray-400">Desktop applications and local server packages for offline use</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition-colors"
+          >
+            ↑ Back to top
+          </button>
+        </div>
+
+        {/* Download Grid - Python & Node */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Python Desktop App */}
+          <div className="bg-green-800 rounded-lg p-5 shadow-lg border border-green-600 hover:shadow-xl transition-shadow">
+            <h3 className="text-lg font-bold text-white mb-2">🐍 Python Desktop App</h3>
+            <p className="text-green-200 text-xs mb-3">Standalone graphics generator with GUI server toggle</p>
+            
+            <div className="bg-green-900/30 rounded p-2 mb-3">
+              <ul className="text-green-100 text-xs space-y-0.5">
+                <li>• GUI toggle: Railway or Local</li>
+                <li>• CSV files every 10 seconds</li>
+                <li>• WebSocket real-time updates</li>
+              </ul>
+            </div>
+            
+            <a
+              href="/OptimizedGraphicsGenerator-Python.zip"
+              download="OptimizedGraphicsGenerator-Python.zip"
+              className="block w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
+            >
+              📥 Download Python App
+            </a>
+            <p className="text-green-300 text-xs text-center mt-2">~2 MB • Requires Python 3.8+</p>
+          </div>
+
+          {/* Local Server Package */}
+          <div className="bg-purple-800 rounded-lg p-5 shadow-lg border border-purple-600 hover:shadow-xl transition-shadow">
+            <h3 className="text-lg font-bold text-white mb-2">💻 Node.js Local Server</h3>
+            <p className="text-purple-200 text-xs mb-3">Standalone API + WebSocket server for local use</p>
+            
+            <div className="bg-purple-900/30 rounded p-2 mb-3">
+              <ul className="text-purple-100 text-xs space-y-0.5">
+                <li>• API + WebSocket (port 3002)</li>
+                <li>• All VMIX XML/CSV endpoints</li>
+                <li>• One-click start • Node.js only</li>
+              </ul>
+            </div>
+            
+            <a
+              href="/ROS-Local-Server-NodeJS.zip"
+              download="ROS-Local-Server-NodeJS.zip"
+              className="block w-full bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
+            >
+              📥 Download Local Server
+            </a>
+            <p className="text-purple-300 text-xs text-center mt-2">~50 KB • Requires Node.js 18+</p>
           </div>
         </div>
       </div>

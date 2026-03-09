@@ -1,32 +1,8 @@
 // API Client for communicating with our Express API server
-const getApiBaseUrl = () => {
-  // Check for forced local override from EventListPage toggle
-  if (typeof window !== 'undefined' && (window as any).__FORCE_LOCAL_API__) {
-    return (window as any).__LOCAL_API_URL__ || 'http://localhost:3001';  // FIXED: Match api-server.js
-  }
-  // Check for "use Railway" from EventListPage toggle (Switch Server -> Railway)
-  if (typeof window !== 'undefined' && (window as any).__USE_RAILWAY__) {
-    return 'https://ros-50-production.up.railway.app';
-  }
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname.toLowerCase();
-    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '';
-    // When opened from another computer on LAN (e.g. http://192.168.1.233:3003), always use same host for API
-    // so we never use localhost (which would be the other PC's machine) or cached env.
-    const isPrivateIp = /^192\.168\.\d+\.\d+$|^10\.\d+\.\d+\.\d+$|^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(hostname);
-    if (isPrivateIp) {
-      return `http://${hostname}:3001`;
-    }
-    // Real production (Netlify etc.) or localhost with no local server - use Railway
-    if (!isLocalhost) {
-      return 'https://ros-50-production.up.railway.app';
-    }
-    // On localhost (dev machine): default to Railway so app works when local API isn't running.
-    // Use "Switch Server" -> Local only when you have the local API running.
-    return 'https://ros-50-production.up.railway.app';
-  }
-  return 'https://ros-50-production.up.railway.app';
-};
+// Always use Railway (local API option disabled).
+const RAILWAY_API_URL = 'https://ros-50-production.up.railway.app';
+
+const getApiBaseUrl = () => RAILWAY_API_URL;
 
 const API_BASE_URL = getApiBaseUrl();
 
