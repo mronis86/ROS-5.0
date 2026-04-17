@@ -1,4 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import {
+  tokenizeScriptForSpeech,
+  alignTranscriptVoicePrompt,
+  normalizeSpeechToken
+} from '../lib/teleprompter-voice-alignment';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { getApiBaseUrl } from '../services/api-client';
@@ -98,6 +103,13 @@ const TeleprompterPage: React.FC = () => {
   const [reconnectKey, setReconnectKey] = useState(0);
   /** False after auto-disconnect until user reconnects — blocks socket reconnect. */
   const connectionEnabledRef = useRef(true);
+
+  /** Mic + Web Speech: align transcript to script and scroll */
+  const [voiceListenEnabled, setVoiceListenEnabled] = useState(false);
+  const [voiceHighlightLine, setVoiceHighlightLine] = useState<number | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<string>('');
+  const [voiceInterimPreview, setVoiceInterimPreview] = useState<string>('');
+  const [voiceHighlightEnabled, setVoiceHighlightEnabled] = useState(true);
   
   // Teleprompter settings
   const [settings, setSettings] = useState<TeleprompterSettings>({
@@ -126,7 +138,20 @@ const TeleprompterPage: React.FC = () => {
   const lineRefsMap = useRef<Map<number, HTMLDivElement>>(new Map());
   const viewerScrollRef = useRef<HTMLDivElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
-  
+
+  const voiceListenEnabledRef = useRef(false);
+  /** Script word index — VoicePrompt-style matcher advances from here (final + interim). */
+  const voiceCommittedAnchorRef = useRef(0);
+  const voiceRecentTranscriptWordsRef = useRef<string[]>([]);
+  /** Dedupe interim `processHeardText` calls (voice_prompt uses last 8 words when interim changes). */
+  const lastVoiceInterimProcessedRef = useRef('');
+  /** Pixel scrollTop the voice loop eases toward (stable vs interim transcript noise). */
+  const voiceDesiredScrollTopRef = useRef<number | null>(null);
+  const voiceScrollLoopRafRef = useRef<number | null>(null);
+  /** Last line we ran a full scroll snap; same-line speech only nudges pixels (avoids per-word snapping). */
+  const voiceScrollSnapLineRef = useRef(-1);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const speechRecognitionRef = useRef<any>(null);
 
   // Handle disconnect timer confirmation
   const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
@@ -484,7 +509,7 @@ const TeleprompterPage: React.FC = () => {
   useEffect(() => {
     console.log('🎬 Auto-play useEffect triggered:', { isAutoPlaying, isPaused, isManualMode, userRole });
     
-    if (!isAutoPlaying || isPaused || isManualMode || userRole !== 'SCROLLER') {
+    if (!isAutoPlaying || isPaused || isManualMode || userRole !== 'SCROLLER' || voiceListenEnabled) {
       // Stop auto-play
       if (autoPlayAnimationRef.current) {
         console.log('🎬 Stopping auto-play animation');
@@ -539,7 +564,7 @@ const TeleprompterPage: React.FC = () => {
         autoPlayAnimationRef.current = null;
       }
     };
-  }, [isAutoPlaying, isPaused, isManualMode, userRole, settings.scrollSpeed, settings.fontSize, settings.lineHeight, eventId]);
+  }, [isAutoPlaying, isPaused, isManualMode, userRole, voiceListenEnabled, settings.scrollSpeed, settings.fontSize, settings.lineHeight, eventId]);
 
   // Manual scroll handling - simplified without auto-scroll
   
@@ -616,6 +641,352 @@ const TeleprompterPage: React.FC = () => {
       }
     }
   };
+
+  const clearVoiceScrollTarget = useCallback(() => {
+    voiceDesiredScrollTopRef.current = null;
+    voiceScrollSnapLineRef.current = -1;
+  }, []);
+
+  /** Gentle downward drift while staying on the same script line (finals add words, not snaps). */
+  const nudgeVoiceScrollByPixels = useCallback((delta: number) => {
+    const el = previewScrollRef.current;
+    if (!el || userRole !== 'SCROLLER' || delta === 0) return;
+    const maxS = Math.max(0, el.scrollHeight - el.clientHeight);
+    const base = voiceDesiredScrollTopRef.current ?? el.scrollTop;
+    voiceDesiredScrollTopRef.current = Math.max(0, Math.min(base + delta, maxS));
+  }, [userRole]);
+
+  /** Sets scroll goal only; continuous RAF loop below eases scrollTop (reduces interim jitter). */
+  const setVoiceScrollDesiredFromLine = useCallback(
+    (lineIndex: number) => {
+      const container = previewScrollRef.current;
+      const lineEl = lineRefsMap.current.get(lineIndex);
+      if (!container || !lineEl || userRole !== 'SCROLLER') return;
+      const c = container.getBoundingClientRect();
+      const r = lineEl.getBoundingClientRect();
+      const guideY = c.top + c.height * (guideLinePosition / 100);
+      const lineCenterY = r.top + r.height / 2;
+      const delta = lineCenterY - guideY;
+      const raw = container.scrollTop + delta;
+      const target = Math.max(0, Math.min(raw, container.scrollHeight - container.clientHeight));
+      voiceDesiredScrollTopRef.current = target;
+    },
+    [userRole, guideLinePosition]
+  );
+
+  useEffect(() => {
+    if (!voiceListenEnabled || userRole !== 'SCROLLER') {
+      if (voiceScrollLoopRafRef.current !== null) {
+        cancelAnimationFrame(voiceScrollLoopRafRef.current);
+        voiceScrollLoopRafRef.current = null;
+      }
+      return;
+    }
+
+    const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
+
+    const tick = () => {
+      const el = previewScrollRef.current;
+      if (el && voiceDesiredScrollTopRef.current !== null) {
+        const maxS = Math.max(0, el.scrollHeight - el.clientHeight);
+        const tgt = Math.max(0, Math.min(voiceDesiredScrollTopRef.current, maxS));
+        const cur = el.scrollTop;
+        const diff = tgt - cur;
+        if (Math.abs(diff) < 0.9) {
+          el.scrollTop = tgt;
+        } else {
+          el.scrollTop = cur + diff * 0.075;
+        }
+        if (scriptRef.current) scriptRef.current.scrollTop = el.scrollTop;
+        if (eventId) {
+          const now = Date.now();
+          if (now - lastScrollBroadcastRef.current >= 100) {
+            const currentLine = Math.floor(el.scrollTop / Math.max(1, lineHeightPx));
+            socketClient.emitScriptScroll(el.scrollTop, currentLine, settings.fontSize);
+            lastScrollBroadcastRef.current = now;
+          }
+        }
+      }
+      voiceScrollLoopRafRef.current = requestAnimationFrame(tick);
+    };
+
+    voiceScrollLoopRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (voiceScrollLoopRafRef.current !== null) {
+        cancelAnimationFrame(voiceScrollLoopRafRef.current);
+        voiceScrollLoopRafRef.current = null;
+      }
+    };
+  }, [voiceListenEnabled, userRole, eventId, settings.fontSize, settings.lineHeight, guideLinePosition]);
+
+  const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);
+
+  useEffect(() => {
+    voiceCommittedAnchorRef.current = 0;
+    voiceRecentTranscriptWordsRef.current = [];
+    lastVoiceInterimProcessedRef.current = '';
+    clearVoiceScrollTarget();
+    setVoiceHighlightLine(null);
+  }, [scriptText, clearVoiceScrollTarget]);
+
+  useEffect(() => {
+    voiceListenEnabledRef.current = voiceListenEnabled;
+  }, [voiceListenEnabled]);
+
+  useEffect(() => {
+    if (!voiceListenEnabled || userRole !== 'SCROLLER') {
+      clearVoiceScrollTarget();
+      if (speechRecognitionRef.current) {
+        const rec = speechRecognitionRef.current;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        try {
+          rec.stop();
+        } catch {
+          /* ignore */
+        }
+        speechRecognitionRef.current = null;
+      }
+      setVoiceInterimPreview('');
+      if (!voiceListenEnabled) setVoiceStatus('');
+      return;
+    }
+
+    const SpeechRecognitionApi =
+      typeof window !== 'undefined'
+        ? ((window as unknown as { SpeechRecognition?: new () => unknown }).SpeechRecognition ||
+            (window as unknown as { webkitSpeechRecognition?: new () => unknown }).webkitSpeechRecognition)
+        : null;
+
+    if (!SpeechRecognitionApi) {
+      setVoiceStatus('Speech recognition is not supported in this browser.');
+      setVoiceListenEnabled(false);
+      return;
+    }
+
+    setIsManualMode(false);
+    setIsAutoPlaying(false);
+    setIsPaused(false);
+    if (autoPlayAnimationRef.current) {
+      cancelAnimationFrame(autoPlayAnimationRef.current);
+      autoPlayAnimationRef.current = null;
+    }
+
+    setVoiceStatus('Listening — line highlight on finals; same-line nudges while you speak.');
+    voiceScrollSnapLineRef.current = -1;
+    lastVoiceInterimProcessedRef.current = '';
+
+    if (previewScrollRef.current) {
+      voiceDesiredScrollTopRef.current = previewScrollRef.current.scrollTop;
+    }
+
+    if (scriptSpeechTokens.length > 0 && previewScrollRef.current) {
+      const scrollEl = previewScrollRef.current;
+      const lh = settings.fontSize * settings.lineHeight * 1.35;
+      const approxLine = Math.floor(scrollEl.scrollTop / Math.max(1, lh * 0.82));
+      const maxLine = scriptSpeechTokens[scriptSpeechTokens.length - 1]?.lineIndex ?? 0;
+      const lineClamped = Math.max(0, Math.min(maxLine, approxLine));
+      const wi = scriptSpeechTokens.findIndex((t) => t.lineIndex >= lineClamped);
+      voiceCommittedAnchorRef.current = wi >= 0 ? wi : 0;
+    } else {
+      voiceCommittedAnchorRef.current = 0;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rec: any = new (SpeechRecognitionApi as any)();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+    rec.maxAlternatives = 3;
+
+    /**
+     * - `final`: snap forward on new line, nudge on same line; highlight line (stable).
+     * - `interim-nudge`: same-line tiny nudges only (no line snap, no highlight → avoids jitter).
+     */
+    const applyVoiceAlign = (
+      heardWordList: string[],
+      mode: 'final' | 'interim-nudge'
+    ): boolean => {
+      if (scriptSpeechTokens.length === 0 || heardWordList.length === 0) return false;
+      const prevIdx = voiceCommittedAnchorRef.current;
+      const align = alignTranscriptVoicePrompt(
+        scriptSpeechTokens,
+        heardWordList,
+        voiceCommittedAnchorRef.current
+      );
+      if (!align) return false;
+
+      if (mode === 'interim-nudge') {
+        const prevSnap = voiceScrollSnapLineRef.current;
+        if (prevSnap >= 0 && align.lineIndex !== prevSnap) {
+          return false;
+        }
+      }
+
+      voiceCommittedAnchorRef.current = align.scriptWordIndex;
+
+      if (mode === 'final' && voiceHighlightEnabled) {
+        setVoiceHighlightLine(align.lineIndex);
+      }
+
+      const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
+      const pxPerWord = lineHeightPx / 6.75;
+
+      if (mode === 'interim-nudge') {
+        const prevSnap = voiceScrollSnapLineRef.current;
+        if (prevSnap < 0) return true;
+        const progressed = Math.max(0, align.scriptWordIndex - prevIdx);
+        if (progressed > 0) {
+          nudgeVoiceScrollByPixels(progressed * pxPerWord * 0.42);
+        }
+        return true;
+      }
+
+      const prevSnap = voiceScrollSnapLineRef.current;
+      if (align.lineIndex > prevSnap) {
+        voiceScrollSnapLineRef.current = align.lineIndex;
+        setVoiceScrollDesiredFromLine(align.lineIndex);
+      } else if (align.lineIndex === prevSnap) {
+        const progressed = Math.max(0, align.scriptWordIndex - prevIdx);
+        if (progressed > 0) {
+          nudgeVoiceScrollByPixels(progressed * pxPerWord);
+        }
+      }
+      return true;
+    };
+
+    rec.onresult = (event: { resultIndex: number; results: { length: number; [i: number]: { 0: { transcript: string }; isFinal: boolean } } }) => {
+      let interim = '';
+      let finalText = '';
+      let newFinalWordCount = 0;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const piece = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += piece;
+          const words = piece
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean)
+            .map(normalizeSpeechToken)
+            .filter((w) => w.length > 0);
+          newFinalWordCount += words.length;
+          words.forEach((w) => voiceRecentTranscriptWordsRef.current.push(w));
+          if (voiceRecentTranscriptWordsRef.current.length > 120) {
+            voiceRecentTranscriptWordsRef.current = voiceRecentTranscriptWordsRef.current.slice(-120);
+          }
+        } else {
+          interim += piece;
+        }
+      }
+      const interimWords = interim
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(normalizeSpeechToken)
+        .filter((w) => w.length > 0);
+      const combined = [...voiceRecentTranscriptWordsRef.current, ...interimWords];
+      setVoiceInterimPreview(combined.slice(-14).join(' '));
+
+      if (scriptSpeechTokens.length === 0) return;
+
+      const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
+      const pxPerWord = lineHeightPx / 6.75;
+
+      const finalTrim = finalText.trim();
+      if (finalTrim.length > 0) {
+        const fromFinal = finalTrim
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, '')
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .map(normalizeSpeechToken)
+          .filter((w) => w.length > 0);
+        const anchorBefore = voiceCommittedAnchorRef.current;
+        const aligned = applyVoiceAlign(fromFinal, 'final');
+        const anchorAfter = voiceCommittedAnchorRef.current;
+        if (newFinalWordCount > 0) {
+          if (!aligned) {
+            nudgeVoiceScrollByPixels(
+              newFinalWordCount * pxPerWord * (voiceScrollSnapLineRef.current >= 0 ? 0.85 : 0.5)
+            );
+          } else if (anchorAfter === anchorBefore) {
+            nudgeVoiceScrollByPixels(Math.max(1, newFinalWordCount) * pxPerWord * 0.65);
+          }
+        }
+      }
+
+      if (interim && interim !== lastVoiceInterimProcessedRef.current && interim.trim().length > 5) {
+        lastVoiceInterimProcessedRef.current = interim;
+        const recent = interim
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(-8)
+          .map(normalizeSpeechToken)
+          .filter((w) => w.length > 0);
+        applyVoiceAlign(recent, 'interim-nudge');
+      }
+    };
+
+    rec.onerror = (e: { error: string }) => {
+      if (e.error === 'not-allowed') {
+        setVoiceStatus('Microphone blocked — allow mic for this site.');
+        setVoiceListenEnabled(false);
+      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        setVoiceStatus(`Voice: ${e.error}`);
+      }
+    };
+
+    rec.onend = () => {
+      if (voiceListenEnabledRef.current && speechRecognitionRef.current) {
+        window.setTimeout(() => {
+          try {
+            if (voiceListenEnabledRef.current && speechRecognitionRef.current) {
+              speechRecognitionRef.current.start();
+            }
+          } catch {
+            /* already running */
+          }
+        }, 250);
+      }
+    };
+
+    speechRecognitionRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      setVoiceStatus('Could not start microphone.');
+      setVoiceListenEnabled(false);
+    }
+
+    return () => {
+      clearVoiceScrollTarget();
+      if (speechRecognitionRef.current) {
+        const r = speechRecognitionRef.current;
+        r.onresult = null;
+        r.onerror = null;
+        r.onend = null;
+        try {
+          r.stop();
+        } catch {
+          /* ignore */
+        }
+        speechRecognitionRef.current = null;
+      }
+    };
+  }, [
+    voiceListenEnabled,
+    userRole,
+    scriptSpeechTokens,
+    voiceHighlightEnabled,
+    settings.fontSize,
+    settings.lineHeight,
+    setVoiceScrollDesiredFromLine,
+    nudgeVoiceScrollByPixels,
+    clearVoiceScrollTarget
+  ]);
   
   // Parse script into lines
   const scriptLines = scriptText.split('\n');
@@ -705,6 +1076,12 @@ const TeleprompterPage: React.FC = () => {
       viewerAnimationFrameRef.current = null;
     }
     targetScrollPositionRef.current = null;
+
+    voiceCommittedAnchorRef.current = 0;
+    voiceRecentTranscriptWordsRef.current = [];
+    lastVoiceInterimProcessedRef.current = '';
+    clearVoiceScrollTarget();
+    setVoiceHighlightLine(null);
   };
   
   /**
@@ -951,6 +1328,68 @@ const TeleprompterPage: React.FC = () => {
                         🔄 Reset to Top
                       </button>
                     </div>
+                  </div>
+
+                  {/* Voice-follow: Web Speech + script alignment */}
+                  <div>
+                    <label className="mb-2 block text-xs text-slate-300">Voice follow:</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVoiceListenEnabled((v) => {
+                          if (v) setVoiceHighlightLine(null);
+                          return !v;
+                        });
+                      }}
+                      disabled={userRole !== 'SCROLLER'}
+                      className={`w-full px-3 py-2 rounded text-xs font-bold transition-colors ${
+                        userRole !== 'SCROLLER'
+                          ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                          : voiceListenEnabled
+                            ? 'bg-rose-700 text-white hover:bg-rose-600 animate-pulse'
+                            : 'bg-cyan-700 text-white hover:bg-cyan-600'
+                      }`}
+                    >
+                      {voiceListenEnabled ? '🎙️ Stop listening' : '🎙️ Listen & auto-scroll'}
+                    </button>
+                    <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+                      <input
+                        type="checkbox"
+                        className="rounded border-slate-500"
+                        checked={voiceHighlightEnabled}
+                        onChange={(e) => {
+                          setVoiceHighlightEnabled(e.target.checked);
+                          if (!e.target.checked) setVoiceHighlightLine(null);
+                        }}
+                      />
+                      Highlight matched line
+                    </label>
+                    {voiceStatus ? (
+                      <p className="mt-1 text-xs text-amber-200">{voiceStatus}</p>
+                    ) : null}
+                    {voiceListenEnabled && voiceInterimPreview ? (
+                      <p
+                        className="mt-1 truncate font-mono text-xs text-slate-400"
+                        title={voiceInterimPreview}
+                      >
+                        {voiceInterimPreview}
+                      </p>
+                    ) : null}
+                    <p className="mt-1 text-[10px] leading-snug text-slate-500">
+                      Chrome / Edge, localhost or HTTPS, mic allowed. Manual turns off while listening — no ▶ Play.{' '}
+                      <span className="font-mono">[brackets]</span> ignored for matching.                       Line glow updates on <span className="font-medium text-slate-400">final</span> text
+                      (less jitter). Scroll: new line on finals, gentle same-line nudge on partials. Matcher
+                      from{' '}
+                      <a
+                        href="https://github.com/chgeuer/voice_prompt"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-400 underline"
+                      >
+                        chgeuer/voice_prompt
+                      </a>
+                      .
+                    </p>
                   </div>
                   
                   {/* Scroll Speed */}
@@ -1310,11 +1749,20 @@ const TeleprompterPage: React.FC = () => {
                   {scriptLines.map((line, index) => {
                     const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
                     
+                    const voiceLineActive =
+                      voiceListenEnabled && voiceHighlightEnabled && voiceHighlightLine === index;
+
                     return (
                       <div 
                         key={index} 
-                        className="mb-2"
+                        className={`mb-2 rounded transition-[box-shadow,background-color] duration-300 ${
+                          voiceLineActive ? 'bg-amber-500/15 shadow-[0_0_0_2px_rgba(251,191,36,0.7)]' : ''
+                        }`}
                         data-line-number={index}
+                        ref={(el) => {
+                          if (el) lineRefsMap.current.set(index, el);
+                          else lineRefsMap.current.delete(index);
+                        }}
                       >
                         {/* Render comment bars from PREVIOUS line BEFORE current line text */}
                         {lineComments.length > 0 && (
