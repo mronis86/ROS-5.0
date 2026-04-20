@@ -18,6 +18,7 @@ import ScheduleXMLPage from './pages/ScheduleXMLPage';
 import CustomColumnsXMLPage from './pages/CustomColumnsXMLPage';
 import GraphicsLinksPage from './pages/GraphicsLinksPage';
 import ReportsPage from './pages/ReportsPage';
+import ContentReviewPage from './pages/ContentReviewPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
 import ScriptsFollowPage from './pages/ScriptsFollowPage';
@@ -54,6 +55,7 @@ function AppContent() {
             <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
             <Route path="/graphics-links" element={<GraphicsLinksPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
