@@ -3456,6 +3456,8 @@ app.post('/api/timers/reset', async (req, res) => {
 
 // Presence: who's viewing Run of Show per event (in-memory, no DB)
 const presenceByEvent = new Map(); // eventId -> Map(socketId -> { userId, userName, userRole })
+/** Latest Content Review cue selection per event (master/slave follow). */
+const contentReviewLastSelection = new Map(); // eventId -> { itemId, fromUserId, fromUserName }
 const socketToEvent = new Map();   // socketId -> eventId (for cleanup on disconnect)
 
 function broadcastPresence(eventId) {
@@ -3511,6 +3513,38 @@ io.on('connection', (socket) => {
     });
     
     console.log(`📡 Reset all states and completed cues cleared broadcasted to event:${data.eventId}`);
+  });
+
+  // Content Review: one browser drives cue selection; others can follow (same event room).
+  socket.on('contentReviewSelectionUpdate', (data) => {
+    const { eventId, itemId, userId, userName } = data || {};
+    if (!eventId || itemId == null || Number.isNaN(Number(itemId))) return;
+    const nid = Number(itemId);
+    contentReviewLastSelection.set(String(eventId), {
+      itemId: nid,
+      fromUserId: userId ? String(userId) : '',
+      fromUserName: userName ? String(userName) : ''
+    });
+    socket.to(`event:${eventId}`).emit('contentReviewSelectionSync', {
+      eventId: String(eventId),
+      itemId: nid,
+      fromUserId: userId ? String(userId) : '',
+      fromUserName: userName ? String(userName) : ''
+    });
+  });
+
+  socket.on('contentReviewRequestState', (data) => {
+    const { eventId } = data || {};
+    if (!eventId) return;
+    const last = contentReviewLastSelection.get(String(eventId));
+    if (!last) return;
+    socket.emit('contentReviewSelectionSync', {
+      eventId: String(eventId),
+      itemId: last.itemId,
+      fromUserId: last.fromUserId,
+      fromUserName: last.fromUserName,
+      catchUp: true
+    });
   });
 
   // Handle script scroll position updates

@@ -220,6 +220,25 @@ class SocketClient {
     }
   }
 
+  /** Content Review: broadcast selected schedule row id to followers in the same event. */
+  emitContentReviewSelectionUpdate(itemId: number, userId: string, userName: string) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('contentReviewSelectionUpdate', {
+        eventId: this.eventId,
+        itemId,
+        userId,
+        userName
+      });
+    }
+  }
+
+  /** Ask server for last known Content Review selection (after enabling Follow or reconnecting). */
+  emitContentReviewRequestState() {
+    if (this.socket && this.eventId) {
+      this.socket.emit('contentReviewRequestState', { eventId: this.eventId });
+    }
+  }
+
   sendPresence(eventId: string, user: { userId: string; userName: string; userEmail: string; userRole: string }) {
     if (this.socket && eventId) {
       const payload = {
