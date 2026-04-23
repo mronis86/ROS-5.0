@@ -58,6 +58,24 @@ const PROGRAM_TYPE_COLORS: Record<string, string> = {
   Panel: '#404040',
   'PreShow/End': '#8B5CF6'
 };
+const PROGRAM_TYPE_OPTIONS = [
+  'Podium Transition',
+  'Panel Transition',
+  'Sub Cue',
+  'No Transition',
+  'Video',
+  'Panel+Remote',
+  'Remote Only',
+  'Break F&B/B2B',
+  'Breakout Session',
+  'TBD',
+  'KILLED',
+  'Podium',
+  'Panel',
+  'PreShow/End'
+];
+
+const SHOT_TYPES = ['Podium', '1-Shot', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'];
 
 interface CustomColumn {
   name: string;
@@ -83,6 +101,16 @@ interface ScheduleItem {
 }
 
 type IndentedMap = Record<number, { parentId: number; userName?: string }>;
+type AssetRow = { id: string; name: string; link: string; linkEnabled: boolean };
+type SpeakerSlotDraft = {
+  id: string;
+  slot: number;
+  location: 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+  fullName: string;
+  title: string;
+  org: string;
+  photoLink: string;
+};
 
 function normalizeScheduleItem(raw: any): ScheduleItem {
   const sec = raw.duration_seconds ?? raw.durationSeconds ?? 0;
@@ -175,6 +203,92 @@ function depthFor(itemId: number, indented: IndentedMap): number {
   return d;
 }
 
+function notesForEditor(raw: string): string {
+  if (!raw) return '';
+  const looksHtml = /<\/?[a-z][\s\S]*>/i.test(raw);
+  if (looksHtml) return raw;
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r?\n/g, '<br>');
+}
+
+function parseAssetRows(raw: string): AssetRow[] {
+  if (!raw || !raw.trim()) return [];
+  return raw
+    .split('||')
+    .map((s, idx) => {
+      const piece = s.trim();
+      if (!piece) return null;
+      const [namePart, ...rest] = piece.split('|');
+      const name = (namePart || '').trim();
+      const link = rest.join('|').trim();
+      if (!name) return null;
+      return {
+        id: `asset-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        name,
+        link,
+        linkEnabled: link.length > 0
+      } as AssetRow;
+    })
+    .filter((r): r is AssetRow => !!r);
+}
+
+function stringifyAssetRows(rows: AssetRow[]): string {
+  return rows
+    .map((r) => {
+      const name = r.name.trim();
+      const link = r.link.trim();
+      if (!name) return '';
+      return r.linkEnabled && link ? `${name}|${link}` : name;
+    })
+    .filter(Boolean)
+    .join('||');
+}
+
+function parseSpeakersDraft(speakersTextJson: string): SpeakerSlotDraft[] {
+  if (!speakersTextJson) return [];
+  try {
+    const arr = JSON.parse(speakersTextJson);
+    if (!Array.isArray(arr)) return [];
+    const out: SpeakerSlotDraft[] = [];
+    for (const s of arr) {
+      const slot = Number(s.slot);
+      if (!Number.isFinite(slot) || slot < 1 || slot > 7) continue;
+      const location = s.location === 'Seat' || s.location === 'Virtual' || s.location === 'Moderator' ? s.location : 'Podium';
+      out.push({
+        id: (s.id || `speaker-slot-${slot}`).toString(),
+        slot,
+        location,
+        fullName: (s.fullName || '').toString(),
+        title: (s.title || '').toString(),
+        org: (s.org || '').toString(),
+        photoLink: (s.photoLink || '').toString()
+      });
+    }
+    out.sort((a, b) => a.slot - b.slot);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function stringifySpeakersDraft(rows: SpeakerSlotDraft[]): string {
+  const payload = rows
+    .filter((r) => r.fullName.trim().length > 0)
+    .map((r) => ({
+      id: r.id || `speaker-slot-${r.slot}`,
+      slot: r.slot,
+      location: r.location,
+      fullName: r.fullName.trim(),
+      title: r.title.trim(),
+      org: r.org.trim(),
+      photoLink: r.photoLink.trim()
+    }));
+  return JSON.stringify(payload);
+}
+
 function buildIndentedMap(data: any[] | null): IndentedMap {
   const map: IndentedMap = {};
   if (!data || !Array.isArray(data)) return map;
@@ -265,6 +379,50 @@ const ContentReviewPage: React.FC = () => {
     height: 560
   });
   const [reviewPanelOpen, setReviewPanelOpen] = useState(false);
+  const [editModeEnabled, setEditModeEnabled] = useState(false);
+  const [notesDraft, setNotesDraft] = useState('');
+  const [notesDirty, setNotesDirty] = useState(false);
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+  const [notesSaveMessage, setNotesSaveMessage] = useState<string | null>(null);
+  const [segmentDraft, setSegmentDraft] = useState('');
+  const [segmentDirty, setSegmentDirty] = useState(false);
+  const [isSavingSegment, setIsSavingSegment] = useState(false);
+  const [segmentSaveMessage, setSegmentSaveMessage] = useState<string | null>(null);
+  const [shotDraft, setShotDraft] = useState('');
+  const [shotDirty, setShotDirty] = useState(false);
+  const [isSavingShot, setIsSavingShot] = useState(false);
+  const [shotSaveMessage, setShotSaveMessage] = useState<string | null>(null);
+  const [assetsDraft, setAssetsDraft] = useState('');
+  const [assetRows, setAssetRows] = useState<AssetRow[]>([]);
+  const [assetsDirty, setAssetsDirty] = useState(false);
+  const [isSavingAssets, setIsSavingAssets] = useState(false);
+  const [assetsSaveMessage, setAssetsSaveMessage] = useState<string | null>(null);
+  const [durationHoursDraft, setDurationHoursDraft] = useState('0');
+  const [durationMinutesDraft, setDurationMinutesDraft] = useState('0');
+  const [durationSecondsDraft, setDurationSecondsDraft] = useState('0');
+  const [durationDirty, setDurationDirty] = useState(false);
+  const [isSavingDuration, setIsSavingDuration] = useState(false);
+  const [durationSaveMessage, setDurationSaveMessage] = useState<string | null>(null);
+  const [customFieldsDraft, setCustomFieldsDraft] = useState<Record<string, string>>({});
+  const [customFieldsDirty, setCustomFieldsDirty] = useState(false);
+  const [isSavingCustomFields, setIsSavingCustomFields] = useState(false);
+  const [customFieldsSaveMessage, setCustomFieldsSaveMessage] = useState<string | null>(null);
+  const [hasPptDraft, setHasPptDraft] = useState(false);
+  const [hasQaDraft, setHasQaDraft] = useState(false);
+  const [pptQaDirty, setPptQaDirty] = useState(false);
+  const [isSavingPptQa, setIsSavingPptQa] = useState(false);
+  const [pptQaSaveMessage, setPptQaSaveMessage] = useState<string | null>(null);
+  const [cueDraft, setCueDraft] = useState('');
+  const [programTypeDraft, setProgramTypeDraft] = useState('');
+  const [cueProgramDirty, setCueProgramDirty] = useState(false);
+  const [isSavingCueProgram, setIsSavingCueProgram] = useState(false);
+  const [cueProgramSaveMessage, setCueProgramSaveMessage] = useState<string | null>(null);
+  const [cueProgramError, setCueProgramError] = useState<string | null>(null);
+  const [speakerDraft, setSpeakerDraft] = useState<SpeakerSlotDraft[]>([]);
+  const [speakersDirty, setSpeakersDirty] = useState(false);
+  const [isSavingSpeakers, setIsSavingSpeakers] = useState(false);
+  const [speakersSaveMessage, setSpeakersSaveMessage] = useState<string | null>(null);
+  const notesEditorRef = useRef<HTMLDivElement>(null);
   /** Width of review+stream column on large screens (px). */
   const [sideRailWidthPx, setSideRailWidthPx] = useState(416);
   const [isLgLayout, setIsLgLayout] = useState(false);
@@ -809,6 +967,476 @@ const ContentReviewPage: React.FC = () => {
     return parts.length ? parts.join(' / ') : 'None';
   };
 
+  useEffect(() => {
+    setNotesDraft(displayItem?.notes ?? '');
+    setNotesDirty(false);
+    setNotesSaveMessage(null);
+    setSegmentDraft(displayItem?.segmentName ?? '');
+    setSegmentDirty(false);
+    setSegmentSaveMessage(null);
+    setShotDraft(displayItem?.shotType ?? '');
+    setShotDirty(false);
+    setShotSaveMessage(null);
+    setAssetsDraft(displayItem?.assets ?? '');
+    const parsedAssets = parseAssetRows(displayItem?.assets ?? '');
+    setAssetRows(parsedAssets.length ? parsedAssets : [{ id: `asset-${Date.now()}`, name: '', link: '', linkEnabled: false }]);
+    setAssetsDirty(false);
+    setAssetsSaveMessage(null);
+    setDurationHoursDraft(String(displayItem?.durationHours ?? 0));
+    setDurationMinutesDraft(String(displayItem?.durationMinutes ?? 0));
+    setDurationSecondsDraft(String(displayItem?.durationSeconds ?? 0));
+    setDurationDirty(false);
+    setDurationSaveMessage(null);
+    setCustomFieldsDraft(
+      Object.fromEntries((customColumns || []).map((col) => [col.id, (displayItem?.customFields?.[col.id] ?? '').toString()]))
+    );
+    setCustomFieldsDirty(false);
+    setCustomFieldsSaveMessage(null);
+    setHasPptDraft(!!displayItem?.hasPPT);
+    setHasQaDraft(!!displayItem?.hasQA);
+    setPptQaDirty(false);
+    setPptQaSaveMessage(null);
+    setCueDraft((displayItem?.customFields?.cue ?? '').toString());
+    setProgramTypeDraft(displayItem?.programType ?? '');
+    setCueProgramDirty(false);
+    setCueProgramSaveMessage(null);
+    setCueProgramError(null);
+    setSpeakerDraft(parseSpeakersDraft(displayItem?.speakersText ?? ''));
+    setSpeakersDirty(false);
+    setSpeakersSaveMessage(null);
+  }, [displayItem?.id, editModeEnabled]);
+
+  useEffect(() => {
+    if (!editModeEnabled) return;
+    const editor = notesEditorRef.current;
+    if (!editor) return;
+    editor.innerHTML = notesForEditor(notesDraft);
+  }, [editModeEnabled, displayItem?.id]);
+
+  const saveDisplayItemNotes = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingNotes) return;
+    const nextNotes = notesDraft;
+    const updatedSchedule = schedule.map((it) => (it.id === displayItem.id ? { ...it, notes: nextNotes } : it));
+
+    setIsSavingNotes(true);
+    setSchedule(updatedSchedule);
+    setNotesSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setNotesDirty(false);
+      setNotesSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save notes from Content Review:', e);
+      setNotesSaveMessage('Save failed');
+    } finally {
+      setIsSavingNotes(false);
+    }
+  }, [displayItem, eventId, isSavingNotes, notesDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const saveDisplayItemSegment = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingSegment) return;
+    const nextSegment = segmentDraft;
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id ? { ...it, segmentName: nextSegment } : it
+    );
+
+    setIsSavingSegment(true);
+    setSchedule(updatedSchedule);
+    setSegmentSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setSegmentDirty(false);
+      setSegmentSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save segment from Content Review:', e);
+      setSegmentSaveMessage('Save failed');
+    } finally {
+      setIsSavingSegment(false);
+    }
+  }, [displayItem, eventId, isSavingSegment, segmentDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const saveDisplayItemShot = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingShot) return;
+    const nextShot = shotDraft;
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id ? { ...it, shotType: nextShot } : it
+    );
+
+    setIsSavingShot(true);
+    setSchedule(updatedSchedule);
+    setShotSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setShotDirty(false);
+      setShotSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save shot type from Content Review:', e);
+      setShotSaveMessage('Save failed');
+    } finally {
+      setIsSavingShot(false);
+    }
+  }, [displayItem, eventId, isSavingShot, shotDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const saveDisplayItemAssets = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingAssets) return;
+    const nextAssets = stringifyAssetRows(assetRows);
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id ? { ...it, assets: nextAssets } : it
+    );
+
+    setIsSavingAssets(true);
+    setSchedule(updatedSchedule);
+    setAssetsSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setAssetsDirty(false);
+      setAssetsSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save assets from Content Review:', e);
+      setAssetsSaveMessage('Save failed');
+    } finally {
+      setIsSavingAssets(false);
+    }
+  }, [displayItem, eventId, isSavingAssets, assetRows, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const saveDisplayItemDuration = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingDuration) return;
+    const h = Math.max(0, Number.parseInt(durationHoursDraft || '0', 10) || 0);
+    const m = Math.min(59, Math.max(0, Number.parseInt(durationMinutesDraft || '0', 10) || 0));
+    const s = Math.min(59, Math.max(0, Number.parseInt(durationSecondsDraft || '0', 10) || 0));
+
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id
+        ? {
+            ...it,
+            durationHours: h,
+            durationMinutes: m,
+            durationSeconds: s
+          }
+        : it
+    );
+
+    setIsSavingDuration(true);
+    setSchedule(updatedSchedule);
+    setDurationSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setDurationDirty(false);
+      setDurationSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save duration from Content Review:', e);
+      setDurationSaveMessage('Save failed');
+    } finally {
+      setIsSavingDuration(false);
+    }
+  }, [
+    displayItem,
+    eventId,
+    isSavingDuration,
+    durationHoursDraft,
+    durationMinutesDraft,
+    durationSecondsDraft,
+    schedule,
+    event.name,
+    event.date,
+    customColumns,
+    driverId,
+    driverName
+  ]);
+
+  const saveDisplayItemCustomFields = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingCustomFields) return;
+    const nextCustomFields = {
+      ...(displayItem.customFields || {}),
+      ...customFieldsDraft
+    };
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id ? { ...it, customFields: nextCustomFields } : it
+    );
+
+    setIsSavingCustomFields(true);
+    setSchedule(updatedSchedule);
+    setCustomFieldsSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setCustomFieldsDirty(false);
+      setCustomFieldsSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save custom fields from Content Review:', e);
+      setCustomFieldsSaveMessage('Save failed');
+    } finally {
+      setIsSavingCustomFields(false);
+    }
+  }, [displayItem, eventId, isSavingCustomFields, customFieldsDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const saveDisplayItemPptQa = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingPptQa) return;
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id ? { ...it, hasPPT: hasPptDraft, hasQA: hasQaDraft } : it
+    );
+
+    setIsSavingPptQa(true);
+    setSchedule(updatedSchedule);
+    setPptQaSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setPptQaDirty(false);
+      setPptQaSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save PPT/Q&A from Content Review:', e);
+      setPptQaSaveMessage('Save failed');
+    } finally {
+      setIsSavingPptQa(false);
+    }
+  }, [displayItem, eventId, isSavingPptQa, hasPptDraft, hasQaDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const saveDisplayItemCueProgram = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingCueProgram) return;
+    const nextCue = cueDraft.trim();
+    const nextProgramType = programTypeDraft.trim();
+    if (!nextCue) {
+      setCueProgramError('Cue is required.');
+      return;
+    }
+    const cueKey = nextCue.replace(/\s+/g, '').toUpperCase();
+    const duplicateCue = schedule.some((it) => {
+      if (it.id === displayItem.id) return false;
+      const existingCue = (it.customFields?.cue ?? '').toString().trim();
+      const existingKey = existingCue.replace(/\s+/g, '').toUpperCase();
+      return !!existingKey && existingKey === cueKey;
+    });
+    if (duplicateCue) {
+      setCueProgramError('Cue already exists in this run of show.');
+      return;
+    }
+
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id
+        ? {
+            ...it,
+            programType: nextProgramType,
+            customFields: {
+              ...(it.customFields || {}),
+              cue: nextCue
+            }
+          }
+        : it
+    );
+
+    setIsSavingCueProgram(true);
+    setSchedule(updatedSchedule);
+    setCueProgramSaveMessage(null);
+    setCueProgramError(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setCueProgramDirty(false);
+      setCueProgramSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save cue/program type from Content Review:', e);
+      setCueProgramSaveMessage('Save failed');
+    } finally {
+      setIsSavingCueProgram(false);
+    }
+  }, [displayItem, eventId, isSavingCueProgram, cueDraft, programTypeDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const saveDisplayItemSpeakers = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingSpeakers) return;
+    const nextSpeakersText = stringifySpeakersDraft(speakerDraft);
+    const updatedSchedule = schedule.map((it) =>
+      it.id === displayItem.id ? { ...it, speakersText: nextSpeakersText } : it
+    );
+
+    setIsSavingSpeakers(true);
+    setSchedule(updatedSchedule);
+    setSpeakersSaveMessage(null);
+    try {
+      const existing = await DatabaseService.getRunOfShowData(eventId);
+      const result = await DatabaseService.saveRunOfShowData(
+        {
+          event_id: eventId,
+          event_name: event.name || existing?.event_name || 'Event',
+          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: existing?.settings || {}
+        },
+        {
+          userId: driverId,
+          userName: driverName,
+          userRole: 'OPERATOR'
+        }
+      );
+      if (!result) throw new Error('save failed');
+      setSpeakersDirty(false);
+      setSpeakersSaveMessage('Saved');
+    } catch (e) {
+      console.error('Failed to save speakers from Content Review:', e);
+      setSpeakersSaveMessage('Save failed');
+    } finally {
+      setIsSavingSpeakers(false);
+    }
+  }, [displayItem, eventId, isSavingSpeakers, speakerDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+
+  const applyNotesFormatting = useCallback((action: string, value?: string) => {
+    const editor = notesEditorRef.current;
+    if (!editor) return;
+    editor.focus();
+    switch (action) {
+      case 'bold':
+      case 'italic':
+      case 'underline':
+      case 'justifyLeft':
+      case 'justifyCenter':
+      case 'justifyRight':
+      case 'undo':
+      case 'redo':
+        document.execCommand(action, false);
+        break;
+      case 'foreColor':
+      case 'backColor':
+      case 'fontSize':
+        if (value) document.execCommand(action, false, value);
+        break;
+      case 'clearHighlight':
+        document.execCommand('backColor', false, 'transparent');
+        break;
+      default:
+        break;
+    }
+    const html = editor.innerHTML;
+    setNotesDraft(html);
+    setNotesDirty(html !== (displayItem?.notes ?? ''));
+    setNotesSaveMessage(null);
+  }, [displayItem?.notes]);
+
   return (
     <div className="fixed inset-x-0 bottom-0 top-16 z-0 flex flex-col bg-slate-900 text-white">
       {/* Slim top bar — page chrome; body does not scroll */}
@@ -864,6 +1492,27 @@ const ContentReviewPage: React.FC = () => {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            aria-pressed={editModeEnabled}
+            aria-label={editModeEnabled ? 'Disable edit mode' : 'Enable edit mode'}
+            onClick={() => setEditModeEnabled((on) => !on)}
+            className={`flex shrink-0 items-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-xs font-semibold shadow-sm md:px-3 md:text-sm ${
+              editModeEnabled
+                ? 'border-violet-300 bg-gradient-to-b from-violet-500 to-violet-600 text-white shadow-lg'
+                : 'border-violet-500/60 bg-violet-950/40 text-violet-200 hover:border-violet-400/70 hover:bg-violet-900/35 hover:text-violet-100'
+            }`}
+          >
+            <svg className="h-4 w-4 shrink-0 opacity-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 7h16M4 12h16M4 17h10"
+              />
+            </svg>
+            <span className="hidden sm:inline">{editModeEnabled ? 'Edit On' : 'Edit'}</span>
+          </button>
           <button
             type="button"
             aria-pressed={reviewPanelOpen}
@@ -1056,48 +1705,286 @@ const ContentReviewPage: React.FC = () => {
                     opacity: displayItem.programType === 'KILLED' ? 0.85 : 1
                   }}
                 >
-                  <div className="grid grid-cols-12 gap-0 border-b border-slate-600">
-                    <div className="col-span-12 border-b border-slate-600 bg-slate-800/90 p-4 sm:col-span-4 sm:border-b-0 sm:border-r md:col-span-3">
-                      <div className="text-center sm:text-left">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Cue</div>
-                        <div
-                          className={`mt-1 text-2xl font-bold md:text-3xl ${
-                            displayItem.programType === 'KILLED' ? 'text-slate-400' : 'text-white'
-                          }`}
-                        >
-                          {formatCueDisplay(cueLabel(displayItem))}
-                        </div>
-                        <div
-                          className="mt-2 inline-block rounded border px-2 py-1 text-xs font-semibold shadow-md"
-                          style={{
-                            backgroundColor: programColor(displayItem.programType),
-                            color: programTextClass(displayItem.programType),
-                            borderColor: displayItem.programType === 'Sub Cue' ? '#000' : 'transparent'
-                          }}
-                        >
-                          {displayItem.programType || 'Unknown'}
-                        </div>
+                  <div className="grid grid-cols-1 gap-0 border-b border-slate-600 md:grid-cols-12">
+                    <div className="border-b border-slate-600 bg-slate-800/90 px-3 py-2 md:col-span-2 md:border-b-0 md:border-r">
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Cue</span>
+                        {editModeEnabled ? (
+                          <div className="mt-1 space-y-2">
+                            <input
+                              type="text"
+                              value={cueDraft}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setCueDraft(v);
+                                setCueProgramDirty(v.trim() !== (displayItem.customFields?.cue ?? '').toString().trim() || programTypeDraft !== (displayItem.programType ?? ''));
+                                setCueProgramSaveMessage(null);
+                                setCueProgramError(null);
+                              }}
+                              placeholder="Cue"
+                              className="w-full rounded border border-slate-500 bg-slate-900 px-2 py-1 text-xs font-semibold text-white outline-none focus:border-violet-400"
+                            />
+                            <select
+                              value={programTypeDraft}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setProgramTypeDraft(v);
+                                setCueProgramDirty(cueDraft.trim() !== (displayItem.customFields?.cue ?? '').toString().trim() || v !== (displayItem.programType ?? ''));
+                                setCueProgramSaveMessage(null);
+                                setCueProgramError(null);
+                              }}
+                              className="w-full rounded border border-slate-500 px-2 py-1 text-xs font-semibold outline-none focus:border-violet-400"
+                              style={{
+                                backgroundColor: programTypeDraft ? programColor(programTypeDraft) : '#0f172a',
+                                color: programTypeDraft ? (programTextClass(programTypeDraft) === 'text-black' ? '#000000' : '#ffffff') : '#ffffff'
+                              }}
+                            >
+                              <option value="">Select Program Type</option>
+                              {PROGRAM_TYPE_OPTIONS.map((type) => (
+                                <option
+                                  key={type}
+                                  value={type}
+                                  style={{
+                                    backgroundColor: programColor(type),
+                                    color: programTextClass(type) === 'text-black' ? '#000000' : '#ffffff'
+                                  }}
+                                >
+                                  {type}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={saveDisplayItemCueProgram}
+                                disabled={!cueProgramDirty || isSavingCueProgram}
+                                className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                                  !cueProgramDirty || isSavingCueProgram
+                                    ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                    : 'bg-violet-600 text-white hover:bg-violet-500'
+                                }`}
+                              >
+                                {isSavingCueProgram ? 'Saving...' : 'Save'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCueDraft((displayItem.customFields?.cue ?? '').toString());
+                                  setProgramTypeDraft(displayItem.programType ?? '');
+                                  setCueProgramDirty(false);
+                                  setCueProgramSaveMessage(null);
+                                  setCueProgramError(null);
+                                }}
+                                disabled={isSavingCueProgram}
+                                className="rounded border border-slate-500 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Cancel
+                              </button>
+                              {cueProgramSaveMessage ? (
+                                <span
+                                  className={`text-[10px] font-semibold ${
+                                    cueProgramSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                                  }`}
+                                >
+                                  {cueProgramSaveMessage}
+                                </span>
+                              ) : null}
+                            </div>
+                            {cueProgramError ? <div className="text-[10px] font-semibold text-rose-300">{cueProgramError}</div> : null}
+                          </div>
+                        ) : (
+                          <>
+                            <div
+                              className={`mt-0.5 min-w-0 truncate text-sm font-bold md:text-base ${
+                                displayItem.programType === 'KILLED' ? 'text-slate-400' : 'text-white'
+                              }`}
+                            >
+                              {formatCueDisplay(cueLabel(displayItem))}
+                            </div>
+                            <span
+                              className="mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold"
+                              style={{
+                                backgroundColor: programColor(displayItem.programType),
+                                color: programTextClass(displayItem.programType),
+                                borderColor: displayItem.programType === 'Sub Cue' ? '#000' : 'transparent'
+                              }}
+                            >
+                              {displayItem.programType || 'Unknown'}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
-                    <div className="col-span-6 border-r border-slate-600 p-4 sm:col-span-4 md:col-span-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Day</div>
-                      <div className="mt-1 text-xl font-bold text-white">Day {displayItem.day}</div>
-                      {displayItem.isStartCue ? (
-                        <div className="mt-1 text-xs font-bold text-amber-400">START</div>
-                      ) : null}
-                    </div>
-                    <div className="col-span-6 p-4 sm:col-span-4 md:col-span-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Duration</div>
-                      <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-white md:text-3xl">
-                        {formatDurationClock(displayItem)}
+                    <div className="border-b border-slate-600 px-3 py-2 md:col-span-2 md:border-b-0 md:border-r">
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Day</span>
+                        <div className="mt-0.5 truncate text-sm font-bold text-white">Day {displayItem.day}</div>
+                        {displayItem.isStartCue ? (
+                          <div className="mt-1 text-[10px] font-bold text-amber-400">START</div>
+                        ) : null}
                       </div>
-                      <div className="mt-1 text-xs text-slate-400">{formatDurationShort(displayItem)}</div>
                     </div>
-                    <div className="col-span-12 bg-slate-800/70 p-4 sm:col-span-12 md:col-span-3 md:border-l md:border-slate-600">
+                    <div className="border-b border-slate-600 px-3 py-2 md:col-span-2 md:border-b-0 md:border-r">
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Duration</span>
+                        {editModeEnabled ? (
+                          <div className="mt-1 space-y-2">
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <input
+                                type="number"
+                                min={0}
+                                value={durationHoursDraft}
+                                onChange={(e) => {
+                                  setDurationHoursDraft(e.target.value);
+                                  const dirty =
+                                    Number.parseInt(e.target.value || '0', 10) !== (displayItem.durationHours ?? 0) ||
+                                    Number.parseInt(durationMinutesDraft || '0', 10) !== (displayItem.durationMinutes ?? 0) ||
+                                    Number.parseInt(durationSecondsDraft || '0', 10) !== (displayItem.durationSeconds ?? 0);
+                                  setDurationDirty(dirty);
+                                  setDurationSaveMessage(null);
+                                }}
+                                className="w-full rounded border border-slate-500 bg-slate-900 px-1.5 py-1 text-center font-mono text-xs text-white outline-none focus:border-violet-400"
+                                aria-label="Duration hours"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                max={59}
+                                value={durationMinutesDraft}
+                                onChange={(e) => {
+                                  setDurationMinutesDraft(e.target.value);
+                                  const dirty =
+                                    Number.parseInt(durationHoursDraft || '0', 10) !== (displayItem.durationHours ?? 0) ||
+                                    Number.parseInt(e.target.value || '0', 10) !== (displayItem.durationMinutes ?? 0) ||
+                                    Number.parseInt(durationSecondsDraft || '0', 10) !== (displayItem.durationSeconds ?? 0);
+                                  setDurationDirty(dirty);
+                                  setDurationSaveMessage(null);
+                                }}
+                                className="w-full rounded border border-slate-500 bg-slate-900 px-1.5 py-1 text-center font-mono text-xs text-white outline-none focus:border-violet-400"
+                                aria-label="Duration minutes"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                max={59}
+                                value={durationSecondsDraft}
+                                onChange={(e) => {
+                                  setDurationSecondsDraft(e.target.value);
+                                  const dirty =
+                                    Number.parseInt(durationHoursDraft || '0', 10) !== (displayItem.durationHours ?? 0) ||
+                                    Number.parseInt(durationMinutesDraft || '0', 10) !== (displayItem.durationMinutes ?? 0) ||
+                                    Number.parseInt(e.target.value || '0', 10) !== (displayItem.durationSeconds ?? 0);
+                                  setDurationDirty(dirty);
+                                  setDurationSaveMessage(null);
+                                }}
+                                className="w-full rounded border border-slate-500 bg-slate-900 px-1.5 py-1 text-center font-mono text-xs text-white outline-none focus:border-violet-400"
+                                aria-label="Duration seconds"
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={saveDisplayItemDuration}
+                                disabled={!durationDirty || isSavingDuration}
+                                className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                                  !durationDirty || isSavingDuration
+                                    ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                    : 'bg-violet-600 text-white hover:bg-violet-500'
+                                }`}
+                              >
+                                {isSavingDuration ? 'Saving...' : 'Save'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDurationHoursDraft(String(displayItem.durationHours ?? 0));
+                                  setDurationMinutesDraft(String(displayItem.durationMinutes ?? 0));
+                                  setDurationSecondsDraft(String(displayItem.durationSeconds ?? 0));
+                                  setDurationDirty(false);
+                                  setDurationSaveMessage(null);
+                                }}
+                                disabled={isSavingDuration}
+                                className="rounded border border-slate-500 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Cancel
+                              </button>
+                              {durationSaveMessage ? (
+                                <span
+                                  className={`text-[10px] font-semibold ${
+                                    durationSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                                  }`}
+                                >
+                                  {durationSaveMessage}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="mt-0.5 min-w-0 truncate font-mono text-sm font-bold tabular-nums text-white md:text-base">
+                              {formatDurationClock(displayItem)}
+                            </div>
+                            <div className="mt-1 text-[10px] text-slate-400">{formatDurationShort(displayItem)}</div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-slate-800/70 px-3 py-2 md:col-span-6">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Segment</div>
-                      <div className="mt-1 text-lg font-bold leading-snug text-white md:text-xl">
-                        {displayItem.segmentName || 'Untitled segment'}
-                      </div>
+                      {editModeEnabled ? (
+                        <div className="mt-1 space-y-1.5">
+                          <input
+                            type="text"
+                            value={segmentDraft}
+                            onChange={(e) => {
+                              setSegmentDraft(e.target.value);
+                              setSegmentDirty(e.target.value !== (displayItem.segmentName ?? ''));
+                              setSegmentSaveMessage(null);
+                            }}
+                            placeholder="Untitled segment"
+                            className="w-full rounded border border-slate-500 bg-slate-900 px-2 py-1.5 text-sm font-semibold text-white outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/40"
+                          />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={saveDisplayItemSegment}
+                              disabled={!segmentDirty || isSavingSegment}
+                              className={`rounded px-2.5 py-1 text-[11px] font-semibold ${
+                                !segmentDirty || isSavingSegment
+                                  ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                  : 'bg-violet-600 text-white hover:bg-violet-500'
+                              }`}
+                            >
+                              {isSavingSegment ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSegmentDraft(displayItem.segmentName ?? '');
+                                setSegmentDirty(false);
+                                setSegmentSaveMessage(null);
+                              }}
+                              disabled={isSavingSegment}
+                              className="rounded border border-slate-500 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                            {segmentSaveMessage ? (
+                              <span
+                                className={`text-[11px] font-semibold ${
+                                  segmentSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                                }`}
+                              >
+                                {segmentSaveMessage}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-0.5 line-clamp-2 text-sm font-bold leading-snug text-white md:text-base">
+                          {displayItem.segmentName || 'Untitled segment'}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1105,11 +1992,136 @@ const ContentReviewPage: React.FC = () => {
                   <div className="grid grid-cols-1 gap-0 border-b border-slate-600 sm:grid-cols-2">
                     <div className="border-b border-slate-600 p-4 sm:border-b-0 sm:border-r">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Shot</div>
-                      <div className="mt-1 text-base font-bold text-white">{displayItem.shotType || '—'}</div>
+                      {editModeEnabled ? (
+                        <div className="mt-1 space-y-2">
+                          <select
+                            value={shotDraft}
+                            onChange={(e) => {
+                              setShotDraft(e.target.value);
+                              setShotDirty(e.target.value !== (displayItem.shotType ?? ''));
+                              setShotSaveMessage(null);
+                            }}
+                            className="w-full rounded border border-slate-500 bg-slate-900 px-2 py-1.5 text-sm font-semibold text-white outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/40"
+                          >
+                            <option value="">Select Shot Type</option>
+                            {SHOT_TYPES.map((type) => (
+                              <option key={type} value={type}>
+                                {type}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={saveDisplayItemShot}
+                              disabled={!shotDirty || isSavingShot}
+                              className={`rounded px-2.5 py-1 text-[11px] font-semibold ${
+                                !shotDirty || isSavingShot
+                                  ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                  : 'bg-violet-600 text-white hover:bg-violet-500'
+                              }`}
+                            >
+                              {isSavingShot ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShotDraft(displayItem.shotType ?? '');
+                                setShotDirty(false);
+                                setShotSaveMessage(null);
+                              }}
+                              disabled={isSavingShot}
+                              className="rounded border border-slate-500 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                            {shotSaveMessage ? (
+                              <span
+                                className={`text-[11px] font-semibold ${
+                                  shotSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                                }`}
+                              >
+                                {shotSaveMessage}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-base font-bold text-white">{displayItem.shotType || '—'}</div>
+                      )}
                     </div>
                     <div className="p-4">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">PPT / Q&A</div>
-                      <div className="mt-1 text-base font-bold text-white">{pptQaString(displayItem)}</div>
+                      {editModeEnabled ? (
+                        <div className="mt-1 space-y-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <label className="inline-flex items-center gap-2 text-sm text-slate-100">
+                              <input
+                                type="checkbox"
+                                checked={hasPptDraft}
+                                onChange={(e) => {
+                                  setHasPptDraft(e.target.checked);
+                                  setPptQaDirty(e.target.checked !== !!displayItem.hasPPT || hasQaDraft !== !!displayItem.hasQA);
+                                  setPptQaSaveMessage(null);
+                                }}
+                                className="h-4 w-4 rounded border-slate-500 bg-slate-800 text-violet-500 focus:ring-violet-500"
+                              />
+                              PPT
+                            </label>
+                            <label className="inline-flex items-center gap-2 text-sm text-slate-100">
+                              <input
+                                type="checkbox"
+                                checked={hasQaDraft}
+                                onChange={(e) => {
+                                  setHasQaDraft(e.target.checked);
+                                  setPptQaDirty(hasPptDraft !== !!displayItem.hasPPT || e.target.checked !== !!displayItem.hasQA);
+                                  setPptQaSaveMessage(null);
+                                }}
+                                className="h-4 w-4 rounded border-slate-500 bg-slate-800 text-violet-500 focus:ring-violet-500"
+                              />
+                              Q&A
+                            </label>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={saveDisplayItemPptQa}
+                              disabled={!pptQaDirty || isSavingPptQa}
+                              className={`rounded px-2.5 py-1 text-[11px] font-semibold ${
+                                !pptQaDirty || isSavingPptQa
+                                  ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                  : 'bg-violet-600 text-white hover:bg-violet-500'
+                              }`}
+                            >
+                              {isSavingPptQa ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setHasPptDraft(!!displayItem.hasPPT);
+                                setHasQaDraft(!!displayItem.hasQA);
+                                setPptQaDirty(false);
+                                setPptQaSaveMessage(null);
+                              }}
+                              disabled={isSavingPptQa}
+                              className="rounded border border-slate-500 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                            {pptQaSaveMessage ? (
+                              <span
+                                className={`text-[11px] font-semibold ${
+                                  pptQaSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                                }`}
+                              >
+                                {pptQaSaveMessage}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-base font-bold text-white">{pptQaString(displayItem)}</div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1119,29 +2131,341 @@ const ContentReviewPage: React.FC = () => {
                   <div className="border-b border-slate-600 bg-slate-700 px-3 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-200">
                     Speakers (slots 1–7)
                   </div>
-                  <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-4 lg:grid-cols-7">
-                    {parseSpeakersSlots(displayItem.speakersText).map((cell, i) => (
-                      <div
-                        key={i}
-                        className="flex min-h-[5.5rem] flex-col justify-start rounded border border-slate-600 bg-slate-900/50 p-2 text-center"
-                      >
-                        <div className="text-[10px] font-bold uppercase text-slate-500">Slot {i + 1}</div>
-                        <div className="mt-1 whitespace-pre-line text-xs font-semibold leading-snug text-white">
-                          {cell || '—'}
-                        </div>
+                  {editModeEnabled ? (
+                    <div className="space-y-2 p-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-slate-300">Edit Participants ({speakerDraft.length}/7)</span>
+                        <button
+                          type="button"
+                          disabled={speakerDraft.length >= 7}
+                          onClick={() => {
+                            setSpeakerDraft((prev) => {
+                              const used = new Set(prev.map((s) => s.slot));
+                              const nextSlot = [1, 2, 3, 4, 5, 6, 7].find((n) => !used.has(n)) ?? 1;
+                              return [
+                                ...prev,
+                                {
+                                  id: `speaker-${Date.now()}-${nextSlot}`,
+                                  slot: nextSlot,
+                                  location: 'Podium',
+                                  fullName: '',
+                                  title: '',
+                                  org: '',
+                                  photoLink: ''
+                                }
+                              ].sort((a, b) => a.slot - b.slot);
+                            });
+                            setSpeakersDirty(true);
+                            setSpeakersSaveMessage(null);
+                          }}
+                          className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          + Add Speaker
+                        </button>
                       </div>
-                    ))}
-                  </div>
+                      {speakerDraft.length === 0 ? (
+                        <div className="rounded border border-slate-700 bg-slate-900/50 p-3 text-xs text-slate-400">
+                          No speakers yet. Use “Add Speaker” to add one at a time.
+                        </div>
+                      ) : null}
+                      <div className="space-y-2">
+                        {speakerDraft
+                          .slice()
+                          .sort((a, b) => a.slot - b.slot)
+                          .map((sp) => (
+                            <div key={sp.id} className="rounded border border-slate-600 bg-slate-900/60 p-2.5">
+                              <div className="mb-2 flex items-center justify-between">
+                                <span className="text-[10px] font-bold uppercase text-slate-400">Speaker {sp.slot}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSpeakerDraft((prev) => prev.filter((row) => row.id !== sp.id));
+                                    setSpeakersDirty(true);
+                                    setSpeakersSaveMessage(null);
+                                  }}
+                                  className="rounded bg-rose-700 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-rose-600"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Slot</label>
+                                  <select
+                                    value={sp.slot}
+                                    onChange={(e) => {
+                                      const newSlot = Number.parseInt(e.target.value, 10) || sp.slot;
+                                      setSpeakerDraft((prev) => {
+                                        const exists = prev.find((r) => r.id !== sp.id && r.slot === newSlot);
+                                        if (exists) return prev;
+                                        return prev
+                                          .map((row) => (row.id === sp.id ? { ...row, slot: newSlot } : row))
+                                          .sort((a, b) => a.slot - b.slot);
+                                      });
+                                      setSpeakersDirty(true);
+                                      setSpeakersSaveMessage(null);
+                                    }}
+                                    className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-violet-400"
+                                  >
+                                    {[1, 2, 3, 4, 5, 6, 7].map((slotNum) => {
+                                      const taken = speakerDraft.some((r) => r.id !== sp.id && r.slot === slotNum);
+                                      return (
+                                        <option key={`${sp.id}-slot-${slotNum}`} value={slotNum} disabled={taken}>
+                                          {slotNum} {taken ? '(Used)' : ''}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Location</label>
+                                  <select
+                                    value={sp.location}
+                                    onChange={(e) => {
+                                      const nextLocation = (e.target.value as SpeakerSlotDraft['location']) || 'Podium';
+                                      setSpeakerDraft((prev) =>
+                                        prev.map((row) => (row.id === sp.id ? { ...row, location: nextLocation } : row))
+                                      );
+                                      setSpeakersDirty(true);
+                                      setSpeakersSaveMessage(null);
+                                    }}
+                                    className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-violet-400"
+                                  >
+                                    <option value="Podium">Podium</option>
+                                    <option value="Seat">Seat</option>
+                                    <option value="Virtual">Virtual</option>
+                                    <option value="Moderator">Moderator</option>
+                                  </select>
+                                </div>
+                                <div className="md:col-span-2 lg:col-span-1">
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Full Name</label>
+                                  <input
+                                    type="text"
+                                    value={sp.fullName}
+                                    onChange={(e) => {
+                                      const nextVal = e.target.value;
+                                      setSpeakerDraft((prev) =>
+                                        prev.map((row) => (row.id === sp.id ? { ...row, fullName: nextVal } : row))
+                                      );
+                                      setSpeakersDirty(true);
+                                      setSpeakersSaveMessage(null);
+                                    }}
+                                    placeholder="Enter full name"
+                                    className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-violet-400"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Title</label>
+                                  <input
+                                    type="text"
+                                    value={sp.title}
+                                    onChange={(e) => {
+                                      const nextVal = e.target.value;
+                                      setSpeakerDraft((prev) =>
+                                        prev.map((row) => (row.id === sp.id ? { ...row, title: nextVal } : row))
+                                      );
+                                      setSpeakersDirty(true);
+                                      setSpeakersSaveMessage(null);
+                                    }}
+                                    placeholder="Title / Position"
+                                    className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-violet-400"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Organization</label>
+                                  <input
+                                    type="text"
+                                    value={sp.org}
+                                    onChange={(e) => {
+                                      const nextVal = e.target.value;
+                                      setSpeakerDraft((prev) =>
+                                        prev.map((row) => (row.id === sp.id ? { ...row, org: nextVal } : row))
+                                      );
+                                      setSpeakersDirty(true);
+                                      setSpeakersSaveMessage(null);
+                                    }}
+                                    placeholder="Organization"
+                                    className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-violet-400"
+                                  />
+                                </div>
+                                <div className="md:col-span-2 lg:col-span-1">
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Photo URL</label>
+                                  <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                                    <input
+                                      type="url"
+                                      value={sp.photoLink}
+                                      onChange={(e) => {
+                                        const nextVal = e.target.value;
+                                        setSpeakerDraft((prev) =>
+                                          prev.map((row) => (row.id === sp.id ? { ...row, photoLink: nextVal } : row))
+                                        );
+                                        setSpeakersDirty(true);
+                                        setSpeakersSaveMessage(null);
+                                      }}
+                                      placeholder="https://..."
+                                      className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-violet-400"
+                                    />
+                                    {sp.photoLink ? (
+                                      <img
+                                        src={sp.photoLink}
+                                        alt={sp.fullName || `Speaker ${sp.slot}`}
+                                        className="h-8 w-8 rounded object-cover border border-slate-500"
+                                        onError={(e) => {
+                                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                        }}
+                                      />
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={saveDisplayItemSpeakers}
+                          disabled={!speakersDirty || isSavingSpeakers}
+                          className={`rounded px-3 py-1.5 text-xs font-semibold ${
+                            !speakersDirty || isSavingSpeakers
+                              ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                              : 'bg-violet-600 text-white hover:bg-violet-500'
+                          }`}
+                        >
+                          {isSavingSpeakers ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSpeakerDraft(parseSpeakersDraft(displayItem.speakersText || ''));
+                            setSpeakersDirty(false);
+                            setSpeakersSaveMessage(null);
+                          }}
+                          disabled={isSavingSpeakers}
+                          className="rounded border border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                        {speakersSaveMessage ? (
+                          <span
+                            className={`text-xs font-semibold ${
+                              speakersSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                            }`}
+                          >
+                            {speakersSaveMessage}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-4 lg:grid-cols-7">
+                      {parseSpeakersSlots(displayItem.speakersText).map((cell, i) => (
+                        <div
+                          key={i}
+                          className="flex min-h-[5.5rem] flex-col justify-start rounded border border-slate-600 bg-slate-900/50 p-2 text-center"
+                        >
+                          <div className="text-[10px] font-bold uppercase text-slate-500">Slot {i + 1}</div>
+                          <div className="mt-1 whitespace-pre-line text-xs font-semibold leading-snug text-white">
+                            {cell || '—'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Notes — full width block */}
                 <div className="rounded-lg border border-slate-600 bg-slate-800">
-                  <div className="border-b border-slate-600 bg-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200">
-                    Notes
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-600 bg-slate-700 px-4 py-2">
+                    <span className="text-xs font-bold uppercase tracking-wide text-slate-200">Notes</span>
+                    {editModeEnabled ? (
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">Edit mode</span>
+                    ) : null}
                   </div>
-                  <div className="min-h-[4rem] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
-                    {displayItem.notes?.trim() ? displayItem.notes : <span className="text-slate-500">No notes</span>}
-                  </div>
+                  {editModeEnabled ? (
+                    <div className="space-y-2 p-4">
+                      <div className="rounded border border-slate-600 bg-slate-900/80 p-2">
+                        <div className="mb-2 flex flex-wrap items-center gap-1.5 border-b border-slate-700 pb-2">
+                          <button type="button" onClick={() => applyNotesFormatting('bold')} className="rounded border border-slate-500 px-2 py-1 text-xs font-bold text-slate-200 hover:bg-slate-700">B</button>
+                          <button type="button" onClick={() => applyNotesFormatting('italic')} className="rounded border border-slate-500 px-2 py-1 text-xs italic text-slate-200 hover:bg-slate-700">I</button>
+                          <button type="button" onClick={() => applyNotesFormatting('underline')} className="rounded border border-slate-500 px-2 py-1 text-xs underline text-slate-200 hover:bg-slate-700">U</button>
+                          <span className="mx-1 h-5 w-px bg-slate-700" aria-hidden />
+                          <button type="button" onClick={() => applyNotesFormatting('justifyLeft')} className="rounded border border-slate-500 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700">L</button>
+                          <button type="button" onClick={() => applyNotesFormatting('justifyCenter')} className="rounded border border-slate-500 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700">C</button>
+                          <button type="button" onClick={() => applyNotesFormatting('justifyRight')} className="rounded border border-slate-500 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700">R</button>
+                          <span className="mx-1 h-5 w-px bg-slate-700" aria-hidden />
+                          <button type="button" onClick={() => applyNotesFormatting('foreColor', '#ffffff')} className="h-6 w-6 rounded border border-slate-400 bg-white" title="White text" />
+                          <button type="button" onClick={() => applyNotesFormatting('foreColor', '#fbbf24')} className="h-6 w-6 rounded border border-slate-400 bg-amber-400" title="Amber text" />
+                          <button type="button" onClick={() => applyNotesFormatting('foreColor', '#60a5fa')} className="h-6 w-6 rounded border border-slate-400 bg-blue-400" title="Blue text" />
+                          <button type="button" onClick={() => applyNotesFormatting('foreColor', '#4ade80')} className="h-6 w-6 rounded border border-slate-400 bg-green-400" title="Green text" />
+                          <span className="mx-1 h-5 w-px bg-slate-700" aria-hidden />
+                          <button type="button" onClick={() => applyNotesFormatting('clearHighlight')} className="rounded border border-slate-500 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-700">No HL</button>
+                          <button type="button" onClick={() => applyNotesFormatting('backColor', '#fbbf24')} className="h-6 w-6 rounded border border-slate-400 bg-amber-400" title="Amber highlight" />
+                          <button type="button" onClick={() => applyNotesFormatting('backColor', '#60a5fa')} className="h-6 w-6 rounded border border-slate-400 bg-blue-400" title="Blue highlight" />
+                          <button type="button" onClick={() => applyNotesFormatting('backColor', '#4ade80')} className="h-6 w-6 rounded border border-slate-400 bg-green-400" title="Green highlight" />
+                          <button type="button" onClick={() => applyNotesFormatting('backColor', '#f472b6')} className="h-6 w-6 rounded border border-slate-400 bg-pink-400" title="Pink highlight" />
+                          <span className="mx-1 h-5 w-px bg-slate-700" aria-hidden />
+                          <button type="button" onClick={() => applyNotesFormatting('undo')} className="rounded border border-slate-500 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-700">Undo</button>
+                          <button type="button" onClick={() => applyNotesFormatting('redo')} className="rounded border border-slate-500 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-700">Redo</button>
+                        </div>
+                        <div
+                          ref={notesEditorRef}
+                          contentEditable
+                          suppressContentEditableWarning
+                          onInput={(e) => {
+                            const html = (e.currentTarget as HTMLDivElement).innerHTML;
+                            setNotesDraft(html);
+                            setNotesDirty(html !== (displayItem.notes ?? ''));
+                            setNotesSaveMessage(null);
+                          }}
+                          className="min-h-[10rem] w-full rounded border border-slate-500 bg-slate-950 px-3 py-2 text-sm leading-relaxed text-slate-100 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/40"
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={saveDisplayItemNotes}
+                          disabled={!notesDirty || isSavingNotes}
+                          className={`rounded px-3 py-1.5 text-xs font-semibold ${
+                            !notesDirty || isSavingNotes
+                              ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                              : 'bg-violet-600 text-white hover:bg-violet-500'
+                          }`}
+                        >
+                          {isSavingNotes ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNotesDraft(displayItem.notes ?? '');
+                            setNotesDirty(false);
+                            setNotesSaveMessage(null);
+                          }}
+                          disabled={isSavingNotes}
+                          className="rounded border border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                        {notesSaveMessage ? (
+                          <span
+                            className={`text-xs font-semibold ${
+                              notesSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                            }`}
+                          >
+                            {notesSaveMessage}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="min-h-[4rem] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+                      {displayItem.notes?.trim() ? (
+                        <div dangerouslySetInnerHTML={{ __html: displayItem.notes }} />
+                      ) : (
+                        <span className="text-slate-500">No notes</span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Assets */}
@@ -1149,16 +2473,147 @@ const ContentReviewPage: React.FC = () => {
                   <div className="border-b border-slate-600 bg-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200">
                     Assets
                   </div>
-                  <div className="break-all p-4 text-sm text-cyan-200">
-                    {displayItem.assets?.trim() ? displayItem.assets : <span className="text-slate-500">None</span>}
-                  </div>
+                  {editModeEnabled ? (
+                    <div className="space-y-2 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Assets list</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAssetRows((prev) => [
+                              ...prev,
+                              { id: `asset-${Date.now()}-${prev.length}`, name: '', link: '', linkEnabled: false }
+                            ]);
+                            setAssetsDirty(true);
+                            setAssetsSaveMessage(null);
+                          }}
+                          className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-600"
+                        >
+                          + Add Asset
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {assetRows.map((row) => (
+                          <div key={row.id} className="rounded border border-slate-600 bg-slate-900/70 p-2.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                type="text"
+                                value={row.name}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setAssetRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, name: v } : r)));
+                                  setAssetsDirty(true);
+                                  setAssetsSaveMessage(null);
+                                }}
+                                placeholder="Asset name..."
+                                className="min-w-[12rem] flex-1 rounded border border-slate-500 bg-slate-800 px-2.5 py-1.5 text-sm text-white outline-none focus:border-violet-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAssetRows((prev) =>
+                                    prev.map((r) =>
+                                      r.id === row.id
+                                        ? { ...r, linkEnabled: !r.linkEnabled, link: !r.linkEnabled ? r.link : '' }
+                                        : r
+                                    )
+                                  );
+                                  setAssetsDirty(true);
+                                  setAssetsSaveMessage(null);
+                                }}
+                                className={`rounded px-2.5 py-1 text-xs font-semibold ${
+                                  row.linkEnabled
+                                    ? 'bg-slate-600 text-white hover:bg-slate-500'
+                                    : 'bg-blue-700 text-white hover:bg-blue-600'
+                                }`}
+                              >
+                                {row.linkEnabled ? '− Link' : '+ Link'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAssetRows((prev) => {
+                                    const next = prev.filter((r) => r.id !== row.id);
+                                    return next.length ? next : [{ id: `asset-${Date.now()}`, name: '', link: '', linkEnabled: false }];
+                                  });
+                                  setAssetsDirty(true);
+                                  setAssetsSaveMessage(null);
+                                }}
+                                className="rounded bg-rose-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-600"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                            {row.linkEnabled ? (
+                              <input
+                                type="url"
+                                value={row.link}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setAssetRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, link: v } : r)));
+                                  setAssetsDirty(true);
+                                  setAssetsSaveMessage(null);
+                                }}
+                                placeholder="Enter asset URL..."
+                                className="mt-2 w-full rounded border border-slate-500 bg-slate-800 px-2.5 py-1.5 text-sm text-cyan-100 outline-none focus:border-violet-400"
+                              />
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={saveDisplayItemAssets}
+                          disabled={!assetsDirty || isSavingAssets}
+                          className={`rounded px-3 py-1.5 text-xs font-semibold ${
+                            !assetsDirty || isSavingAssets
+                              ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                              : 'bg-violet-600 text-white hover:bg-violet-500'
+                          }`}
+                        >
+                          {isSavingAssets ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const reset = parseAssetRows(displayItem.assets ?? '');
+                            setAssetRows(reset.length ? reset : [{ id: `asset-${Date.now()}`, name: '', link: '', linkEnabled: false }]);
+                            setAssetsDraft(displayItem.assets ?? '');
+                            setAssetsDirty(false);
+                            setAssetsSaveMessage(null);
+                          }}
+                          disabled={isSavingAssets}
+                          className="rounded border border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                        {assetsSaveMessage ? (
+                          <span
+                            className={`text-xs font-semibold ${
+                              assetsSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                            }`}
+                          >
+                            {assetsSaveMessage}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="break-all p-4 text-sm text-cyan-200">
+                      {displayItem.assets?.trim() ? displayItem.assets : <span className="text-slate-500">None</span>}
+                    </div>
+                  )}
                 </div>
 
                 {/* Custom columns grid */}
                 {(() => {
-                  const cols = customColumns.filter(
+                  const allDefinedCols = customColumns;
+                  if (!allDefinedCols.length) return null;
+                  const readOnlyCols = allDefinedCols.filter(
                     (col) => (displayItem.customFields?.[col.id] ?? '').toString().trim().length > 0
                   );
+                  const cols = editModeEnabled ? allDefinedCols : readOnlyCols;
                   if (!cols.length) return null;
                   return (
                     <div className="rounded-lg border border-slate-600 bg-slate-800">
@@ -1172,12 +2627,67 @@ const ContentReviewPage: React.FC = () => {
                             className="border-b border-slate-700 p-3 sm:border-r sm:[&:nth-child(2n)]:border-r-0"
                           >
                             <div className="text-[10px] font-semibold uppercase text-slate-500">{col.name}</div>
-                            <div className="mt-1 whitespace-pre-wrap text-sm text-slate-100">
-                              {(displayItem.customFields?.[col.id] ?? '').toString()}
-                            </div>
+                            {editModeEnabled ? (
+                              <textarea
+                                value={(customFieldsDraft[col.id] ?? '').toString()}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCustomFieldsDraft((prev) => ({ ...prev, [col.id]: val }));
+                                  setCustomFieldsDirty(true);
+                                  setCustomFieldsSaveMessage(null);
+                                }}
+                                rows={3}
+                                className="mt-1 w-full resize-y rounded border border-slate-500 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/40"
+                              />
+                            ) : (
+                              <div className="mt-1 whitespace-pre-wrap text-sm text-slate-100">
+                                {(displayItem.customFields?.[col.id] ?? '').toString()}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
+                      {editModeEnabled ? (
+                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-700 px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={saveDisplayItemCustomFields}
+                            disabled={!customFieldsDirty || isSavingCustomFields}
+                            className={`rounded px-3 py-1.5 text-xs font-semibold ${
+                              !customFieldsDirty || isSavingCustomFields
+                                ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                : 'bg-violet-600 text-white hover:bg-violet-500'
+                            }`}
+                          >
+                            {isSavingCustomFields ? 'Saving...' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomFieldsDraft(
+                                Object.fromEntries(
+                                  (customColumns || []).map((c) => [c.id, (displayItem.customFields?.[c.id] ?? '').toString()])
+                                )
+                              );
+                              setCustomFieldsDirty(false);
+                              setCustomFieldsSaveMessage(null);
+                            }}
+                            disabled={isSavingCustomFields}
+                            className="rounded border border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Cancel
+                          </button>
+                          {customFieldsSaveMessage ? (
+                            <span
+                              className={`text-xs font-semibold ${
+                                customFieldsSaveMessage === 'Saved' ? 'text-emerald-300' : 'text-rose-300'
+                              }`}
+                            >
+                              {customFieldsSaveMessage}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })()}
