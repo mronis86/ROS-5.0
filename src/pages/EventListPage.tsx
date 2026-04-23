@@ -631,6 +631,14 @@ const EventListPage: React.FC = () => {
           >
             + Add New Event
           </button>
+          <button
+            type="button"
+            onClick={() => navigate('/quick-mode')}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-colors"
+            title="Run quick ad-hoc timers without creating an event"
+          >
+            Quick Mode
+          </button>
         </div>
 
         {/* Search and Filter */}
