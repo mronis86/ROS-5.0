@@ -5,7 +5,7 @@ import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
 import RoleSelectionModal from '../components/RoleSelectionModal';
-import EventListMobileView from '../components/event-list/EventListMobileView';
+import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import { useNarrowViewport } from '../hooks/useNarrowViewport';
 
 const EventListPage: React.FC = () => {
