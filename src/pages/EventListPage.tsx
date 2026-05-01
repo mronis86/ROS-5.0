@@ -1,14 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS, EVENT_TYPE_OPTIONS, RECORD_STREAMING_OPTIONS } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
 import RoleSelectionModal from '../components/RoleSelectionModal';
+import EventListMobileView from '../components/event-list/EventListMobileView';
+import { useEventListLayoutPreference, type EventListLayoutPreference } from '../hooks/useEventListLayoutPreference';
+
+const MOBILE_LAYOUT_TIP_KEY = 'ros.eventList.mobileLayoutTipDismissed';
 
 const EventListPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { preference, setPreference, effectiveLayout, isNarrow } = useEventListLayoutPreference();
+  const [mobileLayoutTipDismissed, setMobileLayoutTipDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem(MOBILE_LAYOUT_TIP_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const dismissMobileLayoutTip = useCallback(() => {
+    try {
+      sessionStorage.setItem(MOBILE_LAYOUT_TIP_KEY, '1');
+    } catch {
+      // ignore
+    }
+    setMobileLayoutTipDismissed(true);
+  }, []);
   const [events, setEvents] = useState<Event[]>([]);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -599,212 +620,287 @@ const EventListPage: React.FC = () => {
         )}
       </div>
 
-      {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-6">
-        {/* Tabs + Add New Event on one row */}
-        <div className="flex flex-wrap items-center justify-center gap-3 mb-3">
-          <div className="bg-slate-800 rounded-lg p-0.5 flex">
-            <button
-              onClick={() => setActiveTab('upcoming')}
-              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
-                activeTab === 'upcoming'
-                  ? 'bg-green-600 text-white'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              📅 Upcoming Events
-            </button>
-            <button
-              onClick={() => setActiveTab('past')}
-              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
-                activeTab === 'past'
-                  ? 'bg-orange-600 text-white'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              📋 Past Events
-            </button>
-          </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
-          >
-            + Add New Event
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/quick-mode')}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-colors"
-            title="Run quick ad-hoc timers without creating an event"
-          >
-            Quick Mode
-          </button>
-        </div>
-
-        {/* Search and Filter */}
-        <div className="flex justify-center mb-4">
-          <div className="bg-slate-800 rounded-lg p-3 w-full max-w-4xl">
-            <div className="flex items-center gap-4 justify-between">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-white font-semibold text-sm">🔍 Search:</span>
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search events by name or location..."
-                    className="w-80 px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-white font-semibold text-sm">📍 Filter by location:</span>
-                  <select
-                    value={filterLocation}
-                    onChange={(e) => setFilterLocation(e.target.value)}
-                    className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
-                  >
-                    <option value="all">All Locations</option>
-                    {LOCATION_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              
-              {/* Refresh Button */}
+      {preference === 'auto' && isNarrow && !mobileLayoutTipDismissed && (
+        <div className="max-w-6xl mx-auto px-3 sm:px-6 mb-3">
+          <div className="rounded-lg border border-blue-500/40 bg-blue-950/50 px-3 py-2.5 text-sm text-blue-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Narrow screen: the list below uses the <strong>card layout</strong> while layout is set to Auto (under 768px wide).
+            </span>
+            <div className="flex flex-wrap gap-2 shrink-0">
               <button
-                onClick={() => {
-                  console.log('🔄 Manual refresh triggered');
-                  loadEventsFromSupabase();
-                }}
-                disabled={isLoading}
-                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm text-white"
-                title="Refresh events list"
+                type="button"
+                onClick={() => setPreference('desktop')}
+                className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600"
               >
-                {isLoading ? '🔄 Refreshing...' : '🔄 Refresh'}
+                Use full table
+              </button>
+              <button
+                type="button"
+                onClick={dismissMobileLayoutTip}
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
+              >
+                Dismiss
               </button>
             </div>
-            
-            {/* Info message below search bar */}
-            <div className="mt-2 text-center">
-              <p className="text-xs text-slate-400">
-                ℹ️ Events don't auto-refresh. Click "Refresh" to check for new events.
-              </p>
-            </div>
           </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <div className="max-w-6xl mx-auto px-3 sm:px-6">
+        <div className="mb-3 flex flex-col gap-2 rounded-lg border border-slate-600 bg-slate-800/90 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Layout</span>
+          <div className="flex flex-wrap gap-1.5">
+            {(['auto', 'desktop', 'mobile'] as const).map((mode: EventListLayoutPreference) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setPreference(mode)}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
+                  preference === mode
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-500 sm:text-right sm:max-w-[14rem]">
+            Auto switches to cards below 768px. Desktop always shows the table (may scroll horizontally).
+          </p>
         </div>
 
-        {/* Events List */}
-        <div className="bg-slate-800 rounded-xl p-4 shadow-2xl">
-          {isLoading && (
-            <div className="text-center py-2 mb-2">
-              <div className="text-blue-400 text-sm">🔄 Loading events...</div>
+        {effectiveLayout === 'desktop' ? (
+          <>
+            {/* Tabs + Add New Event on one row */}
+            <div className="flex flex-wrap items-center justify-center gap-3 mb-3">
+              <div className="bg-slate-800 rounded-lg p-0.5 flex">
+                <button
+                  onClick={() => setActiveTab('upcoming')}
+                  className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
+                    activeTab === 'upcoming'
+                      ? 'bg-green-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  📅 Upcoming Events
+                </button>
+                <button
+                  onClick={() => setActiveTab('past')}
+                  className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
+                    activeTab === 'past'
+                      ? 'bg-orange-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  📋 Past Events
+                </button>
+              </div>
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                + Add New Event
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/quick-mode')}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                title="Run quick ad-hoc timers without creating an event"
+              >
+                Quick Mode
+              </button>
             </div>
-          )}
-          <div className="bg-slate-800 rounded-lg overflow-hidden border border-slate-600">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-slate-700">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[220px] w-[28%]">Event Name</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Date</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Location</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Type</th>
-                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]" title="Broadcast Options">Broadcast</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Duration</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredEvents.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center">
-                        <div className="text-6xl mb-4">
-                          {activeTab === 'upcoming' ? '📅' : '📋'}
-                        </div>
-                        <h3 className="text-2xl font-bold text-white mb-2">
-                          No {activeTab} events
-                        </h3>
-                        <p className="text-slate-400">
-                          {activeTab === 'upcoming' 
-                            ? 'Add your first upcoming event to get started!'
-                            : 'Past events will appear here once you have some.'
-                          }
-                        </p>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredEvents.map((event) => (
-                      <tr key={event.id} className="border-b border-slate-600">
-                        <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[220px] w-[28%]">
-                          {event.name}
-                        </td>
-                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600">
-                          {formatDate(event.date)}
-                        </td>
-                        <td className="px-3 py-2 border-r border-slate-600">
-                          <div className="flex items-center gap-1.5">
-                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${getLocationColor(event.location)}`}></div>
-                            <span className="text-slate-300 text-sm">{event.location}</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 border-r border-slate-600">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getEventTypeColor(event.eventType || 'Staged Production')}`}
-                            title={event.eventType || 'Staged Production'}
-                          >
-                            {getEventTypeShortLabel(event.eventType || 'Staged Production')}
-                          </span>
-                        </td>
-                        <td className="px-2 py-2 border-r border-slate-600 min-w-[5.5rem] text-center">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
-                            title={getRecordStreamingShort(event.recordStreaming || 'None').title}
-                          >
-                            {getRecordStreamingShort(event.recordStreaming || 'None').label}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
-                          {event.numberOfDays} day{event.numberOfDays > 1 ? 's' : ''}
-                        </td>
-                        <td className="px-3 py-2 text-slate-300 border-r border-slate-600">
-                          <span className="text-xs font-mono">
-                            {event.timezone || 'America/New_York'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex gap-2 justify-center">
-                            <button
-                              onClick={() => launchRunOfShow(event)}
-                              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors"
-                            >
-                              Launch
-                            </button>
-                            <button
-                              onClick={() => openEditModal(event)}
-                              className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded transition-colors"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => openDeleteConfirmModal(event)}
-                              className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
+
+            {/* Search and Filter */}
+            <div className="flex justify-center mb-4">
+              <div className="bg-slate-800 rounded-lg p-3 w-full max-w-4xl">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-white font-semibold text-sm shrink-0">🔍 Search:</span>
+                      <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Search events by name or location..."
+                        className="w-full min-w-0 md:w-80 px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-white font-semibold text-sm shrink-0">📍 Location:</span>
+                      <select
+                        value={filterLocation}
+                        onChange={(e) => setFilterLocation(e.target.value)}
+                        className="w-full sm:w-auto px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                      >
+                        <option value="all">All Locations</option>
+                        {LOCATION_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      console.log('🔄 Manual refresh triggered');
+                      loadEventsFromSupabase();
+                    }}
+                    disabled={isLoading}
+                    className="shrink-0 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm text-white"
+                    title="Refresh events list"
+                  >
+                    {isLoading ? '🔄 Refreshing...' : '🔄 Refresh'}
+                  </button>
+                </div>
+
+                <div className="mt-2 text-center">
+                  <p className="text-xs text-slate-400">
+                    ℹ️ Events don't auto-refresh. Click "Refresh" to check for new events.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Events List */}
+            <div className="bg-slate-800 rounded-xl p-4 shadow-2xl">
+              {isLoading && (
+                <div className="text-center py-2 mb-2">
+                  <div className="text-blue-400 text-sm">🔄 Loading events...</div>
+                </div>
+              )}
+              <div className="bg-slate-800 rounded-lg overflow-hidden border border-slate-600">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-slate-700">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[220px] w-[28%]">Event Name</th>
+                        <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Date</th>
+                        <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Location</th>
+                        <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Type</th>
+                        <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]" title="Broadcast Options">Broadcast</th>
+                        <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Duration</th>
+                        <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
+                        <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm">Actions</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {filteredEvents.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-4 py-12 text-center">
+                            <div className="text-6xl mb-4">
+                              {activeTab === 'upcoming' ? '📅' : '📋'}
+                            </div>
+                            <h3 className="text-2xl font-bold text-white mb-2">
+                              No {activeTab} events
+                            </h3>
+                            <p className="text-slate-400">
+                              {activeTab === 'upcoming'
+                                ? 'Add your first upcoming event to get started!'
+                                : 'Past events will appear here once you have some.'}
+                            </p>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredEvents.map((event) => (
+                          <tr key={event.id} className="border-b border-slate-600">
+                            <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[220px] w-[28%]">
+                              {event.name}
+                            </td>
+                            <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600">
+                              {formatDate(event.date)}
+                            </td>
+                            <td className="px-3 py-2 border-r border-slate-600">
+                              <div className="flex items-center gap-1.5">
+                                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${getLocationColor(event.location)}`}></div>
+                                <span className="text-slate-300 text-sm">{event.location}</span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 border-r border-slate-600">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getEventTypeColor(event.eventType || 'Staged Production')}`}
+                                title={event.eventType || 'Staged Production'}
+                              >
+                                {getEventTypeShortLabel(event.eventType || 'Staged Production')}
+                              </span>
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-600 min-w-[5.5rem] text-center">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
+                                title={getRecordStreamingShort(event.recordStreaming || 'None').title}
+                              >
+                                {getRecordStreamingShort(event.recordStreaming || 'None').label}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
+                              {event.numberOfDays} day{event.numberOfDays > 1 ? 's' : ''}
+                            </td>
+                            <td className="px-3 py-2 text-slate-300 border-r border-slate-600">
+                              <span className="text-xs font-mono">
+                                {event.timezone || 'America/New_York'}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex gap-2 justify-center">
+                                <button
+                                  onClick={() => launchRunOfShow(event)}
+                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors"
+                                >
+                                  Launch
+                                </button>
+                                <button
+                                  onClick={() => openEditModal(event)}
+                                  className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded transition-colors"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => openDeleteConfirmModal(event)}
+                                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          </>
+        ) : (
+          <EventListMobileView
+            filteredEvents={filteredEvents}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            filterLocation={filterLocation}
+            onFilterLocationChange={setFilterLocation}
+            filterDays={filterDays}
+            onFilterDaysChange={setFilterDays}
+            isLoading={isLoading}
+            onRefresh={() => loadEventsFromSupabase()}
+            onAddClick={() => setShowAddModal(true)}
+            onQuickMode={() => navigate('/quick-mode')}
+            onLaunch={launchRunOfShow}
+            onEdit={openEditModal}
+            onDelete={openDeleteConfirmModal}
+            formatDate={formatDate}
+            getLocationColor={getLocationColor}
+            getEventTypeColor={getEventTypeColor}
+            getEventTypeShortLabel={getEventTypeShortLabel}
+            getRecordStreamingColor={getRecordStreamingColor}
+            getRecordStreamingShort={getRecordStreamingShort}
+          />
+        )}
       </div>
 
       {/* Add Event Modal */}
