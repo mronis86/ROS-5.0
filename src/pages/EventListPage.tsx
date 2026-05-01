@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS, EVENT_TYPE_OPTIONS, RECORD_STREAMING_OPTIONS } from '../types/Event';
 import { DatabaseService } from '../services/database';
@@ -6,30 +6,12 @@ import { apiClient } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/event-list/EventListMobileView';
-import { useEventListLayoutPreference, type EventListLayoutPreference } from '../hooks/useEventListLayoutPreference';
-
-const MOBILE_LAYOUT_TIP_KEY = 'ros.eventList.mobileLayoutTipDismissed';
+import { useNarrowViewport } from '../hooks/useNarrowViewport';
 
 const EventListPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { preference, setPreference, effectiveLayout, isNarrow } = useEventListLayoutPreference();
-  const [mobileLayoutTipDismissed, setMobileLayoutTipDismissed] = useState(() => {
-    try {
-      return sessionStorage.getItem(MOBILE_LAYOUT_TIP_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  const dismissMobileLayoutTip = useCallback(() => {
-    try {
-      sessionStorage.setItem(MOBILE_LAYOUT_TIP_KEY, '1');
-    } catch {
-      // ignore
-    }
-    setMobileLayoutTipDismissed(true);
-  }, []);
+  const isNarrowViewport = useNarrowViewport();
   const [events, setEvents] = useState<Event[]>([]);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -604,7 +586,11 @@ const EventListPage: React.FC = () => {
   const filteredEvents = getFilteredEvents();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 pt-16">
+    <div
+      className={`min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 ${
+        isNarrowViewport ? 'pt-14' : 'pt-16'
+      }`}
+    >
       {/* Header */}
       <div className="text-center py-3 pt-4 mt-0">
         <h1 className="text-xl font-bold text-white mb-0.5">
@@ -620,58 +606,9 @@ const EventListPage: React.FC = () => {
         )}
       </div>
 
-      {preference === 'auto' && isNarrow && !mobileLayoutTipDismissed && (
-        <div className="max-w-6xl mx-auto px-3 sm:px-6 mb-3">
-          <div className="rounded-lg border border-blue-500/40 bg-blue-950/50 px-3 py-2.5 text-sm text-blue-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Narrow screen: the list below uses the <strong>card layout</strong> while layout is set to Auto (under 768px wide).
-            </span>
-            <div className="flex flex-wrap gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setPreference('desktop')}
-                className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600"
-              >
-                Use full table
-              </button>
-              <button
-                type="button"
-                onClick={dismissMobileLayoutTip}
-                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Content */}
       <div className="max-w-6xl mx-auto px-3 sm:px-6">
-        <div className="mb-3 flex flex-col gap-2 rounded-lg border border-slate-600 bg-slate-800/90 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Layout</span>
-          <div className="flex flex-wrap gap-1.5">
-            {(['auto', 'desktop', 'mobile'] as const).map((mode: EventListLayoutPreference) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setPreference(mode)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
-                  preference === mode
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                }`}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-500 sm:text-right sm:max-w-[14rem]">
-            Auto switches to cards below 768px. Desktop always shows the table (may scroll horizontally).
-          </p>
-        </div>
-
-        {effectiveLayout === 'desktop' ? (
+        {!isNarrowViewport ? (
           <>
             {/* Tabs + Add New Event on one row */}
             <div className="flex flex-wrap items-center justify-center gap-3 mb-3">
