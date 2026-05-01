@@ -62,10 +62,25 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   getRecordStreamingShort
 }) => {
   const [sortKey, setSortKey] = useState<MobileSortKey>(() => (activeTab === 'past' ? 'date_desc' : 'date_asc'));
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     setSortKey(activeTab === 'past' ? 'date_desc' : 'date_asc');
   }, [activeTab]);
+
+  const filtersActive =
+    searchTerm.trim() !== '' || filterLocation !== 'all' || filterDays !== 'all';
+
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (searchTerm.trim()) parts.push(`“${searchTerm.trim()}”`);
+    if (filterLocation !== 'all') {
+      const label = LOCATION_OPTIONS.find((o) => o.value === filterLocation)?.label ?? filterLocation;
+      parts.push(label);
+    }
+    if (filterDays !== 'all') parts.push(`${filterDays} day${filterDays === '1' ? '' : 's'}`);
+    return parts.join(' · ');
+  }, [searchTerm, filterLocation, filterDays]);
 
   const displayedEvents = useMemo(() => {
     const arr = [...filteredEvents];
@@ -121,70 +136,109 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-500 bg-slate-900/90 p-4 space-y-4 shadow-lg">
-        <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-400">Search</label>
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Name or location…"
-            className="w-full rounded-xl border-2 border-slate-600 bg-slate-950 px-4 py-3.5 text-base text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none min-h-[48px]"
-          />
-        </div>
-        <div className="grid grid-cols-1 gap-4">
-          <div>
-            <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-400">Location</label>
-            <select
-              value={filterLocation}
-              onChange={(e) => onFilterLocationChange(e.target.value)}
-              className="w-full rounded-xl border-2 border-slate-600 bg-slate-950 px-4 py-3.5 text-base text-white focus:border-blue-500 focus:outline-none min-h-[48px]"
-            >
-              <option value="all">All locations</option>
-              {LOCATION_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-400">Duration (days)</label>
-            <select
-              value={filterDays}
-              onChange={(e) => onFilterDaysChange(e.target.value)}
-              className="w-full rounded-xl border-2 border-slate-600 bg-slate-950 px-4 py-3.5 text-base text-white focus:border-blue-500 focus:outline-none min-h-[48px]"
-            >
-              <option value="all">Any length</option>
-              {DAYS_OPTIONS.map((days) => (
-                <option key={days} value={String(days)}>
-                  {days} day{days > 1 ? 's' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-400">Sort list</label>
+      <div className="rounded-xl border border-slate-600 bg-slate-900/80 p-3 shadow-md space-y-2">
+        <div className="flex items-center gap-2">
+          <label htmlFor="mobile-event-sort" className="sr-only">
+            Sort list
+          </label>
+          <span className="shrink-0 text-xs font-bold uppercase tracking-wide text-slate-500">Sort</span>
           <select
+            id="mobile-event-sort"
             value={sortKey}
             onChange={(e) => setSortKey(e.target.value as MobileSortKey)}
-            className="w-full rounded-xl border-2 border-slate-600 bg-slate-950 px-4 py-3.5 text-base text-white focus:border-blue-500 focus:outline-none min-h-[48px]"
+            className="min-h-[40px] flex-1 rounded-lg border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
           >
-            <option value="date_asc">Event date — oldest first</option>
-            <option value="date_desc">Event date — newest first</option>
-            <option value="name_asc">Name — A to Z</option>
+            <option value="date_asc">Date · oldest first</option>
+            <option value="date_desc">Date · newest first</option>
+            <option value="name_asc">Name · A to Z</option>
           </select>
         </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={isLoading}
-          className="w-full rounded-xl border-2 border-slate-500 bg-slate-800 py-3.5 text-base font-bold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 min-h-[48px]"
-        >
-          {isLoading ? 'Refreshing…' : 'Refresh list'}
-        </button>
-        <p className="text-center text-xs text-slate-500">Events do not auto-refresh.</p>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((o) => !o)}
+            className={`flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-lg border-2 px-3 text-sm font-bold transition-colors ${
+              filtersOpen
+                ? 'border-blue-500 bg-blue-950/50 text-blue-100'
+                : 'border-slate-600 bg-slate-800 text-white hover:bg-slate-700'
+            }`}
+            aria-expanded={filtersOpen}
+          >
+            <span aria-hidden>🔍</span>
+            <span className="truncate">{filtersOpen ? 'Hide search & filters' : 'Search & filters'}</span>
+            {filtersActive && !filtersOpen ? (
+              <span className="shrink-0 rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-slate-900">ON</span>
+            ) : null}
+            <span className="shrink-0 text-slate-400" aria-hidden>
+              {filtersOpen ? '▲' : '▼'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isLoading}
+            title="Refresh list"
+            aria-label={isLoading ? 'Refreshing' : 'Refresh event list'}
+            className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-slate-600 bg-slate-800 text-lg hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isLoading ? <span className="text-sm">…</span> : <span aria-hidden>🔄</span>}
+          </button>
+        </div>
+
+        {filtersActive && !filtersOpen && filterSummary ? (
+          <p className="truncate px-0.5 text-center text-[11px] text-slate-500" title={filterSummary}>
+            {filterSummary}
+          </p>
+        ) : null}
+
+        {filtersOpen ? (
+          <div className="space-y-3 border-t border-slate-700 pt-3">
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Search</label>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Name or location…"
+                className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2.5 text-base text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none min-h-[44px]"
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Location</label>
+                <select
+                  value={filterLocation}
+                  onChange={(e) => onFilterLocationChange(e.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2.5 text-base text-white focus:border-blue-500 focus:outline-none min-h-[44px]"
+                >
+                  <option value="all">All locations</option>
+                  {LOCATION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Duration (days)</label>
+                <select
+                  value={filterDays}
+                  onChange={(e) => onFilterDaysChange(e.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2.5 text-base text-white focus:border-blue-500 focus:outline-none min-h-[44px]"
+                >
+                  <option value="all">Any length</option>
+                  {DAYS_OPTIONS.map((days) => (
+                    <option key={days} value={String(days)}>
+                      {days} day{days > 1 ? 's' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <p className="text-center text-[11px] text-slate-500">Events do not auto-refresh.</p>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex items-center justify-between px-1">
