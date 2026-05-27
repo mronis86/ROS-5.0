@@ -7,35 +7,126 @@ import { socketClient } from '../services/socket-client';
 
 type ContentReviewFollowMode = 'solo' | 'drive' | 'follow';
 type ReviewStatus = 'pending' | 'needs_update' | 'approved';
+type ReviewStage = 'creative' | 'ros';
 
-interface CueReviewEntry {
+interface StageReviewEntry {
   status: ReviewStatus;
   note: string;
   updatedAt: string;
   updatedBy: string;
 }
 
+interface CueReviewEntry {
+  creative: StageReviewEntry;
+  ros: StageReviewEntry;
+}
+
 type CueReviewMap = Record<number, CueReviewEntry>;
 type StreamFloatRect = { left: number; top: number; width: number; height: number };
+
+const REVIEW_STAGES: { id: ReviewStage; label: string; shortLabel: string }[] = [
+  { id: 'creative', label: 'Creative Content', shortLabel: 'Creative' },
+  { id: 'ros', label: 'ROS Show', shortLabel: 'ROS' }
+];
+
+function emptyStageReviewEntry(): StageReviewEntry {
+  return { status: 'pending', note: '', updatedAt: '', updatedBy: '' };
+}
+
+function emptyCueReviewEntry(): CueReviewEntry {
+  return { creative: emptyStageReviewEntry(), ros: emptyStageReviewEntry() };
+}
+
+function getStageReview(entry: CueReviewEntry | undefined, stage: ReviewStage): StageReviewEntry {
+  if (!entry) return emptyStageReviewEntry();
+  return entry[stage] ?? emptyStageReviewEntry();
+}
+
+function isFullyApproved(entry: CueReviewEntry | undefined): boolean {
+  if (!entry) return false;
+  return entry.creative.status === 'approved' && entry.ros.status === 'approved';
+}
+
+function canApproveRosStage(entry: CueReviewEntry | undefined): boolean {
+  return getStageReview(entry, 'creative').status === 'approved';
+}
+
+/** Migrate legacy single-stage localStorage entries */
+function normalizeCueReviewMap(raw: unknown): CueReviewMap {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: CueReviewMap = {};
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    const id = Number(key);
+    if (!Number.isFinite(id) || !val || typeof val !== 'object') continue;
+    const row = val as Record<string, unknown>;
+    if ('creative' in row && 'ros' in row) {
+      const creative = row.creative as StageReviewEntry;
+      const ros = row.ros as StageReviewEntry;
+      out[id] = {
+        creative: {
+          status: creative?.status ?? 'pending',
+          note: (creative?.note ?? '').toString(),
+          updatedAt: (creative?.updatedAt ?? '').toString(),
+          updatedBy: (creative?.updatedBy ?? '').toString()
+        },
+        ros: {
+          status: ros?.status ?? 'pending',
+          note: (ros?.note ?? '').toString(),
+          updatedAt: (ros?.updatedAt ?? '').toString(),
+          updatedBy: (ros?.updatedBy ?? '').toString()
+        }
+      };
+      continue;
+    }
+    if ('status' in row) {
+      const legacy: StageReviewEntry = {
+        status: (row.status as ReviewStatus) ?? 'pending',
+        note: (row.note ?? '').toString(),
+        updatedAt: (row.updatedAt ?? '').toString(),
+        updatedBy: (row.updatedBy ?? '').toString()
+      };
+      out[id] = { creative: { ...legacy }, ros: emptyStageReviewEntry() };
+    }
+  }
+  return out;
+}
+
+function cueRailReviewMeta(entry: CueReviewEntry | undefined, activeStage: ReviewStage) {
+  if (isFullyApproved(entry)) return reviewStatusMeta('approved');
+  return reviewStatusMeta(getStageReview(entry, activeStage).status);
+}
 
 function reviewStatusMeta(status: ReviewStatus) {
   switch (status) {
     case 'approved':
       return {
         label: 'Approved',
-        railClass: 'bg-emerald-900/60 text-emerald-200 border-emerald-700/70',
+        railClass: 'bg-emerald-500/90 text-emerald-950 border-emerald-300 shadow-sm shadow-emerald-900/50',
+        cueRailIdleClass:
+          'border-emerald-400/90 bg-emerald-950/90 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.35)] hover:bg-emerald-900/95',
+        cueRailActiveClass:
+          'border-cyan-300 bg-emerald-900 ring-2 ring-emerald-300/70 shadow-[0_0_12px_rgba(52,211,153,0.35)]',
+        cueLabelClass: 'text-emerald-50',
         cardClass: 'border-emerald-700/70 bg-emerald-950/25 text-emerald-100'
       };
     case 'needs_update':
       return {
         label: 'Needs update',
-        railClass: 'bg-amber-900/60 text-amber-200 border-amber-700/70',
+        railClass: 'bg-amber-500/90 text-amber-950 border-amber-200 shadow-sm shadow-amber-900/50',
+        cueRailIdleClass:
+          'border-amber-400/90 bg-amber-950/90 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.35)] hover:bg-amber-900/95',
+        cueRailActiveClass:
+          'border-cyan-300 bg-amber-950 ring-2 ring-amber-300/70 shadow-[0_0_12px_rgba(251,191,36,0.35)]',
+        cueLabelClass: 'text-amber-50',
         cardClass: 'border-amber-700/70 bg-amber-950/25 text-amber-100'
       };
     default:
       return {
         label: 'Pending',
-        railClass: 'bg-slate-800 text-slate-300 border-slate-600/70',
+        railClass: 'bg-slate-700/80 text-slate-300 border-slate-500/70',
+        cueRailIdleClass: 'border-transparent bg-transparent hover:bg-slate-900',
+        cueRailActiveClass: 'border-cyan-500/80 bg-slate-800 ring-1 ring-cyan-500/40',
+        cueLabelClass: 'text-white',
         cardClass: 'border-slate-600/70 bg-slate-800/70 text-slate-200'
       };
   }
@@ -178,7 +269,7 @@ function sanitizeStreamEmbedUrl(raw: string): string | null {
   }
 }
 
-function streamUrlFromSearchParam(raw: string | null): string | null {
+function embedUrlFromSearchParam(raw: string | null): string | null {
   if (!raw) return null;
   const decoded = (() => {
     try {
@@ -188,6 +279,71 @@ function streamUrlFromSearchParam(raw: string | null): string | null {
     }
   })();
   return sanitizeStreamEmbedUrl(decoded);
+}
+
+function youtubeEmbedUrl(base: string): string | null {
+  try {
+    const u = new URL(base);
+    if (u.hostname.includes('youtu.be')) {
+      const id = u.pathname.replace(/^\//, '').split('/')[0];
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+    if (u.hostname.includes('youtube.com') || u.hostname.includes('youtube-nocookie.com')) {
+      const v = u.searchParams.get('v');
+      if (v) return `https://www.youtube.com/embed/${v}`;
+      const short = u.pathname.match(/\/shorts\/([^/]+)/);
+      if (short) return `https://www.youtube.com/embed/${short[1]}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function vimeoEmbedUrl(base: string): string | null {
+  try {
+    const u = new URL(base);
+    if (!u.hostname.includes('vimeo.com')) return null;
+    const id = u.pathname.match(/\/(\d+)/);
+    return id ? `https://player.vimeo.com/video/${id[1]}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/** PDF, Drive, Office web, video hosts — for creative PDF + per-cue asset preview */
+function normalizeCreativeEmbedUrl(raw: string): string | null {
+  const base = sanitizeStreamEmbedUrl(raw);
+  if (!base) return null;
+  const yt = youtubeEmbedUrl(base);
+  if (yt) return yt;
+  const vimeo = vimeoEmbedUrl(base);
+  if (vimeo) return vimeo;
+  try {
+    const u = new URL(base);
+    const driveFile = u.hostname.includes('drive.google.com') && u.pathname.match(/\/file\/d\/([^/]+)/);
+    if (driveFile) {
+      return `https://drive.google.com/file/d/${driveFile[1]}/preview`;
+    }
+    if (u.hostname.includes('docs.google.com') && u.pathname.includes('/document/')) {
+      return base.includes('embedded=true') ? base : `${base}${base.includes('?') ? '&' : '?'}embedded=true`;
+    }
+    const path = u.pathname.toLowerCase();
+    if (path.endsWith('.pdf') || path.endsWith('.ppt') || path.endsWith('.pptx')) {
+      return base;
+    }
+  } catch {
+    return base;
+  }
+  return base;
+}
+
+function cueNeedsCreativeExtras(item: ScheduleItem): boolean {
+  return !!item.hasPPT || item.programType === 'Video';
+}
+
+function creativeExtraAssetRows(item: ScheduleItem): AssetRow[] {
+  return parseAssetRows(item.assets ?? '').filter((a) => a.linkEnabled && a.link.trim());
 }
 
 function depthFor(itemId: number, indented: IndentedMap): number {
@@ -305,6 +461,15 @@ function buildIndentedMap(data: any[] | null): IndentedMap {
   return map;
 }
 
+/** Seven slots with full speaker fields for read-only detail view */
+function parseSpeakersSlotsDetailed(speakersTextJson: string): (SpeakerSlotDraft | null)[] {
+  const out: (SpeakerSlotDraft | null)[] = Array(7).fill(null);
+  for (const row of parseSpeakersDraft(speakersTextJson)) {
+    if (row.slot >= 1 && row.slot <= 7) out[row.slot - 1] = row;
+  }
+  return out;
+}
+
 /** Seven speaker slots like PhotoView print row */
 function parseSpeakersSlots(speakersTextJson: string): string[] {
   const out = Array(7).fill('');
@@ -330,6 +495,106 @@ function parseSpeakersSlots(speakersTextJson: string): string[] {
     /* ignore */
   }
   return out;
+}
+
+function truncateSpeakerField(text: string, maxLength = 20): string {
+  const t = text.trim();
+  if (t.length <= maxLength) return t;
+  return `${t.slice(0, maxLength - 1)}…`;
+}
+
+/** Slots 1–7 left-to-right (PhotoView-style), compact or with photo/title/org */
+function SpeakerSlotsReadOnlyRow({
+  speakersText,
+  expanded,
+  compactClassName = 'p-2'
+}: {
+  speakersText: string;
+  expanded: boolean;
+  compactClassName?: string;
+}) {
+  const slots = parseSpeakersSlotsDetailed(speakersText);
+  const compactCells = parseSpeakersSlots(speakersText);
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="grid min-w-[40rem] grid-cols-7 divide-x divide-slate-600">
+        {slots.map((sp, i) => {
+          const slotNum = i + 1;
+          const hasSpeaker =
+            sp && (sp.fullName.trim() || sp.title.trim() || sp.org.trim() || sp.photoLink.trim());
+
+          return (
+            <div
+              key={`speaker-slot-${slotNum}`}
+              className={`flex min-w-0 flex-col ${compactClassName} ${
+                expanded ? 'items-center text-center' : 'justify-start text-center'
+              }`}
+            >
+              <div className="text-[10px] font-bold uppercase text-slate-500">Slot {slotNum}</div>
+              {expanded ? (
+                hasSpeaker && sp ? (
+                  <div className="mt-1 flex w-full flex-col items-center">
+                    <div className="mb-1.5 flex justify-center">
+                      <img
+                        src={sp.photoLink.trim() || '/speaker-placeholder.svg'}
+                        alt={sp.fullName || `Speaker ${slotNum}`}
+                        className="h-20 w-16 rounded border border-slate-500 object-cover object-top shadow-sm"
+                        onError={(e) => {
+                          const img = e.currentTarget as HTMLImageElement;
+                          img.onerror = null;
+                          img.src = '/speaker-placeholder.svg';
+                        }}
+                      />
+                    </div>
+                    <div className="w-full text-xs font-semibold leading-tight text-white">
+                      {sp.fullName.trim() || '—'}
+                    </div>
+                    {sp.title.trim() ? (
+                      <div
+                        className="mt-1 w-full px-0.5 text-[10px] leading-tight text-slate-400"
+                        title={sp.title.trim()}
+                      >
+                        {truncateSpeakerField(sp.title, 20)}
+                      </div>
+                    ) : null}
+                    {sp.org.trim() ? (
+                      <div
+                        className="mt-0.5 w-full px-0.5 text-[10px] leading-tight text-slate-400"
+                        title={sp.org.trim()}
+                      >
+                        {truncateSpeakerField(sp.org, 20)}
+                      </div>
+                    ) : null}
+                    <div className="mt-1 rounded bg-slate-700/90 px-1.5 py-0.5 text-[9px] font-medium text-slate-300">
+                      {sp.location || '—'}
+                    </div>
+                    {sp.photoLink.trim() ? (
+                      <a
+                        href={sp.photoLink.trim()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 truncate text-[9px] text-cyan-400 hover:text-cyan-300"
+                        title={sp.photoLink.trim()}
+                      >
+                        Photo
+                      </a>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-2 flex flex-1 items-center justify-center text-[10px] text-slate-500">—</div>
+                )
+              ) : (
+                <div className="mt-1 whitespace-pre-line text-xs font-semibold leading-snug text-white">
+                  {compactCells[i] || '—'}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 const ContentReviewPage: React.FC = () => {
@@ -364,10 +629,15 @@ const ContentReviewPage: React.FC = () => {
   const eventId = event?.id || eventIdParam || '';
 
   const streamFromQuery = useMemo(
-    () => streamUrlFromSearchParam(searchParams.get('streamUrl')),
+    () => embedUrlFromSearchParam(searchParams.get('streamUrl')),
+    [searchParams]
+  );
+  const creativePdfFromQuery = useMemo(
+    () => embedUrlFromSearchParam(searchParams.get('creativePdf')),
     [searchParams]
   );
   const streamStorageKey = eventId ? `ros.contentReview.streamUrl.${eventId}` : null;
+  const creativePdfStorageKey = eventId ? `ros.contentReview.creativePdfUrl.${eventId}` : null;
   const sideRailStorageKey = eventId ? `ros.contentReview.sideRailWidth.${eventId}` : null;
   const [savedStreamUrl, setSavedStreamUrl] = useState<string | null>(null);
   const [streamPanelOpen, setStreamPanelOpen] = useState(false);
@@ -429,7 +699,17 @@ const ContentReviewPage: React.FC = () => {
   const [sideRailResizing, setSideRailResizing] = useState(false);
   const [streamUrlDraft, setStreamUrlDraft] = useState('');
   const [streamSetupOpen, setStreamSetupOpen] = useState(false);
+  const [savedCreativePdfUrl, setSavedCreativePdfUrl] = useState<string | null>(null);
+  const [creativePdfUrlDraft, setCreativePdfUrlDraft] = useState('');
+  const [creativePdfSetupOpen, setCreativePdfSetupOpen] = useState(true);
+  /** When set, main creative iframe shows this cue asset instead of the event PDF */
+  const [creativeEmbedOverride, setCreativeEmbedOverride] = useState<string | null>(null);
+  const [creativeEmbedOverrideLabel, setCreativeEmbedOverrideLabel] = useState<string | null>(null);
   const [cueReviews, setCueReviews] = useState<CueReviewMap>({});
+  const [activeReviewStage, setActiveReviewStage] = useState<ReviewStage>('creative');
+  const speakerDetailsStorageKey = eventId ? `ros.contentReview.speakerDetails.${eventId}` : null;
+  const activeReviewStageStorageKey = eventId ? `ros.contentReview.activeStage.${eventId}` : null;
+  const [speakerDetailsExpanded, setSpeakerDetailsExpanded] = useState(false);
 
   const [followMode, setFollowMode] = useState<ContentReviewFollowMode>('solo');
   const [followSourceName, setFollowSourceName] = useState('');
@@ -524,12 +804,34 @@ const ContentReviewPage: React.FC = () => {
         setCueReviews({});
         return;
       }
-      const parsed = JSON.parse(raw) as CueReviewMap;
-      setCueReviews(parsed && typeof parsed === 'object' ? parsed : {});
+      const parsed = JSON.parse(raw);
+      setCueReviews(normalizeCueReviewMap(parsed));
     } catch {
       setCueReviews({});
     }
   }, [reviewStorageKey]);
+
+  useEffect(() => {
+    if (!activeReviewStageStorageKey || typeof localStorage === 'undefined') {
+      setActiveReviewStage('creative');
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(activeReviewStageStorageKey);
+      setActiveReviewStage(saved === 'ros' ? 'ros' : 'creative');
+    } catch {
+      setActiveReviewStage('creative');
+    }
+  }, [activeReviewStageStorageKey]);
+
+  useEffect(() => {
+    if (!activeReviewStageStorageKey || typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(activeReviewStageStorageKey, activeReviewStage);
+    } catch {
+      /* ignore quota */
+    }
+  }, [activeReviewStageStorageKey, activeReviewStage]);
 
   useEffect(() => {
     if (!reviewStorageKey || typeof localStorage === 'undefined') return;
@@ -539,6 +841,27 @@ const ContentReviewPage: React.FC = () => {
       /* ignore quota */
     }
   }, [reviewStorageKey, cueReviews]);
+
+  useEffect(() => {
+    if (!speakerDetailsStorageKey || typeof localStorage === 'undefined') {
+      setSpeakerDetailsExpanded(false);
+      return;
+    }
+    try {
+      setSpeakerDetailsExpanded(localStorage.getItem(speakerDetailsStorageKey) === '1');
+    } catch {
+      setSpeakerDetailsExpanded(false);
+    }
+  }, [speakerDetailsStorageKey]);
+
+  useEffect(() => {
+    if (!speakerDetailsStorageKey || typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(speakerDetailsStorageKey, speakerDetailsExpanded ? '1' : '0');
+    } catch {
+      /* ignore quota */
+    }
+  }, [speakerDetailsStorageKey, speakerDetailsExpanded]);
 
   useEffect(() => {
     followModeRef.current = followMode;
@@ -634,6 +957,80 @@ const ContentReviewPage: React.FC = () => {
   useEffect(() => {
     if (streamFromQuery) setStreamPanelOpen(true);
   }, [streamFromQuery]);
+
+  useEffect(() => {
+    if (creativePdfFromQuery) {
+      setSavedCreativePdfUrl(creativePdfFromQuery);
+      setCreativePdfSetupOpen(false);
+      return;
+    }
+    if (!creativePdfStorageKey || typeof localStorage === 'undefined') {
+      setSavedCreativePdfUrl(null);
+      return;
+    }
+    try {
+      const stored = localStorage.getItem(creativePdfStorageKey);
+      const parsed = stored ? normalizeCreativeEmbedUrl(stored) : null;
+      setSavedCreativePdfUrl(parsed);
+      setCreativePdfSetupOpen(!parsed);
+    } catch {
+      setSavedCreativePdfUrl(null);
+      setCreativePdfSetupOpen(true);
+    }
+  }, [creativePdfFromQuery, creativePdfStorageKey]);
+
+  useEffect(() => {
+    if (activeReviewStage === 'creative' && editModeEnabled) setEditModeEnabled(false);
+  }, [activeReviewStage, editModeEnabled]);
+
+  useEffect(() => {
+    setCreativeEmbedOverride(null);
+    setCreativeEmbedOverrideLabel(null);
+  }, [selectedId]);
+
+  const applyCreativePdfUrl = useCallback(() => {
+    const next = normalizeCreativeEmbedUrl(creativePdfUrlDraft);
+    if (!next) return;
+    setSavedCreativePdfUrl(next);
+    if (creativePdfStorageKey) {
+      try {
+        localStorage.setItem(creativePdfStorageKey, next);
+      } catch {
+        /* ignore quota */
+      }
+    }
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.set('creativePdf', next);
+        return p;
+      },
+      { replace: true }
+    );
+    setCreativePdfUrlDraft(next);
+    setCreativePdfSetupOpen(false);
+  }, [creativePdfUrlDraft, creativePdfStorageKey, setSearchParams]);
+
+  const clearCreativePdfUrl = useCallback(() => {
+    setSavedCreativePdfUrl(null);
+    setCreativePdfUrlDraft('');
+    if (creativePdfStorageKey) {
+      try {
+        localStorage.removeItem(creativePdfStorageKey);
+      } catch {
+        /* ignore */
+      }
+    }
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete('creativePdf');
+        return p;
+      },
+      { replace: true }
+    );
+    setCreativePdfSetupOpen(true);
+  }, [creativePdfStorageKey, setSearchParams]);
 
   const applyStreamUrl = useCallback(() => {
     const next = sanitizeStreamEmbedUrl(streamUrlDraft);
@@ -902,20 +1299,31 @@ const ContentReviewPage: React.FC = () => {
     [schedule, selectedId]
   );
   const selectedReview = selectedRow ? cueReviews[selectedRow.id] : undefined;
-  const selectedStatus: ReviewStatus = selectedReview?.status ?? 'pending';
-  const selectedNote = selectedReview?.note ?? '';
+  const selectedStageReview = getStageReview(selectedReview, activeReviewStage);
+  const selectedStatus: ReviewStatus = selectedStageReview.status;
+  const selectedNote = selectedStageReview.note;
+  const selectedFullyApproved = isFullyApproved(selectedReview);
+  const rosApproveBlocked =
+    activeReviewStage === 'ros' && !canApproveRosStage(selectedReview);
 
   const setCueReviewStatus = useCallback(
-    (itemId: number, status: ReviewStatus) => {
+    (itemId: number, stage: ReviewStage, status: ReviewStatus) => {
       setCueReviews((prev) => {
-        const before = prev[itemId];
+        const before = prev[itemId] ?? emptyCueReviewEntry();
+        if (stage === 'ros' && status === 'approved' && !canApproveRosStage(before)) {
+          return prev;
+        }
+        const stageBefore = getStageReview(before, stage);
         return {
           ...prev,
           [itemId]: {
-            status,
-            note: before?.note ?? '',
-            updatedAt: new Date().toISOString(),
-            updatedBy: driverName
+            ...before,
+            [stage]: {
+              status,
+              note: stageBefore.note,
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName
+            }
           }
         };
       });
@@ -924,21 +1332,50 @@ const ContentReviewPage: React.FC = () => {
   );
 
   const setCueReviewNote = useCallback(
-    (itemId: number, note: string) => {
+    (itemId: number, stage: ReviewStage, note: string) => {
       setCueReviews((prev) => {
-        const before = prev[itemId];
+        const before = prev[itemId] ?? emptyCueReviewEntry();
+        const stageBefore = getStageReview(before, stage);
         return {
           ...prev,
           [itemId]: {
-            status: before?.status ?? 'pending',
-            note,
-            updatedAt: new Date().toISOString(),
-            updatedBy: driverName
+            ...before,
+            [stage]: {
+              status: stageBefore.status,
+              note,
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName
+            }
           }
         };
       });
     },
     [driverName]
+  );
+
+  const ReviewStageSwitcher = ({ className = '' }: { className?: string }) => (
+    <div
+      className={`flex rounded-lg border border-slate-600 bg-slate-800/50 p-0.5 ${className}`}
+      role="group"
+      aria-label="Review stage"
+    >
+      {REVIEW_STAGES.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => setActiveReviewStage(id)}
+          className={`rounded-md px-2 py-1.5 text-[10px] font-semibold leading-tight md:text-xs ${
+            activeReviewStage === id
+              ? id === 'creative'
+                ? 'bg-violet-600 text-white shadow-sm'
+                : 'bg-orange-600 text-white shadow-sm'
+              : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 
   /** Main panel always shows the parent (root) row so subs share the parent’s full content. */
@@ -947,6 +1384,12 @@ const ContentReviewPage: React.FC = () => {
     const root = rootIdFor(selectedId, indented);
     return schedule.find((r) => r.id === root) ?? null;
   }, [schedule, selectedId, indented]);
+
+  const creativeCueItem = selectedRow ?? displayItem ?? null;
+  const creativeCueExtras =
+    creativeCueItem && cueNeedsCreativeExtras(creativeCueItem) ? creativeCueItem : null;
+  const creativeCueAssets = creativeCueItem ? creativeExtraAssetRows(creativeCueItem) : [];
+  const creativeIframeSrc = creativeEmbedOverride ?? savedCreativePdfUrl;
 
   /** Sub-cues under the current parent (same group as sidebar), in run order — shown below parent in main column. */
   const subCuesUnderParent = useMemo(() => {
@@ -1492,15 +1935,24 @@ const ContentReviewPage: React.FC = () => {
               </button>
             ))}
           </div>
+          <ReviewStageSwitcher className="hidden md:flex" />
           <button
             type="button"
             aria-pressed={editModeEnabled}
             aria-label={editModeEnabled ? 'Disable edit mode' : 'Enable edit mode'}
+            disabled={activeReviewStage === 'creative'}
+            title={
+              activeReviewStage === 'creative'
+                ? 'Switch to ROS Show to edit run-of-show fields'
+                : undefined
+            }
             onClick={() => setEditModeEnabled((on) => !on)}
             className={`flex shrink-0 items-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-xs font-semibold shadow-sm md:px-3 md:text-sm ${
-              editModeEnabled
-                ? 'border-violet-300 bg-gradient-to-b from-violet-500 to-violet-600 text-white shadow-lg'
-                : 'border-violet-500/60 bg-violet-950/40 text-violet-200 hover:border-violet-400/70 hover:bg-violet-900/35 hover:text-violet-100'
+              activeReviewStage === 'creative'
+                ? 'cursor-not-allowed border-slate-600 bg-slate-800/50 text-slate-500 opacity-60'
+                : editModeEnabled
+                  ? 'border-violet-300 bg-gradient-to-b from-violet-500 to-violet-600 text-white shadow-lg'
+                  : 'border-violet-500/60 bg-violet-950/40 text-violet-200 hover:border-violet-400/70 hover:bg-violet-900/35 hover:text-violet-100'
             }`}
           >
             <svg className="h-4 w-4 shrink-0 opacity-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -1580,6 +2032,10 @@ const ContentReviewPage: React.FC = () => {
         </div>
       </header>
 
+      <div className="flex shrink-0 justify-center border-b border-slate-800 bg-slate-950/80 px-3 py-1.5 md:hidden">
+        <ReviewStageSwitcher />
+      </div>
+
       {followMode === 'follow' ? (
         <div className="shrink-0 border-b border-emerald-900/40 bg-emerald-950/35 px-3 py-1.5 text-center text-xs text-emerald-100">
           Following live cue selection
@@ -1618,6 +2074,11 @@ const ContentReviewPage: React.FC = () => {
                     const bar = programColor(it.programType);
                     const active = it.id === selectedId;
                     const isSub = it.id !== rootId;
+                    const cueEntry = cueReviews[it.id];
+                    const reviewMeta = cueRailReviewMeta(cueEntry, activeReviewStage);
+                    const creativeMeta = reviewStatusMeta(getStageReview(cueEntry, 'creative').status);
+                    const rosMeta = reviewStatusMeta(getStageReview(cueEntry, 'ros').status);
+                    const fullyApproved = isFullyApproved(cueEntry);
                     return (
                       <button
                         key={it.id}
@@ -1629,12 +2090,12 @@ const ContentReviewPage: React.FC = () => {
                         }}
                         onClick={() => setSelectedId(it.id)}
                         title={followMode === 'follow' ? 'Turn off Follow to select cues' : undefined}
-                        className={`mb-0.5 flex w-full rounded-md border text-left transition-colors disabled:cursor-not-allowed ${
+                        className={`mb-0.5 flex w-full rounded-md border text-left transition-all disabled:cursor-not-allowed ${
                           followMode === 'follow'
                             ? 'border-transparent'
                             : active
-                              ? 'border-cyan-500/80 bg-slate-800 ring-1 ring-cyan-500/40'
-                              : 'border-transparent bg-transparent hover:bg-slate-900'
+                              ? reviewMeta.cueRailActiveClass
+                              : reviewMeta.cueRailIdleClass
                         }`}
                         style={{
                           textDecoration: killed ? 'line-through' : undefined,
@@ -1652,21 +2113,46 @@ const ContentReviewPage: React.FC = () => {
                             paddingLeft: isSub ? `${4 + Math.min(depthFor(it.id, indented), 4) * 8}px` : '4px'
                           }}
                         >
-                          <div className="truncate text-[11px] font-bold leading-tight text-white md:text-xs">
-                            {isSub ? <span className="text-cyan-500/80">↳ </span> : null}
+                          <div
+                            className={`truncate text-[11px] font-bold leading-tight md:text-xs ${reviewMeta.cueLabelClass}`}
+                          >
+                            {isSub ? <span className="text-cyan-400/90">↳ </span> : null}
                             {formatCueDisplay(cueLabel(it))}
                           </div>
-                          <div className="truncate text-[10px] text-slate-500 md:text-[11px]">
+                          <div className="truncate text-[10px] text-slate-400 md:text-[11px]">
                             {it.segmentName || '—'}
                           </div>
-                          <div className="mt-1">
-                            <span
-                              className={`inline-flex rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
-                                reviewStatusMeta(cueReviews[it.id]?.status ?? 'pending').railClass
-                              }`}
-                            >
-                              {reviewStatusMeta(cueReviews[it.id]?.status ?? 'pending').label}
-                            </span>
+                          <div className="mt-1 flex flex-wrap gap-0.5">
+                            {fullyApproved ? (
+                              <span
+                                className={`inline-flex rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${reviewMeta.railClass}`}
+                              >
+                                Both OK
+                              </span>
+                            ) : (
+                              <>
+                                <span
+                                  className={`inline-flex rounded border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide ${
+                                    activeReviewStage === 'creative'
+                                      ? creativeMeta.railClass
+                                      : 'border-slate-600/80 bg-slate-800/80 text-slate-400'
+                                  }`}
+                                  title="Creative Content"
+                                >
+                                  CC: {creativeMeta.label === 'Approved' ? 'OK' : creativeMeta.label === 'Needs update' ? '!' : '…'}
+                                </span>
+                                <span
+                                  className={`inline-flex rounded border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide ${
+                                    activeReviewStage === 'ros'
+                                      ? rosMeta.railClass
+                                      : 'border-slate-600/80 bg-slate-800/80 text-slate-400'
+                                  }`}
+                                  title="ROS Show"
+                                >
+                                  ROS: {rosMeta.label === 'Approved' ? 'OK' : rosMeta.label === 'Needs update' ? '!' : '…'}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </button>
@@ -1682,10 +2168,223 @@ const ContentReviewPage: React.FC = () => {
             className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row"
             dir="ltr"
           >
-            {/* Column 2: detail — scrolls independently from cue rail */}
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-slate-900 p-3 md:p-6">
+            {/* Column 2: Creative = PDF embed; ROS = full schedule detail */}
+            <main
+              className={`min-h-0 min-w-0 flex-1 bg-slate-900 p-3 md:p-6 ${
+                activeReviewStage === 'creative'
+                  ? 'flex flex-col overflow-hidden'
+                  : 'overflow-y-auto overscroll-y-contain'
+              }`}
+            >
             {!displayItem ? (
               <p className="text-slate-500">Select a cue from the list.</p>
+            ) : activeReviewStage === 'creative' ? (
+              <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3">
+                <div className="shrink-0 rounded-lg border border-violet-700/50 bg-violet-950/25 px-3 py-2 md:px-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
+                        Creative content review
+                      </div>
+                      <div className="text-base font-bold text-white md:text-lg">
+                        {formatCueDisplay(cueLabel(displayItem))}
+                        {displayItem.segmentName ? (
+                          <span className="ml-2 text-sm font-medium text-slate-300">
+                            · {displayItem.segmentName}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <p className="max-w-md text-[11px] text-slate-400">
+                      Event PDF below for all cues. PPT / Video cues can open linked assets here.
+                    </p>
+                  </div>
+                </div>
+
+                {creativeCueExtras ? (
+                  <div className="shrink-0 rounded-lg border border-amber-600/45 bg-amber-950/30 px-3 py-2.5">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-amber-200/90">
+                        This cue
+                      </span>
+                      {creativeCueExtras.hasPPT ? (
+                        <span className="rounded border border-amber-500/60 bg-amber-900/50 px-2 py-0.5 text-[10px] font-semibold text-amber-100">
+                          PPT
+                        </span>
+                      ) : null}
+                      {creativeCueExtras.programType === 'Video' ? (
+                        <span className="rounded border border-orange-500/60 bg-orange-900/50 px-2 py-0.5 text-[10px] font-semibold text-orange-100">
+                          Video
+                        </span>
+                      ) : null}
+                      {creativeEmbedOverride ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreativeEmbedOverride(null);
+                            setCreativeEmbedOverrideLabel(null);
+                          }}
+                          className="ml-auto rounded border border-violet-500/70 bg-violet-900/40 px-2 py-0.5 text-[10px] font-semibold text-violet-100 hover:bg-violet-800/50"
+                        >
+                          ← Event PDF
+                        </button>
+                      ) : null}
+                    </div>
+                    {creativeCueAssets.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {creativeCueAssets.map((asset) => {
+                          const embed = normalizeCreativeEmbedUrl(asset.link);
+                          return (
+                            <div
+                              key={asset.id}
+                              className="flex max-w-full items-center gap-1 rounded border border-slate-600 bg-slate-900/80 pl-2 pr-1 py-1"
+                            >
+                              <span className="truncate text-xs font-medium text-slate-200" title={asset.name}>
+                                {asset.name}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => window.open(asset.link, '_blank', 'noopener,noreferrer')}
+                                className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-cyan-300 hover:bg-slate-700"
+                              >
+                                Open
+                              </button>
+                              {embed ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCreativeEmbedOverride(embed);
+                                    setCreativeEmbedOverrideLabel(asset.name);
+                                  }}
+                                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                    creativeEmbedOverride === embed
+                                      ? 'bg-amber-600 text-white'
+                                      : 'text-amber-200 hover:bg-amber-900/60'
+                                  }`}
+                                >
+                                  View
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-amber-100/80">
+                        No asset links yet. Switch to <span className="font-semibold">ROS Show</span>, enable Edit,
+                        and add links under Assets for this cue.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+
+                <div className="shrink-0 rounded-lg border border-slate-600 bg-slate-800/80 p-2 md:p-3">
+                  {savedCreativePdfUrl && !creativePdfSetupOpen ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-300" title={savedCreativePdfUrl}>
+                        {savedCreativePdfUrl}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCreativePdfUrlDraft(savedCreativePdfUrl);
+                          setCreativePdfSetupOpen(true);
+                        }}
+                        className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
+                      >
+                        Change PDF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.open(savedCreativePdfUrl, '_blank', 'noopener,noreferrer')}
+                        className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
+                      >
+                        Open tab
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        Creative PDF URL
+                      </label>
+                      <input
+                        type="url"
+                        value={creativePdfUrlDraft}
+                        onChange={(e) => setCreativePdfUrlDraft(e.target.value)}
+                        placeholder="https://…/deck.pdf or Google Drive share link"
+                        className="w-full rounded border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-violet-400"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={applyCreativePdfUrl}
+                          className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500"
+                        >
+                          Embed PDF
+                        </button>
+                        {savedCreativePdfUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => setCreativePdfSetupOpen(false)}
+                            className="rounded border border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                          >
+                            Cancel
+                          </button>
+                        ) : null}
+                        {savedCreativePdfUrl ? (
+                          <button
+                            type="button"
+                            onClick={clearCreativePdfUrl}
+                            className="rounded border border-rose-700/80 px-3 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-950/50"
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                      <p className="text-[10px] leading-snug text-slate-500">
+                        Direct .pdf links work best. Google Drive file links are converted to preview embeds. Some hosts
+                        block iframes—use Open tab if the viewer is blank.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-600 bg-slate-950 shadow-inner">
+                  {creativeEmbedOverrideLabel ? (
+                    <div className="absolute left-0 right-0 top-0 z-10 border-b border-amber-700/50 bg-amber-950/90 px-3 py-1 text-center text-[10px] font-semibold text-amber-100">
+                      Viewing: {creativeEmbedOverrideLabel}
+                      <span className="text-amber-200/70"> · </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCreativeEmbedOverride(null);
+                          setCreativeEmbedOverrideLabel(null);
+                        }}
+                        className="text-violet-300 underline hover:text-violet-200"
+                      >
+                        Back to event PDF
+                      </button>
+                    </div>
+                  ) : null}
+                  {creativeIframeSrc && (!creativePdfSetupOpen || creativeEmbedOverride) ? (
+                    <iframe
+                      key={creativeIframeSrc}
+                      src={creativeIframeSrc}
+                      title={creativeEmbedOverrideLabel ? `Asset: ${creativeEmbedOverrideLabel}` : 'Creative content PDF'}
+                      className={`absolute inset-0 h-full w-full border-0 bg-white ${creativeEmbedOverrideLabel ? 'pt-7' : ''}`}
+                    />
+                  ) : (
+                    <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-500">
+                      <p>Add a PDF URL above to review creative content for this event.</p>
+                      <p className="text-xs text-slate-600">
+                        {creativeCueExtras
+                          ? 'Use asset links above, or set the event PDF.'
+                          : 'Cue list and approvals still work on the left.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className="mx-auto max-w-5xl space-y-4">
                 {selectedRow && selectedRow.id !== displayItem.id ? (
@@ -2128,8 +2827,20 @@ const ContentReviewPage: React.FC = () => {
 
                 {/* Speaker slots — Photo print row */}
                 <div className="overflow-hidden rounded-lg border border-slate-600 bg-slate-800">
-                  <div className="border-b border-slate-600 bg-slate-700 px-3 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-200">
-                    Speakers (slots 1–7)
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-600 bg-slate-700 px-3 py-2">
+                    <span className="text-xs font-bold uppercase tracking-wide text-slate-200">
+                      Speakers (slots 1–7)
+                    </span>
+                    {!editModeEnabled ? (
+                      <button
+                        type="button"
+                        onClick={() => setSpeakerDetailsExpanded((prev) => !prev)}
+                        className="shrink-0 rounded border border-slate-500 bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-600"
+                        aria-expanded={speakerDetailsExpanded}
+                      >
+                        {speakerDetailsExpanded ? 'Hide details' : 'Show title, org & photo'}
+                      </button>
+                    ) : null}
                   </div>
                   {editModeEnabled ? (
                     <div className="space-y-2 p-2">
@@ -2358,19 +3069,10 @@ const ContentReviewPage: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-4 lg:grid-cols-7">
-                      {parseSpeakersSlots(displayItem.speakersText).map((cell, i) => (
-                        <div
-                          key={i}
-                          className="flex min-h-[5.5rem] flex-col justify-start rounded border border-slate-600 bg-slate-900/50 p-2 text-center"
-                        >
-                          <div className="text-[10px] font-bold uppercase text-slate-500">Slot {i + 1}</div>
-                          <div className="mt-1 whitespace-pre-line text-xs font-semibold leading-snug text-white">
-                            {cell || '—'}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    <SpeakerSlotsReadOnlyRow
+                      speakersText={displayItem.speakersText}
+                      expanded={speakerDetailsExpanded}
+                    />
                   )}
                 </div>
 
@@ -2775,20 +3477,15 @@ const ContentReviewPage: React.FC = () => {
                               <div className="rounded border border-slate-600 bg-slate-900/40">
                                 <div className="border-b border-slate-600 bg-slate-700/80 px-2 py-1 text-center text-[10px] font-bold uppercase text-slate-300">
                                   Speakers (1–7)
+                                  {speakerDetailsExpanded ? (
+                                    <span className="ml-1 font-normal normal-case text-slate-400">— details on</span>
+                                  ) : null}
                                 </div>
-                                <div className="grid grid-cols-2 gap-1 p-1.5 sm:grid-cols-4 lg:grid-cols-7">
-                                  {parseSpeakersSlots(sub.speakersText).map((cell, i) => (
-                                    <div
-                                      key={i}
-                                      className="rounded border border-slate-700 bg-slate-900/60 p-1.5 text-center"
-                                    >
-                                      <div className="text-[9px] font-bold uppercase text-slate-500">{i + 1}</div>
-                                      <div className="mt-0.5 whitespace-pre-line text-[10px] font-medium leading-tight text-slate-200">
-                                        {cell || '—'}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
+                                <SpeakerSlotsReadOnlyRow
+                                  speakersText={sub.speakersText}
+                                  expanded={speakerDetailsExpanded}
+                                  compactClassName="p-1.5"
+                                />
                               </div>
                               {sub.notes?.trim() ? (
                                 <div>
@@ -2880,21 +3577,51 @@ const ContentReviewPage: React.FC = () => {
                     className={`flex min-h-0 flex-1 flex-col border-l-4 border-orange-500 bg-transparent lg:min-h-0 ${streamPanelOpen ? 'border-b border-orange-800/70' : ''}`}
                     aria-label="Cue review"
                   >
-                    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-orange-600/45 bg-transparent px-2 py-2">
-                      <span className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-orange-100">
-                        Cue review
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setReviewPanelOpen(false)}
-                        className="rounded border border-orange-400/60 bg-transparent px-2 py-1 text-[10px] font-medium text-orange-50 hover:bg-transparent"
-                      >
-                        Hide
-                      </button>
+                    <div className="flex shrink-0 flex-col gap-2 border-b border-orange-600/45 bg-transparent px-2 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-orange-100">
+                          Cue review
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setReviewPanelOpen(false)}
+                          className="rounded border border-orange-400/60 bg-transparent px-2 py-1 text-[10px] font-medium text-orange-50 hover:bg-transparent"
+                        >
+                          Hide
+                        </button>
+                      </div>
+                      <ReviewStageSwitcher />
                     </div>
                     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-2">
                       {selectedRow ? (
                         <>
+                          <div className="rounded border border-slate-600/80 bg-slate-900/50 px-2 py-1.5 text-[10px] text-slate-300">
+                            <div className="font-semibold text-slate-200">
+                              {REVIEW_STAGES.find((s) => s.id === activeReviewStage)?.label}
+                            </div>
+                            {selectedFullyApproved ? (
+                              <div className="mt-0.5 text-emerald-300">Fully approved (Creative + ROS)</div>
+                            ) : (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                <span
+                                  className={`rounded border px-1.5 py-0.5 ${reviewStatusMeta(getStageReview(selectedReview, 'creative').status).railClass}`}
+                                >
+                                  Creative: {reviewStatusMeta(getStageReview(selectedReview, 'creative').status).label}
+                                </span>
+                                <span
+                                  className={`rounded border px-1.5 py-0.5 ${reviewStatusMeta(getStageReview(selectedReview, 'ros').status).railClass}`}
+                                >
+                                  ROS: {reviewStatusMeta(getStageReview(selectedReview, 'ros').status).label}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          {rosApproveBlocked ? (
+                            <p className="text-[10px] leading-snug text-amber-200/90">
+                              Approve <span className="font-semibold">Creative Content</span> before marking ROS Show
+                              approved.
+                            </p>
+                          ) : null}
                           <div className="flex flex-wrap gap-1.5">
                             {(
                               [
@@ -2917,17 +3644,19 @@ const ContentReviewPage: React.FC = () => {
                                   label: 'Approved',
                                   activeClass: 'border-emerald-50 bg-emerald-500 text-white shadow-lg',
                                   idleClass:
-                                    'border-emerald-600 bg-emerald-800 text-emerald-50 hover:bg-emerald-700 hover:border-emerald-500'
+                                    'border-emerald-600 bg-emerald-800 text-emerald-50 hover:bg-emerald-700 hover:border-emerald-500',
+                                  disabled: rosApproveBlocked
                                 }
                               ] as const
                             ).map((s) => (
                               <button
                                 key={s.id}
                                 type="button"
-                                onClick={() => setCueReviewStatus(selectedRow.id, s.id)}
+                                disabled={'disabled' in s && s.disabled}
+                                onClick={() => setCueReviewStatus(selectedRow.id, activeReviewStage, s.id)}
                                 className={`rounded border px-2 py-1 text-[11px] font-semibold ${
                                   selectedStatus === s.id ? `${s.activeClass} shadow-sm` : s.idleClass
-                                }`}
+                                } ${'disabled' in s && s.disabled ? 'cursor-not-allowed opacity-45' : ''}`}
                               >
                                 {s.label}
                               </button>
@@ -2935,9 +3664,9 @@ const ContentReviewPage: React.FC = () => {
                           </div>
                           <textarea
                             value={selectedNote}
-                            onChange={(e) => setCueReviewNote(selectedRow.id, e.target.value)}
+                            onChange={(e) => setCueReviewNote(selectedRow.id, activeReviewStage, e.target.value)}
                             rows={6}
-                            placeholder="Review notes…"
+                            placeholder={`${REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label} notes…`}
                             className="min-h-[10rem] w-full flex-1 resize-y rounded border-2 border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 shadow-inner outline-none placeholder:text-slate-400 focus:border-orange-400 focus:ring-2 focus:ring-orange-400/40"
                           />
                         </>
