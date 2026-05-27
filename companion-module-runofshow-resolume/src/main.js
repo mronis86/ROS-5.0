@@ -10,6 +10,7 @@ const {
 	matchesAddress,
 	inferDurationFromSamples,
 	remainingFromPosition,
+	remainingFromPositionPrecise,
 	createUdpPort,
 	sendOsc,
 } = require('./resolumeOsc')
@@ -24,6 +25,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.oscPort = null
 		this.lastInferredDuration = null
 		this.alignInFlight = false
+		this.periodicAlignInterval = null
 	}
 
 	async init(config) {
@@ -41,6 +43,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	async destroy() {
+		this.stopPeriodicAlign()
 		this.closeOscListener()
 		this.resolumeArm = null
 	}
@@ -88,6 +91,56 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	getClipEndPositionThreshold() {
 		const t = Number(this.config?.clipEndPositionThreshold)
 		return Number.isFinite(t) && t > 0.9 && t <= 1 ? t : 0.995
+	}
+
+	getPeriodicAlignIntervalSeconds() {
+		const s = parseInt(this.config?.periodicAlignIntervalSeconds, 10)
+		return Number.isFinite(s) && s >= 0 ? s : 10
+	}
+
+	getPeriodicAlignDriftThreshold() {
+		const s = Number(this.config?.periodicAlignDriftThreshold)
+		return Number.isFinite(s) && s >= 0 ? s : 1
+	}
+
+	getRosRemainingSeconds() {
+		const t = this.activeTimer
+		if (!t?.is_running || !t.started_at || t.duration_seconds == null) return null
+		const startedMs = new Date(t.started_at).getTime()
+		if (!Number.isFinite(startedMs) || startedMs > Date.now() + 86400000) return null
+		return Math.max(0, t.duration_seconds - (Date.now() - startedMs) / 1000)
+	}
+
+	shouldPeriodicRealign(arm) {
+		const threshold = this.getPeriodicAlignDriftThreshold()
+		if (threshold <= 0) return true
+		const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
+		const rosRem = this.getRosRemainingSeconds()
+		if (rosRem == null) return true
+		return Math.abs(rosRem - resolumeRem) >= threshold
+	}
+
+	stopPeriodicAlign() {
+		if (this.periodicAlignInterval) {
+			clearInterval(this.periodicAlignInterval)
+			this.periodicAlignInterval = null
+		}
+	}
+
+	startPeriodicAlign() {
+		this.stopPeriodicAlign()
+		const sec = this.getPeriodicAlignIntervalSeconds()
+		if (sec <= 0) return
+		const self = this
+		this.periodicAlignInterval = setInterval(() => {
+			const arm = self.resolumeArm
+			if (!arm || arm.phase !== 'aligned' || !arm.inferredDuration || arm.endTriggered) return
+			if (!self.shouldPeriodicRealign(arm)) return
+			const rem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
+			self.triggerResolumeAlign(arm.inferredDuration, rem, arm.lastPositionMs, true, 'periodic').catch((err) => {
+				self.log('warn', `Periodic align failed: ${err.message}`)
+			})
+		}, sec * 1000)
 	}
 
 	getResolumeSendHost() {
@@ -242,10 +295,11 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	clearResolumeArm() {
+		this.stopPeriodicAlign()
 		this.resolumeArm = null
 		this.alignInFlight = false
 		this.updateVariableValues()
-		this.checkFeedbacks('resolume_armed')
+		this.checkFeedbacks('resolume_armed', 'resolume_aligned')
 	}
 
 	closeOscListener() {
@@ -323,8 +377,8 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		const duration = inferDurationFromSamples(arm.samples)
 		if (!duration) return
 
-		const remaining = remainingFromPosition(duration, position)
-		this.triggerResolumeAlign(duration, remaining, nowMs).catch((err) => {
+		const remaining = remainingFromPositionPrecise(duration, position, false)
+		this.triggerResolumeAlign(duration, remaining, nowMs, false, 'initial').catch((err) => {
 			this.log('error', `Resolume align failed: ${err.message}`)
 			arm.phase = 'idle'
 			this.alignInFlight = false
@@ -340,11 +394,20 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		setTimeout(() => {
 			const a = self.resolumeArm
 			if (!a || a.phase !== 'aligned' || !a.inferredDuration) return
-			const rem = remainingFromPosition(a.inferredDuration, a.lastPosition)
-			self.triggerResolumeAlign(a.inferredDuration, rem, a.lastPositionMs, true).catch((err) => {
+			const rem = remainingFromPositionPrecise(a.inferredDuration, a.lastPosition, false)
+			self.triggerResolumeAlign(a.inferredDuration, rem, a.lastPositionMs, true, 'follow-up').catch((err) => {
 				self.log('warn', `Follow-up align failed: ${err.message}`)
 			})
 		}, delayMs)
+		const extraMs = parseInt(this.config?.followUpAlignMs2, 10)
+		if (Number.isFinite(extraMs) && extraMs > delayMs) {
+			setTimeout(() => {
+				const a = self.resolumeArm
+				if (!a || a.phase !== 'aligned' || !a.inferredDuration) return
+				const rem = remainingFromPositionPrecise(a.inferredDuration, a.lastPosition, false)
+				self.triggerResolumeAlign(a.inferredDuration, rem, a.lastPositionMs, true, 'follow-up-2').catch(() => {})
+			}, extraMs)
+		}
 	}
 
 	async triggerClipEndStop() {
@@ -365,7 +428,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		}
 	}
 
-	async triggerResolumeAlign(durationSeconds, remainingSeconds, alignAtMs, isFollowUp = false) {
+	async triggerResolumeAlign(durationSeconds, remainingSeconds, alignAtMs, isFollowUp = false, reason = 'align') {
 		if (this.alignInFlight || !this.resolumeArm) return
 		this.alignInFlight = true
 		const eventId = this.config?.eventId
@@ -389,9 +452,12 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			this.checkFeedbacks('resolume_armed', 'resolume_aligned')
 			this.log(
 				'info',
-				`${isFollowUp ? 'Follow-up' : 'Resolume'} aligned: ${remainingSeconds}s remaining (duration ${durationSeconds}s)`
+				`[${reason}] aligned: ${remainingSeconds}s remaining (duration ${durationSeconds}s)`
 			)
-			if (!isFollowUp) this.scheduleFollowUpAlign()
+			if (!isFollowUp) {
+				this.scheduleFollowUpAlign()
+				this.startPeriodicAlign()
+			}
 		} finally {
 			this.alignInFlight = false
 		}
@@ -462,12 +528,42 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			{
 				type: 'number',
 				id: 'followUpAlignMs',
-				label: 'Follow-up align delay (ms)',
+				label: 'Follow-up align #1 (ms)',
 				width: 6,
 				default: 400,
 				min: 0,
 				max: 5000,
-				tooltip: '0 = off. One second align ~400ms after first to correct 1-2s drift',
+				tooltip: '0 = off. Re-align shortly after first lock',
+			},
+			{
+				type: 'number',
+				id: 'followUpAlignMs2',
+				label: 'Follow-up align #2 (ms)',
+				width: 6,
+				default: 1200,
+				min: 0,
+				max: 10000,
+				tooltip: '0 = off. Second early correction (e.g. 1200ms)',
+			},
+			{
+				type: 'number',
+				id: 'periodicAlignIntervalSeconds',
+				label: 'Periodic re-sync interval (seconds)',
+				width: 6,
+				default: 10,
+				min: 0,
+				max: 120,
+				tooltip: '0 = off. Re-check Resolume vs clock every N seconds while armed',
+			},
+			{
+				type: 'number',
+				id: 'periodicAlignDriftThreshold',
+				label: 'Re-sync only if drift >= (seconds)',
+				width: 6,
+				default: 1,
+				min: 0,
+				max: 30,
+				tooltip: '0 = always re-sync on interval. 1 = only fix when off by 1+ second',
 			},
 			{
 				type: 'checkbox',

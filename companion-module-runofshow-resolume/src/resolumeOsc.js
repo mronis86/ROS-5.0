@@ -30,8 +30,14 @@ function inferDurationFromSamples(samples) {
 }
 
 function remainingFromPosition(durationSeconds, position) {
+	return remainingFromPositionPrecise(durationSeconds, position, true)
+}
+
+/** Fractional seconds remaining; optional round for display-only */
+function remainingFromPositionPrecise(durationSeconds, position, roundToWholeSeconds = false) {
 	const pos = Math.max(0, Math.min(1, Number(position) || 0))
-	return Math.max(0, Math.round(durationSeconds * (1 - pos)))
+	const rem = Math.max(0, durationSeconds * (1 - pos))
+	return roundToWholeSeconds ? Math.round(rem) : Math.round(rem * 1000) / 1000
 }
 
 module.exports = {
@@ -41,6 +47,7 @@ module.exports = {
 	matchesAddress,
 	inferDurationFromSamples,
 	remainingFromPosition,
+	remainingFromPositionPrecise,
 	createUdpPort(port, onMessage, onError) {
 		const udpPort = new osc.UDPPort({
 			localAddress: '0.0.0.0',

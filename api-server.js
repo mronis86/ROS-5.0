@@ -3480,7 +3480,7 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
 
     const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
     const rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
-    const elapsed = dur - rem;
+    const elapsed = dur - rem; // fractional OK — tighter started_at
     const alignMs = align_at ? new Date(align_at).getTime() : Date.now();
     const startedAt = new Date((Number.isFinite(alignMs) ? alignMs : Date.now()) - elapsed * 1000).toISOString();
 
