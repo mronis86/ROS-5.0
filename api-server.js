@@ -2233,11 +2233,12 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
       'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
       [eventId]
     );
+    const rows = result.rows.map((row) => applyResolumeMeta(eventId, row));
     
     // Broadcast active timers update via WebSocket for real-time sync
-    broadcastUpdate(eventId, 'activeTimersUpdated', result.rows);
+    broadcastUpdate(eventId, 'activeTimersUpdated', rows);
     
-    res.json(result.rows);
+    res.json(rows);
   } catch (error) {
     console.error('Error fetching active timers:', error);
     res.status(500).json({ error: 'Failed to fetch active timers' });

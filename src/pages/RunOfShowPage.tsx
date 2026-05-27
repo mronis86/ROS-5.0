@@ -874,6 +874,10 @@ const RunOfShowPage: React.FC = () => {
   const [stoppedItems, setStoppedItems] = useState<Set<number>>(new Set());
   
   // Helper function to format cue display with proper spacing
+  /** True when timer is driven by Resolume OSC sync (from WebSocket timerUpdated). */
+  const isResolumeTimerSource = (timer: { time_source?: string } | null | undefined) =>
+    timer?.time_source === 'resolume';
+
   const formatCueDisplay = (cue: string | number | undefined) => {
     if (!cue && cue !== 0) return 'CUE';
     // Convert to string if it's a number
@@ -8246,7 +8250,15 @@ const RunOfShowPage: React.FC = () => {
       const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
       const isHybridRunning = Boolean(isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
       const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running);
-      if (isHybridRunning) { classNames.set(item.id, 'bg-green-950'); return; }
+      if (isHybridRunning) {
+        classNames.set(
+          item.id,
+          isResolumeTimerSource(hybridTimerData?.activeTimer)
+            ? 'bg-purple-950 ring-1 ring-inset ring-purple-500'
+            : 'bg-green-950'
+        );
+        return;
+      }
       if (isHybridLoaded) { classNames.set(item.id, 'bg-blue-950'); return; }
       if (completedCues[item.id]) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
       if (stoppedItems.has(item.id)) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
@@ -9748,11 +9760,15 @@ const RunOfShowPage: React.FC = () => {
                 {hybridTimerData?.activeTimer ? (
                   <div className={`text-lg font-bold ${
                     hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? 'text-green-400'
+                      ? isResolumeTimerSource(hybridTimerData.activeTimer)
+                        ? 'text-purple-400'
+                        : 'text-green-400'
                       : 'text-yellow-400'
                   }`}>
                     {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? 'RUNNING'
+                      ? isResolumeTimerSource(hybridTimerData.activeTimer)
+                        ? 'RUNNING · RESOLUME'
+                        : 'RUNNING'
                       : 'LOADED'
                     } - {(() => {
                       // Try to find the schedule item with proper type conversion
@@ -11380,11 +11396,28 @@ const RunOfShowPage: React.FC = () => {
                   -
                 </div>
               ) : (
-                                 getFilteredSchedule().map((item, index) => (
+                                 getFilteredSchedule().map((item, index) => {
+                   const hybridItemId: any = hybridTimerData?.activeTimer?.item_id;
+                   const isTimerRowMatch =
+                     hybridItemId &&
+                     (parseInt(String(hybridItemId), 10) === item.id ||
+                       hybridItemId === item.id ||
+                       String(hybridItemId) === String(item.id));
+                   const isResolumeRunningRow = Boolean(
+                     isTimerRowMatch &&
+                       hybridTimerData?.activeTimer?.is_running &&
+                       hybridTimerData?.activeTimer?.is_active &&
+                       isResolumeTimerSource(hybridTimerData?.activeTimer)
+                   );
+                   return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                      className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${
-                       index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
+                       isResolumeRunningRow
+                         ? 'bg-purple-950 ring-1 ring-inset ring-purple-500'
+                         : index % 2 === 0
+                           ? 'bg-slate-800'
+                           : 'bg-slate-900'
                      }`}
                      style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                    >
@@ -11446,7 +11479,9 @@ const RunOfShowPage: React.FC = () => {
                                 currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeTimers[item.id]
-                                    ? 'bg-red-600 hover:bg-red-500 text-white'
+                                    ? isResolumeRunningRow
+                                      ? 'bg-purple-700 hover:bg-purple-600 text-white'
+                                      : 'bg-red-600 hover:bg-red-500 text-white'
                                     : activeItemId === item.id && Object.keys(activeTimers).length === 0
                                     ? 'bg-green-600 hover:bg-green-500 text-white'
                                     : 'bg-slate-600 text-slate-400 cursor-not-allowed'
@@ -11514,7 +11549,8 @@ const RunOfShowPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                ))
+                );
+                })
               )}
             </div>
           </div>
