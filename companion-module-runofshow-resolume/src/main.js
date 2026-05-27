@@ -72,7 +72,22 @@ class RunOfShowResolumeInstance extends InstanceBase {
 
 	getSampleDelayMs() {
 		const ms = parseInt(this.config?.sampleDelayMs, 10)
-		return Number.isFinite(ms) && ms >= 50 ? ms : 120
+		return Number.isFinite(ms) && ms >= 30 ? ms : 80
+	}
+
+	getFollowUpAlignMs() {
+		const ms = parseInt(this.config?.followUpAlignMs, 10)
+		return Number.isFinite(ms) && ms >= 0 ? ms : 400
+	}
+
+	getAutoStopAtClipEnd() {
+		const v = this.config?.autoStopAtClipEnd
+		return v !== false && v !== 'false'
+	}
+
+	getClipEndPositionThreshold() {
+		const t = Number(this.config?.clipEndPositionThreshold)
+		return Number.isFinite(t) && t > 0.9 && t <= 1 ? t : 0.995
 	}
 
 	getResolumeSendHost() {
@@ -216,6 +231,10 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			samples: [],
 			sampleStartMs: 0,
 			inferredDuration: null,
+			lastPosition: 0,
+			lastPositionMs: 0,
+			endTriggered: false,
+			followUpScheduled: false,
 			positionAddress: positionAddress(layer, clip),
 			connectAddress: connectAddress(layer, clip),
 		}
@@ -255,7 +274,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	handleOscMessage(oscMsg) {
-		if (!this.resolumeArm || this.alignInFlight) return
+		if (!this.resolumeArm) return
 		const address = oscMsg?.address
 		const args = oscMsg?.args || []
 		const value = args[0]?.value
@@ -267,6 +286,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			arm.samples = []
 			arm.sampleStartMs = Date.now()
 			arm.inferredDuration = null
+			arm.endTriggered = false
 			return
 		}
 
@@ -274,15 +294,29 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		const position = Number(value)
 		if (!Number.isFinite(position)) return
 
+		const nowMs = Date.now()
+		arm.lastPosition = position
+		arm.lastPositionMs = nowMs
+
+		if (arm.phase === 'aligned') {
+			if (this.getAutoStopAtClipEnd() && !arm.endTriggered && position >= this.getClipEndPositionThreshold()) {
+				this.triggerClipEndStop().catch((err) => {
+					this.log('error', `Clip end stop failed: ${err.message}`)
+				})
+			}
+			return
+		}
+
+		if (this.alignInFlight) return
+
 		if (arm.phase === 'idle' && position > 0.002) {
 			arm.phase = 'sampling'
 			arm.samples = []
-			arm.sampleStartMs = Date.now()
+			arm.sampleStartMs = nowMs
 		}
 
 		if (arm.phase !== 'sampling') return
 
-		const nowMs = Date.now()
 		arm.samples.push({ timeMs: nowMs, position })
 		if (nowMs - arm.sampleStartMs < this.getSampleDelayMs()) return
 
@@ -290,14 +324,48 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		if (!duration) return
 
 		const remaining = remainingFromPosition(duration, position)
-		this.triggerResolumeAlign(duration, remaining).catch((err) => {
+		this.triggerResolumeAlign(duration, remaining, nowMs).catch((err) => {
 			this.log('error', `Resolume align failed: ${err.message}`)
 			arm.phase = 'idle'
 			this.alignInFlight = false
 		})
 	}
 
-	async triggerResolumeAlign(durationSeconds, remainingSeconds) {
+	scheduleFollowUpAlign() {
+		const arm = this.resolumeArm
+		const delayMs = this.getFollowUpAlignMs()
+		if (!arm || delayMs <= 0 || arm.followUpScheduled) return
+		arm.followUpScheduled = true
+		const self = this
+		setTimeout(() => {
+			const a = self.resolumeArm
+			if (!a || a.phase !== 'aligned' || !a.inferredDuration) return
+			const rem = remainingFromPosition(a.inferredDuration, a.lastPosition)
+			self.triggerResolumeAlign(a.inferredDuration, rem, a.lastPositionMs, true).catch((err) => {
+				self.log('warn', `Follow-up align failed: ${err.message}`)
+			})
+		}, delayMs)
+	}
+
+	async triggerClipEndStop() {
+		const arm = this.resolumeArm
+		const eventId = this.config?.eventId
+		if (!arm || arm.endTriggered || !eventId) return
+		arm.endTriggered = true
+		const itemId = parseInt(arm.itemId, 10)
+		try {
+			await this.apiPost('/api/timers/stop', { event_id: eventId, item_id: itemId })
+			await this.apiPost('/api/timers/resolume-end', { event_id: eventId })
+			this.clearResolumeArm()
+			await this.fetchActiveTimer(eventId)
+			this.log('info', `Clip ended — timer stopped for item ${itemId}`)
+		} catch (err) {
+			arm.endTriggered = false
+			throw err
+		}
+	}
+
+	async triggerResolumeAlign(durationSeconds, remainingSeconds, alignAtMs, isFollowUp = false) {
 		if (this.alignInFlight || !this.resolumeArm) return
 		this.alignInFlight = true
 		const eventId = this.config?.eventId
@@ -312,22 +380,26 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				cueIs,
 				durationSeconds,
 				remainingSeconds,
+				alignAtMs: alignAtMs || Date.now(),
 			})
 			this.lastInferredDuration = durationSeconds
 			this.resolumeArm.phase = 'aligned'
 			this.resolumeArm.inferredDuration = durationSeconds
 			this.updateVariableValues()
+			this.checkFeedbacks('resolume_armed', 'resolume_aligned')
 			this.log(
 				'info',
-				`Resolume aligned: ${remainingSeconds}s remaining (inferred duration ${durationSeconds}s)`
+				`${isFollowUp ? 'Follow-up' : 'Resolume'} aligned: ${remainingSeconds}s remaining (duration ${durationSeconds}s)`
 			)
+			if (!isFollowUp) this.scheduleFollowUpAlign()
 		} finally {
 			this.alignInFlight = false
 		}
 	}
 
-	async postResolumeAlign({ eventId, itemId, cueIs, durationSeconds, remainingSeconds }) {
+	async postResolumeAlign({ eventId, itemId, cueIs, durationSeconds, remainingSeconds, alignAtMs }) {
 		if (!eventId || !itemId) throw new Error('event_id and item_id required')
+		const alignAt = new Date(alignAtMs || Date.now()).toISOString()
 		await this.apiPost('/api/timers/resolume-sync-align', {
 			event_id: eventId,
 			item_id: parseInt(itemId, 10),
@@ -335,6 +407,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			cue_is: cueIs,
 			duration_seconds: durationSeconds,
 			remaining_seconds: remainingSeconds,
+			align_at: alignAt,
 		})
 		await this.fetchActiveTimer(eventId)
 		this.updateVariableValues()
@@ -381,10 +454,37 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				id: 'sampleDelayMs',
 				label: 'Duration sample window (ms)',
 				width: 6,
-				default: 120,
-				min: 50,
+				default: 80,
+				min: 30,
 				max: 2000,
-				tooltip: 'Wait this long after clip play before inferring duration from position slope',
+				tooltip: 'Wait this long after clip play before first align (lower = faster, may be less accurate)',
+			},
+			{
+				type: 'number',
+				id: 'followUpAlignMs',
+				label: 'Follow-up align delay (ms)',
+				width: 6,
+				default: 400,
+				min: 0,
+				max: 5000,
+				tooltip: '0 = off. One second align ~400ms after first to correct 1-2s drift',
+			},
+			{
+				type: 'checkbox',
+				id: 'autoStopAtClipEnd',
+				label: 'Auto stop timer when clip reaches end',
+				width: 12,
+				default: true,
+			},
+			{
+				type: 'number',
+				id: 'clipEndPositionThreshold',
+				label: 'Clip end position (0-1)',
+				width: 6,
+				default: 0.995,
+				min: 0.9,
+				max: 1,
+				tooltip: 'When OSC position reaches this, stop timer and clear Resolume sync',
 			},
 			{
 				type: 'textinput',
@@ -416,7 +516,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	checkAllFeedbacks() {
-		this.checkFeedbacks('resolume_armed')
+		this.checkFeedbacks('resolume_armed', 'resolume_aligned')
 	}
 
 	updatePresets() {
@@ -436,6 +536,11 @@ class RunOfShowResolumeInstance extends InstanceBase {
 						feedbackId: 'resolume_armed',
 						options: {},
 						style: { bgcolor: combineRgb(160, 80, 200), color: combineRgb(255, 255, 255) },
+					},
+					{
+						feedbackId: 'resolume_aligned',
+						options: {},
+						style: { bgcolor: combineRgb(0, 140, 60), color: combineRgb(255, 255, 255) },
 					},
 				],
 				steps: [{ down: [{ actionId: 'arm_resolume_sync', options: { itemId: '', layer: 1, clip: 1, triggerOnArm: true, triggerType: 'clip', column: 1 } }], up: [] }],
@@ -486,6 +591,11 @@ class RunOfShowResolumeInstance extends InstanceBase {
 						feedbackId: 'resolume_armed',
 						options: {},
 						style: { bgcolor: combineRgb(160, 80, 200), color: combineRgb(255, 255, 255) },
+					},
+					{
+						feedbackId: 'resolume_aligned',
+						options: {},
+						style: { bgcolor: combineRgb(0, 140, 60), color: combineRgb(255, 255, 255) },
 					},
 				],
 				steps: [{ down: [{ actionId: 'arm_resolume_sync', options: { itemId: String(item.id), layer: 1, clip: 1, triggerOnArm: true, triggerType: 'clip', column: 1 } }], up: [] }],

@@ -11,7 +11,18 @@ module.exports = async function (self) {
 				color: combineRgb(255, 255, 255),
 			},
 			options: [],
-			callback: () => self.resolumeArm != null,
+			callback: () => self.resolumeArm != null && self.resolumeArm.phase !== 'aligned',
+		},
+		resolume_aligned: {
+			name: 'Resolume sync aligned (timer locked)',
+			type: 'boolean',
+			label: 'Resolume sync aligned',
+			defaultStyle: {
+				bgcolor: combineRgb(0, 140, 60),
+				color: combineRgb(255, 255, 255),
+			},
+			options: [],
+			callback: () => self.resolumeArm?.phase === 'aligned',
 		},
 	})
 }

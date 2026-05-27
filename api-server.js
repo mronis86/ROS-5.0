@@ -3470,7 +3470,7 @@ app.post('/api/timers/reset', async (req, res) => {
 // Resolume: one-shot align from Companion OSC (low egress — not per-tick HTTP)
 app.post('/api/timers/resolume-sync-align', async (req, res) => {
   try {
-    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id } = req.body;
+    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id, align_at } = req.body;
     if (!event_id || item_id == null) {
       return res.status(400).json({ error: 'event_id and item_id are required' });
     }
@@ -3481,7 +3481,8 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
     const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
     const rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
     const elapsed = dur - rem;
-    const startedAt = new Date(Date.now() - elapsed * 1000).toISOString();
+    const alignMs = align_at ? new Date(align_at).getTime() : Date.now();
+    const startedAt = new Date((Number.isFinite(alignMs) ? alignMs : Date.now()) - elapsed * 1000).toISOString();
 
     console.log(`🎬 Resolume sync-align - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s`);
 
