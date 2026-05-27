@@ -55,6 +55,28 @@ const pool = new Pool({
   allowExitOnIdle: true
 });
 
+// Resolume sync: time_source per event (in-memory; clients use WebSocket timerUpdated)
+const resolumeTimeSourceByEvent = new Map(); // eventId -> { time_source: 'resolume', item_id }
+
+function applyResolumeMeta(eventId, timerRow) {
+  if (!timerRow || typeof timerRow !== 'object') return timerRow;
+  const meta = resolumeTimeSourceByEvent.get(eventId);
+  return {
+    ...timerRow,
+    time_source: meta?.time_source === 'resolume' ? 'resolume' : 'schedule',
+  };
+}
+
+function broadcastTimerUpdated(eventId, timerRow) {
+  const data = applyResolumeMeta(eventId, timerRow);
+  io.to(`event:${eventId}`).emit('update', { type: 'timerUpdated', data });
+  return data;
+}
+
+function clearResolumeTimeSource(eventId) {
+  resolumeTimeSourceByEvent.delete(eventId);
+}
+
 // Upstash Redis REST API helper - for caching graphics data
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -2307,7 +2329,7 @@ app.post('/api/active-timers', async (req, res) => {
     
     // Use the elapsed_seconds from the database (which we set to 0 in the SQL)
     // Don't recalculate - it adds delay!
-    const timerData = result.rows[0];
+    const timerData = applyResolumeMeta(event_id, result.rows[0]);
     
     // Broadcast update via WebSocket with database elapsed_seconds
     broadcastUpdate(event_id, 'timerUpdated', timerData);
@@ -3201,6 +3223,7 @@ app.post('/api/cues/load', async (req, res) => {
     const { event_id, item_id, user_id, duration_seconds, row_is, cue_is, timer_id } = req.body;
     
     console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}, Cue: ${cue_is}`);
+    clearResolumeTimeSource(event_id);
     
     // ONLY write to active_timers table (like Supabase RPC did)
     // Match the EXACT same fields as React app's /api/active-timers endpoint
@@ -3251,12 +3274,8 @@ app.post('/api/cues/load', async (req, res) => {
       item_id
     });
     
-    // Broadcast via Socket.IO to event room with FULL timer data (match /api/active-timers)
-    io.to(`event:${event_id}`).emit('update', {
-      type: 'timerUpdated',  // Match Browser A's event type
-      data: timerData
-    });
-    console.log(`📡 Socket.IO: timerUpdated broadcast to event:${event_id}`, timerData);
+    const broadcastData = broadcastTimerUpdated(event_id, timerData);
+    console.log(`📡 Socket.IO: timerUpdated broadcast to event:${event_id}`, broadcastData);
     
   } catch (error) {
     console.error('Error loading cue:', error);
@@ -3303,11 +3322,7 @@ app.post('/api/timers/start', async (req, res) => {
       item_id
     });
     
-    // Broadcast via Socket.IO to event room with FULL timer data (match /api/active-timers)
-    io.to(`event:${event_id}`).emit('update', {
-      type: 'timerUpdated',  // Match Browser A's event type
-      data: timerData
-    });
+    broadcastTimerUpdated(event_id, timerData);
     console.log(`📡 Socket.IO: timerUpdated broadcast to event:${event_id}`);
     
   } catch (error) {
@@ -3321,6 +3336,7 @@ app.post('/api/timers/stop', async (req, res) => {
     const { event_id, item_id } = req.body;
     
     console.log(`⏹️ OSC: Stopping timer - Event: ${event_id}, Item: ${item_id}`);
+    clearResolumeTimeSource(event_id);
     
     // Get timer data BEFORE stopping to calculate overtime
     const timerBeforeStop = await pool.query(
@@ -3407,6 +3423,7 @@ app.post('/api/timers/reset', async (req, res) => {
     const { event_id, item_id } = req.body;
     
     console.log(`🔄 OSC: Resetting timer - Event: ${event_id}`);
+    clearResolumeTimeSource(event_id);
     
     // Clear all timer tables (like old Supabase reset did)
     // DO NOT touch run_of_show_data table
@@ -3447,6 +3464,109 @@ app.post('/api/timers/reset', async (req, res) => {
   } catch (error) {
     console.error('Error resetting timer:', error);
     res.status(500).json({ error: 'Failed to reset timer', details: error.message });
+  }
+});
+
+// Resolume: one-shot align from Companion OSC (low egress — not per-tick HTTP)
+app.post('/api/timers/resolume-sync-align', async (req, res) => {
+  try {
+    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id } = req.body;
+    if (!event_id || item_id == null) {
+      return res.status(400).json({ error: 'event_id and item_id are required' });
+    }
+    if (remaining_seconds == null || remaining_seconds === '') {
+      return res.status(400).json({ error: 'remaining_seconds is required' });
+    }
+
+    const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
+    const rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
+    const elapsed = dur - rem;
+    const startedAt = new Date(Date.now() - elapsed * 1000).toISOString();
+
+    console.log(`🎬 Resolume sync-align - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s`);
+
+    await pool.query(`
+      INSERT INTO active_timers (
+        event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running,
+        started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, 'running', true, true, $8::timestamptz, $2, $6, $7, 0, NOW(), NOW())
+      ON CONFLICT (event_id)
+      DO UPDATE SET
+        item_id = $2,
+        user_id = $3,
+        user_name = $4,
+        user_role = $5,
+        timer_state = 'running',
+        is_active = true,
+        is_running = true,
+        started_at = $8::timestamptz,
+        last_loaded_cue_id = $2,
+        cue_is = COALESCE($6, active_timers.cue_is),
+        duration_seconds = $7,
+        elapsed_seconds = 0,
+        updated_at = NOW()
+    `, [
+      event_id,
+      parseInt(item_id, 10),
+      user_id || 'companion-resolume',
+      'Resolume Sync',
+      'OPERATOR',
+      cue_is || `CUE ${item_id}`,
+      dur,
+      startedAt,
+    ]);
+
+    resolumeTimeSourceByEvent.set(event_id, {
+      time_source: 'resolume',
+      item_id: parseInt(item_id, 10),
+    });
+
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    const timerData = timerResult.rows[0];
+    const broadcastData = broadcastTimerUpdated(event_id, timerData);
+
+    res.json({
+      success: true,
+      message: 'Resolume timer aligned',
+      event_id,
+      item_id: parseInt(item_id, 10),
+      duration_seconds: dur,
+      remaining_seconds: rem,
+      time_source: 'resolume',
+    });
+    console.log(`📡 Resolume sync-align broadcast to event:${event_id}`, broadcastData);
+  } catch (error) {
+    console.error('Error in resolume-sync-align:', error);
+    res.status(500).json({ error: 'Failed to resolume-sync-align', details: error.message });
+  }
+});
+
+// Resolume: clear resolume time source (timer may keep running on schedule math)
+app.post('/api/timers/resolume-end', async (req, res) => {
+  try {
+    const { event_id } = req.body;
+    if (!event_id) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
+    clearResolumeTimeSource(event_id);
+    console.log(`🎬 Resolume end - cleared time_source for event: ${event_id}`);
+
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    const timerData = timerResult.rows[0] || null;
+    if (timerData) {
+      broadcastTimerUpdated(event_id, timerData);
+    }
+
+    res.json({ success: true, message: 'Resolume time source cleared', event_id });
+  } catch (error) {
+    console.error('Error in resolume-end:', error);
+    res.status(500).json({ error: 'Failed to resolume-end', details: error.message });
   }
 });
 
