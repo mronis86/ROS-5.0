@@ -3,7 +3,7 @@
   "name": "Resolume Sync",
   "shortname": "ros-resolume",
   "description": "Experimental Run of Show module: sync ROS timers from Resolume clip playback via OSC",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "MIT",
   "repository": "git+https://github.com/bitfocus/companion-module-runofshow.git",
   "bugs": "https://github.com/bitfocus/companion-module-runofshow/issues",

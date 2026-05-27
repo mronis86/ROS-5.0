@@ -96,10 +96,10 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		return Number.isFinite(ms) && ms >= 0 ? ms : 400
 	}
 
-	/** align_zero = snap to 0 and keep running (overtime). stop = legacy hard stop. none = ignore clip end. */
+	/** align_zero = snap to 0 + overtime. stop = stop timer. none = stop timer (do nothing else). keep_running = release lock only. */
 	getClipEndAction() {
 		const a = String(this.config?.clipEndAction || '').trim()
-		if (a === 'stop' || a === 'none') return a
+		if (a === 'stop' || a === 'none' || a === 'keep_running') return a
 		// Legacy checkbox
 		if (this.config?.autoStopAtClipEnd === true || this.config?.autoStopAtClipEnd === 'true') return 'stop'
 		return 'align_zero'
@@ -162,7 +162,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 
 	getPeriodicAlignDriftThreshold() {
 		const s = Number(this.config?.periodicAlignDriftThreshold)
-		return Number.isFinite(s) && s >= 0 ? s : 1
+		return Number.isFinite(s) && s >= 0 ? s : 0
 	}
 
 	getEstimatedDriftSeconds() {
@@ -204,20 +204,41 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		if (sec <= 0) return
 		const self = this
 		this.periodicAlignInterval = setInterval(() => {
-			const arm = self.resolumeArm
-			if (!arm || arm.phase !== 'aligned' || !arm.inferredDuration || arm.endTriggered) return
-			const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
-			const rosRem = self.getRosRemainingSeconds()
-			if (!self.shouldPeriodicRealign(arm)) {
-				const drift =
-					rosRem != null ? Math.round(Math.abs(rosRem - resolumeRem) * 10) / 10 : null
-				self.log('debug', `Periodic skipped (drift ${drift ?? '?'}s < threshold)`)
-				return
+			const run = async () => {
+				const arm = self.resolumeArm
+				if (!arm || arm.phase !== 'aligned' || !arm.inferredDuration || arm.endTriggered) return
+				const eventId = self.config?.eventId
+				if (eventId) {
+					try {
+						await self.fetchActiveTimer(eventId)
+					} catch (_) {}
+				}
+				const nowMs = Date.now()
+				const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
+				const rosRem = self.getRosRemainingSeconds()
+				const threshold = self.getPeriodicAlignDriftThreshold()
+				if (!self.shouldPeriodicRealign(arm)) {
+					const drift =
+						rosRem != null ? Math.round(Math.abs(rosRem - resolumeRem) * 10) / 10 : null
+					self.log(
+						'info',
+						`Periodic skipped (drift ${drift ?? '?'}s < ${threshold}s) — set Re-sync drift to 0 to align every interval`
+					)
+					return
+				}
+				self.log(
+					'info',
+					`Periodic re-sync (interval ${sec}s, drift threshold ${threshold}s, rem ${resolumeRem}s)`
+				)
+				await self.triggerResolumeAlign(
+					arm.inferredDuration,
+					resolumeRem,
+					nowMs,
+					true,
+					'periodic'
+				)
 			}
-			const rem = resolumeRem
-			self.triggerResolumeAlign(arm.inferredDuration, rem, arm.lastPositionMs, true, 'periodic').catch((err) => {
-				self.log('warn', `Periodic align failed: ${err.message}`)
-			})
+			run().catch((err) => self.log('warn', `Periodic align failed: ${err.message}`))
 		}, sec * 1000)
 	}
 
@@ -483,9 +504,13 @@ class RunOfShowResolumeInstance extends InstanceBase {
 					this.triggerClipEndAlignZero().catch((err) => {
 						this.log('error', `Clip end align failed: ${err.message}`)
 					})
-				} else if (action === 'stop') {
+				} else if (action === 'stop' || action === 'none') {
 					this.triggerClipEndStop().catch((err) => {
 						this.log('error', `Clip end stop failed: ${err.message}`)
+					})
+				} else if (action === 'keep_running') {
+					this.triggerClipEndRelease().catch((err) => {
+						this.log('error', `Clip end release failed: ${err.message}`)
 					})
 				}
 			}
@@ -595,6 +620,26 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		}
 	}
 
+	/** Release Resolume lock only; timer keeps running (may show overtime). */
+	async triggerClipEndRelease() {
+		const arm = this.resolumeArm
+		const eventId = this.config?.eventId
+		if (!arm || arm.endTriggered || !eventId) return
+		arm.endTriggered = true
+		try {
+			await this.apiPost('/api/timers/resolume-end', { event_id: eventId })
+			this.stopPeriodicAlign()
+			this.resolumeArm = null
+			this.updateVariableValues()
+			this.checkFeedbacks('resolume_armed', 'resolume_aligned')
+			await this.fetchActiveTimer(eventId)
+			this.log('info', 'Clip ended — released Resolume lock (timer still running)')
+		} catch (err) {
+			arm.endTriggered = false
+			throw err
+		}
+	}
+
 	async triggerResolumeAlign(durationSeconds, remainingSeconds, alignAtMs, isFollowUp = false, reason = 'align') {
 		if (this.alignInFlight || !this.resolumeArm) return
 		this.alignInFlight = true
@@ -611,6 +656,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				durationSeconds,
 				remainingSeconds,
 				alignAtMs: alignAtMs || Date.now(),
+				alignReason: reason,
 			})
 			this.recordSyncSuccess(reason, remainingSeconds, durationSeconds)
 			const drift = this.getEstimatedDriftSeconds()
@@ -627,7 +673,15 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		}
 	}
 
-	async postResolumeAlign({ eventId, itemId, cueIs, durationSeconds, remainingSeconds, alignAtMs }) {
+	async postResolumeAlign({
+		eventId,
+		itemId,
+		cueIs,
+		durationSeconds,
+		remainingSeconds,
+		alignAtMs,
+		alignReason,
+	}) {
 		if (!eventId || !itemId) throw new Error('event_id and item_id required')
 		const alignAt = new Date(alignAtMs || Date.now()).toISOString()
 		await this.apiPost('/api/timers/resolume-sync-align', {
@@ -639,6 +693,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			remaining_seconds: remainingSeconds,
 			align_at: alignAt,
 			latency_compensation_ms: this.getNetworkDelayMs(),
+			align_reason: alignReason || 'align',
 		})
 		await this.fetchActiveTimer(eventId)
 		this.updateVariableValues()
@@ -735,10 +790,10 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				id: 'periodicAlignDriftThreshold',
 				label: 'Re-sync only if drift >= (seconds)',
 				width: 6,
-				default: 1,
+				default: 0,
 				min: 0,
 				max: 30,
-				tooltip: '0 = always re-sync on interval. 1 = only fix when off by 1+ second',
+				tooltip: '0 = re-sync every interval (Run of Show yellow flash each time). 1+ = only when drift is at least this many seconds.',
 			},
 			{
 				type: 'dropdown',
@@ -748,8 +803,9 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				default: 'align_zero',
 				choices: [
 					{ id: 'align_zero', label: 'Sync to 0:00 and keep running (overtime OK)' },
-					{ id: 'stop', label: 'Stop timer' },
-					{ id: 'none', label: 'Do nothing' },
+					{ id: 'stop', label: 'Stop timer at clip end' },
+					{ id: 'none', label: 'Do nothing — stop timer (no overtime)' },
+					{ id: 'keep_running', label: 'Release Resolume lock only (timer keeps running)' },
 				],
 			},
 			{

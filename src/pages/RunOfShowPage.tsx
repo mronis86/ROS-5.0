@@ -889,12 +889,34 @@ const RunOfShowPage: React.FC = () => {
     (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
 
   const shouldTriggerResolumeSyncPulse = (
-    prev: { started_at?: string; duration_seconds?: number; resolume_state?: string; time_source?: string; is_running?: boolean; is_active?: boolean } | null | undefined,
-    next: { started_at?: string; duration_seconds?: number; resolume_state?: string; time_source?: string; is_running?: boolean; is_active?: boolean }
+    prev: {
+      started_at?: string;
+      duration_seconds?: number;
+      resolume_state?: string;
+      time_source?: string;
+      is_running?: boolean;
+      is_active?: boolean;
+      resolume_align_seq?: number;
+    } | null | undefined,
+    next: {
+      started_at?: string;
+      duration_seconds?: number;
+      resolume_state?: string;
+      time_source?: string;
+      is_running?: boolean;
+      is_active?: boolean;
+      resolume_align_seq?: number;
+    }
   ) => {
     if (!isResolumeSynced(next) || !next.is_running || !next.is_active) return false;
     if (!prev) return true;
     if (!isResolumeSynced(prev) && isResolumeSynced(next)) return true;
+    if (
+      next.resolume_align_seq != null &&
+      next.resolume_align_seq !== prev.resolume_align_seq
+    ) {
+      return true;
+    }
     if (prev.started_at !== next.started_at) return true;
     if (prev.duration_seconds !== next.duration_seconds) return true;
     return false;
@@ -9858,7 +9880,7 @@ const RunOfShowPage: React.FC = () => {
                   {isResolumeSynced(hybridTimerData.activeTimer) &&
                     hybridTimerData.activeTimer.is_running &&
                     hybridTimerData.activeTimer.is_active && (
-                    <div className="text-xs text-purple-300/90">Timer locked to clip · may show overtime after 0:00</div>
+                    <div className="text-xs text-purple-300/90">Countdown synced to Resolume clip</div>
                   )}
                   {(hybridTimerData?.secondaryTimer || secondaryTimer) && (
                       <div className="text-lg text-orange-400 mt-0.5 font-bold">

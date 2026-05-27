@@ -56,14 +56,20 @@ const pool = new Pool({
 });
 
 // Resolume sync: in-memory flags (clients use WebSocket timerUpdated)
-const resolumeTimeSourceByEvent = new Map(); // eventId -> { time_source: 'resolume', item_id }
+const resolumeTimeSourceByEvent = new Map(); // eventId -> { time_source, item_id, align_seq, align_reason }
 const resolumePendingByEvent = new Map(); // eventId -> { item_id } — armed, waiting for OSC align
 
 function applyResolumeMeta(eventId, timerRow) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
   const synced = resolumeTimeSourceByEvent.get(eventId);
   if (synced?.time_source === 'resolume') {
-    return { ...timerRow, time_source: 'resolume', resolume_state: 'synced' };
+    return {
+      ...timerRow,
+      time_source: 'resolume',
+      resolume_state: 'synced',
+      resolume_align_seq: synced.align_seq ?? 0,
+      resolume_align_reason: synced.align_reason ?? null,
+    };
   }
   const pending = resolumePendingByEvent.get(eventId);
   const rowItemId = timerRow.item_id != null ? String(timerRow.item_id) : '';
@@ -3526,7 +3532,7 @@ app.post('/api/timers/resolume-disarm', async (req, res) => {
 // Resolume: one-shot align from Companion OSC (low egress — not per-tick HTTP)
 app.post('/api/timers/resolume-sync-align', async (req, res) => {
   try {
-    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id, align_at, latency_compensation_ms } = req.body;
+    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id, align_at, latency_compensation_ms, align_reason } = req.body;
     if (!event_id || item_id == null) {
       return res.status(400).json({ error: 'event_id and item_id are required' });
     }
@@ -3544,12 +3550,20 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
     ).toISOString();
 
     clearResolumePending(event_id);
+    const prevSynced = resolumeTimeSourceByEvent.get(event_id);
+    const alignSeq = (prevSynced?.align_seq || 0) + 1;
+    const reason =
+      typeof align_reason === 'string' && align_reason.trim() ? align_reason.trim() : 'align';
     resolumeTimeSourceByEvent.set(event_id, {
       time_source: 'resolume',
       item_id: parseInt(item_id, 10),
+      align_seq: alignSeq,
+      align_reason: reason,
     });
 
-    console.log(`🎬 Resolume sync-align - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s, latency_ms: ${compensationMs}`);
+    console.log(
+      `🎬 Resolume sync-align #${alignSeq} (${reason}) - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s, latency_ms: ${compensationMs}`
+    );
 
     await pool.query(`
       INSERT INTO active_timers (
@@ -3598,6 +3612,8 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
       remaining_seconds: rem,
       time_source: 'resolume',
       resolume_state: 'synced',
+      resolume_align_seq: alignSeq,
+      resolume_align_reason: reason,
       latency_compensation_ms: compensationMs,
     });
     console.log(`📡 Resolume sync-align broadcast to event:${event_id}`, broadcastData);
