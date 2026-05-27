@@ -15,6 +15,6 @@ cd companion-module-runofshow-resolume
 npm install
 ```
 
-Restart Companion. Add a new connection: **Run of Show (Resolume)**.
+Restart Companion. Add a new connection: **Run of Show: Resolume Sync**.
 
 See `README.md` in this folder for Resolume OSC routing.

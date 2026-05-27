@@ -35,12 +35,39 @@ module.exports = function (self) {
 					min: 1,
 					max: 64,
 				},
+				{
+					id: 'triggerOnArm',
+					type: 'checkbox',
+					label: 'Trigger Resolume on arm',
+					default: true,
+				},
+				{
+					id: 'triggerType',
+					type: 'dropdown',
+					label: 'Trigger target',
+					default: 'clip',
+					choices: [
+						{ id: 'clip', label: 'Clip connect (watch layer/clip)' },
+						{ id: 'column', label: 'Column connect (still watch layer/clip)' },
+					],
+				},
+				{
+					id: 'column',
+					type: 'number',
+					label: 'Resolume column (used when target=column)',
+					default: 1,
+					min: 1,
+					max: 64,
+				},
 			],
 			callback: async (event) => {
 				const eventId = self.config?.eventId
 				const itemId = event.options.itemId
 				const layer = Math.max(1, parseInt(event.options.layer, 10) || 1)
 				const clip = Math.max(1, parseInt(event.options.clip, 10) || 1)
+				const triggerOnArm = event.options.triggerOnArm === true
+				const triggerType = event.options.triggerType === 'column' ? 'column' : 'clip'
+				const column = Math.max(1, parseInt(event.options.column, 10) || 1)
 				if (!eventId || !itemId) {
 					self.log('warn', 'Arm Resolume: Event ID and Cue are required')
 					return
@@ -48,10 +75,16 @@ module.exports = function (self) {
 				try {
 					await self.loadCueForResolume(eventId, itemId)
 					self.setResolumeArm({ itemId: String(itemId), layer, clip })
+					if (triggerOnArm) {
+						self.sendResolumeTrigger({ triggerType, layer, clip, column })
+					}
 					self.ensureOscListener()
 					self.updateVariableValues()
 					self.checkFeedbacks('resolume_armed')
-					self.log('info', `Resolume sync armed for cue ${itemId} (layer ${layer}, clip ${clip})`)
+					self.log(
+						'info',
+						`Resolume sync armed for cue ${itemId} (watch L${layer} C${clip}${triggerOnArm ? `; trigger ${triggerType}${triggerType === 'column' ? ` ${column}` : ''}` : ''})`
+					)
 				} catch (err) {
 					self.log('error', `Arm Resolume failed: ${err.message}`)
 				}

@@ -1,4 +1,4 @@
-# Run of Show (Resolume) – Help
+# Run of Show: Resolume Sync – Help
 
 Experimental module. Use alongside or instead of the standard Run of Show module for Resolume timer tests only.
 

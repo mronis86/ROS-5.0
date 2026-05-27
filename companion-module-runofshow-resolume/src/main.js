@@ -6,10 +6,12 @@ const UpdateVariableDefinitions = require('./variables')
 const {
 	positionAddress,
 	connectAddress,
+	columnConnectAddress,
 	matchesAddress,
 	inferDurationFromSamples,
 	remainingFromPosition,
 	createUdpPort,
+	sendOsc,
 } = require('./resolumeOsc')
 
 class RunOfShowResolumeInstance extends InstanceBase {
@@ -71,6 +73,29 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	getSampleDelayMs() {
 		const ms = parseInt(this.config?.sampleDelayMs, 10)
 		return Number.isFinite(ms) && ms >= 50 ? ms : 120
+	}
+
+	getResolumeSendHost() {
+		const host = String(this.config?.resolumeSendHost || '').trim()
+		return host || '127.0.0.1'
+	}
+
+	getResolumeSendPort() {
+		const p = parseInt(this.config?.resolumeSendPort, 10)
+		return Number.isFinite(p) && p > 0 ? p : 7000
+	}
+
+	sendResolumeTrigger({ triggerType, layer, clip, column }) {
+		const host = this.getResolumeSendHost()
+		const port = this.getResolumeSendPort()
+		let address = ''
+		if (triggerType === 'column') {
+			address = columnConnectAddress(Math.max(1, parseInt(column, 10) || 1))
+		} else {
+			address = connectAddress(Math.max(1, parseInt(layer, 10) || 1), Math.max(1, parseInt(clip, 10) || 1))
+		}
+		sendOsc(host, port, address, 1)
+		this.log('info', `Sent Resolume OSC trigger -> ${host}:${port} ${address}`)
 	}
 
 	async fetch(url, options = {}) {
@@ -361,6 +386,24 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				max: 2000,
 				tooltip: 'Wait this long after clip play before inferring duration from position slope',
 			},
+			{
+				type: 'textinput',
+				id: 'resolumeSendHost',
+				label: 'Resolume target host (for trigger on arm)',
+				width: 8,
+				default: '127.0.0.1',
+				tooltip: 'IP/hostname of Resolume machine to send OSC trigger (clip/column connect)',
+			},
+			{
+				type: 'number',
+				id: 'resolumeSendPort',
+				label: 'Resolume target port (for trigger on arm)',
+				width: 4,
+				default: 7000,
+				min: 1,
+				max: 65535,
+				tooltip: 'OSC input port in Resolume',
+			},
 		]
 	}
 
@@ -377,13 +420,13 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	updatePresets() {
-		this.setPresetDefinitions({
-			arm_resolume: {
+		const presets = {
+			arm_resolume_generic: {
 				type: 'button',
 				category: 'Resolume',
-				name: 'Arm Resolume sync',
+				name: 'Arm Resolume sync (select cue)',
 				style: {
-					text: 'Arm\nResolume',
+					text: 'Arm+Load\n(Select Cue)',
 					size: 'auto',
 					color: combineRgb(255, 255, 255),
 					bgcolor: combineRgb(90, 40, 120),
@@ -395,7 +438,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 						style: { bgcolor: combineRgb(160, 80, 200), color: combineRgb(255, 255, 255) },
 					},
 				],
-				steps: [{ down: [{ actionId: 'arm_resolume_sync', options: { itemId: '', layer: 1, clip: 1 } }], up: [] }],
+				steps: [{ down: [{ actionId: 'arm_resolume_sync', options: { itemId: '', layer: 1, clip: 1, triggerOnArm: true, triggerType: 'clip', column: 1 } }], up: [] }],
 			},
 			disarm_resolume: {
 				type: 'button',
@@ -423,7 +466,33 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				feedbacks: [],
 				steps: [{ down: [{ actionId: 'end_resolume_sync', options: {} }], up: [] }],
 			},
-		})
+		}
+
+		// One ready-to-use Arm+Load preset per cue (no manual cue option editing needed)
+		for (const item of this.scheduleItems || []) {
+			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
+			presets[`arm_cue_${item.id}`] = {
+				type: 'button',
+				category: 'Resolume Cues',
+				name: `Arm + Load ${cueDisplay}`,
+				style: {
+					text: `${cueDisplay}\nArm+Load`,
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(75, 40, 120),
+				},
+				feedbacks: [
+					{
+						feedbackId: 'resolume_armed',
+						options: {},
+						style: { bgcolor: combineRgb(160, 80, 200), color: combineRgb(255, 255, 255) },
+					},
+				],
+				steps: [{ down: [{ actionId: 'arm_resolume_sync', options: { itemId: String(item.id), layer: 1, clip: 1, triggerOnArm: true, triggerType: 'clip', column: 1 } }], up: [] }],
+			}
+		}
+
+		this.setPresetDefinitions(presets)
 	}
 
 	updateVariableDefinitions() {

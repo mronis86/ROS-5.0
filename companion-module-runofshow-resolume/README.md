@@ -19,7 +19,7 @@ Point **Developer → Module path** at the **parent folder** that contains both 
 C:\Users\audre\OneDrive\Desktop\ROS-5.0
 ```
 
-You should see **Run of Show** and **Run of Show (Resolume)** as separate instances.
+You should see **Run of Show: Run of Show** and **Run of Show: Resolume Sync** as separate modules.
 
 ### 2. Install dependencies
 
