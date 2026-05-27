@@ -26,6 +26,12 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.lastInferredDuration = null
 		this.alignInFlight = false
 		this.periodicAlignInterval = null
+		this.lastSyncAt = null
+		this.lastSyncReason = ''
+		this.lastSyncRemaining = null
+		this.syncCount = 0
+		this.syncPulseActive = false
+		this.syncPulseTimeout = null
 	}
 
 	async init(config) {
@@ -34,6 +40,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 
 	async destroy() {
 		this.stopPeriodicAlign()
+		if (this.syncPulseTimeout) clearTimeout(this.syncPulseTimeout)
 		this.closeOscListener()
 		this.resolumeArm = null
 	}
@@ -100,7 +107,47 @@ class RunOfShowResolumeInstance extends InstanceBase {
 
 	getNetworkDelayMs() {
 		const ms = parseInt(this.config?.networkDelayMs, 10)
-		return Number.isFinite(ms) && ms >= 0 ? Math.min(5000, ms) : 800
+		return Number.isFinite(ms) && ms >= 0 ? Math.min(15000, ms) : 800
+	}
+
+	getScheduleDurationSeconds(itemId) {
+		const item = this.scheduleItems.find((s) => String(s.id) === String(itemId))
+		if (!item) return null
+		const d =
+			(item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
+		return d > 0 ? d : null
+	}
+
+	resolveClipDuration(arm) {
+		const fromSamples = inferDurationFromSamples(arm.samples)
+		if (fromSamples) return { duration: fromSamples, source: 'osc-slope' }
+		const schedule =
+			arm.scheduleDurationSeconds ||
+			this.getScheduleDurationSeconds(arm.itemId) ||
+			(this.activeTimer?.duration_seconds > 0 ? this.activeTimer.duration_seconds : null)
+		if (schedule) return { duration: schedule, source: 'schedule' }
+		return null
+	}
+
+	recordSyncSuccess(reason, remainingSeconds, durationSeconds) {
+		this.lastSyncAt = Date.now()
+		this.lastSyncReason = reason
+		this.lastSyncRemaining = remainingSeconds
+		this.lastInferredDuration = durationSeconds
+		this.syncCount = (this.syncCount || 0) + 1
+		if (this.resolumeArm) {
+			this.resolumeArm.phase = 'aligned'
+			this.resolumeArm.inferredDuration = durationSeconds
+		}
+		this.updateVariableValues()
+		this.checkFeedbacks('resolume_armed', 'resolume_aligned', 'resolume_sync_pulse')
+		if (this.syncPulseTimeout) clearTimeout(this.syncPulseTimeout)
+		this.syncPulseActive = true
+		this.checkFeedbacks('resolume_sync_pulse')
+		this.syncPulseTimeout = setTimeout(() => {
+			this.syncPulseActive = false
+			this.checkFeedbacks('resolume_sync_pulse')
+		}, 2000)
 	}
 
 	getClipEndPositionThreshold() {
@@ -116,6 +163,15 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	getPeriodicAlignDriftThreshold() {
 		const s = Number(this.config?.periodicAlignDriftThreshold)
 		return Number.isFinite(s) && s >= 0 ? s : 1
+	}
+
+	getEstimatedDriftSeconds() {
+		const arm = this.resolumeArm
+		if (!arm?.inferredDuration || arm.lastPosition == null) return null
+		const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
+		const rosRem = this.getRosRemainingSeconds()
+		if (rosRem == null) return null
+		return Math.round((rosRem - resolumeRem) * 10) / 10
 	}
 
 	getRosRemainingSeconds() {
@@ -150,8 +206,15 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.periodicAlignInterval = setInterval(() => {
 			const arm = self.resolumeArm
 			if (!arm || arm.phase !== 'aligned' || !arm.inferredDuration || arm.endTriggered) return
-			if (!self.shouldPeriodicRealign(arm)) return
-			const rem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
+			const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
+			const rosRem = self.getRosRemainingSeconds()
+			if (!self.shouldPeriodicRealign(arm)) {
+				const drift =
+					rosRem != null ? Math.round(Math.abs(rosRem - resolumeRem) * 10) / 10 : null
+				self.log('debug', `Periodic skipped (drift ${drift ?? '?'}s < threshold)`)
+				return
+			}
+			const rem = resolumeRem
 			self.triggerResolumeAlign(arm.inferredDuration, rem, arm.lastPositionMs, true, 'periodic').catch((err) => {
 				self.log('warn', `Periodic align failed: ${err.message}`)
 			})
@@ -312,6 +375,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	setResolumeArm({ itemId, layer, clip }) {
+		const scheduleDurationSeconds = this.getScheduleDurationSeconds(itemId)
 		this.resolumeArm = {
 			itemId: String(itemId),
 			layer,
@@ -319,15 +383,22 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			phase: 'idle',
 			samples: [],
 			sampleStartMs: 0,
+			scheduleDurationSeconds,
 			inferredDuration: null,
 			lastPosition: 0,
 			lastPositionMs: 0,
 			endTriggered: false,
 			followUpScheduled: false,
+			usedScheduleFallback: false,
+			oscMsgCount: 0,
 			positionAddress: positionAddress(layer, clip),
 			connectAddress: connectAddress(layer, clip),
 		}
 		this.alignInFlight = false
+		this.log(
+			'info',
+			`Watching OSC: ${positionAddress(layer, clip)} (cue duration ${scheduleDurationSeconds ?? 'unknown'}s)`
+		)
 	}
 
 	async clearResolumeArm() {
@@ -374,6 +445,11 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		const value = args[0]?.value
 		const arm = this.resolumeArm
 
+		arm.oscMsgCount = (arm.oscMsgCount || 0) + 1
+		if (arm.oscMsgCount <= 5) {
+			this.log('info', `OSC #${arm.oscMsgCount}: ${address} = ${value}`)
+		}
+
 		if (matchesAddress(address, arm.connectAddress) && Number(value) >= 1) {
 			if (arm.phase === 'aligned') return
 			arm.phase = 'sampling'
@@ -393,6 +469,14 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		arm.lastPositionMs = nowMs
 
 		if (arm.phase === 'aligned') {
+			arm.refineSamples = arm.refineSamples || []
+			arm.refineSamples.push({ timeMs: nowMs, position })
+			if (arm.refineSamples.length > 20) arm.refineSamples.shift()
+			const refined = inferDurationFromSamples(arm.refineSamples)
+			if (refined && Math.abs(refined - (arm.inferredDuration || 0)) >= 2) {
+				arm.inferredDuration = refined
+				this.lastInferredDuration = refined
+			}
 			if (!arm.endTriggered && position >= this.getClipEndPositionThreshold()) {
 				const action = this.getClipEndAction()
 				if (action === 'align_zero') {
@@ -419,13 +503,28 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		if (arm.phase !== 'sampling') return
 
 		arm.samples.push({ timeMs: nowMs, position })
-		if (nowMs - arm.sampleStartMs < this.getSampleDelayMs()) return
+		const windowMs = this.getSampleDelayMs()
+		const elapsed = nowMs - arm.sampleStartMs
+		const resolved = this.resolveClipDuration(arm)
+		if (!resolved) {
+			if (elapsed > 2500 && !arm.alignTimeoutLogged) {
+				arm.alignTimeoutLogged = true
+				this.log(
+					'warn',
+					`No align yet — check Resolume OSC out → this PC port ${this.getOscListenPort()}, layer ${arm.layer} clip ${arm.clip}`
+				)
+			}
+			return
+		}
+		if (resolved.source === 'osc-slope' && elapsed < windowMs) return
+		if (resolved.source === 'schedule' && elapsed < 40) return
+		if (resolved.source === 'schedule' && !arm.usedScheduleFallback) {
+			arm.usedScheduleFallback = true
+			this.log('info', `Sync using cue duration ${resolved.duration}s (waiting for OSC slope to refine)`)
+		}
 
-		const duration = inferDurationFromSamples(arm.samples)
-		if (!duration) return
-
-		const remaining = remainingFromPositionPrecise(duration, position, false)
-		this.triggerResolumeAlign(duration, remaining, nowMs, false, 'initial').catch((err) => {
+		const remaining = remainingFromPositionPrecise(resolved.duration, position, false)
+		this.triggerResolumeAlign(resolved.duration, remaining, nowMs, false, 'initial').catch((err) => {
 			this.log('error', `Resolume align failed: ${err.message}`)
 			arm.phase = 'idle'
 			this.alignInFlight = false
@@ -513,14 +612,11 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				remainingSeconds,
 				alignAtMs: alignAtMs || Date.now(),
 			})
-			this.lastInferredDuration = durationSeconds
-			this.resolumeArm.phase = 'aligned'
-			this.resolumeArm.inferredDuration = durationSeconds
-			this.updateVariableValues()
-			this.checkFeedbacks('resolume_armed', 'resolume_aligned')
+			this.recordSyncSuccess(reason, remainingSeconds, durationSeconds)
+			const drift = this.getEstimatedDriftSeconds()
 			this.log(
 				'info',
-				`[${reason}] aligned: ${remainingSeconds}s remaining (duration ${durationSeconds}s)`
+				`[${reason}] SYNC #${this.syncCount} @ ${new Date().toLocaleTimeString()} — ${remainingSeconds}s left (dur ${durationSeconds}s)${drift != null ? `, drift ${drift}s` : ''}`
 			)
 			if (!isFollowUp) {
 				this.scheduleFollowUpAlign()
@@ -599,10 +695,10 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				id: 'sampleDelayMs',
 				label: 'Duration sample window (ms)',
 				width: 6,
-				default: 80,
+				default: 120,
 				min: 30,
 				max: 2000,
-				tooltip: 'Wait this long after clip play before first align (lower = faster, may be less accurate)',
+				tooltip: 'Wait after play before first align. With cue duration, sync can happen sooner; slope needs ~2 OSC samples.',
 			},
 			{
 				type: 'number',
@@ -673,8 +769,9 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				width: 6,
 				default: 800,
 				min: 0,
-				max: 5000,
-				tooltip: 'Subtract from started_at so web clocks catch up after HTTP/WebSocket delay',
+				max: 15000,
+				tooltip:
+					'Subtract from started_at on each sync. If ROS shows MORE time than Resolume, lower this. If LESS, raise it (try 500–1500 first, not 3000).',
 			},
 			{
 				type: 'textinput',
@@ -706,7 +803,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	checkAllFeedbacks() {
-		this.checkFeedbacks('resolume_armed', 'resolume_aligned')
+		this.checkFeedbacks('resolume_armed', 'resolume_aligned', 'resolume_sync_pulse')
 	}
 
 	updatePresets() {
@@ -731,6 +828,11 @@ class RunOfShowResolumeInstance extends InstanceBase {
 						feedbackId: 'resolume_aligned',
 						options: {},
 						style: { bgcolor: combineRgb(0, 140, 60), color: combineRgb(255, 255, 255) },
+					},
+					{
+						feedbackId: 'resolume_sync_pulse',
+						options: {},
+						style: { bgcolor: combineRgb(0, 180, 220), color: combineRgb(0, 0, 0) },
 					},
 				],
 				steps: [{ down: [{ actionId: 'arm_resolume_sync', options: { itemId: '', layer: 1, clip: 1, triggerOnArm: true, triggerType: 'clip', column: 1 } }], up: [] }],
@@ -787,6 +889,11 @@ class RunOfShowResolumeInstance extends InstanceBase {
 						options: {},
 						style: { bgcolor: combineRgb(0, 140, 60), color: combineRgb(255, 255, 255) },
 					},
+					{
+						feedbackId: 'resolume_sync_pulse',
+						options: {},
+						style: { bgcolor: combineRgb(0, 180, 220), color: combineRgb(0, 0, 0) },
+					},
 				],
 				steps: [{ down: [{ actionId: 'arm_resolume_sync', options: { itemId: String(item.id), layer: 1, clip: 1, triggerOnArm: true, triggerType: 'clip', column: 1 } }], up: [] }],
 			}
@@ -807,11 +914,26 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			? this.formatCueDisplay(currentItem.customFields?.cue ?? this.activeTimer?.cue_is, currentItem.id)
 			: (this.activeTimer?.cue_is ?? '—')
 
+		const phase = this.resolumeArm?.phase ?? 'off'
+		const statusMap = {
+			off: 'Off',
+			idle: 'Armed — waiting for playback',
+			sampling: 'Receiving OSC — locking…',
+			aligned: 'Locked to Resolume',
+		}
+		const drift = this.getEstimatedDriftSeconds()
+
 		this.setVariableValues({
 			resolume_armed: this.resolumeArm ? 'Yes' : 'No',
+			resolume_sync_status: this.resolumeArm ? statusMap[phase] || phase : 'Off',
 			resolume_layer: this.resolumeArm ? String(this.resolumeArm.layer) : '—',
 			resolume_clip: this.resolumeArm ? String(this.resolumeArm.clip) : '—',
 			resolume_inferred_duration: this.lastInferredDuration != null ? String(this.lastInferredDuration) : '—',
+			last_sync_at: this.lastSyncAt ? new Date(this.lastSyncAt).toLocaleTimeString() : '—',
+			last_sync_reason: this.lastSyncReason || '—',
+			sync_count: String(this.syncCount || 0),
+			last_sync_remaining: this.lastSyncRemaining != null ? String(this.lastSyncRemaining) : '—',
+			estimated_drift: drift != null ? `${drift}s` : '—',
 			current_cue: cueLabel,
 			timer_running: this.activeTimer?.is_running === true ? 'Yes' : 'No',
 			event_name: event?.name ?? '—',

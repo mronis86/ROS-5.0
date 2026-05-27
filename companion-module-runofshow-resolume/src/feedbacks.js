@@ -24,5 +24,16 @@ module.exports = async function (self) {
 			options: [],
 			callback: () => self.resolumeArm?.phase === 'aligned',
 		},
+		resolume_sync_pulse: {
+			name: 'Resolume just synced (2s flash)',
+			type: 'boolean',
+			label: 'Resolume sync pulse',
+			defaultStyle: {
+				bgcolor: combineRgb(0, 180, 220),
+				color: combineRgb(0, 0, 0),
+			},
+			options: [],
+			callback: () => self.syncPulseActive === true,
+		},
 	})
 }

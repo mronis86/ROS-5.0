@@ -161,7 +161,8 @@ module.exports = function (self) {
 						durationSeconds: dur,
 						remainingSeconds: rem,
 					})
-					self.log('info', `Manual align: ${rem}s remaining of ${dur}s`)
+					self.recordSyncSuccess('manual', rem, dur)
+					self.log('info', `Manual align: ${rem}s remaining of ${dur}s (button should turn green)`)
 				} catch (err) {
 					self.log('error', `Manual align failed: ${err.message}`)
 				}

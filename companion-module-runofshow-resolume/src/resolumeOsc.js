@@ -23,7 +23,7 @@ function inferDurationFromSamples(samples) {
 	const last = samples[samples.length - 1]
 	const deltaPos = last.position - first.position
 	const deltaMs = last.timeMs - first.timeMs
-	if (deltaPos <= 0.0005 || deltaMs < 50) return null
+	if (deltaPos <= 0.0001 || deltaMs < 30) return null
 	const duration = (deltaMs / 1000) / deltaPos
 	if (!Number.isFinite(duration) || duration < 1 || duration > 86400) return null
 	return Math.round(duration)

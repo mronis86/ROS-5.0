@@ -721,6 +721,9 @@ const RunOfShowPage: React.FC = () => {
   
   // ClockPage-style hybrid timer data for real-time updates
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  /** Brief yellow flash when Resolume align updates arrive via WebSocket */
+  const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
+  const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
@@ -884,6 +887,36 @@ const RunOfShowPage: React.FC = () => {
   const isResolumeSynced = (timer: { resolume_state?: string; time_source?: string } | null | undefined) =>
     timer?.resolume_state === 'synced' ||
     (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
+
+  const shouldTriggerResolumeSyncPulse = (
+    prev: { started_at?: string; duration_seconds?: number; resolume_state?: string; time_source?: string; is_running?: boolean; is_active?: boolean } | null | undefined,
+    next: { started_at?: string; duration_seconds?: number; resolume_state?: string; time_source?: string; is_running?: boolean; is_active?: boolean }
+  ) => {
+    if (!isResolumeSynced(next) || !next.is_running || !next.is_active) return false;
+    if (!prev) return true;
+    if (!isResolumeSynced(prev) && isResolumeSynced(next)) return true;
+    if (prev.started_at !== next.started_at) return true;
+    if (prev.duration_seconds !== next.duration_seconds) return true;
+    return false;
+  };
+
+  const triggerResolumeSyncPulse = useCallback(() => {
+    setResolumeSyncPulse(true);
+    if (resolumeSyncPulseTimeoutRef.current) clearTimeout(resolumeSyncPulseTimeoutRef.current);
+    resolumeSyncPulseTimeoutRef.current = setTimeout(() => setResolumeSyncPulse(false), 2000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (resolumeSyncPulseTimeoutRef.current) clearTimeout(resolumeSyncPulseTimeoutRef.current);
+    };
+  }, []);
+
+  const isResolumeSyncPulseActive = Boolean(
+    resolumeSyncPulse &&
+      isResolumeSynced(hybridTimerData?.activeTimer) &&
+      hybridTimerData?.activeTimer?.is_running
+  );
 
   const formatCueDisplay = (cue: string | number | undefined) => {
     if (!cue && cue !== 0) return 'CUE';
@@ -5413,10 +5446,15 @@ const RunOfShowPage: React.FC = () => {
         console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
         if (data && data.event_id === event?.id) {
           // Update hybrid timer data directly from WebSocket (ClockPage style)
-          setHybridTimerData(prev => ({
-            ...prev,
-            activeTimer: data
-          }));
+          setHybridTimerData(prev => {
+            if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, data)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
+            }
+            return {
+              ...prev,
+              activeTimer: data,
+            };
+          });
           
           // Update timer progress for smooth UI updates
           if (data.item_id) {
@@ -9776,9 +9814,11 @@ const RunOfShowPage: React.FC = () => {
                   <div className="flex flex-col items-center gap-0.5">
                   <div className={`text-lg font-bold ${
                     hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? isResolumeSynced(hybridTimerData.activeTimer)
-                        ? 'text-purple-400'
-                        : 'text-green-400'
+                      ? isResolumeSyncPulseActive
+                        ? 'text-yellow-300'
+                        : isResolumeSynced(hybridTimerData.activeTimer)
+                          ? 'text-purple-400'
+                          : 'text-green-400'
                       : isResolumeArmed(hybridTimerData.activeTimer)
                         ? 'text-purple-300'
                         : 'text-yellow-400'

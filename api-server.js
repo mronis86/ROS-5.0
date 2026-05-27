@@ -3538,7 +3538,7 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
     const rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
     const elapsed = dur - rem; // fractional OK — tighter started_at
     const alignMs = align_at ? new Date(align_at).getTime() : Date.now();
-    const compensationMs = Math.max(0, Math.min(5000, parseInt(latency_compensation_ms, 10) || 0));
+    const compensationMs = Math.max(0, Math.min(15000, parseInt(latency_compensation_ms, 10) || 0));
     const startedAt = new Date(
       (Number.isFinite(alignMs) ? alignMs : Date.now()) - elapsed * 1000 - compensationMs
     ).toISOString();
