@@ -29,17 +29,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	async init(config) {
-		this.config = config
-		this.updateStatus(InstanceStatus.Connecting)
-		await this.fetchData()
-		this.updateActions()
-		this.updateFeedbacks()
-		this.updatePresets()
-		this.updateVariableDefinitions()
-		this.updateVariableValues()
-		this.checkAllFeedbacks()
-		this.ensureOscListener()
-		this.updateStatus(InstanceStatus.Ok)
+		await this.applyConfig(config, true)
 	}
 
 	async destroy() {
@@ -49,13 +39,29 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	async configUpdated(config) {
+		await this.applyConfig(config, false)
+	}
+
+	/** Fast init: OSC first, API fetch with timeout so Companion does not hang on "Connecting". */
+	async applyConfig(config, isFirstInit) {
 		this.config = config
 		this.updateStatus(InstanceStatus.Connecting)
-		await this.fetchData()
-		this.closeOscListener()
-		this.ensureOscListener()
+		if (isFirstInit) {
+			this.ensureOscListener()
+		} else {
+			this.closeOscListener()
+			this.ensureOscListener()
+		}
+		try {
+			await this.fetchData()
+		} catch (err) {
+			this.log(
+				'warn',
+				`API fetch failed (${err.message}). Check API URL + Event ID. OSC listener is still active.`
+			)
+		}
 		this.updateActions()
-		this.updateFeedbacks()
+		await this.updateFeedbacks()
 		this.updatePresets()
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
@@ -175,30 +181,41 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.log('info', `Sent Resolume OSC trigger -> ${host}:${port} ${address}`)
 	}
 
+	getFetchTimeoutMs() {
+		const ms = parseInt(this.config?.apiFetchTimeoutMs, 10)
+		return Number.isFinite(ms) && ms >= 2000 ? Math.min(ms, 30000) : 8000
+	}
+
 	async fetch(url, options = {}) {
 		const baseUrl = this.getApiUrl()
 		const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`
-		const res = await fetch(fullUrl, {
-			...options,
-			headers: { 'Content-Type': 'application/json', ...options.headers },
-		})
-		if (!res.ok) throw new Error(`HTTP ${res.status}`)
-		const text = await res.text()
-		return text ? JSON.parse(text) : null
+		const timeoutMs = this.getFetchTimeoutMs()
+		const controller = new AbortController()
+		const timer = setTimeout(() => controller.abort(), timeoutMs)
+		try {
+			const res = await fetch(fullUrl, {
+				...options,
+				signal: controller.signal,
+				headers: { 'Content-Type': 'application/json', ...options.headers },
+			})
+			if (!res.ok) throw new Error(`HTTP ${res.status}`)
+			const text = await res.text()
+			return text ? JSON.parse(text) : null
+		} catch (err) {
+			if (err?.name === 'AbortError') {
+				throw new Error(`Request timed out after ${timeoutMs}ms`)
+			}
+			throw err
+		} finally {
+			clearTimeout(timer)
+		}
 	}
 
 	async apiPost(path, body) {
-		const baseUrl = this.getApiUrl()
-		const res = await fetch(`${baseUrl}${path}`, {
+		return this.fetch(path, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
 		})
-		if (!res.ok) {
-			const err = await res.text()
-			throw new Error(err || `HTTP ${res.status}`)
-		}
-		return res.json().catch(() => ({}))
 	}
 
 	async fetchEvents() {
@@ -237,15 +254,12 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			this.events = []
 			this.scheduleItems = []
 			this.activeTimer = null
+			this.log('warn', 'Event ID is empty — set Event ID in module config to load cues')
 			return
 		}
-		try {
-			await this.fetchEvents()
-			await this.fetchRunOfShow(eventId, this.config?.day || 1)
-			await this.fetchActiveTimer(eventId)
-		} catch (err) {
-			this.log('error', `Failed to fetch data: ${err.message}`)
-		}
+		await this.fetchEvents()
+		await this.fetchRunOfShow(eventId, this.config?.day || 1)
+		await this.fetchActiveTimer(eventId)
 	}
 
 	formatCueDisplay(raw, itemId) {
@@ -322,21 +336,19 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.resolumeArm = null
 		this.alignInFlight = false
 		if (eventId) {
-			try {
-				await this.apiPost('/api/timers/resolume-disarm', { event_id: eventId })
-			} catch (_) {}
+			this.apiPost('/api/timers/resolume-disarm', { event_id: eventId }).catch(() => {})
 		}
 		this.updateVariableValues()
 		this.checkFeedbacks('resolume_armed', 'resolume_aligned')
 	}
 
 	closeOscListener() {
-		if (this.oscPort) {
-			try {
-				this.oscPort.close()
-			} catch (_) {}
-			this.oscPort = null
-		}
+		const port = this.oscPort
+		this.oscPort = null
+		if (!port) return
+		try {
+			port.close()
+		} catch (_) {}
 	}
 
 	ensureOscListener() {
@@ -544,7 +556,17 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				label: 'API Base URL',
 				width: 12,
 				default: 'https://ros-50-production.up.railway.app',
-				tooltip: 'Run of Show Railway API URL',
+				tooltip: 'Run of Show Railway API URL (must include new resolume-* routes)',
+			},
+			{
+				type: 'number',
+				id: 'apiFetchTimeoutMs',
+				label: 'API fetch timeout (ms)',
+				width: 6,
+				default: 8000,
+				min: 2000,
+				max: 30000,
+				tooltip: 'Prevents Companion stuck on Connecting if Railway is slow',
 			},
 			{
 				type: 'textinput',
@@ -679,8 +701,8 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		UpdateActions(this)
 	}
 
-	updateFeedbacks() {
-		UpdateFeedbacks(this)
+	async updateFeedbacks() {
+		await UpdateFeedbacks(this)
 	}
 
 	checkAllFeedbacks() {
