@@ -160,11 +160,6 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		return Number.isFinite(s) && s >= 0 ? s : 10
 	}
 
-	getPeriodicAlignDriftThreshold() {
-		const s = Number(this.config?.periodicAlignDriftThreshold)
-		return Number.isFinite(s) && s >= 0 ? s : 0
-	}
-
 	getEstimatedDriftSeconds() {
 		const arm = this.resolumeArm
 		if (!arm?.inferredDuration || arm.lastPosition == null) return null
@@ -180,15 +175,6 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		const startedMs = new Date(t.started_at).getTime()
 		if (!Number.isFinite(startedMs) || startedMs > Date.now() + 86400000) return null
 		return Math.max(0, t.duration_seconds - (Date.now() - startedMs) / 1000)
-	}
-
-	shouldPeriodicRealign(arm) {
-		const threshold = this.getPeriodicAlignDriftThreshold()
-		if (threshold <= 0) return true
-		const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
-		const rosRem = this.getRosRemainingSeconds()
-		if (rosRem == null) return true
-		return Math.abs(rosRem - resolumeRem) >= threshold
 	}
 
 	stopPeriodicAlign() {
@@ -216,19 +202,13 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				const nowMs = Date.now()
 				const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
 				const rosRem = self.getRosRemainingSeconds()
-				const threshold = self.getPeriodicAlignDriftThreshold()
-				if (!self.shouldPeriodicRealign(arm)) {
-					const drift =
-						rosRem != null ? Math.round(Math.abs(rosRem - resolumeRem) * 10) / 10 : null
-					self.log(
-						'info',
-						`Periodic skipped (drift ${drift ?? '?'}s < ${threshold}s) — set Re-sync drift to 0 to align every interval`
-					)
-					return
-				}
+				const drift =
+					rosRem != null
+						? Math.round(Math.abs(rosRem - resolumeRem) * 10) / 10
+						: null
 				self.log(
 					'info',
-					`Periodic re-sync (interval ${sec}s, drift threshold ${threshold}s, rem ${resolumeRem}s)`
+					`Periodic re-sync every ${sec}s (rem ${resolumeRem}s${drift != null ? `, drift ${drift}s` : ''})`
 				)
 				await self.triggerResolumeAlign(
 					arm.inferredDuration,
@@ -783,17 +763,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				default: 10,
 				min: 0,
 				max: 120,
-				tooltip: '0 = off. Re-check Resolume vs clock every N seconds while armed',
-			},
-			{
-				type: 'number',
-				id: 'periodicAlignDriftThreshold',
-				label: 'Re-sync only if drift >= (seconds)',
-				width: 6,
-				default: 0,
-				min: 0,
-				max: 30,
-				tooltip: '0 = re-sync every interval (Run of Show yellow flash each time). 1+ = only when drift is at least this many seconds.',
+				tooltip: '0 = off. Re-sync and Run of Show yellow flash every N seconds while clip is playing',
 			},
 			{
 				type: 'dropdown',
