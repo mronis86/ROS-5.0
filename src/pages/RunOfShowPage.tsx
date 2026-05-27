@@ -875,8 +875,15 @@ const RunOfShowPage: React.FC = () => {
   
   // Helper function to format cue display with proper spacing
   /** True when timer is driven by Resolume OSC sync (from WebSocket timerUpdated). */
-  const isResolumeTimerSource = (timer: { time_source?: string } | null | undefined) =>
+  const isResolumeTimerSource = (timer: { time_source?: string; resolume_state?: string } | null | undefined) =>
     timer?.time_source === 'resolume';
+
+  const isResolumeArmed = (timer: { resolume_state?: string } | null | undefined) =>
+    timer?.resolume_state === 'armed';
+
+  const isResolumeSynced = (timer: { resolume_state?: string; time_source?: string } | null | undefined) =>
+    timer?.resolume_state === 'synced' ||
+    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
 
   const formatCueDisplay = (cue: string | number | undefined) => {
     if (!cue && cue !== 0) return 'CUE';
@@ -8253,13 +8260,21 @@ const RunOfShowPage: React.FC = () => {
       if (isHybridRunning) {
         classNames.set(
           item.id,
-          isResolumeTimerSource(hybridTimerData?.activeTimer)
+          isResolumeSynced(hybridTimerData?.activeTimer)
             ? 'bg-purple-950 ring-1 ring-inset ring-purple-500'
             : 'bg-green-950'
         );
         return;
       }
-      if (isHybridLoaded) { classNames.set(item.id, 'bg-blue-950'); return; }
+      if (isHybridLoaded) {
+        classNames.set(
+          item.id,
+          isResolumeArmed(hybridTimerData?.activeTimer)
+            ? 'bg-purple-950/60 ring-1 ring-inset ring-purple-400'
+            : 'bg-blue-950'
+        );
+        return;
+      }
       if (completedCues[item.id]) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
       if (stoppedItems.has(item.id)) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
       if (loadedCueDependents.has(item.id)) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
@@ -9758,18 +9773,23 @@ const RunOfShowPage: React.FC = () => {
             <div className="flex items-center gap-6">
               <div className="text-center">
                 {hybridTimerData?.activeTimer ? (
+                  <div className="flex flex-col items-center gap-0.5">
                   <div className={`text-lg font-bold ${
                     hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? isResolumeTimerSource(hybridTimerData.activeTimer)
+                      ? isResolumeSynced(hybridTimerData.activeTimer)
                         ? 'text-purple-400'
                         : 'text-green-400'
-                      : 'text-yellow-400'
+                      : isResolumeArmed(hybridTimerData.activeTimer)
+                        ? 'text-purple-300'
+                        : 'text-yellow-400'
                   }`}>
                     {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? isResolumeTimerSource(hybridTimerData.activeTimer)
+                      ? isResolumeSynced(hybridTimerData.activeTimer)
                         ? 'RUNNING · RESOLUME'
                         : 'RUNNING'
-                      : 'LOADED'
+                      : isResolumeArmed(hybridTimerData.activeTimer)
+                        ? 'LOADED · RESOLUME (armed)'
+                        : 'LOADED'
                     } - {(() => {
                       // Try to find the schedule item with proper type conversion
                       const itemId = hybridTimerData.activeTimer.item_id;
@@ -9791,7 +9811,16 @@ const RunOfShowPage: React.FC = () => {
                         return `CUE ${itemId}`;
                       }
                     })()}
-                    {(hybridTimerData?.secondaryTimer || secondaryTimer) && (
+                  </div>
+                  {isResolumeArmed(hybridTimerData.activeTimer) && (
+                    <div className="text-xs text-purple-300/90">Waiting for Resolume playback…</div>
+                  )}
+                  {isResolumeSynced(hybridTimerData.activeTimer) &&
+                    hybridTimerData.activeTimer.is_running &&
+                    hybridTimerData.activeTimer.is_active && (
+                    <div className="text-xs text-purple-300/90">Timer locked to clip · may show overtime after 0:00</div>
+                  )}
+                  {(hybridTimerData?.secondaryTimer || secondaryTimer) && (
                       <div className="text-lg text-orange-400 mt-0.5 font-bold">
                         {(() => {
                           // Debug: Log sub-cue timer data
@@ -11403,11 +11432,17 @@ const RunOfShowPage: React.FC = () => {
                      (parseInt(String(hybridItemId), 10) === item.id ||
                        hybridItemId === item.id ||
                        String(hybridItemId) === String(item.id));
+                   const isResolumeArmedRow = Boolean(
+                     isTimerRowMatch &&
+                       hybridTimerData?.activeTimer?.is_active &&
+                       !hybridTimerData?.activeTimer?.is_running &&
+                       isResolumeArmed(hybridTimerData?.activeTimer)
+                   );
                    const isResolumeRunningRow = Boolean(
                      isTimerRowMatch &&
                        hybridTimerData?.activeTimer?.is_running &&
                        hybridTimerData?.activeTimer?.is_active &&
-                       isResolumeTimerSource(hybridTimerData?.activeTimer)
+                       isResolumeSynced(hybridTimerData?.activeTimer)
                    );
                    return (
                    <div 
@@ -11415,9 +11450,11 @@ const RunOfShowPage: React.FC = () => {
                      className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${
                        isResolumeRunningRow
                          ? 'bg-purple-950 ring-1 ring-inset ring-purple-500'
-                         : index % 2 === 0
-                           ? 'bg-slate-800'
-                           : 'bg-slate-900'
+                         : isResolumeArmedRow
+                           ? 'bg-purple-950/60 ring-1 ring-inset ring-purple-400'
+                           : index % 2 === 0
+                             ? 'bg-slate-800'
+                             : 'bg-slate-900'
                      }`}
                      style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
                    >

@@ -55,16 +55,22 @@ const pool = new Pool({
   allowExitOnIdle: true
 });
 
-// Resolume sync: time_source per event (in-memory; clients use WebSocket timerUpdated)
+// Resolume sync: in-memory flags (clients use WebSocket timerUpdated)
 const resolumeTimeSourceByEvent = new Map(); // eventId -> { time_source: 'resolume', item_id }
+const resolumePendingByEvent = new Map(); // eventId -> { item_id } — armed, waiting for OSC align
 
 function applyResolumeMeta(eventId, timerRow) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
-  const meta = resolumeTimeSourceByEvent.get(eventId);
-  return {
-    ...timerRow,
-    time_source: meta?.time_source === 'resolume' ? 'resolume' : 'schedule',
-  };
+  const synced = resolumeTimeSourceByEvent.get(eventId);
+  if (synced?.time_source === 'resolume') {
+    return { ...timerRow, time_source: 'resolume', resolume_state: 'synced' };
+  }
+  const pending = resolumePendingByEvent.get(eventId);
+  const rowItemId = timerRow.item_id != null ? String(timerRow.item_id) : '';
+  if (pending && rowItemId === String(pending.item_id)) {
+    return { ...timerRow, time_source: 'resolume', resolume_state: 'armed' };
+  }
+  return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
 }
 
 function broadcastTimerUpdated(eventId, timerRow) {
@@ -75,6 +81,15 @@ function broadcastTimerUpdated(eventId, timerRow) {
 
 function clearResolumeTimeSource(eventId) {
   resolumeTimeSourceByEvent.delete(eventId);
+}
+
+function clearResolumePending(eventId) {
+  resolumePendingByEvent.delete(eventId);
+}
+
+function clearAllResolumeState(eventId) {
+  clearResolumeTimeSource(eventId);
+  clearResolumePending(eventId);
 }
 
 // Upstash Redis REST API helper - for caching graphics data
@@ -3224,7 +3239,7 @@ app.post('/api/cues/load', async (req, res) => {
     const { event_id, item_id, user_id, duration_seconds, row_is, cue_is, timer_id } = req.body;
     
     console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}, Cue: ${cue_is}`);
-    clearResolumeTimeSource(event_id);
+    clearAllResolumeState(event_id);
     
     // ONLY write to active_timers table (like Supabase RPC did)
     // Match the EXACT same fields as React app's /api/active-timers endpoint
@@ -3337,7 +3352,7 @@ app.post('/api/timers/stop', async (req, res) => {
     const { event_id, item_id } = req.body;
     
     console.log(`⏹️ OSC: Stopping timer - Event: ${event_id}, Item: ${item_id}`);
-    clearResolumeTimeSource(event_id);
+    clearAllResolumeState(event_id);
     
     // Get timer data BEFORE stopping to calculate overtime
     const timerBeforeStop = await pool.query(
@@ -3424,7 +3439,7 @@ app.post('/api/timers/reset', async (req, res) => {
     const { event_id, item_id } = req.body;
     
     console.log(`🔄 OSC: Resetting timer - Event: ${event_id}`);
-    clearResolumeTimeSource(event_id);
+    clearAllResolumeState(event_id);
     
     // Clear all timer tables (like old Supabase reset did)
     // DO NOT touch run_of_show_data table
@@ -3468,10 +3483,50 @@ app.post('/api/timers/reset', async (req, res) => {
   }
 });
 
+// Resolume: mark cue armed (loaded, waiting for OSC) — UI shows "armed" on Run of Show
+app.post('/api/timers/resolume-arm', async (req, res) => {
+  try {
+    const { event_id, item_id } = req.body;
+    if (!event_id || item_id == null) {
+      return res.status(400).json({ error: 'event_id and item_id are required' });
+    }
+    clearResolumeTimeSource(event_id);
+    resolumePendingByEvent.set(event_id, { item_id: parseInt(item_id, 10) });
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    const timerData = timerResult.rows[0];
+    if (timerData) broadcastTimerUpdated(event_id, timerData);
+    res.json({ success: true, event_id, item_id: parseInt(item_id, 10), resolume_state: 'armed' });
+  } catch (error) {
+    console.error('Error in resolume-arm:', error);
+    res.status(500).json({ error: 'Failed to resolume-arm', details: error.message });
+  }
+});
+
+app.post('/api/timers/resolume-disarm', async (req, res) => {
+  try {
+    const { event_id } = req.body;
+    if (!event_id) return res.status(400).json({ error: 'event_id is required' });
+    clearAllResolumeState(event_id);
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    const timerData = timerResult.rows[0];
+    if (timerData) broadcastTimerUpdated(event_id, timerData);
+    res.json({ success: true, event_id });
+  } catch (error) {
+    console.error('Error in resolume-disarm:', error);
+    res.status(500).json({ error: 'Failed to resolume-disarm', details: error.message });
+  }
+});
+
 // Resolume: one-shot align from Companion OSC (low egress — not per-tick HTTP)
 app.post('/api/timers/resolume-sync-align', async (req, res) => {
   try {
-    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id, align_at } = req.body;
+    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id, align_at, latency_compensation_ms } = req.body;
     if (!event_id || item_id == null) {
       return res.status(400).json({ error: 'event_id and item_id are required' });
     }
@@ -3483,9 +3538,18 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
     const rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
     const elapsed = dur - rem; // fractional OK — tighter started_at
     const alignMs = align_at ? new Date(align_at).getTime() : Date.now();
-    const startedAt = new Date((Number.isFinite(alignMs) ? alignMs : Date.now()) - elapsed * 1000).toISOString();
+    const compensationMs = Math.max(0, Math.min(5000, parseInt(latency_compensation_ms, 10) || 0));
+    const startedAt = new Date(
+      (Number.isFinite(alignMs) ? alignMs : Date.now()) - elapsed * 1000 - compensationMs
+    ).toISOString();
 
-    console.log(`🎬 Resolume sync-align - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s`);
+    clearResolumePending(event_id);
+    resolumeTimeSourceByEvent.set(event_id, {
+      time_source: 'resolume',
+      item_id: parseInt(item_id, 10),
+    });
+
+    console.log(`🎬 Resolume sync-align - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s, latency_ms: ${compensationMs}`);
 
     await pool.query(`
       INSERT INTO active_timers (
@@ -3518,11 +3582,6 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
       startedAt,
     ]);
 
-    resolumeTimeSourceByEvent.set(event_id, {
-      time_source: 'resolume',
-      item_id: parseInt(item_id, 10),
-    });
-
     const timerResult = await pool.query(
       'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
       [event_id]
@@ -3538,6 +3597,8 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
       duration_seconds: dur,
       remaining_seconds: rem,
       time_source: 'resolume',
+      resolume_state: 'synced',
+      latency_compensation_ms: compensationMs,
     });
     console.log(`📡 Resolume sync-align broadcast to event:${event_id}`, broadcastData);
   } catch (error) {
@@ -3553,8 +3614,8 @@ app.post('/api/timers/resolume-end', async (req, res) => {
     if (!event_id) {
       return res.status(400).json({ error: 'event_id is required' });
     }
-    clearResolumeTimeSource(event_id);
-    console.log(`🎬 Resolume end - cleared time_source for event: ${event_id}`);
+    clearAllResolumeState(event_id);
+    console.log(`🎬 Resolume end - cleared Resolume state for event: ${event_id}`);
 
     const timerResult = await pool.query(
       'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',

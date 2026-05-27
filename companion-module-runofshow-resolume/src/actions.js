@@ -75,6 +75,7 @@ module.exports = function (self) {
 				try {
 					await self.loadCueForResolume(eventId, itemId)
 					self.setResolumeArm({ itemId: String(itemId), layer, clip })
+					await self.notifyResolumeArm(itemId)
 					if (triggerOnArm) {
 						self.sendResolumeTrigger({ triggerType, layer, clip, column })
 					}
@@ -94,7 +95,7 @@ module.exports = function (self) {
 			name: 'Disarm Resolume sync',
 			options: [],
 			callback: async () => {
-				self.clearResolumeArm()
+				await self.clearResolumeArm()
 				self.log('info', 'Resolume sync disarmed')
 			},
 		},
@@ -106,7 +107,7 @@ module.exports = function (self) {
 				if (!eventId) return
 				try {
 					await self.apiPost('/api/timers/resolume-end', { event_id: eventId })
-					self.clearResolumeArm()
+					await self.clearResolumeArm()
 					self.log('info', 'Resolume time source cleared')
 				} catch (err) {
 					self.log('error', `End Resolume sync failed: ${err.message}`)
@@ -204,7 +205,7 @@ module.exports = function (self) {
 						event_id: eventId,
 						item_id: parseInt(itemId, 10),
 					})
-					self.clearResolumeArm()
+					await self.clearResolumeArm()
 					await self.fetchActiveTimer(eventId)
 					self.updateVariableValues()
 					self.log('info', 'Timer stopped')

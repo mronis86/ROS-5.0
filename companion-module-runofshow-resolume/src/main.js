@@ -83,9 +83,18 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		return Number.isFinite(ms) && ms >= 0 ? ms : 400
 	}
 
-	getAutoStopAtClipEnd() {
-		const v = this.config?.autoStopAtClipEnd
-		return v !== false && v !== 'false'
+	/** align_zero = snap to 0 and keep running (overtime). stop = legacy hard stop. none = ignore clip end. */
+	getClipEndAction() {
+		const a = String(this.config?.clipEndAction || '').trim()
+		if (a === 'stop' || a === 'none') return a
+		// Legacy checkbox
+		if (this.config?.autoStopAtClipEnd === true || this.config?.autoStopAtClipEnd === 'true') return 'stop'
+		return 'align_zero'
+	}
+
+	getNetworkDelayMs() {
+		const ms = parseInt(this.config?.networkDelayMs, 10)
+		return Number.isFinite(ms) && ms >= 0 ? Math.min(5000, ms) : 800
 	}
 
 	getClipEndPositionThreshold() {
@@ -275,6 +284,19 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.updateVariableValues()
 	}
 
+	async notifyResolumeArm(itemId) {
+		const eventId = this.config?.eventId
+		if (!eventId || !itemId) return
+		try {
+			await this.apiPost('/api/timers/resolume-arm', {
+				event_id: eventId,
+				item_id: parseInt(itemId, 10),
+			})
+		} catch (err) {
+			this.log('warn', `resolume-arm notify failed: ${err.message}`)
+		}
+	}
+
 	setResolumeArm({ itemId, layer, clip }) {
 		this.resolumeArm = {
 			itemId: String(itemId),
@@ -294,10 +316,16 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.alignInFlight = false
 	}
 
-	clearResolumeArm() {
+	async clearResolumeArm() {
 		this.stopPeriodicAlign()
+		const eventId = this.config?.eventId
 		this.resolumeArm = null
 		this.alignInFlight = false
+		if (eventId) {
+			try {
+				await this.apiPost('/api/timers/resolume-disarm', { event_id: eventId })
+			} catch (_) {}
+		}
 		this.updateVariableValues()
 		this.checkFeedbacks('resolume_armed', 'resolume_aligned')
 	}
@@ -353,10 +381,17 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		arm.lastPositionMs = nowMs
 
 		if (arm.phase === 'aligned') {
-			if (this.getAutoStopAtClipEnd() && !arm.endTriggered && position >= this.getClipEndPositionThreshold()) {
-				this.triggerClipEndStop().catch((err) => {
-					this.log('error', `Clip end stop failed: ${err.message}`)
-				})
+			if (!arm.endTriggered && position >= this.getClipEndPositionThreshold()) {
+				const action = this.getClipEndAction()
+				if (action === 'align_zero') {
+					this.triggerClipEndAlignZero().catch((err) => {
+						this.log('error', `Clip end align failed: ${err.message}`)
+					})
+				} else if (action === 'stop') {
+					this.triggerClipEndStop().catch((err) => {
+						this.log('error', `Clip end stop failed: ${err.message}`)
+					})
+				}
 			}
 			return
 		}
@@ -407,6 +442,27 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				const rem = remainingFromPositionPrecise(a.inferredDuration, a.lastPosition, false)
 				self.triggerResolumeAlign(a.inferredDuration, rem, a.lastPositionMs, true, 'follow-up-2').catch(() => {})
 			}, extraMs)
+		}
+	}
+
+	async triggerClipEndAlignZero() {
+		const arm = this.resolumeArm
+		const eventId = this.config?.eventId
+		if (!arm || arm.endTriggered || !eventId || !arm.inferredDuration) return
+		arm.endTriggered = true
+		const dur = arm.inferredDuration
+		try {
+			await this.triggerResolumeAlign(dur, 0, arm.lastPositionMs || Date.now(), true, 'clip-end')
+			await this.apiPost('/api/timers/resolume-end', { event_id: eventId })
+			this.stopPeriodicAlign()
+			this.resolumeArm = null
+			this.updateVariableValues()
+			this.checkFeedbacks('resolume_armed', 'resolume_aligned')
+			await this.fetchActiveTimer(eventId)
+			this.log('info', `Clip ended — timer synced to 0 (overtime allowed)`)
+		} catch (err) {
+			arm.endTriggered = false
+			throw err
 		}
 	}
 
@@ -474,6 +530,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			duration_seconds: durationSeconds,
 			remaining_seconds: remainingSeconds,
 			align_at: alignAt,
+			latency_compensation_ms: this.getNetworkDelayMs(),
 		})
 		await this.fetchActiveTimer(eventId)
 		this.updateVariableValues()
@@ -566,11 +623,16 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				tooltip: '0 = always re-sync on interval. 1 = only fix when off by 1+ second',
 			},
 			{
-				type: 'checkbox',
-				id: 'autoStopAtClipEnd',
-				label: 'Auto stop timer when clip reaches end',
+				type: 'dropdown',
+				id: 'clipEndAction',
+				label: 'When clip reaches end',
 				width: 12,
-				default: true,
+				default: 'align_zero',
+				choices: [
+					{ id: 'align_zero', label: 'Sync to 0:00 and keep running (overtime OK)' },
+					{ id: 'stop', label: 'Stop timer' },
+					{ id: 'none', label: 'Do nothing' },
+				],
 			},
 			{
 				type: 'number',
@@ -580,7 +642,17 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				default: 0.995,
 				min: 0.9,
 				max: 1,
-				tooltip: 'When OSC position reaches this, stop timer and clear Resolume sync',
+				tooltip: 'When OSC position reaches this, run clip-end action',
+			},
+			{
+				type: 'number',
+				id: 'networkDelayMs',
+				label: 'Network delay compensation (ms)',
+				width: 6,
+				default: 800,
+				min: 0,
+				max: 5000,
+				tooltip: 'Subtract from started_at so web clocks catch up after HTTP/WebSocket delay',
 			},
 			{
 				type: 'textinput',
