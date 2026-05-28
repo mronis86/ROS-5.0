@@ -47,8 +47,15 @@ const ScheduleXMLPage: React.FC = () => {
     try {
       const itemIndex = scheduleItems.indexOf(currentItem);
       
-      // If indented, no start time
-      if (currentItem.isIndented) return '';
+      // Indented rows share the parent row's start time
+      if (currentItem.isIndented) {
+        for (let j = itemIndex - 1; j >= 0; j--) {
+          if (!scheduleItems[j].isIndented) {
+            return calculateStartTime(scheduleItems, scheduleItems[j], masterStartTime);
+          }
+        }
+        return '';
+      }
       
       // Calculate total seconds up to this item
       let totalSeconds = 0;

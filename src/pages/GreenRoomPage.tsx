@@ -6,6 +6,10 @@ import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
+import {
+  findParentScheduleIndex,
+  isIndentedScheduleItem,
+} from '../lib/scheduleStartTime';
 
 interface ScheduleItem {
   id: number;
@@ -211,11 +215,18 @@ const GreenRoomPage: React.FC = () => {
       console.log(`❌ No current item at index ${index}`);
       return '';
     }
-    
+
+    const currentIndentedCues = indentedCuesData || indentedCues;
+
+    if (isIndentedScheduleItem(currentItem, currentIndentedCues)) {
+      const parentIndex = findParentScheduleIndex(currentSchedule, index, currentIndentedCues);
+      if (parentIndex < 0) return '';
+      return calculateStartTime(parentIndex, scheduleData, masterStartTimeOverride, indentedCuesData);
+    }
+
     // Get the appropriate start time for this day
     const itemDay = currentItem.day || 1;
     const effectiveMasterStartTime = masterStartTimeOverride || (dayStartTimes[itemDay] || masterStartTime);
-    const currentIndentedCues = indentedCuesData || indentedCues;
     
     // Removed verbose logging to prevent console spam
     // console.log(`🔄 calculateStartTime called for index ${index} (day ${itemDay}):`, {
@@ -241,7 +252,7 @@ const GreenRoomPage: React.FC = () => {
       
       const itemItemDay = item.day || 1;
       // Only count items from the same day and non-indented items
-      if (itemItemDay === itemDay && !currentIndentedCues[item.id]) {
+      if (itemItemDay === itemDay && !isIndentedScheduleItem(item, currentIndentedCues)) {
         const durationHours = item.durationHours || 0;
         const durationMinutes = item.durationMinutes || 0;
         const itemMinutes = (durationHours * 60) + durationMinutes;
@@ -285,7 +296,21 @@ const GreenRoomPage: React.FC = () => {
     const currentShowStartOvertime = showStartOvertimeData !== undefined ? (showStartOvertimeData || 0) : showStartOvertime;
     const currentStartCueId = startCueIdData !== undefined ? startCueIdData : startCueId;
     const currentIndentedCues = indentedCuesData || indentedCues;
-    
+
+    if (isIndentedScheduleItem(currentItem, currentIndentedCues)) {
+      const parentIndex = findParentScheduleIndex(currentSchedule, index, currentIndentedCues);
+      if (parentIndex < 0) return '';
+      return calculateStartTimeWithOvertime(
+        parentIndex,
+        scheduleData,
+        masterStartTimeOverride,
+        overtimeData,
+        showStartOvertimeData,
+        startCueIdData,
+        indentedCuesData
+      );
+    }
+
     // Get the base start time (pass indentedCuesData so it can filter correctly)
     const baseStartTime = calculateStartTime(index, scheduleData, masterStartTimeOverride, currentIndentedCues);
     if (!baseStartTime) {
@@ -310,7 +335,7 @@ const GreenRoomPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && !currentIndentedCues[item.id]) {
+      if (itemDay === currentItemDay && !isIndentedScheduleItem(item, currentIndentedCues)) {
         const itemOvertime = currentOvertimeMinutes[item.id] || 0;
         totalOvertimeMinutes += itemOvertime;
         // Removed verbose logging to prevent console spam
@@ -1192,7 +1217,7 @@ const GreenRoomPage: React.FC = () => {
           let nextItemIndex = index + 1;
           while (nextItemIndex < schedule.length) {
             const nextItem = schedule[nextItemIndex];
-            if (nextItem && !indentedCues[nextItem.id]) {
+              if (nextItem && !isIndentedScheduleItem(nextItem, freshIndentedCues)) {
               const nextItemDay = nextItem.day || 1;
               const nextDaySpecificStartTime = dayStartTimes[nextItemDay] || masterStartTime;
               const nextStartTime = calculateStartTimeWithOvertime(

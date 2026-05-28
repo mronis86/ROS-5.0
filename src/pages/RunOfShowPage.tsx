@@ -24,6 +24,10 @@ import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
+import {
+  findParentScheduleIndex,
+  isIndentedScheduleItem,
+} from '../lib/scheduleStartTime';
 
 // Speaker interface/type definition
 interface Speaker {
@@ -1785,7 +1789,7 @@ const RunOfShowPage: React.FC = () => {
     // Look backwards through the schedule to find the first non-indented item
     for (let i = currentIndex - 1; i >= 0; i--) {
       const candidateParent = schedule[i];
-      if (!indentedCues[candidateParent.id]) {
+      if (!isIndentedScheduleItem(candidateParent, indentedCues)) {
         return candidateParent.id;
       }
     }
@@ -8001,12 +8005,14 @@ const RunOfShowPage: React.FC = () => {
   const calculateStartTime = (index: number) => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
-    
-    // If this item is indented, return empty string (no start time)
-    if (indentedCues[currentItem.id]) {
-      return '';
+
+    // Indented rows (e.g. sub-breakouts) share the parent row's start time
+    if (isIndentedScheduleItem(currentItem, indentedCues)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      if (parentIndex < 0) return '';
+      return calculateStartTime(parentIndex);
     }
-    
+
     // Get the appropriate start time for this day
     const itemDay = currentItem.day || 1;
     const startTime = dayStartTimes[itemDay] || masterStartTime;
@@ -8019,7 +8025,7 @@ const RunOfShowPage: React.FC = () => {
     for (let i = 0; i < index; i++) {
       const item = schedule[i];
       // Only count items from the same day and non-indented items
-      if ((item.day || 1) === itemDay && !indentedCues[item.id]) {
+      if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedCues)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     }
@@ -8069,10 +8075,9 @@ const RunOfShowPage: React.FC = () => {
       const originalIndex = schedule.findIndex(s => s.id === item.id);
       const calculatedStartTime = calculateStartTime(originalIndex);
       const duration = `${item.durationHours}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
-      let startTime = '';
+      let startTime = calculatedStartTime || '';
       let endTime = '';
       if (!item.isIndented) {
-        startTime = calculatedStartTime || '';
         endTime = (() => {
           let nextNonIndentedItem: ScheduleItem | null = null;
           let nextIndex = index + 1;
@@ -8148,12 +8153,13 @@ const RunOfShowPage: React.FC = () => {
   const calculateStartTimeWithOvertime = (index: number) => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
-    
-    // If this item is indented, return empty string (no start time)
-    if (indentedCues[currentItem.id]) {
-      return '';
+
+    if (isIndentedScheduleItem(currentItem, indentedCues)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      if (parentIndex < 0) return '';
+      return calculateStartTimeWithOvertime(parentIndex);
     }
-    
+
     // Get the base start time
     const baseStartTime = calculateStartTime(index);
     if (!baseStartTime) return '';
@@ -8172,16 +8178,16 @@ const RunOfShowPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && !indentedCues[item.id]) {
+      if (itemDay === currentItemDay && !isIndentedScheduleItem(item, indentedCues)) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
-    
+
     // Add show start overtime for START cue and all rows after it
     if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
       totalOvertimeMinutes += showStartOvertime;
     }
-    
+
     // If no overtime, return the base start time
     if (totalOvertimeMinutes === 0) {
       return baseStartTime;
@@ -8220,8 +8226,8 @@ const RunOfShowPage: React.FC = () => {
     schedule.forEach((item, index) => {
       let totalOvertime = 0;
       
-      // Skip indented items - they don't have cumulative overtime
-      if (indentedCues[item.id]) {
+      // Indented items use parent start time; no separate cumulative overtime
+      if (isIndentedScheduleItem(item, indentedCues)) {
         overtimeMap.set(item.id, 0);
         return;
       }
@@ -8235,19 +8241,19 @@ const RunOfShowPage: React.FC = () => {
         const prevItemDay = prevItem.day || 1;
         
         // Only count overtime from the same day and non-indented items
-        if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+        if (prevItemDay === currentItemDay && !isIndentedScheduleItem(prevItem, indentedCues)) {
           totalOvertime += overtimeMinutes[prevItem.id] || 0;
         }
       }
-      
+
       // Add show start overtime for START cue and all rows after it
       if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
         totalOvertime += showStartOvertime;
       }
-      
+
       overtimeMap.set(item.id, totalOvertime);
     });
-    
+
     return overtimeMap;
   }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime]);
 

@@ -463,15 +463,26 @@ const ReportsPage: React.FC = () => {
   // Calculate start time function (simple - no overtime adjustments for print reports)
   const calculateStartTime = (index: number) => {
     console.log(`calculateStartTime called with index: ${index}, masterStartTime: ${masterStartTime}`);
-    
+
     if (!masterStartTime) {
       console.log('No master start time, returning empty string');
       return '';
     }
-    
+
+    const currentItem = schedule[index];
+    if (currentItem?.isIndented) {
+      for (let j = index - 1; j >= 0; j--) {
+        if (!schedule[j].isIndented) {
+          return calculateStartTime(j);
+        }
+      }
+      return '';
+    }
+
     let totalMinutes = 0;
     for (let i = 0; i < index; i++) {
       const item = schedule[i];
+      if (item.isIndented) continue;
       totalMinutes += (item.durationHours * 60) + item.durationMinutes;
     }
     

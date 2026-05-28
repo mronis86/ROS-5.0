@@ -119,7 +119,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.start && (() => {
         const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
         const displayedStart = calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : null;
-        const startTimeRolled = !indentedCues[item.id] && showMode === 'in-show' && scheduledStart && displayedStart && scheduledStart !== displayedStart;
+        const isIndentedRow = Boolean(indentedCues[item.id] || item.isIndented);
+        const startTimeRolled = !isIndentedRow && showMode === 'in-show' && scheduledStart && displayedStart && scheduledStart !== displayedStart;
         return (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
@@ -127,18 +128,18 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         >
           <div className="flex flex-col items-center gap-1">
             <span className="text-white font-mono text-base font-bold">
-              {indentedCues[item.id]
-                ? '↘'
-                : (calculateStartTime && calculateStartTimeWithOvertime
-                    ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index))
-                    : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1)))}
+              {calculateStartTime && calculateStartTimeWithOvertime
+                ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)) || (isIndentedRow ? '↘' : '')
+                : isIndentedRow
+                  ? '↘'
+                  : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1))}
             </span>
             {startTimeRolled && scheduledStart && (
               <span className="text-xs text-slate-400">
                 was {scheduledStart}
               </span>
             )}
-            {!indentedCues[item.id] && showMode !== 'rehearsal' && (
+            {!isIndentedRow && showMode !== 'rehearsal' && (
               (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) ||
                (calculateStartTime && calculateStartTimeWithOvertime &&
                 String(calculateStartTime(index)) !== String(calculateStartTimeWithOvertime(index))))

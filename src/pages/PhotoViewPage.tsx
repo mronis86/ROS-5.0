@@ -7,6 +7,10 @@ import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { supabase } from '../services/supabase'; // REMOVED: Using WebSocket-only approach
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
+import {
+  findParentScheduleIndex,
+  isIndentedScheduleItem,
+} from '../lib/scheduleStartTime';
 
 interface ScheduleItem {
   id: number;
@@ -189,11 +193,12 @@ const PhotoViewPage: React.FC = () => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
     
-    // If this item is indented, return empty string (no start time)
-    if (indentedCues[currentItem.id]) {
-      return '';
+    if (isIndentedScheduleItem(currentItem, indentedCues)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      if (parentIndex < 0) return '';
+      return calculateStartTime(parentIndex);
     }
-    
+
     // Get the appropriate start time for this day
     const itemDay = currentItem.day || 1;
     const startTime = dayStartTimes[itemDay] || masterStartTime;
@@ -216,27 +221,27 @@ const PhotoViewPage: React.FC = () => {
     for (let i = 0; i < index; i++) {
       const item = schedule[i];
       // Only count items from the same day and non-indented items
-      if ((item.day || 1) === itemDay && !indentedCues[item.id]) {
+      if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedCues)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     }
-    
+
     const [hours, minutes] = startTime.split(':').map(Number);
     const startSeconds = hours * 3600 + minutes * 60;
     const totalStartSeconds = startSeconds + totalSeconds;
-    
+
     const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
     const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
-    
+
     // Convert to 12-hour format
     const date = new Date();
     date.setHours(finalHours, finalMinutes, 0, 0);
-    const result = date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
+    const result = date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
       minute: '2-digit',
-      hour12: true 
+      hour12: true
     });
-    
+
     console.log('🔄 PhotoView: calculateStartTime result for index', index, ':', {
       finalHours,
       finalMinutes,
@@ -251,11 +256,12 @@ const PhotoViewPage: React.FC = () => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
     
-    // If this item is indented, return empty string (no start time)
-    if (indentedCues[currentItem.id]) {
-      return '';
+    if (isIndentedScheduleItem(currentItem, indentedCues)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      if (parentIndex < 0) return '';
+      return calculateStartTimeWithOvertime(parentIndex);
     }
-    
+
     // Get the base start time
     const baseStartTime = calculateStartTime(index);
     if (!baseStartTime) {
@@ -279,7 +285,7 @@ const PhotoViewPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && !indentedCues[item.id]) {
+      if (itemDay === currentItemDay && !isIndentedScheduleItem(item, indentedCues)) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
@@ -2071,7 +2077,7 @@ const PhotoViewPage: React.FC = () => {
                       <div className="mb-4">
                         <div className="text-gray-400 text-xs mb-1">START TIME</div>
                         <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>
-                          {indentedCues[item.id] ? '↘' : (startTime || 'No Time')}
+                          {startTime || (indentedCues[item.id] ? '↘' : 'No Time')}
                         </div>
                         {startTimeRolled && scheduledStart && (
                           <div className="text-xs text-slate-400">was {scheduledStart}</div>
@@ -2091,7 +2097,7 @@ const PhotoViewPage: React.FC = () => {
                                 const prevItem = schedule[i];
                                 const prevItemDay = prevItem.day || 1;
                                 const currentItemDay = item.day || 1;
-                                if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                if (prevItemDay === currentItemDay && !isIndentedScheduleItem(prevItem, indentedCues)) {
                                   totalOvertime += overtimeMinutes[prevItem.id] || 0;
                                 }
                               }
@@ -2131,7 +2137,7 @@ const PhotoViewPage: React.FC = () => {
                                 const prevItem = schedule[i];
                                 const prevItemDay = prevItem.day || 1;
                                 const currentItemDay = item.day || 1;
-                                if (prevItemDay === currentItemDay && !indentedCues[prevItem.id]) {
+                                if (prevItemDay === currentItemDay && !isIndentedScheduleItem(prevItem, indentedCues)) {
                                   totalOvertime += overtimeMinutes[prevItem.id] || 0;
                                 }
                               }

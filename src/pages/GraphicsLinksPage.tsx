@@ -423,10 +423,21 @@ const GraphicsLinksPage: React.FC = () => {
     // Calculate start time function
     const calculateStartTime = (index: number) => {
       if (!masterStartTime) return '';
-      
+
+      const current = currentSchedule[index];
+      if (current?.isIndented) {
+        for (let j = index - 1; j >= 0; j--) {
+          if (!currentSchedule[j]?.isIndented) {
+            return calculateStartTime(j);
+          }
+        }
+        return '';
+      }
+
       let totalMinutes = 0;
       for (let i = 0; i < index; i++) {
         const item = currentSchedule[i];
+        if (item?.isIndented) continue;
         totalMinutes += (item.durationHours * 60) + item.durationMinutes;
       }
       
