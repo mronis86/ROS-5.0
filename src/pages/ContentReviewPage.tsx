@@ -628,6 +628,22 @@ const ContentReviewPage: React.FC = () => {
 
   const eventId = event?.id || eventIdParam || '';
 
+  const goBackFromContentReview = useCallback(() => {
+    if (eventId) {
+      navigate('/run-of-show', {
+        state: {
+          event: {
+            ...event,
+            id: eventId,
+            name: event.name || eventNameParam || 'Event',
+          },
+        },
+      });
+      return;
+    }
+    navigate('/');
+  }, [event, eventId, eventNameParam, navigate]);
+
   const streamFromQuery = useMemo(
     () => embedUrlFromSearchParam(searchParams.get('streamUrl')),
     [searchParams]
@@ -1887,9 +1903,10 @@ const ContentReviewPage: React.FC = () => {
         <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-2 md:gap-3">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={goBackFromContentReview}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-slate-800 hover:text-white"
-            aria-label="Go back"
+            aria-label="Back to Run of Show"
+            title="Back to Run of Show"
           >
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />

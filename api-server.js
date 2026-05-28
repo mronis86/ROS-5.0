@@ -2471,17 +2471,8 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
       return res.status(400).json({ error: 'duration_seconds must be a positive number' });
     }
 
-    // 1. Update the timer duration (counter)
-    const result = await pool.query(
-      'UPDATE active_timers SET duration_seconds = $1, updated_at = NOW() WHERE event_id = $2 AND item_id = $3',
-      [duration_seconds, eventId, itemIdNum]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Active timer not found' });
-    }
-
-    // 2. Update the schedule row duration (run_of_show_data.schedule_items) so the row shows the new duration
+    // 1. Update the schedule row duration (run_of_show_data.schedule_items) so the row shows the new duration
+    let scheduleUpdated = false;
     const totalSec = Math.floor(Number(duration_seconds)) || 0;
     const durationHours = Math.floor(totalSec / 3600);
     const durationMinutes = Math.floor((totalSec % 3600) / 60);
@@ -2513,9 +2504,10 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
               : it
           );
           await pool.query(
-            "UPDATE run_of_show_data SET schedule_items = $2, last_modified_by = 'companion', updated_at = NOW() WHERE event_id = $1",
+            "UPDATE run_of_show_data SET schedule_items = $2, last_modified_by = 'companion-resolume', updated_at = NOW() WHERE event_id = $1",
             [eventId, JSON.stringify(updated)]
           );
+          scheduleUpdated = true;
           const savedRow = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
           if (savedRow.rows[0]) {
             const payload = savedRow.rows[0];
@@ -2533,7 +2525,17 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
       }
     }
 
-    // Get the updated timer data with server-calculated elapsed_seconds
+    if (!scheduleUpdated) {
+      return res.status(404).json({ error: 'Schedule item not found for this event' });
+    }
+
+    // 2. Update active timer counter when one is loaded for this cue (optional)
+    const result = await pool.query(
+      'UPDATE active_timers SET duration_seconds = $1, updated_at = NOW() WHERE event_id = $2 AND item_id = $3',
+      [duration_seconds, eventId, itemIdNum]
+    );
+
+    // Get the updated timer data with server-calculated elapsed_seconds (if any)
     const timerResult = await pool.query(
       `SELECT *, 
         CASE 
@@ -2546,26 +2548,27 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
       [eventId, itemIdNum]
     );
 
-    const timerData = {
-      ...timerResult.rows[0],
-      elapsed_seconds: timerResult.rows[0].server_elapsed_seconds
-    };
+    let timerData = null;
+    if (timerResult.rows[0]) {
+      timerData = {
+        ...timerResult.rows[0],
+        elapsed_seconds: timerResult.rows[0].server_elapsed_seconds
+      };
+      broadcastUpdate(eventId, 'timerUpdated', timerData);
+    }
 
-    console.log('⏱️ Timer duration updated (counter + row) - broadcasting:', {
+    console.log('⏱️ Timer duration updated (row' + (timerData ? ' + active timer' : ' only') + '):', {
       itemId,
       duration_seconds,
       durationHours,
       durationMinutes,
       durationSeconds,
-      elapsed_seconds: timerData.elapsed_seconds,
-      is_running: timerData.is_running
     });
-
-    broadcastUpdate(eventId, 'timerUpdated', timerData);
 
     res.json({
       success: true,
-      message: 'Timer duration updated',
+      message: timerData ? 'Schedule and active timer duration updated' : 'Schedule duration updated',
+      schedule_updated: true,
       timer: timerData
     });
   } catch (error) {

@@ -192,6 +192,91 @@ module.exports = function (self) {
 				}
 			},
 		},
+		resolume_set_cue_duration: {
+			name: 'Set cue duration from Resolume clip',
+			options: [
+				{
+					id: 'itemId',
+					type: 'dropdown',
+					label: 'Cue / Row to update',
+					default: '',
+					choices:
+						cueChoices.length > 0 ? cueChoices : [{ id: '', label: 'No cues - configure Event ID first' }],
+				},
+				{
+					id: 'layer',
+					type: 'number',
+					label: 'Resolume layer',
+					default: 1,
+					min: 1,
+					max: 64,
+				},
+				{
+					id: 'clip',
+					type: 'number',
+					label: 'Resolume clip',
+					default: 1,
+					min: 1,
+					max: 64,
+				},
+				{
+					id: 'durationSeconds',
+					type: 'number',
+					label: 'Duration (seconds, 0 = sample from OSC)',
+					default: 0,
+					min: 0,
+					max: 86400,
+					tooltip: 'Leave 0 to measure from clip playback via OSC while sampling',
+				},
+				{
+					id: 'sampleMs',
+					type: 'number',
+					label: 'OSC sample time (ms)',
+					default: 600,
+					min: 200,
+					max: 5000,
+				},
+				{
+					id: 'triggerClip',
+					type: 'checkbox',
+					label: 'Trigger clip before sampling',
+					default: true,
+				},
+			],
+			callback: async (event) => {
+				const eventId = self.config?.eventId
+				const itemId = event.options.itemId
+				const layer = Math.max(1, parseInt(event.options.layer, 10) || 1)
+				const clip = Math.max(1, parseInt(event.options.clip, 10) || 1)
+				if (!eventId || !itemId) {
+					self.log('warn', 'Set cue duration: Event ID and cue are required')
+					return
+				}
+				try {
+					let dur = parseInt(event.options.durationSeconds, 10)
+					if (!Number.isFinite(dur) || dur < 1) {
+						dur = await self.sampleClipDurationFromOsc(layer, clip, {
+							waitMs: event.options.sampleMs,
+							triggerClip: event.options.triggerClip === true,
+							itemId: String(itemId),
+						})
+					}
+					const applied = await self.putCueDurationSeconds(eventId, itemId, dur)
+					const cueDisplay = self.formatCueDisplay
+						? self.formatCueDisplay(
+								self.scheduleItems.find((s) => String(s.id) === String(itemId))?.customFields?.cue,
+								itemId
+							)
+						: `cue ${itemId}`
+					self.log(
+						'info',
+						`Updated ${cueDisplay} duration to ${applied}s from Resolume L${layer} C${clip} (web app schedule row)`
+					)
+				} catch (err) {
+					self.log('error', `Set cue duration failed: ${err.message}`)
+				}
+			},
+		},
 		stop_timer: {
 			name: 'Stop Timer',
 			options: [],

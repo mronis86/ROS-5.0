@@ -436,12 +436,26 @@ const QuickModePage: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-16 z-0 flex flex-col bg-slate-900 text-white">
+    <div className="fixed inset-0 z-0 flex flex-col bg-slate-900 text-white">
       <header className="shrink-0 border-b border-slate-700 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-3 py-2 md:px-4">
         <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <h1 className="text-base font-bold md:text-lg">Quick Mode</h1>
-            <p className="text-[11px] text-slate-400">Ad-hoc timer rundown with dedicated event ID</p>
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-slate-800 hover:text-white"
+              aria-label="Back to event list"
+              title="Back to event list"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <div className="hidden h-7 w-px shrink-0 bg-slate-600/80 sm:block" aria-hidden />
+            <div className="min-w-0">
+              <h1 className="text-base font-bold md:text-lg">Quick Mode</h1>
+              <p className="text-[11px] text-slate-400">Ad-hoc timer rundown with dedicated event ID</p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-[11px] text-slate-200">

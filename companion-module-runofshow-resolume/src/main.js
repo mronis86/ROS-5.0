@@ -40,6 +40,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 
 	async destroy() {
 		this.stopPeriodicAlign()
+		this.cancelDurationSample()
 		if (this.syncPulseTimeout) clearTimeout(this.syncPulseTimeout)
 		this.closeOscListener()
 		this.resolumeArm = null
@@ -282,6 +283,75 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		})
 	}
 
+	async apiPut(path, body) {
+		return this.fetch(path, {
+			method: 'PUT',
+			body: JSON.stringify(body),
+		})
+	}
+
+	cancelDurationSample() {
+		const req = this.durationSampleRequest
+		if (!req) return
+		if (req.timer) clearTimeout(req.timer)
+		this.durationSampleRequest = null
+	}
+
+	/** Sample Resolume clip length from OSC position slope (clip should be playing). */
+	sampleClipDurationFromOsc(layer, clip, options = {}) {
+		const waitMs = Math.max(200, parseInt(options.waitMs, 10) || 600)
+		const triggerClip = options.triggerClip !== false
+		const itemId = options.itemId
+		const column = Math.max(1, parseInt(options.column, 10) || 1)
+
+		this.ensureOscListener()
+		this.cancelDurationSample()
+
+		if (triggerClip) {
+			this.sendResolumeTrigger({ triggerType: 'clip', layer, clip, column })
+		}
+
+		const posAddr = positionAddress(layer, clip)
+		this.log('info', `Sampling clip duration L${layer} C${clip} for ${waitMs}ms…`)
+
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				const req = this.durationSampleRequest
+				this.durationSampleRequest = null
+				const samples = req?.samples || []
+				let duration = inferDurationFromSamples(samples)
+				if (!duration && itemId) duration = this.getScheduleDurationSeconds(itemId)
+				if (!duration || duration < 1) {
+					reject(
+						new Error(
+							`Could not read clip duration (L${layer} C${clip}). Play the clip in Resolume or set duration manually.`
+						)
+					)
+					return
+				}
+				this.lastInferredDuration = duration
+				resolve(duration)
+			}, waitMs)
+
+			this.durationSampleRequest = {
+				positionAddress: posAddr,
+				samples: [],
+				timer,
+				reject,
+			}
+		})
+	}
+
+	async putCueDurationSeconds(eventId, itemId, durationSeconds) {
+		const dur = Math.max(1, Math.floor(Number(durationSeconds) || 0))
+		await this.apiPut(`/api/active-timers/${eventId}/${itemId}/duration`, {
+			duration_seconds: dur,
+		})
+		await this.fetchRunOfShow(eventId, this.config?.day || 1)
+		this.updateVariableValues()
+		return dur
+	}
+
 	async fetchEvents() {
 		const data = await this.fetch('/api/calendar-events')
 		this.events = Array.isArray(data) ? data : []
@@ -440,10 +510,19 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	handleOscMessage(oscMsg) {
-		if (!this.resolumeArm) return
 		const address = oscMsg?.address
 		const args = oscMsg?.args || []
 		const value = args[0]?.value
+
+		const durSample = this.durationSampleRequest
+		if (durSample && matchesAddress(address, durSample.positionAddress)) {
+			const position = Number(value)
+			if (Number.isFinite(position)) {
+				durSample.samples.push({ timeMs: Date.now(), position })
+			}
+		}
+
+		if (!this.resolumeArm) return
 		const arm = this.resolumeArm
 
 		arm.oscMsgCount = (arm.oscMsgCount || 0) + 1
@@ -876,6 +955,36 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				feedbacks: [],
 				steps: [{ down: [{ actionId: 'disarm_resolume_sync', options: {} }], up: [] }],
 			},
+			set_cue_duration_from_clip: {
+				type: 'button',
+				category: 'Resolume Duration',
+				name: 'Set cue duration from clip (pick cue + layer/clip)',
+				style: {
+					text: 'Set dur\nfrom clip',
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(60, 80, 140),
+				},
+				feedbacks: [],
+				steps: [
+					{
+						down: [
+							{
+								actionId: 'resolume_set_cue_duration',
+								options: {
+									itemId: '',
+									layer: 1,
+									clip: 1,
+									durationSeconds: 0,
+									sampleMs: 600,
+									triggerClip: true,
+								},
+							},
+						],
+						up: [],
+					},
+				],
+			},
 			end_resolume: {
 				type: 'button',
 				category: 'Resolume',
@@ -889,6 +998,40 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				feedbacks: [],
 				steps: [{ down: [{ actionId: 'end_resolume_sync', options: {} }], up: [] }],
 			},
+		}
+
+		for (const item of this.scheduleItems || []) {
+			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
+			presets[`set_duration_cue_${item.id}`] = {
+				type: 'button',
+				category: 'Resolume Duration',
+				name: `Set duration — ${cueDisplay}`,
+				style: {
+					text: `${cueDisplay}\nSet dur`,
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(50, 70, 130),
+				},
+				feedbacks: [],
+				steps: [
+					{
+						down: [
+							{
+								actionId: 'resolume_set_cue_duration',
+								options: {
+									itemId: String(item.id),
+									layer: 1,
+									clip: 1,
+									durationSeconds: 0,
+									sampleMs: 600,
+									triggerClip: true,
+								},
+							},
+						],
+						up: [],
+					},
+				],
+			}
 		}
 
 		// One ready-to-use Arm+Load preset per cue (no manual cue option editing needed)
