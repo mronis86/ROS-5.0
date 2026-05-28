@@ -32,6 +32,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.syncCount = 0
 		this.syncPulseActive = false
 		this.syncPulseTimeout = null
+		this.subCueTimer = null
 	}
 
 	async init(config) {
@@ -382,18 +383,58 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		return this.activeTimer
 	}
 
+	async fetchSubCueTimer(eventId) {
+		try {
+			const data = await this.fetch(`/api/sub-cue-timers/${eventId}`)
+			const row = Array.isArray(data) && data[0] ? data[0] : data
+			this.subCueTimer = row && row.item_id != null && row.is_running ? row : null
+		} catch {
+			this.subCueTimer = null
+		}
+		return this.subCueTimer
+	}
+
+	getRegularCues() {
+		return (this.scheduleItems || []).filter((item) => !item.isIndented)
+	}
+
+	getSubCues() {
+		return (this.scheduleItems || []).filter((item) => item.isIndented === true)
+	}
+
+	buildCueDropdownChoices(items, emptyLabel = 'No cues — configure Event ID first') {
+		const list = items || []
+		if (list.length === 0) return [{ id: '', label: emptyLabel }]
+		return list.map((item) => {
+			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
+			return { id: String(item.id), label: `${cueDisplay}: ${item.segmentName || 'Untitled'}` }
+		})
+	}
+
+	async stopAllSubCueTimers(eventId) {
+		if (!eventId) return
+		try {
+			await this.apiPut('/api/sub-cue-timers/stop', { event_id: eventId })
+			this.subCueTimer = null
+		} catch (err) {
+			this.log('warn', `Stop sub-cue timers: ${err.message}`)
+		}
+	}
+
 	async fetchData() {
 		const eventId = this.config?.eventId
 		if (!eventId) {
 			this.events = []
 			this.scheduleItems = []
 			this.activeTimer = null
+			this.subCueTimer = null
 			this.log('warn', 'Event ID is empty — set Event ID in module config to load cues')
 			return
 		}
 		await this.fetchEvents()
 		await this.fetchRunOfShow(eventId, this.config?.day || 1)
 		await this.fetchActiveTimer(eventId)
+		await this.fetchSubCueTimer(eventId)
 	}
 
 	formatCueDisplay(raw, itemId) {
@@ -406,6 +447,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 
 	async loadCueForResolume(eventId, itemId) {
 		await this.fetchActiveTimer(eventId)
+		await this.stopAllSubCueTimers(eventId)
 		if (this.activeTimer?.item_id != null) {
 			try {
 				await this.apiPost('/api/timers/stop', {
@@ -908,7 +950,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 	}
 
 	checkAllFeedbacks() {
-		this.checkFeedbacks('resolume_armed', 'resolume_aligned', 'resolume_sync_pulse')
+		this.checkFeedbacks('resolume_armed', 'resolume_aligned', 'resolume_sync_pulse', 'sub_timer_running')
 	}
 
 	updatePresets() {
@@ -1000,7 +1042,41 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			},
 		}
 
-		for (const item of this.scheduleItems || []) {
+		presets.start_subtimer_generic = {
+			type: 'button',
+			category: 'Resolume Sub-Cues',
+			name: 'Start sub-cue timer (select row)',
+			style: {
+				text: 'Start\nsub',
+				size: 'auto',
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(70, 45, 95),
+			},
+			feedbacks: [
+				{
+					feedbackId: 'sub_timer_running',
+					options: {},
+					style: { bgcolor: combineRgb(120, 70, 160), color: combineRgb(255, 255, 255) },
+				},
+			],
+			steps: [{ down: [{ actionId: 'start_subtimer', options: { itemId: '' } }], up: [] }],
+		}
+
+		presets.stop_subtimer_all = {
+			type: 'button',
+			category: 'Resolume Sub-Cues',
+			name: 'Stop all sub-cue timers',
+			style: {
+				text: 'Stop\nsubs',
+				size: 'auto',
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(100, 50, 0),
+			},
+			feedbacks: [],
+			steps: [{ down: [{ actionId: 'stop_subtimer', options: { itemId: '' } }], up: [] }],
+		}
+
+		for (const item of this.getRegularCues()) {
 			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
 			presets[`set_duration_cue_${item.id}`] = {
 				type: 'button',
@@ -1034,8 +1110,60 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			}
 		}
 
-		// One ready-to-use Arm+Load preset per cue (no manual cue option editing needed)
-		for (const item of this.scheduleItems || []) {
+		for (const item of this.getSubCues()) {
+			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
+			presets[`set_duration_sub_${item.id}`] = {
+				type: 'button',
+				category: 'Resolume Duration',
+				name: `Set duration (sub) — ${cueDisplay}`,
+				style: {
+					text: `Sub ${cueDisplay}\nSet dur`,
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(45, 55, 110),
+				},
+				feedbacks: [],
+				steps: [
+					{
+						down: [
+							{
+								actionId: 'resolume_set_cue_duration',
+								options: {
+									itemId: String(item.id),
+									layer: 1,
+									clip: 1,
+									durationSeconds: 0,
+									sampleMs: 600,
+									triggerClip: true,
+								},
+							},
+						],
+						up: [],
+					},
+				],
+			}
+			presets[`sub_${item.id}`] = {
+				type: 'button',
+				category: 'Resolume Sub-Cues',
+				name: `Start sub — ${cueDisplay}`,
+				style: {
+					text: `Sub\n${cueDisplay}`,
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(60, 40, 80),
+				},
+				feedbacks: [
+					{
+						feedbackId: 'sub_timer_running',
+						options: { itemId: String(item.id) },
+						style: { bgcolor: combineRgb(120, 70, 160), color: combineRgb(255, 255, 255) },
+					},
+				],
+				steps: [{ down: [{ actionId: 'start_subtimer', options: { itemId: String(item.id) } }], up: [] }],
+			}
+		}
+
+		for (const item of this.getRegularCues()) {
 			const cueDisplay = this.formatCueDisplay(item.customFields?.cue, item.id)
 			presets[`arm_cue_${item.id}`] = {
 				type: 'button',
@@ -1079,9 +1207,13 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		const eventId = this.config?.eventId
 		const event = eventId ? this.events.find((e) => String(e.id) === String(eventId)) : null
 		const currentItem = this.scheduleItems.find((s) => String(s.id) === String(this.activeTimer?.item_id))
+		const subItem = this.scheduleItems.find((s) => String(s.id) === String(this.subCueTimer?.item_id))
 		const cueLabel = currentItem
 			? this.formatCueDisplay(currentItem.customFields?.cue ?? this.activeTimer?.cue_is, currentItem.id)
 			: (this.activeTimer?.cue_is ?? '—')
+		const subCueLabel = subItem
+			? this.formatCueDisplay(subItem.customFields?.cue ?? this.subCueTimer?.cue_display, subItem.id)
+			: (this.subCueTimer?.cue_display ?? '—')
 
 		const phase = this.resolumeArm?.phase ?? 'off'
 		const statusMap = {
@@ -1104,6 +1236,8 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			last_sync_remaining: this.lastSyncRemaining != null ? String(this.lastSyncRemaining) : '—',
 			estimated_drift: drift != null ? `${drift}s` : '—',
 			current_cue: cueLabel,
+			sub_cue: subCueLabel,
+			sub_timer_running: this.subCueTimer?.is_running === true ? 'Yes' : 'No',
 			timer_running: this.activeTimer?.is_running === true ? 'Yes' : 'No',
 			event_name: event?.name ?? '—',
 		})

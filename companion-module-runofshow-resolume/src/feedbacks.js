@@ -35,5 +35,29 @@ module.exports = async function (self) {
 			options: [],
 			callback: () => self.syncPulseActive === true,
 		},
+		sub_timer_running: {
+			name: 'Sub-cue timer running',
+			type: 'boolean',
+			label: 'Sub-cue timer running',
+			defaultStyle: {
+				bgcolor: combineRgb(120, 70, 160),
+				color: combineRgb(255, 255, 255),
+			},
+			options: [
+				{
+					id: 'itemId',
+					type: 'dropdown',
+					label: 'Sub-cue (blank = any)',
+					default: '',
+					choices: [{ id: '', label: 'Any sub-cue running' }, ...self.buildCueDropdownChoices(self.getSubCues())],
+				},
+			],
+			callback: (feedback) => {
+				if (!self.subCueTimer?.is_running) return false
+				const want = feedback.options.itemId
+				if (!want) return true
+				return String(self.subCueTimer.item_id) === String(want)
+			},
+		},
 	})
 }

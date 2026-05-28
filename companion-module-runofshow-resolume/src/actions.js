@@ -1,11 +1,13 @@
 module.exports = function (self) {
-	const cueChoices = (self.scheduleItems || []).map((item) => {
-		const cueDisplay = self.formatCueDisplay
-			? self.formatCueDisplay(item.customFields?.cue, item.id)
-			: (item.customFields?.cue ?? `CUE ${item.id}`)
-		const label = `${cueDisplay}: ${item.segmentName || 'Untitled'}`
-		return { id: String(item.id), label }
-	})
+	const regularCueChoices = self.buildCueDropdownChoices(
+		self.getRegularCues(),
+		'No main cues — configure Event ID first'
+	)
+	const subCueChoices = self.buildCueDropdownChoices(
+		self.getSubCues(),
+		'No sub-cues — add indented rows in Run of Show'
+	)
+	const allCueChoices = self.buildCueDropdownChoices(self.scheduleItems || [])
 
 	self.setActionDefinitions({
 		arm_resolume_sync: {
@@ -14,10 +16,9 @@ module.exports = function (self) {
 				{
 					id: 'itemId',
 					type: 'dropdown',
-					label: 'Cue / Row',
+					label: 'Main cue / Row',
 					default: '',
-					choices:
-						cueChoices.length > 0 ? cueChoices : [{ id: '', label: 'No cues - configure Event ID first' }],
+					choices: regularCueChoices,
 				},
 				{
 					id: 'layer',
@@ -72,6 +73,11 @@ module.exports = function (self) {
 					self.log('warn', 'Arm Resolume: Event ID and Cue are required')
 					return
 				}
+				const item = self.scheduleItems.find((s) => String(s.id) === String(itemId))
+				if (item?.isIndented) {
+					self.log('warn', 'Arm Resolume: use a main cue row, not a sub-cue')
+					return
+				}
 				try {
 					await self.loadCueForResolume(eventId, itemId)
 					self.setResolumeArm({ itemId: String(itemId), layer, clip })
@@ -120,10 +126,9 @@ module.exports = function (self) {
 				{
 					id: 'itemId',
 					type: 'dropdown',
-					label: 'Cue / Row',
+					label: 'Main cue / Row',
 					default: '',
-					choices:
-						cueChoices.length > 0 ? cueChoices : [{ id: '', label: 'No cues - configure Event ID first' }],
+					choices: regularCueChoices,
 				},
 				{
 					id: 'durationSeconds',
@@ -174,21 +179,118 @@ module.exports = function (self) {
 				{
 					id: 'itemId',
 					type: 'dropdown',
-					label: 'Cue / Row',
+					label: 'Main cue / Row',
 					default: '',
-					choices:
-						cueChoices.length > 0 ? cueChoices : [{ id: '', label: 'No cues - configure Event ID first' }],
+					choices: regularCueChoices,
 				},
 			],
 			callback: async (event) => {
 				const eventId = self.config?.eventId
 				const itemId = event.options.itemId
 				if (!eventId || !itemId) return
+				const item = self.scheduleItems.find((s) => String(s.id) === String(itemId))
+				if (item?.isIndented) {
+					self.log('warn', 'Load Cue: use a main cue row, not a sub-cue')
+					return
+				}
 				try {
 					await self.loadCueForResolume(eventId, itemId)
 					self.log('info', `Loaded cue ${itemId}`)
 				} catch (err) {
 					self.log('error', `Load Cue failed: ${err.message}`)
+				}
+			},
+		},
+		start_subtimer: {
+			name: 'Start Sub-Cue Timer',
+			options: [
+				{
+					id: 'itemId',
+					type: 'dropdown',
+					label: 'Sub-cue / Row',
+					default: '',
+					choices: subCueChoices,
+				},
+			],
+			callback: async (event) => {
+				const eventId = self.config?.eventId
+				const itemId = event.options.itemId
+				if (!eventId || !itemId) {
+					self.log('warn', 'Start Sub-Cue: Event ID and sub-cue are required')
+					return
+				}
+				try {
+					const item = self.scheduleItems.find((s) => String(s.id) === String(itemId))
+					if (!item) {
+						self.log('warn', 'Start Sub-Cue: row not found')
+						return
+					}
+					if (!item.isIndented) {
+						self.log('warn', 'Start Sub-Cue: row is not a sub-cue (not indented)')
+						return
+					}
+					const dur =
+						(item.durationHours || 0) * 3600 +
+						(item.durationMinutes || 0) * 60 +
+						(item.durationSeconds || 0)
+					const durationSeconds = dur != null && dur >= 0 ? dur : 300
+					const rowNumber = self.scheduleItems.findIndex((s) => String(s.id) === String(itemId)) + 1
+					const cueDisplay = self.formatCueDisplay
+						? self.formatCueDisplay(item.customFields?.cue, itemId)
+						: (item.customFields?.cue ?? `CUE ${itemId}`)
+					const timerId = item.timerId || `SUB${itemId}`
+					await self.apiPost('/api/sub-cue-timers', {
+						event_id: eventId,
+						item_id: parseInt(itemId, 10),
+						user_id: 'companion-resolume',
+						user_name: 'Companion (Resolume)',
+						user_role: 'OPERATOR',
+						duration_seconds: durationSeconds,
+						row_number: rowNumber,
+						cue_display: cueDisplay,
+						timer_id: timerId,
+						is_active: true,
+						is_running: true,
+						started_at: new Date().toISOString(),
+					})
+					await self.fetchSubCueTimer(eventId)
+					self.updateVariableValues()
+					self.checkAllFeedbacks()
+					self.log('info', `Sub-cue timer started: ${cueDisplay}`)
+				} catch (err) {
+					self.log('error', `Start Sub-Cue failed: ${err.message}`)
+				}
+			},
+		},
+		stop_subtimer: {
+			name: 'Stop Sub-Cue Timer',
+			options: [
+				{
+					id: 'itemId',
+					type: 'dropdown',
+					label: 'Sub-cue (or All)',
+					default: '',
+					choices: [{ id: '', label: 'All sub-cue timers' }, ...subCueChoices],
+				},
+			],
+			callback: async (event) => {
+				const eventId = self.config?.eventId
+				if (!eventId) {
+					self.log('warn', 'Stop Sub-Cue: Event ID is required')
+					return
+				}
+				try {
+					const itemId = event.options.itemId
+					await self.apiPut('/api/sub-cue-timers/stop', {
+						event_id: eventId,
+						...(itemId ? { item_id: parseInt(itemId, 10) } : {}),
+					})
+					await self.fetchSubCueTimer(eventId)
+					self.updateVariableValues()
+					self.checkAllFeedbacks()
+					self.log('info', itemId ? `Sub-cue timer stopped: ${itemId}` : 'All sub-cue timers stopped')
+				} catch (err) {
+					self.log('error', `Stop Sub-Cue failed: ${err.message}`)
 				}
 			},
 		},
@@ -200,8 +302,7 @@ module.exports = function (self) {
 					type: 'dropdown',
 					label: 'Cue / Row to update',
 					default: '',
-					choices:
-						cueChoices.length > 0 ? cueChoices : [{ id: '', label: 'No cues - configure Event ID first' }],
+					choices: allCueChoices,
 				},
 				{
 					id: 'layer',
