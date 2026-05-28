@@ -1496,6 +1496,62 @@ export class DatabaseService {
     }
   }
 
+  // CONTENT REVIEW (Neon: content_review_data)
+
+  static async getContentReviewData(eventId: string): Promise<{
+    event_id: string;
+    reviews: Record<string, unknown>;
+    stream_url: string | null;
+    creative_pdf_url: string | null;
+    active_stage: 'creative' | 'ros';
+    side_rail_width_px: number | null;
+    updated_at?: string;
+  } | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/content-review/${eventId}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        console.error('Failed to get content review data:', response.status, response.statusText);
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error getting content review data:', error);
+      return null;
+    }
+  }
+
+  static async saveContentReviewData(
+    eventId: string,
+    payload: {
+      reviews: Record<string, unknown>;
+      stream_url?: string | null;
+      creative_pdf_url?: string | null;
+      active_stage?: 'creative' | 'ros';
+      side_rail_width_px?: number | null;
+      last_modified_by?: string;
+      last_modified_by_name?: string;
+    }
+  ): Promise<boolean> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/content-review/${eventId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        console.error('Failed to save content review data:', response.status, response.statusText);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('Error saving content review data:', error);
+      return false;
+    }
+  }
+
   // INDENTED CUES METHODS - Similar to completed cues but for indented/sub-cue relationships
 
   // Get indented cues for an event

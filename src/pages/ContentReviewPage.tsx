@@ -722,6 +722,8 @@ const ContentReviewPage: React.FC = () => {
   const [creativeEmbedOverride, setCreativeEmbedOverride] = useState<string | null>(null);
   const [creativeEmbedOverrideLabel, setCreativeEmbedOverrideLabel] = useState<string | null>(null);
   const [cueReviews, setCueReviews] = useState<CueReviewMap>({});
+  const [contentReviewHydrated, setContentReviewHydrated] = useState(false);
+  const contentReviewHydratedRef = useRef(false);
   const [activeReviewStage, setActiveReviewStage] = useState<ReviewStage>('creative');
   const speakerDetailsStorageKey = eventId ? `ros.contentReview.speakerDetails.${eventId}` : null;
   const activeReviewStageStorageKey = eventId ? `ros.contentReview.activeStage.${eventId}` : null;
@@ -776,6 +778,7 @@ const ContentReviewPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (contentReviewHydrated) return;
     if (!sideRailStorageKey || typeof localStorage === 'undefined') return;
     try {
       const raw = localStorage.getItem(sideRailStorageKey);
@@ -786,7 +789,7 @@ const ContentReviewPage: React.FC = () => {
     } catch {
       /* ignore */
     }
-  }, [sideRailStorageKey, clampSideRailWidth]);
+  }, [sideRailStorageKey, clampSideRailWidth, contentReviewHydrated]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -809,36 +812,16 @@ const ContentReviewPage: React.FC = () => {
     return { left, top, width, height };
   }, []);
 
-  useEffect(() => {
-    if (!reviewStorageKey || typeof localStorage === 'undefined') {
-      setCueReviews({});
-      return;
-    }
+  const readLocalCueReviews = useCallback((): CueReviewMap => {
+    if (!reviewStorageKey || typeof localStorage === 'undefined') return {};
     try {
       const raw = localStorage.getItem(reviewStorageKey);
-      if (!raw) {
-        setCueReviews({});
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      setCueReviews(normalizeCueReviewMap(parsed));
+      if (!raw) return {};
+      return normalizeCueReviewMap(JSON.parse(raw));
     } catch {
-      setCueReviews({});
+      return {};
     }
   }, [reviewStorageKey]);
-
-  useEffect(() => {
-    if (!activeReviewStageStorageKey || typeof localStorage === 'undefined') {
-      setActiveReviewStage('creative');
-      return;
-    }
-    try {
-      const saved = localStorage.getItem(activeReviewStageStorageKey);
-      setActiveReviewStage(saved === 'ros' ? 'ros' : 'creative');
-    } catch {
-      setActiveReviewStage('creative');
-    }
-  }, [activeReviewStageStorageKey]);
 
   useEffect(() => {
     if (!activeReviewStageStorageKey || typeof localStorage === 'undefined') return;
@@ -857,6 +840,32 @@ const ContentReviewPage: React.FC = () => {
       /* ignore quota */
     }
   }, [reviewStorageKey, cueReviews]);
+
+  useEffect(() => {
+    if (!eventId || !contentReviewHydrated) return;
+    const t = window.setTimeout(() => {
+      void DatabaseService.saveContentReviewData(eventId, {
+        reviews: cueReviews as Record<string, unknown>,
+        stream_url: savedStreamUrl,
+        creative_pdf_url: savedCreativePdfUrl,
+        active_stage: activeReviewStage,
+        side_rail_width_px: sideRailWidthPx,
+        last_modified_by: driverId,
+        last_modified_by_name: driverName,
+      });
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [
+    eventId,
+    contentReviewHydrated,
+    cueReviews,
+    savedStreamUrl,
+    savedCreativePdfUrl,
+    activeReviewStage,
+    sideRailWidthPx,
+    driverId,
+    driverName,
+  ]);
 
   useEffect(() => {
     if (!speakerDetailsStorageKey || typeof localStorage === 'undefined') {
@@ -958,6 +967,7 @@ const ContentReviewPage: React.FC = () => {
       setSavedStreamUrl(streamFromQuery);
       return;
     }
+    if (contentReviewHydrated) return;
     if (!streamStorageKey || typeof localStorage === 'undefined') {
       setSavedStreamUrl(null);
       return;
@@ -968,7 +978,7 @@ const ContentReviewPage: React.FC = () => {
     } catch {
       setSavedStreamUrl(null);
     }
-  }, [streamFromQuery, streamStorageKey]);
+  }, [streamFromQuery, streamStorageKey, contentReviewHydrated]);
 
   useEffect(() => {
     if (streamFromQuery) setStreamPanelOpen(true);
@@ -980,6 +990,7 @@ const ContentReviewPage: React.FC = () => {
       setCreativePdfSetupOpen(false);
       return;
     }
+    if (contentReviewHydrated) return;
     if (!creativePdfStorageKey || typeof localStorage === 'undefined') {
       setSavedCreativePdfUrl(null);
       return;
@@ -993,7 +1004,7 @@ const ContentReviewPage: React.FC = () => {
       setSavedCreativePdfUrl(null);
       setCreativePdfSetupOpen(true);
     }
-  }, [creativePdfFromQuery, creativePdfStorageKey]);
+  }, [creativePdfFromQuery, creativePdfStorageKey, contentReviewHydrated]);
 
   useEffect(() => {
     if (activeReviewStage === 'creative' && editModeEnabled) setEditModeEnabled(false);
@@ -1235,14 +1246,19 @@ const ContentReviewPage: React.FC = () => {
     if (!eventId) {
       setError('Missing event. Open Content Review from the Run of Show menu, or add ?eventId= to the URL.');
       setLoading(false);
+      setContentReviewHydrated(false);
+      contentReviewHydratedRef.current = false;
       return;
     }
     setLoading(true);
     setError(null);
+    setContentReviewHydrated(false);
+    contentReviewHydratedRef.current = false;
     try {
-      const [data, indentedRows] = await Promise.all([
+      const [data, indentedRows, reviewData] = await Promise.all([
         DatabaseService.getRunOfShowData(eventId),
-        DatabaseService.getIndentedCues(eventId)
+        DatabaseService.getIndentedCues(eventId),
+        DatabaseService.getContentReviewData(eventId),
       ]);
       if (!data?.schedule_items?.length) {
         setSchedule([]);
@@ -1256,14 +1272,53 @@ const ContentReviewPage: React.FC = () => {
       setSchedule(items);
       setCustomColumns(Array.isArray(data.custom_columns) ? (data.custom_columns as CustomColumn[]) : []);
       setIndented(buildIndentedMap(indentedRows));
+
+      const localReviews = readLocalCueReviews();
+      const apiReviews = reviewData?.reviews ? normalizeCueReviewMap(reviewData.reviews) : {};
+      const hasApiReviews = Object.keys(apiReviews).length > 0;
+      const hasLocalReviews = Object.keys(localReviews).length > 0;
+      setCueReviews(hasApiReviews ? apiReviews : hasLocalReviews ? localReviews : {});
+
+      if (reviewData?.active_stage === 'ros' || reviewData?.active_stage === 'creative') {
+        setActiveReviewStage(reviewData.active_stage);
+      } else if (activeReviewStageStorageKey && typeof localStorage !== 'undefined') {
+        try {
+          const saved = localStorage.getItem(activeReviewStageStorageKey);
+          setActiveReviewStage(saved === 'ros' ? 'ros' : 'creative');
+        } catch {
+          setActiveReviewStage('creative');
+        }
+      }
+
+      if (!streamFromQuery && reviewData?.stream_url) {
+        setSavedStreamUrl(sanitizeStreamEmbedUrl(reviewData.stream_url));
+      }
+      if (!creativePdfFromQuery && reviewData?.creative_pdf_url) {
+        const pdf = normalizeCreativeEmbedUrl(reviewData.creative_pdf_url);
+        setSavedCreativePdfUrl(pdf);
+        setCreativePdfSetupOpen(!pdf);
+      }
+      if (reviewData?.side_rail_width_px != null && Number.isFinite(reviewData.side_rail_width_px)) {
+        setSideRailWidthPx(clampSideRailWidth(reviewData.side_rail_width_px));
+      }
+
       setError(null);
     } catch (e) {
       console.error(e);
       setError('Could not load run of show data.');
     } finally {
       setLoading(false);
+      setContentReviewHydrated(true);
+      contentReviewHydratedRef.current = true;
     }
-  }, [eventId]);
+  }, [
+    eventId,
+    readLocalCueReviews,
+    activeReviewStageStorageKey,
+    streamFromQuery,
+    creativePdfFromQuery,
+    clampSideRailWidth,
+  ]);
 
   useEffect(() => {
     load();

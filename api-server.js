@@ -2154,6 +2154,114 @@ app.delete('/api/completed-cues', async (req, res) => {
   }
 });
 
+// Content Review endpoints (Neon: content_review_data)
+app.get('/api/content-review/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM content_review_data WHERE event_id = $1',
+      [eventId]
+    );
+    if (result.rows.length === 0) {
+      return res.json({
+        event_id: eventId,
+        reviews: {},
+        stream_url: null,
+        creative_pdf_url: null,
+        active_stage: 'creative',
+        side_rail_width_px: null,
+      });
+    }
+    const row = result.rows[0];
+    res.json({
+      event_id: row.event_id,
+      reviews: row.reviews || {},
+      stream_url: row.stream_url || null,
+      creative_pdf_url: row.creative_pdf_url || null,
+      active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
+      side_rail_width_px: row.side_rail_width_px ?? null,
+      last_modified_by: row.last_modified_by,
+      last_modified_by_name: row.last_modified_by_name,
+      updated_at: row.updated_at,
+    });
+  } catch (error) {
+    console.error('Error fetching content review data:', error);
+    if (error.code === '42P01') {
+      return res.status(503).json({
+        error: 'content_review_data table missing — run migrations/025_create_content_review_data.sql on Neon',
+      });
+    }
+    res.status(500).json({ error: 'Failed to fetch content review data' });
+  }
+});
+
+app.put('/api/content-review/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const {
+      reviews,
+      stream_url,
+      creative_pdf_url,
+      active_stage,
+      side_rail_width_px,
+      last_modified_by,
+      last_modified_by_name,
+    } = req.body || {};
+
+    const reviewsJson =
+      reviews != null && typeof reviews === 'object' ? JSON.stringify(reviews) : '{}';
+    const stage = active_stage === 'ros' ? 'ros' : 'creative';
+
+    const result = await pool.query(
+      `INSERT INTO content_review_data (
+         event_id, reviews, stream_url, creative_pdf_url, active_stage, side_rail_width_px,
+         last_modified_by, last_modified_by_name, updated_at
+       ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, NOW())
+       ON CONFLICT (event_id) DO UPDATE SET
+         reviews = EXCLUDED.reviews,
+         stream_url = EXCLUDED.stream_url,
+         creative_pdf_url = EXCLUDED.creative_pdf_url,
+         active_stage = EXCLUDED.active_stage,
+         side_rail_width_px = EXCLUDED.side_rail_width_px,
+         last_modified_by = EXCLUDED.last_modified_by,
+         last_modified_by_name = EXCLUDED.last_modified_by_name,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        eventId,
+        reviewsJson,
+        stream_url ?? null,
+        creative_pdf_url ?? null,
+        stage,
+        side_rail_width_px != null ? parseInt(side_rail_width_px, 10) : null,
+        last_modified_by || null,
+        last_modified_by_name || null,
+      ]
+    );
+
+    const row = result.rows[0];
+    const payload = {
+      event_id: row.event_id,
+      reviews: row.reviews || {},
+      stream_url: row.stream_url || null,
+      creative_pdf_url: row.creative_pdf_url || null,
+      active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
+      side_rail_width_px: row.side_rail_width_px ?? null,
+      updated_at: row.updated_at,
+    };
+    broadcastUpdate(eventId, 'contentReviewDataUpdated', payload);
+    res.json(payload);
+  } catch (error) {
+    console.error('Error saving content review data:', error);
+    if (error.code === '42P01') {
+      return res.status(503).json({
+        error: 'content_review_data table missing — run migrations/025_create_content_review_data.sql on Neon',
+      });
+    }
+    res.status(500).json({ error: 'Failed to save content review data' });
+  }
+});
+
 // Indented Cues endpoints
 app.get('/api/indented-cues/:eventId', async (req, res) => {
   try {
