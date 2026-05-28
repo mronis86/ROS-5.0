@@ -25,6 +25,7 @@ import ScriptsFollowPage from './pages/ScriptsFollowPage';
 import TeleprompterPage from './pages/TeleprompterPage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
+import QuickModePage from './pages/QuickModePage';
 
 function AppContent() {
   const location = useLocation();
@@ -39,18 +40,20 @@ function AppContent() {
   const isLocalXML = location.pathname === '/lower-thirds-xml' || location.pathname === '/schedule-xml' || location.pathname === '/custom-columns-xml';
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
   const isAdmin = location.pathname === '/admin';
+  const isQuickMode = location.pathname === '/quick-mode';
 
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && <AppHeader />}
       
       {!isPinNotesPopout && (
         <AuthGuard>
           <Routes>
             <Route path="/admin" element={null} />
             <Route path="/" element={<EventListPage />} />
+            <Route path="/quick-mode" element={<QuickModePage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />
             <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
             <Route path="/graphics-links" element={<GraphicsLinksPage />} />

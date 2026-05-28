@@ -184,33 +184,99 @@ const QuickModePage: React.FC = () => {
     };
   }, [eventId, timers]);
 
+  const applyServerTimerRow = (data: Record<string, unknown>) => {
+    const itemId = Number(data.item_id);
+    if (!Number.isFinite(itemId)) return;
+    const durationMs = Math.max(1000, Number(data.duration_seconds || 60) * 1000);
+    const running = data.is_running === true;
+    const loaded = data.timer_state === 'loaded' || (data.is_active === true && !running);
+    const startedAtMs = running && data.started_at ? new Date(String(data.started_at)).getTime() : null;
+    const now = Date.now();
+    setTimers((prev) => {
+      const exists = prev.some((t) => t.id === itemId);
+      const nextRemaining = running
+        ? Math.max(0, durationMs - (now - (startedAtMs || now)))
+        : loaded
+          ? durationMs
+          : durationMs;
+      if (!exists) {
+        return [
+          ...prev,
+          {
+            id: itemId,
+            title: String(data.cue_is || `Timer ${itemId}`).replace(/^CUE\s*/i, 'Timer '),
+            cue: String(data.cue_is || `CUE ${itemId}`),
+            durationMs,
+            remainingMs: nextRemaining,
+            isRunning: running,
+            startedAtMs
+          }
+        ];
+      }
+      return prev.map((t) => {
+        if (t.id !== itemId) return running ? { ...t, isRunning: false, startedAtMs: null } : t;
+        return { ...t, durationMs, remainingMs: nextRemaining, isRunning: running, startedAtMs };
+      });
+    });
+    if (running || loaded) setLoadedTimerId(itemId);
+    if (data.timer_state === 'stopped' || data.is_active === false) {
+      setLoadedTimerId((prev) => (prev === itemId ? null : prev));
+    }
+  };
+
   useEffect(() => {
     if (!eventId) return;
+    let cancelled = false;
+
+    const hydrateFromApi = async () => {
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`);
+        if (!res.ok || cancelled) return;
+        const rows = await res.json();
+        const row = Array.isArray(rows) ? rows[0] : rows;
+        if (row && row.is_active !== false && row.timer_state !== 'stopped') {
+          applyServerTimerRow(row);
+        }
+      } catch {
+        // local timers still work
+      }
+    };
+
+    hydrateFromApi();
+
     socketClient.connect(eventId, {});
     const socket = socketClient.getSocket();
     const onUpdate = (message: any) => {
       if (!message?.type) return;
       const data = message.data || {};
       if (message.type === 'timerUpdated') {
-        const itemId = Number(data.item_id);
-        if (!Number.isFinite(itemId)) return;
-        const durationMs = Math.max(1000, Number(data.duration_seconds || 60) * 1000);
-        const running = data.is_running === true;
-        const startedAtMs = running && data.started_at ? new Date(data.started_at).getTime() : null;
-        setTimers((prev) =>
-          prev.map((t) => {
-            if (t.id !== itemId) return t;
-            const nextRemaining = running ? Math.max(0, durationMs - (Date.now() - (startedAtMs || Date.now()))) : durationMs;
-            return { ...t, durationMs, remainingMs: nextRemaining, isRunning: running, startedAtMs };
-          })
-        );
-        if (data.timer_state === 'running' || data.timer_state === 'loaded') setLoadedTimerId(itemId);
+        applyServerTimerRow(data);
       }
-      if (message.type === 'timerStopped') {
+      if (message.type === 'activeTimersUpdated') {
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row) {
+          setLoadedTimerId(null);
+          return;
+        }
+        if (row.timer_state === 'stopped' || row.is_active === false) {
+          const itemId = Number(row.item_id);
+          setTimers((prev) =>
+            prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t))
+          );
+          setLoadedTimerId((prev) => (prev === itemId ? null : prev));
+          return;
+        }
+        applyServerTimerRow(row);
+      }
+      if (message.type === 'timerStopped' || message.type === 'timersStopped') {
         const itemId = Number(data.item_id);
-        if (!Number.isFinite(itemId)) return;
-        setTimers((prev) => prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t)));
-        setLoadedTimerId((prev) => (prev === itemId ? null : prev));
+        if (Number.isFinite(itemId)) {
+          setTimers((prev) => prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t)));
+          setLoadedTimerId((prev) => (prev === itemId ? null : prev));
+        } else {
+          setTimers((prev) => prev.map((t) => ({ ...t, isRunning: false, startedAtMs: null })));
+          setLoadedTimerId(null);
+        }
       }
       if (message.type === 'resetAllStates') {
         setTimers((prev) => prev.map((t) => ({ ...t, remainingMs: t.durationMs, isRunning: false, startedAtMs: null })));
@@ -219,6 +285,7 @@ const QuickModePage: React.FC = () => {
     };
     socket?.on('update', onUpdate);
     return () => {
+      cancelled = true;
       socket?.off('update', onUpdate);
       socketClient.disconnect(eventId);
     };

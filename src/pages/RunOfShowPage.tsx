@@ -5616,18 +5616,18 @@ const RunOfShowPage: React.FC = () => {
             return;
           }
           
-          // Check if timer is stopped or inactive
-          if (timerData.timer_state === 'stopped' || !timerData.is_active || timerData.is_running === false && timerData.is_active === false) {
-            // Clear timer data when stopped
+          // Clear only when truly stopped — loaded cues are is_active + !is_running
+          const isStopped =
+            timerData.timer_state === 'stopped' || timerData.is_active === false;
+          if (isStopped) {
             setHybridTimerData(prev => ({
               ...prev,
               activeTimer: null
             }));
-            // Also clear old state to prevent hanging blue highlighting
             setActiveItemId(null);
             setActiveTimers({});
             console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
-          } else {
+          } else if (timerData.is_active === true) {
             // Additional check: if this is the same timer that was previously stopped, ignore it
             const currentHybridTimer = hybridTimerData?.activeTimer;
             if (currentHybridTimer && currentHybridTimer.id === timerData.id && 

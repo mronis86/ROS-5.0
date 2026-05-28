@@ -2255,10 +2255,7 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
       [eventId]
     );
     const rows = result.rows.map((row) => applyResolumeMeta(eventId, row));
-    
-    // Broadcast active timers update via WebSocket for real-time sync
-    broadcastUpdate(eventId, 'activeTimersUpdated', rows);
-    
+    // Do not broadcast on GET — every fetch was pushing activeTimersUpdated to all clients and clearing loaded timers
     res.json(rows);
   } catch (error) {
     console.error('Error fetching active timers:', error);

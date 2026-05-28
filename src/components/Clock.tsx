@@ -368,7 +368,7 @@ const Clock: React.FC<ClockProps> = ({
         
         if (timerData && timerData.event_id === eventId) {
           // Check if timer is stopped
-          if (timerData.timer_state === 'stopped' || !timerData.is_active) {
+          if (timerData.timer_state === 'stopped' || timerData.is_active === false) {
             console.log('🔍 [CLOCK DEBUG] Timer is stopped - clearing timer data');
             // Clear timer data when stopped
             setHybridTimerData(prev => ({

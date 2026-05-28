@@ -180,7 +180,7 @@ const FullScreenTimerPage: React.FC = () => {
         
         if (timerData && timerData.event_id === eventId) {
           // Check if timer is stopped or inactive
-          if (timerData.timer_state === 'stopped' || !timerData.is_active || timerData.is_running === false && timerData.is_active === false) {
+          if (timerData.timer_state === 'stopped' || timerData.is_active === false) {
             // Clear timer data when stopped
             setHybridTimerData(prev => ({
               ...prev,
