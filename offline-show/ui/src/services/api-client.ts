@@ -1,0 +1,356 @@
+// Offline show: all API calls go to the LAN server on :3004 (cloud vs SQLite decided server-side).
+const getApiBaseUrl = () => {
+  if (typeof window !== 'undefined') return window.location.origin;
+  return '';
+};
+
+// Smart caching system
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+  ttl: number; // Time to live in milliseconds
+}
+
+class ApiClient {
+  private cache: Map<string, CacheEntry<any>> = new Map();
+  
+  // Cache TTL settings (in milliseconds)
+  private readonly CACHE_TTL = {
+    calendarEvents: 5 * 60 * 1000,    // 5 minutes
+    runOfShowData: 30 * 1000,         // 30 seconds (frequently updated)
+    completedCues: 2 * 60 * 1000,     // 2 minutes
+    activeTimers: 10 * 1000,          // 10 seconds (very dynamic)
+    changeLog: 1 * 60 * 1000,         // 1 minute
+    timerMessages: 1 * 60 * 1000,     // 1 minute
+  };
+
+  private getCacheKey(endpoint: string, params?: any): string {
+    return `${endpoint}${params ? `_${JSON.stringify(params)}` : ''}`;
+  }
+
+  private getCachedData<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    
+    if (Date.now() - entry.timestamp > entry.ttl) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return entry.data;
+  }
+
+  private setCachedData<T>(key: string, data: T, ttl: number): void {
+    this.cache.set(key, {
+      data,
+      timestamp: Date.now(),
+      ttl
+    });
+  }
+
+  // Public method to clear all cache
+  async clearCache(): Promise<void> {
+    console.log('🗑️ Clearing all API cache...');
+    this.cache.clear();
+    console.log('✅ Cache cleared');
+  }
+
+  private async request<T>(endpoint: string, options: RequestInit = {}, cacheKey?: string, cacheTTL?: number): Promise<T> {
+    // Check cache first (only for GET requests)
+    if (options.method === 'GET' || !options.method) {
+      const cacheKeyToUse = cacheKey || this.getCacheKey(endpoint);
+      const cachedData = this.getCachedData<T>(cacheKeyToUse);
+      if (cachedData) {
+        console.log(`📦 Cache hit for: ${endpoint}`);
+        return cachedData;
+      }
+    }
+
+    // Get the API base URL dynamically (respects toggle)
+    const apiBaseUrl = getApiBaseUrl();
+    const url = `${apiBaseUrl}${endpoint}`;
+    
+    const defaultOptions: RequestInit = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    };
+
+    try {
+      const response = await fetch(url, defaultOptions);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Cache the response (only for GET requests)
+      if (options.method === 'GET' || !options.method) {
+        const cacheKeyToUse = cacheKey || this.getCacheKey(endpoint);
+        const ttlToUse = cacheTTL || this.CACHE_TTL.calendarEvents;
+        this.setCachedData(cacheKeyToUse, data, ttlToUse);
+      }
+      
+      return data;
+    } catch (error) {
+      console.error(`API request failed for ${endpoint}:`, error);
+      throw error;
+    }
+  }
+
+  // Health check
+  async healthCheck() {
+    return this.request('/health');
+  }
+
+  // Calendar Events
+  async getCalendarEvents() {
+    return this.request('/api/calendar-events', {}, 'calendarEvents', this.CACHE_TTL.calendarEvents);
+  }
+
+  async createCalendarEvent(event: { name: string; date: string; schedule_data: any }) {
+    const result = await this.request('/api/calendar-events', {
+      method: 'POST',
+      body: JSON.stringify(event),
+    });
+    
+    // Invalidate calendar events cache
+    this.cache.delete('calendarEvents');
+    return result;
+  }
+
+  async getCalendarEvent(id: string) {
+    return this.request(`/api/calendar-events/${id}`, {}, `calendarEvent_${id}`, this.CACHE_TTL.calendarEvents);
+  }
+
+  async updateCalendarEvent(id: string, event: { name: string; date: string; schedule_data: any }) {
+    const result = await this.request(`/api/calendar-events/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(event),
+    });
+    
+    // Invalidate calendar events cache
+    this.cache.delete('calendarEvents');
+    this.cache.delete(`calendarEvent_${id}`);
+    return result;
+  }
+
+  async deleteCalendarEvent(id: string) {
+    const result = await this.request(`/api/calendar-events/${id}`, {
+      method: 'DELETE',
+    });
+    
+    // Invalidate calendar events cache
+    this.cache.delete('calendarEvents');
+    this.cache.delete(`calendarEvent_${id}`);
+    return result;
+  }
+
+  // Run of Show Data
+  async getRunOfShowData(eventId: string) {
+    return this.request(`/api/run-of-show-data/${eventId}`, {}, `runOfShowData_${eventId}`, this.CACHE_TTL.runOfShowData);
+  }
+
+  async saveRunOfShowData(data: {
+    event_id: string;
+    event_name?: string;
+    event_date?: string;
+    schedule_items: any[];
+    custom_columns: any[];
+    settings: any;
+    last_modified_by?: string;
+    last_modified_by_name?: string;
+    last_modified_by_role?: string;
+  }) {
+    const result = await this.request('/api/run-of-show-data', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    
+    // Invalidate run of show data cache for this event
+    this.cache.delete(`runOfShowData_${data.event_id}`);
+    return result;
+  }
+
+  // Overtime tracking
+  async saveOvertimeMinutes(eventId: string, itemId: number, overtimeMinutes: number) {
+    const result = await this.request('/api/overtime-minutes', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        event_id: eventId, 
+        item_id: itemId, 
+        overtime_minutes: overtimeMinutes 
+      }),
+    });
+    
+    // Invalidate overtime cache
+    this.cache.delete(`overtimeMinutes_${eventId}`);
+    return result;
+  }
+
+  async getOvertimeMinutes(eventId: string) {
+    return this.request(`/api/overtime-minutes/${eventId}`, {}, `overtimeMinutes_${eventId}`, this.CACHE_TTL.completedCues);
+  }
+
+  async saveShowStartOvertime(
+    eventId: string, 
+    itemId: number, 
+    overtimeMinutes: number,
+    scheduledTime: string,
+    actualTime: string
+  ) {
+    const result = await this.request('/api/show-start-overtime', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        event_id: eventId, 
+        item_id: itemId, 
+        show_start_overtime: overtimeMinutes,
+        scheduled_time: scheduledTime,
+        actual_time: actualTime
+      }),
+    });
+    
+    this.cache.delete(`showStartOvertime_${eventId}`);
+    return result;
+  }
+
+  async getShowStartOvertime(eventId: string) {
+    return this.request(`/api/show-start-overtime/${eventId}`, {}, `showStartOvertime_${eventId}`, this.CACHE_TTL.completedCues);
+  }
+
+  async getShowMode(eventId: string): Promise<{ showMode: 'rehearsal' | 'in-show'; trackWasDurations: boolean }> {
+    const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
+    return {
+      showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
+      trackWasDurations: result?.trackWasDurations === true
+    };
+  }
+
+  async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show') {
+    const result = await this.request(`/api/show-mode/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ showMode }),
+    });
+    this.cache.delete(`showMode_${eventId}`);
+    return result;
+  }
+
+  async saveTrackWasDurations(eventId: string, trackWasDurations: boolean) {
+    const result = await this.request(`/api/show-mode/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ trackWasDurations }),
+    });
+    this.cache.delete(`showMode_${eventId}`);
+    return result;
+  }
+
+  /** Invalidate cache for Photo page 20s sync - ensures fresh overtime/schedule data every sync */
+  invalidateSyncDataCache(eventId: string): void {
+    this.cache.delete(`runOfShowData_${eventId}`);
+    this.cache.delete(`overtimeMinutes_${eventId}`);
+    this.cache.delete(`showStartOvertime_${eventId}`);
+  }
+
+  /** Invalidate show mode cache so refresh/reconnect gets current in-show state */
+  invalidateShowModeCache(eventId: string): void {
+    this.cache.delete(`showMode_${eventId}`);
+  }
+
+  async saveStartCueSelection(eventId: string, itemId: number) {
+    const result = await this.request('/api/start-cue-selection', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        event_id: eventId, 
+        item_id: itemId
+      }),
+    });
+    
+    this.cache.delete(`startCueSelection_${eventId}`);
+    return result;
+  }
+
+  async getStartCueSelection(eventId: string) {
+    return this.request(`/api/start-cue-selection/${eventId}`, {}, `startCueSelection_${eventId}`, this.CACHE_TTL.completedCues);
+  }
+
+  async clearShowStartOvertime(eventId: string) {
+    const result = await this.request(`/api/show-start-overtime/${eventId}`, {
+      method: 'DELETE'
+    });
+    
+    this.cache.delete(`showStartOvertime_${eventId}`);
+    return result;
+  }
+
+  // Completed Cues
+  async getCompletedCues(eventId: string) {
+    return this.request(`/api/completed-cues/${eventId}`, {}, `completedCues_${eventId}`, this.CACHE_TTL.completedCues);
+  }
+
+  async markCueAsCompleted(eventId: string, itemId: number, userId: string) {
+    const result = await this.request('/api/completed-cues', {
+      method: 'POST',
+      body: JSON.stringify({ event_id: eventId, item_id: itemId, user_id: userId }),
+    });
+    
+    // Invalidate completed cues cache
+    this.cache.delete(`completedCues_${eventId}`);
+    return result;
+  }
+
+  async unmarkCueAsCompleted(eventId: string, itemId: number, userId: string) {
+    const result = await this.request('/api/completed-cues', {
+      method: 'DELETE',
+      body: JSON.stringify({ event_id: eventId, item_id: itemId, user_id: userId }),
+    });
+    
+    // Invalidate completed cues cache
+    this.cache.delete(`completedCues_${eventId}`);
+    return result;
+  }
+
+  // Active Timers
+  async getActiveTimers(eventId: string) {
+    return this.request(`/api/active-timers/${eventId}`, {}, `activeTimers_${eventId}`, this.CACHE_TTL.activeTimers);
+  }
+
+  async saveActiveTimer(timerData: any) {
+    const result = await this.request('/api/active-timers', {
+      method: 'POST',
+      body: JSON.stringify(timerData),
+    });
+    
+    // Invalidate active timers cache
+    this.cache.delete(`activeTimers_${timerData.event_id}`);
+    return result;
+  }
+
+  // Sub Cue Timers
+  async getSubCueTimers(eventId: string) {
+    return this.request(`/api/sub-cue-timers/${eventId}`);
+  }
+
+  // Change Log
+  async getChangeLog(eventId: string, limit: number = 100) {
+    return this.request(`/api/change-log/${eventId}?limit=${limit}`);
+  }
+
+  async logChange(changeData: any) {
+    const result = await this.request('/api/change-log', {
+      method: 'POST',
+      body: JSON.stringify(changeData),
+    });
+    return result;
+  }
+
+  // Timer Messages
+  async getTimerMessages(eventId: string) {
+    return this.request(`/api/timer-messages/${eventId}`);
+  }
+}
+
+export const apiClient = new ApiClient();
+export { getApiBaseUrl };
