@@ -5,10 +5,13 @@ import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
 import RoleSelectionModal from '../components/RoleSelectionModal';
+import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
+import { useNarrowViewport } from '../hooks/useNarrowViewport';
 
 const EventListPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const isNarrowViewport = useNarrowViewport();
   const [events, setEvents] = useState<Event[]>([]);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -468,8 +471,8 @@ const EventListPage: React.FC = () => {
         // Don't prevent navigation if Supabase save fails
       }
       
-      // Navigate to RunOfShow with the selected role
-      navigate('/run-of-show', { state: { event: selectedEvent, userRole: role } });
+      const runOfShowPath = isNarrowViewport ? '/run-of-show-mobile' : '/run-of-show';
+      navigate(runOfShowPath, { state: { event: selectedEvent, userRole: role } });
       
       // Close modal and reset state
       setShowRoleModal(false);
@@ -583,7 +586,11 @@ const EventListPage: React.FC = () => {
   const filteredEvents = getFilteredEvents();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 pt-16">
+    <div
+      className={`min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 ${
+        isNarrowViewport ? 'pt-14' : 'pt-16'
+      }`}
+    >
       {/* Header */}
       <div className="text-center py-3 pt-4 mt-0">
         <h1 className="text-xl font-bold text-white mb-0.5">
@@ -600,7 +607,9 @@ const EventListPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-6">
+      <div className={`mx-auto w-full ${isNarrowViewport ? 'max-w-lg px-3' : 'max-w-6xl px-6'}`}>
+        {!isNarrowViewport ? (
+          <>
         {/* Tabs + Add New Event on one row */}
         <div className="flex flex-wrap items-center justify-center gap-3 mb-3">
           <div className="bg-slate-800 rounded-lg p-0.5 flex">
@@ -805,6 +814,33 @@ const EventListPage: React.FC = () => {
             </div>
           </div>
         </div>
+          </>
+        ) : (
+          <EventListMobileView
+            filteredEvents={filteredEvents}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            filterLocation={filterLocation}
+            onFilterLocationChange={setFilterLocation}
+            filterDays={filterDays}
+            onFilterDaysChange={setFilterDays}
+            isLoading={isLoading}
+            onRefresh={() => loadEventsFromSupabase()}
+            onAddClick={() => setShowAddModal(true)}
+            onQuickMode={() => navigate('/quick-mode')}
+            onLaunch={launchRunOfShow}
+            onEdit={openEditModal}
+            onDelete={openDeleteConfirmModal}
+            formatDate={formatDate}
+            getLocationColor={getLocationColor}
+            getEventTypeColor={getEventTypeColor}
+            getEventTypeShortLabel={getEventTypeShortLabel}
+            getRecordStreamingColor={getRecordStreamingColor}
+            getRecordStreamingShort={getRecordStreamingShort}
+          />
+        )}
       </div>
 
       {/* Add Event Modal */}
