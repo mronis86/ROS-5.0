@@ -7,6 +7,7 @@ import AuthGuard from './components/AuthGuard';
 import AppHeader from './components/AppHeader';
 import EventListPage from './pages/EventListPage';
 import RunOfShowPage from './pages/RunOfShowPage';
+import RunOfShowMobilePage from './pages/RunOfShowMobilePage';
 import FullScreenTimerPage from './pages/FullScreenTimerPage';
 import ClockPage from './pages/ClockPage';
 import LowerThirdsXMLPage from './pages/LowerThirdsXMLPage';
@@ -41,12 +42,13 @@ function AppContent() {
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
   const isAdmin = location.pathname === '/admin';
   const isQuickMode = location.pathname === '/quick-mode';
+  const isRunOfShowMobile = location.pathname === '/run-of-show-mobile';
 
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isRunOfShowMobile && <AppHeader />}
       
       {!isPinNotesPopout && (
         <AuthGuard>
@@ -55,6 +57,7 @@ function AppContent() {
             <Route path="/" element={<EventListPage />} />
             <Route path="/quick-mode" element={<QuickModePage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />
+            <Route path="/run-of-show-mobile" element={<RunOfShowMobilePage />} />
             <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
             <Route path="/graphics-links" element={<GraphicsLinksPage />} />
             <Route path="/reports" element={<ReportsPage />} />
