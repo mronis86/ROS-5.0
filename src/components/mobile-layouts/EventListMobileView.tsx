@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Event, DAYS_OPTIONS, LOCATION_OPTIONS } from '../../types/Event';
+import QuickModeBoltIcon from '../QuickModeBoltIcon';
 
-type Tab = 'upcoming' | 'past';
+type Tab = 'upcoming' | 'past' | 'quickMode';
 type MobileSortKey = 'date_asc' | 'date_desc' | 'name_asc';
 
 function parseEventDayTs(dateString: string): number {
@@ -24,6 +25,10 @@ type EventListMobileViewProps = {
   onRefresh: () => void;
   onAddClick: () => void;
   onQuickMode: () => void;
+  onOpenQuickModeSession?: (event: Event) => void;
+  quickModeEventCount?: number;
+  onBulkDeleteQuickMode?: () => void;
+  onClearQuickModeSelection?: () => void;
   onLaunch: (event: Event) => void;
   onEdit: (event: Event) => void;
   onDelete: (event: Event) => void;
@@ -49,6 +54,9 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   onRefresh,
   onAddClick,
   onQuickMode,
+  onOpenQuickModeSession,
+  quickModeEventCount = 0,
+  onBulkDeleteQuickMode,
   onLaunch,
   onEdit,
   onDelete,
@@ -64,7 +72,7 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
   useEffect(() => {
-    setSortKey(activeTab === 'past' ? 'date_desc' : 'date_asc');
+    setSortKey(activeTab === 'past' || activeTab === 'quickMode' ? 'date_desc' : 'date_asc');
   }, [activeTab]);
 
   const filtersActive = searchTerm.trim() !== '' || filterLocation !== 'all' || filterDays !== 'all';
@@ -102,11 +110,11 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   return (
     <div className="mx-auto w-full max-w-lg space-y-4 pb-20">
       <div className="flex flex-col gap-3">
-        <div className="flex w-full rounded-xl border border-slate-600 bg-slate-800 p-1">
+        <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-600 bg-slate-800 p-1">
           <button
             type="button"
             onClick={() => onTabChange('upcoming')}
-            className={`min-h-[46px] flex-1 rounded-lg px-3 text-sm font-bold transition-colors ${
+            className={`min-h-[46px] rounded-lg px-2 text-xs font-bold transition-colors ${
               activeTab === 'upcoming' ? 'bg-green-600 text-white shadow' : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -115,11 +123,21 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
           <button
             type="button"
             onClick={() => onTabChange('past')}
-            className={`min-h-[46px] flex-1 rounded-lg px-3 text-sm font-bold transition-colors ${
+            className={`min-h-[46px] rounded-lg px-2 text-xs font-bold transition-colors ${
               activeTab === 'past' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'
             }`}
           >
             Past
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange('quickMode')}
+            className={`inline-flex min-h-[46px] items-center justify-center gap-1 rounded-lg px-2 text-xs font-bold transition-colors ${
+              activeTab === 'quickMode' ? 'bg-yellow-600 text-white shadow' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <QuickModeBoltIcon className="h-3.5 w-3.5" />
+            Quick{quickModeEventCount > 0 ? ` (${quickModeEventCount})` : ''}
           </button>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -134,11 +152,20 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
             type="button"
             onClick={onQuickMode}
             className="min-h-[44px] rounded-lg bg-purple-600 px-3 py-2 text-sm font-bold text-white shadow hover:bg-purple-500"
-            title="Run quick ad-hoc timers without creating an event"
+            title="Open Quick Mode for ad-hoc timers"
           >
-            Quick Mode
+            Open Quick Mode
           </button>
         </div>
+        {activeTab === 'quickMode' && onBulkDeleteQuickMode && displayedEvents.length > 0 ? (
+          <button
+            type="button"
+            onClick={onBulkDeleteQuickMode}
+            className="min-h-[44px] w-full rounded-lg bg-red-700 px-3 py-2 text-sm font-bold text-white shadow hover:bg-red-600"
+          >
+            Delete all Quick Mode sessions ({displayedEvents.length})
+          </button>
+        ) : null}
       </div>
 
       <div className="space-y-2 rounded-xl border border-slate-600 bg-slate-900/80 p-3 shadow-md">
@@ -246,10 +273,24 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
       <div className="space-y-2">
         {displayedEvents.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-600 bg-slate-900/80 p-10 text-center">
-            <div className="mb-3 text-5xl">{activeTab === 'upcoming' ? '📅' : '📋'}</div>
-            <h3 className="mb-1 text-lg font-bold text-white">No {activeTab} events</h3>
+            <div className="mb-3 flex justify-center">
+              {activeTab === 'upcoming' ? (
+                <span className="text-5xl">📅</span>
+              ) : activeTab === 'quickMode' ? (
+                <QuickModeBoltIcon className="h-12 w-12 text-yellow-500" />
+              ) : (
+                <span className="text-5xl">📋</span>
+              )}
+            </div>
+            <h3 className="mb-1 text-lg font-bold text-white">
+              {activeTab === 'quickMode' ? 'No Quick Mode sessions' : `No ${activeTab} events`}
+            </h3>
             <p className="text-sm text-slate-400">
-              {activeTab === 'upcoming' ? 'Add an event to get started.' : 'Past events will appear here.'}
+              {activeTab === 'upcoming'
+                ? 'Add an event to get started.'
+                : activeTab === 'quickMode'
+                  ? 'Open Quick Mode to start timers.'
+                  : 'Past events will appear here.'}
             </p>
           </div>
         ) : (
@@ -295,7 +336,26 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                     {selected ? 'Hide actions' : 'Select'}
                   </button>
                   {selected ? (
-                    <div className="mt-2 grid grid-cols-3 gap-1.5">
+                    <div className={`mt-2 grid gap-1.5 ${activeTab === 'quickMode' ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                      {activeTab === 'quickMode' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onOpenQuickModeSession?.(event)}
+                            className="min-h-[36px] rounded-md bg-purple-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-purple-500"
+                          >
+                            Open
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDelete(event)}
+                            className="min-h-[36px] rounded-md bg-red-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-red-500"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : (
+                        <>
                       <button
                         type="button"
                         onClick={() => onLaunch(event)}
@@ -317,6 +377,8 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                       >
                         Delete
                       </button>
+                        </>
+                      )}
                     </div>
                   ) : null}
                 </div>

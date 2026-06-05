@@ -85,6 +85,8 @@ function AppContent() {
         <Route path="/custom-columns-xml" element={<CustomColumnsXMLPage />} />
         <Route path="/netlify-custom-columns-xml" element={<NetlifyCustomColumnsXMLPage />} />
         <Route path="/google-sheets-vmix" element={<GoogleSheetsVMIXPage />} />
+        {/* Suppress "No routes matched" for paths handled by AuthGuard routes above */}
+        <Route path="*" element={null} />
       </Routes>
     </div>
     </ActiveViewersProvider>

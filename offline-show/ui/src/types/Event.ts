@@ -11,6 +11,7 @@ export interface Event {
   updated_at?: string;
   originalDate?: string;
   calendarId?: string;
+  isQuickMode?: boolean;
 }
 
 export interface EventFormData {

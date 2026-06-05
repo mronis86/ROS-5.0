@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { getApiBaseUrl } from '../services/api-client';
+import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
+import { resolveQuickModeEventId } from '../lib/quickModeEvent';
 
 type QuickTimer = {
   id: number;
@@ -35,22 +36,13 @@ const nowRemainingMs = (timer: QuickTimer, nowMs: number) => {
   return Math.max(0, timer.remainingMs - (nowMs - timer.startedAtMs));
 };
 
-const isValidEventUuid = (id: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
-
-/** Railway/Neon active_timers.event_id is UUID — register a calendar event and use its id. */
 const createQuickCalendarEvent = async (): Promise<string> => {
-  const res = await fetch(`${getApiBaseUrl()}/api/calendar-events`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: `Quick Mode ${new Date().toLocaleDateString()}`,
-      date: new Date().toISOString().slice(0, 10),
-      schedule_data: { quickMode: true, source: 'quick-mode' }
-    })
+  const data = await apiClient.createCalendarEvent({
+    name: `Quick Mode ${new Date().toLocaleDateString()}`,
+    date: new Date().toISOString().slice(0, 10),
+    schedule_data: { quickMode: true, source: 'quick-mode' }
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
+  if (!data?.id) throw new Error('Calendar event created without an ID');
   return String(data.id);
 };
 
@@ -87,6 +79,7 @@ const QuickModePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [eventId, setEventId] = useState('');
+  const [eventIdError, setEventIdError] = useState('');
   const [timers, setTimers] = useState<QuickTimer[]>([]);
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
   const [loadedTimerId, setLoadedTimerId] = useState<number | null>(null);
@@ -98,34 +91,47 @@ const QuickModePage: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState('');
   const clockWindowRef = useRef<Window | null>(null);
 
+  const eventIdParam = searchParams.get('eventId') ?? '';
+  const forceNewSession = searchParams.get('new') === '1';
+
   const storageKey = useMemo(() => (eventId ? `${STORAGE_KEY_PREFIX}${eventId}` : ''), [eventId]);
 
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
-      const fromQuery = (searchParams.get('eventId') || '').trim();
-      if (fromQuery && isValidEventUuid(fromQuery) && !fromQuery.startsWith('quick-')) {
-        setEventId(fromQuery);
-        return;
-      }
-      let id: string;
       try {
-        id = await createQuickCalendarEvent();
-      } catch {
-        id = crypto.randomUUID();
+        const id = await resolveQuickModeEventId(eventIdParam, createQuickCalendarEvent, {
+          forceNew: forceNewSession,
+          verifyEventId: async (candidateId) => {
+            try {
+              await apiClient.getCalendarEvent(candidateId);
+              return true;
+            } catch {
+              return false;
+            }
+          }
+        });
+        if (cancelled) return;
+        setSearchParams((prev) => {
+          const p = new URLSearchParams(prev);
+          if (p.get('eventId') === id && !p.has('new')) return prev;
+          p.set('eventId', id);
+          p.delete('new');
+          return p;
+        }, { replace: true });
+        setEventId((prev) => (prev === id ? prev : id));
+        setEventIdError('');
+      } catch (err) {
+        if (cancelled) return;
+        setEventIdError(err instanceof Error ? err.message : 'Failed to create Quick Mode session');
       }
-      if (cancelled) return;
-      setSearchParams((prev) => {
-        const p = new URLSearchParams(prev);
-        p.set('eventId', id);
-        return p;
-      }, { replace: true });
-      setEventId(id);
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [searchParams, setSearchParams]);
+  }, [eventIdParam, forceNewSession, setSearchParams]);
 
   useEffect(() => {
     if (!storageKey) return;
@@ -492,7 +498,7 @@ const QuickModePage: React.FC = () => {
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/', { state: { tab: 'quickMode' } })}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-slate-800 hover:text-white"
               aria-label="Back to event list"
               title="Back to event list"
@@ -509,7 +515,10 @@ const QuickModePage: React.FC = () => {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-[11px] text-slate-200">
-              Event ID: <span className="font-mono text-purple-300">{eventId || 'loading...'}</span>
+              Event ID:{' '}
+              <span className={`font-mono ${eventIdError ? 'text-red-300' : 'text-purple-300'}`}>
+                {eventIdError || eventId || 'loading...'}
+              </span>
             </div>
             <button
               type="button"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Event,
   EventFormData,
@@ -13,12 +13,16 @@ import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { getOfflineDisplayName, getOfflineUserId } from '../services/offline-user';
 import RoleSelectionModal from '../components/RoleSelectionModal';
+import { isQuickModeCalendarEvent } from '../lib/quickModeEvent';
+import QuickModeBoltIcon from '../components/QuickModeBoltIcon';
+
+type EventListTab = 'upcoming' | 'past' | 'quickMode';
 
 const EventListPage: React.FC = () => {
   const navigate = useNavigate();
-  const displayName = getOfflineDisplayName();
+  const location = useLocation();
   const [events, setEvents] = useState<Event[]>([]);
-  const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
+  const [activeTab, setActiveTab] = useState<EventListTab>('upcoming');
   const [showAddModal, setShowAddModal] = useState(false);
   const [filterLocation, setFilterLocation] = useState<string>('all');
   const [filterDays, setFilterDays] = useState<string>('all');
@@ -53,6 +57,8 @@ const EventListPage: React.FC = () => {
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [deleteConfirmCode, setDeleteConfirmCode] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [quickModeSelectedIds, setQuickModeSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<Event[]>([]);
 
   const generateDeleteCode = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -65,6 +71,13 @@ const EventListPage: React.FC = () => {
   useEffect(() => {
     loadEventsFromSupabase();
   }, []);
+
+  useEffect(() => {
+    const tab = (location.state as { tab?: EventListTab } | null)?.tab;
+    if (tab === 'quickMode') {
+      setActiveTab('quickMode');
+    }
+  }, [location.state]);
 
   // Auto-refresh disabled to reduce database usage - users can manually refresh
   // useEffect(() => {
@@ -79,6 +92,7 @@ const EventListPage: React.FC = () => {
   const loadEventsFromSupabase = async () => {
     try {
       setIsLoading(true);
+      apiClient.invalidateCalendarEventsCache();
       console.log('🔄 Loading events from offline LAN database...');
       const calendarEvents = await DatabaseService.getCalendarEvents();
       console.log('📊 Raw calendar events from Neon:', calendarEvents);
@@ -100,20 +114,23 @@ const EventListPage: React.FC = () => {
           const dateObj = new Date(calEvent.date);
           const simpleDate = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD format
           
-          const eventId =
-            (calEvent.schedule_data?.eventId as string | undefined) || calEvent.id || Date.now().toString();
+          const isQm = isQuickModeCalendarEvent(calEvent);
+          const eventId = isQm
+            ? (calEvent.id || Date.now().toString())
+            : ((calEvent.schedule_data?.eventId as string | undefined) || calEvent.id || Date.now().toString());
 
           const transformedEvent: Event = {
             id: eventId,
             calendarId: calEvent.id,
             name: calEvent.name,
-            date: simpleDate, // Use simple date format for filtering
-            originalDate: calEvent.date, // Keep original for reference
+            date: simpleDate,
+            originalDate: calEvent.date,
             location: (calEvent.schedule_data?.location as string) || 'Great Hall',
             numberOfDays: Number(calEvent.schedule_data?.numberOfDays) || 1,
             timezone: (calEvent.schedule_data?.timezone as string) || 'America/New_York',
             eventType: (calEvent.schedule_data?.eventType as string) || 'Staged Production',
             recordStreaming: (calEvent.schedule_data?.recordStreaming as string) || 'None',
+            isQuickMode: isQm,
             created_at: calEvent.created_at || new Date().toISOString(),
             updated_at: calEvent.updated_at || new Date().toISOString()
           };
@@ -409,50 +426,87 @@ const EventListPage: React.FC = () => {
     }
   };
 
-  const openDeleteConfirmModal = (event: Event) => {
-    setEventToDelete(event);
-    setDeleteConfirmInput('');
-    setDeleteConfirmCode(generateDeleteCode());
-  };
-
   const closeDeleteConfirmModal = () => {
     setEventToDelete(null);
+    setBulkDeleteTargets([]);
     setDeleteConfirmInput('');
     setDeleteConfirmCode('');
+  };
+
+  const deleteEventFully = async (event: Event) => {
+    const calendarId = event.calendarId || event.id;
+    try {
+      await DatabaseService.deleteRunOfShowData(calendarId);
+    } catch (error) {
+      console.error('Error deleting run-of-show data:', error);
+    }
+    try {
+      await DatabaseService.deleteCalendarEvent(calendarId);
+    } catch (error) {
+      console.error('Error deleting calendar event:', error);
+    }
   };
 
   const deleteConfirmPhrase = deleteConfirmCode ? `DELETE ${deleteConfirmCode}` : '';
   const deleteConfirmMatch = deleteConfirmPhrase.length > 0 && deleteConfirmInput.trim() === deleteConfirmPhrase;
 
   const performDeleteEvent = async () => {
-    if (!eventToDelete || !deleteConfirmMatch) return;
+    if (!deleteConfirmMatch) return;
+
+    if (bulkDeleteTargets.length > 0) {
+      const targets = bulkDeleteTargets;
+      const ids = new Set(targets.map((e) => e.id));
+      setIsDeleting(true);
+      closeDeleteConfirmModal();
+      setEvents((prev) => prev.filter((event) => !ids.has(event.id)));
+      setQuickModeSelectedIds(new Set());
+      try {
+        for (const event of targets) {
+          await deleteEventFully(event);
+        }
+      } finally {
+        setIsDeleting(false);
+        loadEventsFromSupabase();
+      }
+      return;
+    }
+
+    if (!eventToDelete) return;
     const id = eventToDelete.id;
-    const name = eventToDelete.name;
-    const calendarId = eventToDelete.calendarId;
     setIsDeleting(true);
     closeDeleteConfirmModal();
-    setEvents(prev => prev.filter(event => event.id !== id));
+    setEvents((prev) => prev.filter((event) => event.id !== id));
     try {
-      await DatabaseService.deleteRunOfShowData(id);
-      if (calendarId) {
-        await DatabaseService.deleteCalendarEvent(calendarId);
-      } else {
-        const calendarEvents = await DatabaseService.getCalendarEvents();
-        const matchingCalendarEvent = calendarEvents.find(
-          (calEvent) =>
-            calEvent.schedule_data?.eventId === id ||
-            calEvent.id === id ||
-            calEvent.name === name
-        );
-        if (matchingCalendarEvent?.id) {
-          await DatabaseService.deleteCalendarEvent(matchingCalendarEvent.id);
-        }
-      }
-    } catch (error) {
-      console.error('Error auto-deleting event from Supabase:', error);
+      await deleteEventFully(eventToDelete);
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  const openBulkDeleteConfirm = (targetEvents: Event[]) => {
+    if (targetEvents.length === 0) return;
+    setEventToDelete(null);
+    setBulkDeleteTargets(targetEvents);
+    setDeleteConfirmInput('');
+    setDeleteConfirmCode(generateDeleteCode());
+  };
+
+  const toggleQuickModeSelected = (id: string) => {
+    setQuickModeSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const clearQuickModeSelection = () => setQuickModeSelectedIds(new Set());
+
+  const openDeleteConfirmModal = (event: Event) => {
+    setBulkDeleteTargets([]);
+    setEventToDelete(event);
+    setDeleteConfirmInput('');
+    setDeleteConfirmCode(generateDeleteCode());
   };
 
   const openEditModal = (event: Event) => {
@@ -556,9 +610,16 @@ const EventListPage: React.FC = () => {
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Start of today
     
     const filtered = events.filter(event => {
-      // Parse date without timezone conversion
+      const searchMatch = searchTerm === '' || 
+        event.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        event.location.toLowerCase().includes(searchTerm.toLowerCase());
+
+      if (activeTab === 'quickMode') {
+        return Boolean(event.isQuickMode) && searchMatch;
+      }
+
       const [year, month, day] = event.date.split('-').map(Number);
-      const eventDate = new Date(year, month - 1, day); // month is 0-indexed
+      const eventDate = new Date(year, month - 1, day);
       
       const dateMatch = activeTab === 'upcoming' 
         ? eventDate >= today 
@@ -566,11 +627,8 @@ const EventListPage: React.FC = () => {
       
       const locationMatch = filterLocation === 'all' || event.location === filterLocation;
       const daysMatch = filterDays === 'all' || event.numberOfDays.toString() === filterDays;
-      const searchMatch = searchTerm === '' || 
-        event.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        event.location.toLowerCase().includes(searchTerm.toLowerCase());
       
-      const passes = dateMatch && locationMatch && daysMatch && searchMatch;
+      const passes = dateMatch && locationMatch && daysMatch && searchMatch && !event.isQuickMode;
       console.log(`🔍 Event "${event.name}" filter result:`, {
         dateMatch,
         locationMatch,
@@ -583,6 +641,11 @@ const EventListPage: React.FC = () => {
       
       return passes;
     }).sort((a, b) => {
+      if (activeTab === 'quickMode') {
+        const aTs = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bTs = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bTs - aTs;
+      }
       const dateA = new Date(a.date);
       const dateB = new Date(b.date);
       return activeTab === 'upcoming' 
@@ -595,6 +658,8 @@ const EventListPage: React.FC = () => {
   };
 
   const filteredEvents = getFilteredEvents();
+  const quickModeEventCount = events.filter((e) => e.isQuickMode).length;
+  const bulkDeleteSelection = filteredEvents.filter((e) => quickModeSelectedIds.has(e.id));
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 pt-16">
@@ -605,9 +670,6 @@ const EventListPage: React.FC = () => {
         </h1>
         <p className="text-sm text-slate-400 mb-1">
           Manage your events and schedules
-        </p>
-        <p className="text-white font-medium text-sm mb-0">
-          Welcome back, {displayName}!
         </p>
       </div>
 
@@ -636,6 +698,20 @@ const EventListPage: React.FC = () => {
             >
               📋 Past Events
             </button>
+            <button
+              onClick={() => {
+                setActiveTab('quickMode');
+                clearQuickModeSelection();
+              }}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
+                activeTab === 'quickMode'
+                  ? 'bg-yellow-600 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <QuickModeBoltIcon className="h-3.5 w-3.5" />
+              Quick Mode{quickModeEventCount > 0 ? ` (${quickModeEventCount})` : ''}
+            </button>
           </div>
           <button
             onClick={() => setShowAddModal(true)}
@@ -645,13 +721,55 @@ const EventListPage: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/quick-mode')}
+            onClick={() => navigate('/quick-mode?new=1')}
             className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-colors"
-            title="Run quick ad-hoc timers without creating an event"
+            title="Open Quick Mode for ad-hoc timers"
           >
-            Quick Mode
+            Open Quick Mode
           </button>
         </div>
+
+        {activeTab === 'quickMode' && (
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4 p-3 bg-purple-950/40 border border-purple-700/50 rounded-lg">
+            <p className="text-sm text-purple-200">
+              Quick Mode sessions are timer workspaces. Select entries below to delete old or duplicate sessions.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setQuickModeSelectedIds(new Set(filteredEvents.map((e) => e.id)))}
+                disabled={filteredEvents.length === 0}
+                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm rounded-lg"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={clearQuickModeSelection}
+                disabled={quickModeSelectedIds.size === 0}
+                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm rounded-lg"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => openBulkDeleteConfirm(bulkDeleteSelection)}
+                disabled={bulkDeleteSelection.length === 0 || isDeleting}
+                className="px-3 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
+              >
+                Delete selected ({bulkDeleteSelection.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => openBulkDeleteConfirm(filteredEvents)}
+                disabled={filteredEvents.length === 0 || isDeleting}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
+              >
+                Delete all ({filteredEvents.length})
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Search and Filter */}
         <div className="flex justify-center mb-4">
@@ -720,30 +838,50 @@ const EventListPage: React.FC = () => {
               <table className="w-full">
                 <thead className="bg-slate-700">
                   <tr>
+                    {activeTab === 'quickMode' && (
+                      <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 w-10">
+                        <span className="sr-only">Select</span>
+                      </th>
+                    )}
                     <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[220px] w-[28%]">Event Name</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Date</th>
+                    {activeTab !== 'quickMode' && (
+                      <>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Location</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Type</th>
                     <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]" title="Broadcast Options">Broadcast</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Duration</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
+                      </>
+                    )}
+                    {activeTab === 'quickMode' && (
+                      <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Created</th>
+                    )}
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredEvents.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center">
-                        <div className="text-6xl mb-4">
-                          {activeTab === 'upcoming' ? '📅' : '📋'}
+                      <td colSpan={activeTab === 'quickMode' ? 5 : 8} className="px-4 py-12 text-center">
+                        <div className="mb-4 flex justify-center">
+                          {activeTab === 'upcoming' ? (
+                            <span className="text-6xl">📅</span>
+                          ) : activeTab === 'quickMode' ? (
+                            <QuickModeBoltIcon className="h-14 w-14 text-yellow-500" />
+                          ) : (
+                            <span className="text-6xl">📋</span>
+                          )}
                         </div>
                         <h3 className="text-2xl font-bold text-white mb-2">
-                          No {activeTab} events
+                          {activeTab === 'quickMode' ? 'No Quick Mode sessions' : `No ${activeTab} events`}
                         </h3>
                         <p className="text-slate-400">
                           {activeTab === 'upcoming' 
                             ? 'Add your first upcoming event to get started!'
-                            : 'Past events will appear here once you have some.'
+                            : activeTab === 'quickMode'
+                              ? 'Open Quick Mode to start timers. Sessions appear here for cleanup.'
+                              : 'Past events will appear here once you have some.'
                           }
                         </p>
                       </td>
@@ -751,12 +889,32 @@ const EventListPage: React.FC = () => {
                   ) : (
                     filteredEvents.map((event) => (
                       <tr key={event.id} className="border-b border-slate-600">
+                        {activeTab === 'quickMode' && (
+                          <td className="px-2 py-2 text-center border-r border-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={quickModeSelectedIds.has(event.id)}
+                              onChange={() => toggleQuickModeSelected(event.id)}
+                              className="h-4 w-4 rounded border-slate-500"
+                              aria-label={`Select ${event.name}`}
+                            />
+                          </td>
+                        )}
                         <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[220px] w-[28%]">
-                          {event.name}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {event.name}
+                            {event.isQuickMode && (
+                              <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-purple-600 text-white">
+                                Quick
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600">
+                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
                           {formatDate(event.date)}
                         </td>
+                        {activeTab !== 'quickMode' && (
+                          <>
                         <td className="px-3 py-2 border-r border-slate-600">
                           <div className="flex items-center gap-1.5">
                             <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${getLocationColor(event.location)}`}></div>
@@ -787,8 +945,32 @@ const EventListPage: React.FC = () => {
                             {event.timezone || 'America/New_York'}
                           </span>
                         </td>
+                          </>
+                        )}
+                        {activeTab === 'quickMode' && (
+                          <td className="px-3 py-2 text-slate-400 text-xs border-r border-slate-600 text-center font-mono">
+                            {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
+                          </td>
+                        )}
                         <td className="px-3 py-2">
-                          <div className="flex gap-2 justify-center">
+                          <div className="flex gap-2 justify-center flex-wrap">
+                            {activeTab === 'quickMode' ? (
+                              <>
+                                <button
+                                  onClick={() => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
+                                  className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium rounded transition-colors"
+                                >
+                                  Open
+                                </button>
+                                <button
+                                  onClick={() => openDeleteConfirmModal(event)}
+                                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
+                                >
+                                  Delete
+                                </button>
+                              </>
+                            ) : (
+                              <>
                             <button
                               onClick={() => launchRunOfShow(event)}
                               className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors"
@@ -807,6 +989,8 @@ const EventListPage: React.FC = () => {
                             >
                               Delete
                             </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -942,14 +1126,23 @@ const EventListPage: React.FC = () => {
       )}
 
       {/* Delete confirmation modal - must type phrase to confirm */}
-      {eventToDelete && (
+      {(eventToDelete || bulkDeleteTargets.length > 0) && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-lg p-6 max-w-md w-full border border-slate-600 shadow-xl">
             <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
-              <span className="text-red-400">⚠️</span> Delete Event
+              <span className="text-red-400">⚠️</span>
+              {bulkDeleteTargets.length > 0 ? `Delete ${bulkDeleteTargets.length} Quick Mode Sessions` : 'Delete Event'}
             </h2>
             <p className="text-slate-300 text-sm mb-3">
-              This will permanently delete <strong className="text-white">{eventToDelete.name}</strong> and its Run of Show data. This cannot be undone.
+              {bulkDeleteTargets.length > 0 ? (
+                <>
+                  This will permanently delete <strong className="text-white">{bulkDeleteTargets.length}</strong> Quick Mode session(s) and their timer data. This cannot be undone.
+                </>
+              ) : (
+                <>
+                  This will permanently delete <strong className="text-white">{eventToDelete?.name}</strong> and its Run of Show data. This cannot be undone.
+                </>
+              )}
             </p>
             <p className="text-slate-400 text-xs mb-2">
               Copy or type the phrase below to confirm:

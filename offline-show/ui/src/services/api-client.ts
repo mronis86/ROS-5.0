@@ -55,6 +55,10 @@ class ApiClient {
     console.log('✅ Cache cleared');
   }
 
+  invalidateCalendarEventsCache(): void {
+    this.cache.delete('calendarEvents');
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}, cacheKey?: string, cacheTTL?: number): Promise<T> {
     // Check cache first (only for GET requests)
     if (options.method === 'GET' || !options.method) {

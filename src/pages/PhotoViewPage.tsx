@@ -339,9 +339,11 @@ const PhotoViewPage: React.FC = () => {
   const [masterStartTime, setMasterStartTime] = useState<string>('09:00');
   const [syncCountdown, setSyncCountdown] = useState<number>(20); // Seconds until next 20s data sync (overtime, start time, duration)
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
+  const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Hybrid timer data (same pattern as RunOfShowPage)
-  const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null, secondaryTimer: null });
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
   
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
@@ -402,6 +404,8 @@ const PhotoViewPage: React.FC = () => {
     setSubCueTimers({});
     setSubCueTimerProgress({});
     setSecondaryTimer(null);
+    setHybridTimerData({ activeTimer: null, secondaryTimer: null });
+    setResolumeSyncPulse(false);
     setOvertimeMinutes({});
     setShowStartOvertime(0);
     setSchedule(prev => prev.map(item => ({ ...item, isIndented: false })));
@@ -409,12 +413,205 @@ const PhotoViewPage: React.FC = () => {
 
 
   // Helper function to format cue display with proper spacing (matches Run of Show)
-  const formatCueDisplay = (cue: string | undefined) => {
-    if (!cue) return 'CUE';
-    // If cue already has proper spacing, return as is
-    if (cue.includes('CUE ')) return cue;
-    // If cue is like "CUE2", convert to "CUE 2"
-    return cue.replace(/^CUE(\d+)$/, 'CUE $1');
+  const formatCueDisplay = (cue: string | number | undefined) => {
+    if (!cue && cue !== 0) return 'CUE';
+    const cueStr = String(cue);
+    if (cueStr.includes('CUE ')) return cueStr;
+    if (cueStr.match(/^CUE\d+$/)) return cueStr.replace(/^CUE(\d+)$/, 'CUE $1');
+    return `CUE ${cueStr}`;
+  };
+
+  const isResolumeArmed = (timer: { resolume_state?: string } | null | undefined) =>
+    timer?.resolume_state === 'armed';
+
+  const isResolumeSynced = (timer: { resolume_state?: string; time_source?: string } | null | undefined) =>
+    timer?.resolume_state === 'synced' ||
+    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
+
+  const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
+    timer?.user_name === 'Resolume Sync' || timer?.user_id === 'companion-resolume';
+
+  const enrichSubCueTimer = (timer: any) => {
+    if (!timer || typeof timer !== 'object') return timer;
+    if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
+    if (!isResolumeCompanionSubCue(timer)) return timer;
+    return {
+      ...timer,
+      time_source: 'resolume',
+      resolume_state: timer.is_running ? 'synced' : 'armed',
+    };
+  };
+
+  const isSubCueResolumeRunning = (timer: any) => {
+    const enriched = enrichSubCueTimer(timer);
+    return isResolumeSynced(enriched) && !!enriched?.is_running;
+  };
+
+  const RESOLUME_RUNNING_ROW_CLASS =
+    'bg-yellow-400/25 ring-2 ring-inset ring-yellow-300 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.35)]';
+
+  const hybridSecondaryTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
+
+  const itemMatchesTimerRow = (itemId: number, timer: { item_id?: unknown } | null | undefined) => {
+    const tid = timer?.item_id;
+    if (tid == null) return false;
+    return (
+      parseInt(String(tid), 10) === itemId ||
+      tid === itemId ||
+      String(tid) === String(itemId)
+    );
+  };
+
+  const isSubCueResolumeSyncedRow = (itemId: number) =>
+    Boolean(
+      hybridSecondaryTimer &&
+      itemMatchesTimerRow(itemId, hybridSecondaryTimer) &&
+      isSubCueResolumeRunning(hybridSecondaryTimer)
+    );
+
+  const isSubCueResolumeArmedRow = (itemId: number) =>
+    Boolean(
+      hybridSecondaryTimer &&
+      itemMatchesTimerRow(itemId, hybridSecondaryTimer) &&
+      !hybridSecondaryTimer.is_running &&
+      (isResolumeArmed(hybridSecondaryTimer) ||
+        (isResolumeCompanionSubCue(hybridSecondaryTimer) && !hybridSecondaryTimer.is_running))
+    );
+
+  const getRemainingFromTimer = (
+    timer: { started_at?: string; duration_seconds?: number } | null | undefined,
+    offsetMs: number
+  ) => {
+    if (!timer?.started_at || timer.duration_seconds == null) return null;
+    const startedMs = new Date(timer.started_at).getTime();
+    if (!Number.isFinite(startedMs)) return null;
+    const elapsed = (Date.now() + offsetMs - startedMs) / 1000;
+    return timer.duration_seconds - elapsed;
+  };
+
+  const shouldRejectResolumeAlignReset = (
+    prev: { started_at?: string; duration_seconds?: number; is_running?: boolean } | null | undefined,
+    next: { started_at?: string; duration_seconds?: number; is_running?: boolean; resolume_state?: string; time_source?: string },
+    offsetMs: number
+  ) => {
+    if (!prev?.is_running || !next.is_running || !isResolumeSynced(next)) return false;
+    if (!prev.started_at || !next.started_at || prev.started_at === next.started_at) return false;
+    const dur = next.duration_seconds ?? prev.duration_seconds ?? 0;
+    if (dur <= 0) return false;
+    const prevRem = getRemainingFromTimer(prev, offsetMs);
+    const nextRem = getRemainingFromTimer(next, offsetMs);
+    if (prevRem == null || nextRem == null) return false;
+    return prevRem <= 15 && nextRem > dur * 0.85;
+  };
+
+  const shouldTriggerResolumeSyncPulse = (
+    prev: {
+      started_at?: string;
+      duration_seconds?: number;
+      resolume_state?: string;
+      time_source?: string;
+      is_running?: boolean;
+      is_active?: boolean;
+      resolume_align_seq?: number;
+    } | null | undefined,
+    next: {
+      started_at?: string;
+      duration_seconds?: number;
+      resolume_state?: string;
+      time_source?: string;
+      is_running?: boolean;
+      is_active?: boolean;
+      resolume_align_seq?: number;
+    }
+  ) => {
+    if (!isResolumeSynced(next) || !next.is_running || !next.is_active) return false;
+    if (!prev) return true;
+    if (!isResolumeSynced(prev) && isResolumeSynced(next)) return true;
+    if (
+      next.resolume_align_seq != null &&
+      next.resolume_align_seq !== prev.resolume_align_seq
+    ) {
+      return true;
+    }
+    if (prev.started_at !== next.started_at) return true;
+    if (prev.duration_seconds !== next.duration_seconds) return true;
+    return false;
+  };
+
+  const triggerResolumeSyncPulse = useCallback(() => {
+    setResolumeSyncPulse(true);
+    if (resolumeSyncPulseTimeoutRef.current) clearTimeout(resolumeSyncPulseTimeoutRef.current);
+    resolumeSyncPulseTimeoutRef.current = setTimeout(() => setResolumeSyncPulse(false), 2000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (resolumeSyncPulseTimeoutRef.current) clearTimeout(resolumeSyncPulseTimeoutRef.current);
+    };
+  }, []);
+
+  const isResolumeSyncPulseActive = Boolean(
+    resolumeSyncPulse &&
+      isResolumeSynced(hybridTimerData?.activeTimer) &&
+      hybridTimerData?.activeTimer?.is_running
+  );
+
+  const getPhotoRowHighlight = (item: ScheduleItem) => {
+    const hybridItemId = hybridTimerData?.activeTimer?.item_id;
+    const isTimerRowMatch = hybridItemId != null && itemMatchesTimerRow(item.id, hybridTimerData?.activeTimer);
+    const isHybridRunning = Boolean(
+      isTimerRowMatch &&
+      hybridTimerData?.activeTimer?.is_running &&
+      hybridTimerData?.activeTimer?.is_active
+    );
+    const isHybridLoaded = Boolean(
+      isTimerRowMatch &&
+      hybridTimerData?.activeTimer?.is_active &&
+      !hybridTimerData?.activeTimer?.is_running
+    );
+    const isResolumeRunningRow = isHybridRunning && isResolumeSynced(hybridTimerData?.activeTimer);
+    const isResolumeArmedRow = isHybridLoaded && isResolumeArmed(hybridTimerData?.activeTimer);
+    const isSubResolumeRunning = isSubCueResolumeSyncedRow(item.id);
+    const isSubResolumeArmed = isSubCueResolumeArmedRow(item.id);
+    const isIndented = Boolean(indentedCues[item.id]);
+
+    if (isResolumeRunningRow || isSubResolumeRunning) {
+      return { border: 'border-4 border-yellow-300', bg: RESOLUME_RUNNING_ROW_CLASS };
+    }
+    if (isResolumeArmedRow || isSubResolumeArmed) {
+      return {
+        border: 'border-4 border-purple-400',
+        bg: 'bg-purple-950/60 ring-1 ring-inset ring-purple-400',
+      };
+    }
+
+    const isActive = isTimerRowMatch || String(activeItemId) === String(item.id);
+    const isRunning =
+      isHybridRunning ||
+      (timerState === 'running' && String(activeItemId) === String(item.id));
+
+    if (isIndented) {
+      const parentId = indentedCues[item.id].parentId;
+      const parentIsLoaded = loadedItems[parentId] || false;
+      const parentIsRunning = activeTimers[parentId] || false;
+      const currentlyLoadedId = hybridItemId ?? activeItemId;
+      const parentIsLoadedHybrid =
+        currentlyLoadedId != null &&
+        (parseInt(String(currentlyLoadedId), 10) === parentId ||
+          currentlyLoadedId === parentId ||
+          String(currentlyLoadedId) === String(parentId));
+      if (parentIsLoaded || parentIsRunning || parentIsLoadedHybrid) {
+        return { border: 'border-4 border-orange-400', bg: 'bg-amber-950' };
+      }
+    }
+
+    if (isActive) {
+      return isRunning
+        ? { border: 'border-4 border-green-400', bg: 'bg-green-950' }
+        : { border: 'border-4 border-blue-400', bg: 'bg-blue-950' };
+    }
+
+    return { border: 'border border-slate-600', bg: 'bg-slate-900' };
   };
 
   // Helper function to truncate text (matches ROS Show File)
@@ -910,9 +1107,10 @@ const PhotoViewPage: React.FC = () => {
             setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
             
             // Set hybrid timer data (same pattern as RunOfShowPage)
-            setHybridTimerData({
+            setHybridTimerData(prev => ({
+              ...prev,
               activeTimer: activeTimerData
-            });
+            }));
             
             setTimerProgress({
               [parseInt(activeTimerData.item_id)]: {
@@ -927,7 +1125,7 @@ const PhotoViewPage: React.FC = () => {
             setActiveItemId(null);
             setTimerState(null);
             setLoadedItems({});
-            setHybridTimerData({ activeTimer: null });
+            setHybridTimerData(prev => ({ ...prev, activeTimer: null }));
             setTimerProgress({});
             console.log('✅ PhotoView: No active timer found on mount');
           }
@@ -977,10 +1175,15 @@ const PhotoViewPage: React.FC = () => {
         }
         // Update hybrid timer data directly from WebSocket (same pattern as RunOfShowPage)
         if (data && data.item_id) {
-          setHybridTimerData(prev => ({
-            ...prev,
-            activeTimer: data
-          }));
+          setHybridTimerData(prev => {
+            if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, data)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
+            }
+            return {
+              ...prev,
+              activeTimer: data,
+            };
+          });
           
           // Also update legacy timerProgress for compatibility
           const itemId = parseInt(data.item_id);
@@ -1009,7 +1212,7 @@ const PhotoViewPage: React.FC = () => {
         console.log('📡 PhotoView: Timer stopped via WebSocket', data);
         // Clear timer state when stopped
         if (data && data.item_id) {
-          setHybridTimerData({ activeTimer: null });
+          setHybridTimerData(prev => ({ ...prev, activeTimer: null }));
           setActiveItemId(null);
           setTimerState(null);
           setLoadedItems(prev => {
@@ -1028,7 +1231,8 @@ const PhotoViewPage: React.FC = () => {
       onTimersStopped: (data: any) => {
         console.log('📡 PhotoView: All timers stopped via WebSocket', data);
         // Clear all timer states
-        setHybridTimerData({ activeTimer: null });
+        setHybridTimerData({ activeTimer: null, secondaryTimer: null });
+        setSecondaryTimer(null);
         setActiveItemId(null);
         setTimerState(null);
         setLoadedItems({});
@@ -1058,13 +1262,25 @@ const PhotoViewPage: React.FC = () => {
       onSubCueTimerStarted: (data: any) => {
         console.log('📡 PhotoView: Sub-cue timer started via WebSocket', data);
         scheduleTimerStoppedSync();
-        // Handle sub-cue timer start
-        if (data && data.item_id) {
-          const itemId = parseInt(data.item_id);
-          // Find the schedule item to get cue and segment name
+        if (data && data.event_id === event?.id && data.item_id) {
+          setHybridTimerData(prev => {
+            const enrichedIncoming = enrichSubCueTimer(data);
+            if (shouldTriggerResolumeSyncPulse(prev?.secondaryTimer, enrichedIncoming)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
+            }
+            let secondaryTimerData = enrichedIncoming;
+            if (shouldRejectResolumeAlignReset(prev?.secondaryTimer, enrichedIncoming, clockOffset)) {
+              secondaryTimerData = { ...enrichedIncoming, started_at: prev!.secondaryTimer!.started_at };
+            }
+            return {
+              ...prev,
+              secondaryTimer: secondaryTimerData,
+            };
+          });
+
+          const itemId = parseInt(String(data.item_id), 10);
           const scheduleItem = schedule.find(item => item.id === itemId);
-          
-          // Set sub-cue timer progress
+
           setSubCueTimerProgress(prev => ({
             ...prev,
             [itemId]: {
@@ -1073,50 +1289,56 @@ const PhotoViewPage: React.FC = () => {
               startedAt: data.started_at ? new Date(data.started_at) : new Date()
             }
           }));
-          
+
           setSecondaryTimer({
-            itemId: itemId,
+            itemId,
             duration: data.duration_seconds || 60,
             remaining: Math.max(0, (data.duration_seconds || 60) - (data.elapsed_seconds || 0)),
             isActive: true,
             startedAt: data.started_at ? new Date(data.started_at) : new Date(),
-            timerState: 'running',
-            cue: scheduleItem?.customFields?.cue || `CUE ${data.item_id}`,
+            timerState: data.is_running ? 'running' : 'loaded',
+            cue: scheduleItem?.customFields?.cue || data.cue_display || `CUE ${data.item_id}`,
             segmentName: scheduleItem?.segmentName || 'Segment'
           });
         }
       },
       onSubCueTimerStopped: (data: any) => {
         console.log('📡 PhotoView: Sub-cue timer stopped via WebSocket', data);
-        // Clear sub-cue timer when stopped
-        if (data && data.item_id) {
-          const itemId = parseInt(data.item_id);
-          setSubCueTimerProgress(prev => {
-            const newProgress = { ...prev };
-            delete newProgress[itemId];
-            return newProgress;
-          });
+        if (data && data.event_id === event?.id) {
+          if (data.item_id) {
+            const itemId = parseInt(String(data.item_id), 10);
+            setSubCueTimerProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[itemId];
+              return newProgress;
+            });
+          }
+          setSecondaryTimer(null);
+          setHybridTimerData(prev => ({
+            ...prev,
+            secondaryTimer: null,
+          }));
         }
-        setSecondaryTimer(null);
       },
       onActiveTimersUpdated: (data: any) => {
         console.log('📡 PhotoView: Active timers updated via WebSocket', data);
-        // Handle active timers update from active_timers table
         if (data && data.item_id) {
           if (data.timer_state === 'running' || data.timer_state === 'loaded') {
-            setActiveItemId(parseInt(data.item_id));
+            const itemId = parseInt(String(data.item_id), 10);
+            setHybridTimerData(prev => ({ ...prev, activeTimer: data }));
+            setActiveItemId(itemId);
             setTimerState(data.timer_state);
-            setLoadedItems({ [parseInt(data.item_id)]: true });
-            
+            setLoadedItems({ [itemId]: true });
+
             setTimerProgress({
-              [parseInt(data.item_id)]: {
+              [itemId]: {
                 elapsed: data.elapsed_seconds || 0,
                 total: data.duration_seconds || 0,
                 startedAt: data.started_at ? new Date(data.started_at) : null
               }
             });
           } else if (data.timer_state === 'stopped') {
-            // Timer stopped - clear state
+            setHybridTimerData(prev => ({ ...prev, activeTimer: null }));
             setActiveItemId(null);
             setTimerState(null);
             setLoadedItems({});
@@ -1188,9 +1410,10 @@ const PhotoViewPage: React.FC = () => {
               setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
               
               // Set hybrid timer data (same pattern as RunOfShowPage)
-              setHybridTimerData({
+              setHybridTimerData(prev => ({
+                ...prev,
                 activeTimer: activeTimerData
-              });
+              }));
               
               // Update timer progress
               setTimerProgress({
@@ -1222,6 +1445,7 @@ const PhotoViewPage: React.FC = () => {
           if (error) {
             console.error('❌ PhotoView: Error loading sub-cue timers:', error);
             setSecondaryTimer(null);
+            setHybridTimerData(prev => ({ ...prev, secondaryTimer: null }));
             return;
           }
 
@@ -1232,39 +1456,54 @@ const PhotoViewPage: React.FC = () => {
             console.log('🔄 PhotoView: Looking for timer_state === "running"');
             console.log('🔄 PhotoView: All timer states:', subCueTimers.map(t => ({ id: t.item_id, state: t.timer_state, is_running: t.is_running })));
             
-            // Find the first running sub-cue timer
-            const runningTimer = subCueTimers.find(timer => timer.timer_state === 'running' || timer.is_running === true);
-            console.log('🔄 PhotoView: Found running timer:', runningTimer);
-            
-            if (runningTimer) {
-              const itemId = parseInt(runningTimer.item_id);
+            // Find active sub-cue (running or Resolume armed)
+            const activeSubCue = subCueTimers.find(
+              (timer) =>
+                timer.is_active &&
+                (timer.is_running ||
+                  timer.timer_state === 'running' ||
+                  timer.resolume_state === 'armed' ||
+                  timer.time_source === 'resolume' ||
+                  timer.user_name === 'Resolume Sync' ||
+                  timer.user_id === 'companion-resolume')
+            );
+            console.log('🔄 PhotoView: Found active sub-cue timer:', activeSubCue);
+
+            if (activeSubCue) {
+              const enriched = enrichSubCueTimer(activeSubCue);
+              const itemId = parseInt(String(activeSubCue.item_id), 10);
               const scheduleItem = schedule.find(item => item.id === itemId);
-              
-              // Set sub-cue timer progress
+
+              setHybridTimerData(prev => ({
+                ...prev,
+                secondaryTimer: enriched,
+              }));
+
               setSubCueTimerProgress(prev => ({
                 ...prev,
                 [itemId]: {
-                  elapsed: runningTimer.elapsed_seconds || 0,
-                  total: runningTimer.duration_seconds || 60,
-                  startedAt: runningTimer.started_at ? new Date(runningTimer.started_at) : new Date()
+                  elapsed: activeSubCue.elapsed_seconds || 0,
+                  total: activeSubCue.duration_seconds || 60,
+                  startedAt: activeSubCue.started_at ? new Date(activeSubCue.started_at) : new Date()
                 }
               }));
-              
+
               setSecondaryTimer({
-                itemId: itemId,
-                duration: runningTimer.duration_seconds || 60,
-                remaining: Math.max(0, (runningTimer.duration_seconds || 60) - (runningTimer.elapsed_seconds || 0)),
+                itemId,
+                duration: activeSubCue.duration_seconds || 60,
+                remaining: Math.max(0, (activeSubCue.duration_seconds || 60) - (activeSubCue.elapsed_seconds || 0)),
                 isActive: true,
-                startedAt: runningTimer.started_at ? new Date(runningTimer.started_at) : new Date(),
-                timerState: 'running',
-                cue: scheduleItem?.customFields?.cue || `CUE ${runningTimer.item_id}`,
+                startedAt: activeSubCue.started_at ? new Date(activeSubCue.started_at) : new Date(),
+                timerState: activeSubCue.is_running ? 'running' : 'loaded',
+                cue: scheduleItem?.customFields?.cue || activeSubCue.cue_display || `CUE ${activeSubCue.item_id}`,
                 segmentName: scheduleItem?.segmentName || 'Segment'
               });
-              
+
               console.log('🔄 PhotoView: Initial sync completed - sub-cue timer restored');
             } else {
               setSecondaryTimer(null);
-              console.log('🔄 PhotoView: Initial sync completed - no running sub-cue timer');
+              setHybridTimerData(prev => ({ ...prev, secondaryTimer: null }));
+              console.log('🔄 PhotoView: Initial sync completed - no active sub-cue timer');
             }
           } else {
             setSecondaryTimer(null);
@@ -1897,9 +2136,93 @@ const PhotoViewPage: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center space-x-6">
-            {/* Status Text Display */}
+            {/* Status Text Display — matches Run of Show Resolume labels */}
             <div className="text-center">
-              {timerState === 'running' && activeItemId ? (
+              {hybridTimerData?.activeTimer ? (
+                <div className="flex flex-col items-center gap-0.5">
+                  <div className={`text-lg font-bold ${
+                    hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                      ? isResolumeSyncPulseActive
+                        ? 'text-yellow-300'
+                        : isResolumeSynced(hybridTimerData.activeTimer)
+                          ? 'text-purple-400'
+                          : 'text-green-400'
+                      : isResolumeArmed(hybridTimerData.activeTimer)
+                        ? 'text-purple-300'
+                        : 'text-yellow-400'
+                  }`}>
+                    {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                      ? isResolumeSynced(hybridTimerData.activeTimer)
+                        ? 'RUNNING · RESOLUME'
+                        : 'RUNNING'
+                      : isResolumeArmed(hybridTimerData.activeTimer)
+                        ? 'LOADED · RESOLUME (armed)'
+                        : 'LOADED'
+                    } - {(() => {
+                      const itemId = hybridTimerData.activeTimer.item_id;
+                      const idNum = typeof itemId === 'string' ? parseInt(itemId, 10) : Number(itemId);
+                      const scheduleItem = schedule.find(item => item.id === idNum);
+                      if (scheduleItem?.customFields?.cue) {
+                        return formatCueDisplay(scheduleItem.customFields.cue);
+                      }
+                      return `CUE ${itemId}`;
+                    })()}
+                  </div>
+                  {isResolumeArmed(hybridTimerData.activeTimer) && (
+                    <div className="text-xs text-purple-300/90">Waiting for Resolume playback…</div>
+                  )}
+                  {isResolumeSynced(hybridTimerData.activeTimer) &&
+                    hybridTimerData.activeTimer.is_running &&
+                    hybridTimerData.activeTimer.is_active && (
+                    <div className="text-xs text-purple-300/90">Countdown synced to Resolume clip</div>
+                  )}
+                  {((hybridSecondaryTimer?.is_running && hybridSecondaryTimer?.is_active !== false) ||
+                    (secondaryTimer && secondaryTimer.timerState === 'running')) && (
+                    <div className="flex flex-col items-center mt-0.5 gap-0.5">
+                      {(() => {
+                        const subCueData: any = hybridSecondaryTimer;
+                        const itemId = subCueData?.item_id != null
+                          ? (typeof subCueData.item_id === 'string' ? parseInt(subCueData.item_id, 10) : subCueData.item_id)
+                          : secondaryTimer?.itemId;
+                        const scheduleItem = schedule.find(item => item.id === itemId);
+                        const cueDisplay = scheduleItem?.customFields?.cue ||
+                          subCueData?.cue_display ||
+                          subCueData?.cue ||
+                          secondaryTimer?.cue ||
+                          (itemId != null ? `CUE ${itemId}` : 'CUE');
+                        const formattedCue = formatCueDisplay(cueDisplay);
+
+                        let remaining = secondaryTimer?.remaining ?? 0;
+                        if (subCueData?.started_at) {
+                          const syncedNow = Date.now() + clockOffset;
+                          const startedAt = new Date(subCueData.started_at || subCueData.created_at).getTime();
+                          const elapsed = Math.floor((syncedNow - startedAt) / 1000);
+                          const total = Number(subCueData.duration_seconds || subCueData.duration || 60);
+                          remaining = Math.max(0, total - elapsed);
+                        }
+
+                        const colorClass = isSubCueResolumeRunning(subCueData)
+                          ? 'text-yellow-300'
+                          : subCueData && isResolumeArmed(subCueData)
+                            ? 'text-purple-300'
+                            : 'text-orange-400';
+                        const statusLine = isSubCueResolumeRunning(subCueData)
+                          ? `RUNNING · RESOLUME - ${formattedCue}`
+                          : subCueData && isResolumeArmed(subCueData)
+                            ? `LOADED · RESOLUME (armed) - ${formattedCue}`
+                            : `${formattedCue} -`;
+
+                        return (
+                          <>
+                            <div className={`text-lg font-bold ${colorClass}`}>{statusLine}</div>
+                            <div className={`text-lg font-bold ${colorClass}`}>{formatSubCueTime(remaining)}</div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              ) : timerState === 'running' && activeItemId ? (
                 <div className="text-lg text-green-400 font-bold">
                   RUNNING - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields?.cue)}
                   {secondaryTimer && secondaryTimer.isActive && (
@@ -1989,19 +2312,8 @@ const PhotoViewPage: React.FC = () => {
           </div>
         ) : (
           previewItems.map((item, index) => {
-                    const isActive = String(activeItemId) === String(item.id);
-                    const isLoaded = loadedItems[item.id];
-                    const isRunning = timerState === 'running' && isActive;
+                    const rowHighlight = getPhotoRowHighlight(item);
                     const isIndented = indentedCues[item.id] || false;
-                    
-                    // Check if indented cue's parent is loaded/running
-                    let shouldHighlightIndented = false;
-                    if (isIndented) {
-                      const parentId = indentedCues[item.id].parentId;
-                      const parentIsLoaded = loadedItems[parentId] || false;
-                      const parentIsRunning = activeTimers[parentId] || false;
-                      shouldHighlightIndented = parentIsLoaded || parentIsRunning;
-                    }
             
             // Calculate start time: rehearsal = scheduled only, in-show = with overtime
             const itemIndex = schedule.findIndex(s => s.id === item.id);
@@ -2021,15 +2333,8 @@ const PhotoViewPage: React.FC = () => {
             if (item.hasQA) pptQA.push('Q&A');
             const pptQAString = pptQA.length > 0 ? pptQA.join('/') : 'None';
             
-            // CSS class selection
-            let cssClass = '';
-            if (shouldHighlightIndented) {
-              cssClass = 'border-4 border-orange-400';
-            } else if (isActive) {
-              cssClass = isRunning ? 'border-4 border-green-400' : 'border-4 border-blue-400';
-            } else {
-              cssClass = 'border border-slate-600';
-            }
+            // CSS class selection (Resolume yellow / armed purple / standard states)
+            const cssClass = rowHighlight.border;
             
             return (
               <div 
@@ -2044,13 +2349,7 @@ const PhotoViewPage: React.FC = () => {
                 }}
               >
                         {/* Main Data Row - Made taller for better portrait image display */}
-                        <div className={`grid grid-cols-11 gap-0 ${
-                          shouldHighlightIndented ? 'bg-amber-950' : 
-                          isActive ? (
-                            isRunning ? 'bg-green-950' : 'bg-blue-950'
-                          ) : 
-                          'bg-slate-900'
-                        }`} style={{ minHeight: '200px' }}>
+                        <div className={`grid grid-cols-11 gap-0 ${rowHighlight.bg}`} style={{ minHeight: '200px' }}>
                   {/* CUE Column - Enhanced for taller display */}
                   <div className="col-span-1 border-r border-slate-600 p-3 flex flex-col justify-center">
                     <div className="text-center">

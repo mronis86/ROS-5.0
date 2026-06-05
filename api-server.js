@@ -1400,7 +1400,7 @@ app.post('/api/calendar-events', async (req, res) => {
        RETURNING *`,
       [name, date, JSON.stringify(schedule_data)]
     );
-    res.json(result.rows[0]);
+    res.json(normalizeCalendarEvent(result.rows[0]));
   } catch (error) {
     console.error('Error creating calendar event:', error);
     res.status(500).json({ error: 'Failed to create calendar event' });

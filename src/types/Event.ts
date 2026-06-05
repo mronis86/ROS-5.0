@@ -9,6 +9,9 @@ export interface Event {
   recordStreaming?: string;
   created_at?: string;
   updated_at?: string;
+  /** Hidden backend row for Quick Mode timers — shown on Quick Mode tab */
+  isQuickMode?: boolean;
+  calendarId?: string;
 }
 
 export interface EventFormData {
