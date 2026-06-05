@@ -509,7 +509,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			armTrackItemId = itemId
 		}
 		try {
-			await this.loadCueForResolume(eventId, loadItemId)
+			await this.loadCueForResolume(eventId, loadItemId, { forSubCueParent: !!requireSubCue })
 			this.setResolumeArm({ itemId: String(armTrackItemId), layer, clip, isSubCue: !!requireSubCue })
 			await this.notifyResolumeArm(armTrackItemId, { isSubCue: requireSubCue })
 			if (triggerOnArm) {
@@ -567,9 +567,26 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		}
 	}
 
-	async loadCueForResolume(eventId, itemId) {
+	async loadCueForResolume(eventId, itemId, { forSubCueParent = false } = {}) {
 		await this.fetchActiveTimer(eventId)
 		await this.stopAllSubCueTimers(eventId)
+
+		const targetId = String(itemId)
+		const activeId =
+			this.activeTimer?.item_id != null ? String(this.activeTimer.item_id) : null
+		const activeRunning =
+			this.activeTimer?.is_running === true ||
+			this.activeTimer?.timer_state === 'running'
+
+		// Sub-cue Resolume arm: keep parent RUNNING/LOADED — same as native PLAY on indented row
+		if (forSubCueParent && activeId === targetId) {
+			this.log(
+				'info',
+				`Sub-cue arm: parent cue ${itemId} left ${activeRunning ? 'RUNNING' : 'LOADED'} (not reloading)`
+			)
+			return
+		}
+
 		if (this.activeTimer?.item_id != null) {
 			try {
 				await this.apiPost('/api/timers/stop', {

@@ -3434,10 +3434,35 @@ function broadcastToAll(eventId, updateType, data) {
 
 app.post('/api/cues/load', async (req, res) => {
   try {
-    const { event_id, item_id, user_id, duration_seconds, row_is, cue_is, timer_id } = req.body;
+    const { event_id, item_id, user_id, duration_seconds, row_is, cue_is, timer_id, preserve_running } = req.body;
     
     console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}, Cue: ${cue_is}`);
     clearAllResolumeState(event_id);
+
+    if (preserve_running) {
+      const existing = await pool.query(
+        'SELECT * FROM active_timers WHERE event_id = $1 LIMIT 1',
+        [event_id]
+      );
+      const row = existing.rows[0];
+      if (
+        row &&
+        String(row.item_id) === String(item_id) &&
+        row.is_running === true &&
+        row.timer_state === 'running'
+      ) {
+        console.log(`🎯 OSC: preserve_running — parent cue ${item_id} stays RUNNING`);
+        const broadcastData = broadcastTimerUpdated(event_id, row);
+        return res.json({
+          success: true,
+          message: 'Cue already running — state preserved',
+          event_id,
+          item_id,
+          preserved: true,
+          broadcast: broadcastData,
+        });
+      }
+    }
     
     // ONLY write to active_timers table (like Supabase RPC did)
     // Match the EXACT same fields as React app's /api/active-timers endpoint
@@ -3844,11 +3869,14 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
         [event_id]
       );
       broadcastData = broadcastSubCueTimerUpdated(event_id, subResult.rows[0]);
+      // Refresh main timer UI without changing DB — parent must stay RUNNING during sub-cue
       const mainResult = await pool.query(
         'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
         [event_id]
       );
-      if (mainResult.rows[0]) broadcastTimerUpdated(event_id, mainResult.rows[0]);
+      if (mainResult.rows[0]) {
+        broadcastTimerUpdated(event_id, mainResult.rows[0]);
+      }
     } else {
       await pool.query(`
         INSERT INTO active_timers (
