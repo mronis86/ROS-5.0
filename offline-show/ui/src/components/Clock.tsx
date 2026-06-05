@@ -385,23 +385,22 @@ const Clock: React.FC<ClockProps> = ({
         console.log('🔍 [CLOCK DEBUG] Duration:', data?.duration_seconds);
         
         if (data && data.event_id === eventId) {
-          if (data.timer_state === 'stopped' || data.is_active === false) {
-            setHybridTimerData(prev => ({
+          // Update timer data directly from WebSocket
+          console.log('🔍 [CLOCK DEBUG] Updating hybridTimerData with WebSocket data');
+          setHybridTimerData(prev => {
+            console.log('🔍 [CLOCK DEBUG] Previous hybridTimerData:', prev);
+            let activeTimer = data;
+            if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
+              activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
+            }
+            const newData = {
               ...prev,
-              activeTimer: null
-            }));
-            console.log('✅ Clock: Timer cleared via WebSocket (stopped/inactive)');
-          } else {
-            console.log('🔍 [CLOCK DEBUG] Updating hybridTimerData with WebSocket data');
-            setHybridTimerData(prev => {
-              let activeTimer = data;
-              if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
-                activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
-              }
-              return { ...prev, activeTimer };
-            });
-            console.log('✅ Clock: Timer updated via WebSocket');
-          }
+              activeTimer
+            };
+            console.log('🔍 [CLOCK DEBUG] New hybridTimerData:', newData);
+            return newData;
+          });
+          console.log('✅ Clock: Timer updated via WebSocket');
         } else {
           console.log('⚠️ Clock: Timer update ignored - event ID mismatch or no data');
         }
@@ -451,11 +450,11 @@ const Clock: React.FC<ClockProps> = ({
       onTimerStopped: (data: any) => {
         console.log('🔄 Clock: WebSocket timer stopped:', data);
         if (data && data.event_id === eventId) {
+          // Clear timer data when stopped
           setHybridTimerData(prev => ({
             ...prev,
             activeTimer: null
           }));
-          setTimerProgress({ elapsed: 0, total: 0 });
           console.log('✅ Clock: Timer cleared via WebSocket');
         }
       },
@@ -468,18 +467,6 @@ const Clock: React.FC<ClockProps> = ({
             activeTimer: null
           }));
           console.log('✅ Clock: All timers cleared via WebSocket');
-        }
-      },
-      onResetAllStates: (data: any) => {
-        console.log('🔄 Clock: WebSocket reset all states:', data);
-        if (!data?.event_id || data.event_id === eventId) {
-          setHybridTimerData(prev => ({
-            ...prev,
-            activeTimer: null,
-            secondaryTimer: null
-          }));
-          setTimerProgress({ elapsed: 0, total: 0 });
-          console.log('✅ Clock: Timer cleared via resetAllStates');
         }
       },
       onSubCueTimerStarted: (data: any) => {
@@ -520,8 +507,7 @@ const Clock: React.FC<ClockProps> = ({
         }
       },
       onInitialSync: async () => {
-        console.log('🔄 Clock: Performing initial sync for active timer, sub-cue timers, and messages');
-        await loadActiveTimer();
+        console.log('🔄 Clock: Performing initial sync for sub-cue timers and messages');
         try {
           // Load current sub-cue timers
           const subCueTimersResult = await DatabaseService.getActiveSubCueTimers(eventId);
@@ -533,7 +519,7 @@ const Clock: React.FC<ClockProps> = ({
             if (runningSubCueTimer) {
               setHybridTimerData(prev => ({
                 ...prev,
-                secondaryTimer: enrichSubCueTimer(runningSubCueTimer)
+                secondaryTimer: enrichSubCueTimer(runningSubCueTimer),
               }));
               console.log('✅ Clock: Initial sync - sub-cue timer loaded:', runningSubCueTimer);
             }
@@ -558,14 +544,26 @@ const Clock: React.FC<ClockProps> = ({
           // Reload timer when reconnected
           loadActiveTimer();
         }
+      },
+      onResetAllStates: (data: any) => {
+        if (data?.event_id === eventId || !data?.event_id) {
+          setHybridTimerData((prev) => ({
+            ...prev,
+            activeTimer: null,
+            secondaryTimer: null
+          }));
+          setLastActiveTimerId(null);
+          setLastActiveItemId(null);
+          setLastActiveStartTime(null);
+        }
       }
     };
 
-    const unsub = socketClient.connect(eventId, callbacks);
+    socketClient.connect(eventId, callbacks);
 
     return () => {
       console.log('🔄 Clock: Cleaning up WebSocket connection');
-      unsub();
+      socketClient.disconnect(eventId);
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component
 
@@ -1133,6 +1131,7 @@ const Clock: React.FC<ClockProps> = ({
               
               let remaining = 0;
               if (supabaseOnly) {
+                // Supabase data structure - calculate remaining time in real-time
                 if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
                   const syncedNow = Date.now() + clockOffset;
                   const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
@@ -1148,22 +1147,19 @@ const Clock: React.FC<ClockProps> = ({
               
               const hours = Math.floor(Math.abs(remaining) / 3600);
               
-              // When supabaseOnly is true, only check Supabase messages
               if (supabaseOnly) {
                 const displayMessage = hybridTimerData?.timerMessage || supabaseMessage;
                 if (displayMessage && displayMessage.enabled) {
                   return 'text-3xl md:text-4xl lg:text-5xl';
                 }
               } else {
-                // When supabaseOnly is false, check both local and Supabase messages
               if ((messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled)) {
                 return 'text-3xl md:text-4xl lg:text-5xl';
                 }
               }
-              // Increase size by 25% when no hours (MM:SS format)
               return hours === 0 
-                ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]' // 25% larger
-                : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]'; // Original size
+                ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
             })()}`}
             style={{
               lineHeight: '1'

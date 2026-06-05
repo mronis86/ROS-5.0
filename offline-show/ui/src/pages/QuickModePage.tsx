@@ -39,7 +39,6 @@ const nowRemainingMs = (timer: QuickTimer, nowMs: number) => {
 const isValidEventUuid = (id: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
-/** UUID event id — required when cloud mode forwards timers to Railway/Neon. */
 const createQuickCalendarEvent = async (): Promise<string> => {
   const res = await fetch(`${getApiBaseUrl()}/api/calendar-events`, {
     method: 'POST',
@@ -225,7 +224,7 @@ const QuickModePage: React.FC = () => {
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        if (!cancelled) setSyncMessage('Synced to show server (timer display)');
+        if (!cancelled) setSyncMessage('Synced to show server');
       } catch {
         if (!cancelled) setSyncMessage('Show server unavailable');
       } finally {
@@ -376,25 +375,7 @@ const QuickModePage: React.FC = () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      console.error('Quick Mode API error:', path, res.status, detail);
-      throw new Error(`HTTP ${res.status}`);
-    }
-  };
-
-  const openTimerDisplay = () => {
-    if (!eventId) return;
-    if (timerWindowRef.current && !timerWindowRef.current.closed) {
-      timerWindowRef.current.focus();
-      return;
-    }
-    const win = window.open(
-      `/timer?eventId=${encodeURIComponent(eventId)}`,
-      'offlineShowTimer',
-      'width=1920,height=1080,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
-    );
-    if (win) timerWindowRef.current = win;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
   };
 
   const addTimer = () => {
@@ -549,7 +530,7 @@ const QuickModePage: React.FC = () => {
                   {connectivity?.cloudConnected ? 'Cloud on' : 'LAN only'}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">Ad-hoc timers — UUID event for LAN + cloud timer sync</p>
+              <p className="text-[11px] text-slate-400">Ad-hoc timers · syncs via local show server (:3004)</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -558,7 +539,14 @@ const QuickModePage: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={openTimerDisplay}
+              onClick={() => {
+                if (!eventId) return;
+                window.open(
+                  `/timer?eventId=${encodeURIComponent(eventId)}`,
+                  'offlineShowTimer',
+                  'width=1920,height=1080,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+                );
+              }}
               className="rounded border border-emerald-500/70 px-2 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-900/30"
             >
               Open timer display
