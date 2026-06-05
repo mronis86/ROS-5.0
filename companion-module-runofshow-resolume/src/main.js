@@ -823,13 +823,32 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		}
 	}
 
+	async stopSubCueResolumeAtClipEnd(eventId, itemId) {
+		await this.apiPut('/api/sub-cue-timers/stop', {
+			event_id: eventId,
+			item_id: parseInt(itemId, 10),
+		})
+	}
+
 	async triggerClipEndAlignZero() {
 		const arm = this.resolumeArm
 		const eventId = this.config?.eventId
 		if (!arm || arm.endTriggered || !eventId || !arm.inferredDuration) return
 		arm.endTriggered = true
 		const dur = arm.inferredDuration
+		const itemId = parseInt(arm.itemId, 10)
 		try {
+			if (arm.isSubCue) {
+				await this.triggerResolumeAlign(dur, 0, arm.lastPositionMs || Date.now(), true, 'clip-end')
+				await this.stopSubCueResolumeAtClipEnd(eventId, itemId)
+				await this.apiPost('/api/timers/resolume-end', { event_id: eventId })
+				this.stopPeriodicAlign()
+				this.resolumeArm = null
+				this.updateVariableValues()
+				this.checkFeedbacks('resolume_armed', 'resolume_aligned')
+				this.log('info', `Clip ended — sub-cue ${itemId} stopped at 0`)
+				return
+			}
 			await this.triggerResolumeAlign(dur, 0, arm.lastPositionMs || Date.now(), true, 'clip-end')
 			await this.apiPost('/api/timers/resolume-end', { event_id: eventId })
 			this.stopPeriodicAlign()
@@ -851,31 +870,49 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		arm.endTriggered = true
 		const itemId = parseInt(arm.itemId, 10)
 		try {
-			await this.apiPost('/api/timers/stop', { event_id: eventId, item_id: itemId })
+			if (arm.isSubCue) {
+				await this.stopSubCueResolumeAtClipEnd(eventId, itemId)
+			} else {
+				await this.apiPost('/api/timers/stop', { event_id: eventId, item_id: itemId })
+			}
 			await this.apiPost('/api/timers/resolume-end', { event_id: eventId })
 			this.clearResolumeArm()
 			await this.fetchActiveTimer(eventId)
-			this.log('info', `Clip ended — timer stopped for item ${itemId}`)
+			this.log(
+				'info',
+				arm.isSubCue
+					? `Clip ended — sub-cue ${itemId} stopped`
+					: `Clip ended — timer stopped for item ${itemId}`
+			)
 		} catch (err) {
 			arm.endTriggered = false
 			throw err
 		}
 	}
 
-	/** Release Resolume lock only; timer keeps running (may show overtime). */
+	/** Release Resolume lock only; main cue may keep running (overtime). Sub-cues always stop. */
 	async triggerClipEndRelease() {
 		const arm = this.resolumeArm
 		const eventId = this.config?.eventId
 		if (!arm || arm.endTriggered || !eventId) return
 		arm.endTriggered = true
+		const itemId = parseInt(arm.itemId, 10)
 		try {
+			if (arm.isSubCue) {
+				await this.stopSubCueResolumeAtClipEnd(eventId, itemId)
+			}
 			await this.apiPost('/api/timers/resolume-end', { event_id: eventId })
 			this.stopPeriodicAlign()
 			this.resolumeArm = null
 			this.updateVariableValues()
 			this.checkFeedbacks('resolume_armed', 'resolume_aligned')
 			await this.fetchActiveTimer(eventId)
-			this.log('info', 'Clip ended — released Resolume lock (timer still running)')
+			this.log(
+				'info',
+				arm.isSubCue
+					? `Clip ended — sub-cue ${itemId} stopped`
+					: 'Clip ended — released Resolume lock (timer still running)'
+			)
 		} catch (err) {
 			arm.endTriggered = false
 			throw err

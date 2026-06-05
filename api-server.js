@@ -3945,8 +3945,13 @@ app.post('/api/timers/resolume-end', async (req, res) => {
     if (!event_id) {
       return res.status(400).json({ error: 'event_id is required' });
     }
+    const synced = resolumeTimeSourceByEvent.get(event_id);
+    const pending = resolumePendingByEvent.get(event_id);
+    const wasSubCue = !!(synced?.is_sub_cue ?? pending?.is_sub_cue);
     clearAllResolumeState(event_id);
-    console.log(`🎬 Resolume end - cleared Resolume state for event: ${event_id}`);
+    console.log(
+      `🎬 Resolume end - cleared Resolume state for event: ${event_id}${wasSubCue ? ' [sub-cue]' : ''}`
+    );
 
     const timerResult = await pool.query(
       'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
@@ -3956,12 +3961,22 @@ app.post('/api/timers/resolume-end', async (req, res) => {
     if (timerData) {
       broadcastTimerUpdated(event_id, timerData);
     }
-    const subResult = await pool.query(
-      'SELECT * FROM sub_cue_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [event_id]
-    );
-    if (subResult.rows[0]) {
-      broadcastSubCueTimerUpdated(event_id, subResult.rows[0]);
+
+    if (wasSubCue) {
+      const stopResult = await pool.query(
+        `UPDATE sub_cue_timers
+         SET is_running = false, is_active = false, updated_at = NOW()
+         WHERE event_id = $1 AND is_running = true
+         RETURNING *`,
+        [event_id]
+      );
+      if (stopResult.rows.length > 0) {
+        broadcastUpdate(event_id, 'subCueTimerStopped', {
+          event_id,
+          stopped_count: stopResult.rows.length,
+        });
+        console.log(`🎬 Resolume end - stopped ${stopResult.rows.length} sub-cue timer(s)`);
+      }
     }
 
     res.json({ success: true, message: 'Resolume time source cleared', event_id });

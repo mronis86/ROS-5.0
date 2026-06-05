@@ -84,6 +84,20 @@ const Clock: React.FC<ClockProps> = ({
   const isResolumeArmed = (timer: { resolume_state?: string } | null | undefined) =>
     timer?.resolume_state === 'armed';
 
+  const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
+    timer?.user_name === 'Resolume Sync' || timer?.user_id === 'companion-resolume';
+
+  const enrichSubCueTimer = (timer: any) => {
+    if (!timer || typeof timer !== 'object') return timer;
+    if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
+    if (!isResolumeCompanionSubCue(timer)) return timer;
+    return {
+      ...timer,
+      time_source: 'resolume',
+      resolume_state: timer.is_running ? 'synced' : 'armed',
+    };
+  };
+
   const getRemainingFromTimer = (
     timer: { started_at?: string; duration_seconds?: number } | null | undefined,
     offsetMs: number
@@ -261,7 +275,7 @@ const Clock: React.FC<ClockProps> = ({
             if (runningSubCueTimer) {
               setHybridTimerData(prev => ({
                 ...prev,
-                secondaryTimer: runningSubCueTimer
+                secondaryTimer: enrichSubCueTimer(runningSubCueTimer)
               }));
               console.log('✅ Clock: Initial load - sub-cue timer loaded:', runningSubCueTimer);
             }
@@ -472,9 +486,10 @@ const Clock: React.FC<ClockProps> = ({
         console.log('🔄 Clock: WebSocket sub-cue timer started:', data);
         if (data && data.event_id === eventId) {
           setHybridTimerData(prev => {
-            let secondaryTimer = data;
-            if (shouldRejectResolumeAlignReset(prev?.secondaryTimer, data, clockOffset)) {
-              secondaryTimer = { ...data, started_at: prev!.secondaryTimer!.started_at };
+            const enriched = enrichSubCueTimer(data);
+            let secondaryTimer = enriched;
+            if (shouldRejectResolumeAlignReset(prev?.secondaryTimer, enriched, clockOffset)) {
+              secondaryTimer = { ...enriched, started_at: prev!.secondaryTimer!.started_at };
               console.log('🎬 Clock: Ignoring Resolume sub-cue align that reset countdown to full clip');
             }
             return { ...prev, secondaryTimer };
@@ -518,7 +533,7 @@ const Clock: React.FC<ClockProps> = ({
             if (runningSubCueTimer) {
               setHybridTimerData(prev => ({
                 ...prev,
-                secondaryTimer: runningSubCueTimer
+                secondaryTimer: enrichSubCueTimer(runningSubCueTimer)
               }));
               console.log('✅ Clock: Initial sync - sub-cue timer loaded:', runningSubCueTimer);
             }
@@ -714,7 +729,7 @@ const Clock: React.FC<ClockProps> = ({
   const elapsedForDisplay = getElapsedTime();
   const isOvertimeCountUp = useCountUp && timerProgress.total > 0 && elapsedForDisplay > timerProgress.total;
   const overtimeAmount = isOvertimeCountUp ? elapsedForDisplay - timerProgress.total : 0;
-  const secondarySubTimer = hybridTimerData?.secondaryTimer;
+  const secondarySubTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
   const secondaryDisplayColor =
     secondarySubTimer && isResolumeSynced(secondarySubTimer) ? 'text-yellow-300' : 'text-orange-400';
   const secondaryResolumeLabel = secondarySubTimer
@@ -724,6 +739,12 @@ const Clock: React.FC<ClockProps> = ({
         ? ' · RESOLUME (armed)'
         : ''
     : '';
+  const secondaryStatusPrefix =
+    secondarySubTimer && isResolumeSynced(secondarySubTimer) && secondarySubTimer.is_running
+      ? 'RUNNING · RESOLUME - '
+      : secondarySubTimer && isResolumeArmed(secondarySubTimer)
+        ? 'LOADED · RESOLUME (armed) - '
+        : '';
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
@@ -1092,7 +1113,9 @@ const Clock: React.FC<ClockProps> = ({
                 const segmentName = currentSecondaryTimer.segment_name || currentSecondaryTimer.segmentName || '';
                 const formattedCue = cue.replace(/CUE(\d+)/, 'CUE $1');
                 const line = segmentName ? `${formattedCue} - ${segmentName}` : formattedCue;
-                return `${line}${secondaryResolumeLabel}`;
+                return secondaryStatusPrefix
+                  ? `${secondaryStatusPrefix}${line}`
+                  : `${line}${secondaryResolumeLabel}`;
               } else {
                 // Clock always runs in WebSocket-only mode
                 return 'No CUE';
@@ -1115,7 +1138,7 @@ const Clock: React.FC<ClockProps> = ({
                   const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
                   const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
                   const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = totalDuration - elapsed;
+                  remaining = Math.max(0, totalDuration - elapsed);
                 } else {
                   remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
                 }
@@ -1161,7 +1184,7 @@ const Clock: React.FC<ClockProps> = ({
                   const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
                   const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
                   const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = totalDuration - elapsed;
+                  remaining = Math.max(0, totalDuration - elapsed);
                 } else {
                   remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
                 }
@@ -1279,9 +1302,7 @@ const Clock: React.FC<ClockProps> = ({
               const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
               const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
               const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-              const remaining = isResolumeSynced(currentSecondaryTimer)
-                ? totalDuration - elapsed
-                : Math.max(0, totalDuration - elapsed);
+              const remaining = Math.max(0, totalDuration - elapsed);
               
               const hours = Math.floor(remaining / 3600);
               const minutes = Math.floor((remaining % 3600) / 60);

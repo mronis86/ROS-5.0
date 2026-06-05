@@ -1094,7 +1094,7 @@ const Clock: React.FC<ClockProps> = ({
                   const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
                   const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
                   const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = totalDuration - elapsed;
+                  remaining = Math.max(0, totalDuration - elapsed);
                 } else {
                   remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
                 }
@@ -1137,7 +1137,7 @@ const Clock: React.FC<ClockProps> = ({
                   const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
                   const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
                   const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = totalDuration - elapsed;
+                  remaining = Math.max(0, totalDuration - elapsed);
                 } else {
                   remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
                 }
@@ -1255,9 +1255,7 @@ const Clock: React.FC<ClockProps> = ({
               const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
               const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
               const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-              const remaining = isResolumeSynced(currentSecondaryTimer)
-                ? totalDuration - elapsed
-                : Math.max(0, totalDuration - elapsed);
+              const remaining = Math.max(0, totalDuration - elapsed);
               
               const hours = Math.floor(remaining / 3600);
               const minutes = Math.floor((remaining % 3600) / 60);

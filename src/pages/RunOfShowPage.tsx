@@ -929,6 +929,84 @@ const RunOfShowPage: React.FC = () => {
     );
   };
 
+  const normalizeScheduleItemId = (id: unknown): number | null => {
+    if (id == null || id === '') return null;
+    const n = typeof id === 'number' ? id : parseInt(String(id), 10);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const isItemCompleted = (itemId: number) =>
+    Object.entries(completedCues).some(
+      ([key, done]) => !!done && normalizeScheduleItemId(key) === itemId
+    );
+
+  const COMPLETED_ROW_CLASS =
+    'bg-purple-950/90 ring-2 ring-inset ring-purple-400/45';
+
+  const isItemDimmed = (itemId: number) =>
+    isItemCompleted(itemId) || stoppedItems.has(itemId);
+
+  const getRowDimStyle = (item: { id: number; programType?: string }): React.CSSProperties => {
+    if (item.programType === 'KILLED') return { opacity: 0.7 };
+    if (isItemDimmed(item.id)) {
+      return { opacity: 0.68, filter: 'brightness(0.59) saturate(0.33)' };
+    }
+    return { opacity: 1 };
+  };
+
+  const getRowContainerStyle = (
+    item: {
+      id: number;
+      programType?: string;
+      notes?: string;
+      speakersText?: string;
+      speakers?: unknown;
+      customFields?: Record<string, unknown>;
+    },
+    extra?: React.CSSProperties
+  ): React.CSSProperties => ({
+    height: getRowHeight(
+      item.notes ?? '',
+      item.speakersText,
+      item.speakers as string | undefined,
+      item.customFields,
+      customColumns
+    ),
+    ...getRowDimStyle(item),
+    ...extra,
+  });
+
+  const getRowContainerClass = (itemId: number, index: number) =>
+    rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
+
+  /** CUE + Timer columns: neutral unless the row is completed/stopped. */
+  const getSideColumnRowClass = (itemId: number, index: number) =>
+    isItemDimmed(itemId)
+      ? COMPLETED_ROW_CLASS
+      : index % 2 === 0
+        ? 'bg-slate-800'
+        : 'bg-slate-900';
+
+  const getSideColumnRowStyle = (item: {
+    id: number;
+    programType?: string;
+    notes?: string;
+    speakersText?: string;
+    speakers?: unknown;
+    customFields?: Record<string, unknown>;
+  }): React.CSSProperties =>
+    isItemDimmed(item.id)
+      ? getRowContainerStyle(item)
+      : {
+          height: getRowHeight(
+            item.notes ?? '',
+            item.speakersText,
+            item.speakers as string | undefined,
+            item.customFields,
+            customColumns
+          ),
+        };
+
   const isSubCueResolumeSyncedRow = (itemId: number) =>
     Boolean(
       hybridSecondaryTimer &&
@@ -1577,9 +1655,8 @@ const RunOfShowPage: React.FC = () => {
       if (Array.isArray(completedData)) {
         const completedCuesMap: Record<number, boolean> = {};
         completedData.forEach((cue: any) => {
-          if (cue.item_id) {
-            completedCuesMap[cue.item_id] = true;
-          }
+          const id = normalizeScheduleItemId(cue.item_id);
+          if (id != null) completedCuesMap[id] = true;
         });
         setCompletedCues(completedCuesMap);
         console.log('🟣 Synced completed cues:', completedCuesMap);
@@ -1803,14 +1880,14 @@ const RunOfShowPage: React.FC = () => {
         // Convert the database data to completedCues state format
         const completedCuesMap: Record<number, boolean> = {};
         completedCuesData.forEach((cue: any) => {
-          if (cue.item_id) {
-            // Don't mark the currently loaded cue as completed
-            if (activeItemId && cue.item_id === activeItemId) {
-              console.log('🟣 Skipping currently loaded cue from completed cues:', cue.item_id);
-              return;
-            }
-            completedCuesMap[cue.item_id] = true;
+          const id = normalizeScheduleItemId(cue.item_id);
+          if (id == null) return;
+          const loadedId = normalizeScheduleItemId(hybridTimerData?.activeTimer?.item_id ?? activeItemId);
+          if (loadedId != null && loadedId === id && hybridTimerData?.activeTimer?.is_active) {
+            console.log('🟣 Skipping currently active cue from completed cues:', id);
+            return;
           }
+          completedCuesMap[id] = true;
         });
         
         setCompletedCues(completedCuesMap);
@@ -5503,26 +5580,30 @@ const RunOfShowPage: React.FC = () => {
         if (data && data.cleared) {
           // All completed cues cleared (from reset button)
           setCompletedCues({});
-        } else if (data && data.removed && data.item_id) {
-          // Remove completed cue
-          setCompletedCues(prev => {
-            const newCompleted = { ...prev };
-            delete newCompleted[data.item_id];
-            return newCompleted;
-          });
+        } else if (data && data.removed && data.item_id != null) {
+          const id = normalizeScheduleItemId(data.item_id);
+          if (id != null) {
+            setCompletedCues((prev) => {
+              const newCompleted = { ...prev };
+              delete newCompleted[id];
+              return newCompleted;
+            });
+          }
         } else if (data && Array.isArray(data)) {
-          // Full array of completed cues (from GET request) - convert to object format
-          const completedObject = data.reduce((acc, cue) => {
-            acc[cue.item_id] = true;
+          const completedObject = data.reduce((acc: Record<number, boolean>, cue: { item_id?: unknown }) => {
+            const id = normalizeScheduleItemId(cue.item_id);
+            if (id != null) acc[id] = true;
             return acc;
           }, {});
           setCompletedCues(completedObject);
-        } else if (data && data.item_id) {
-          // Add or update single completed cue
-          setCompletedCues(prev => ({
-            ...prev,
-            [data.item_id]: true
-          }));
+        } else if (data && data.item_id != null) {
+          const id = normalizeScheduleItemId(data.item_id);
+          if (id != null) {
+            setCompletedCues((prev) => ({
+              ...prev,
+              [id]: true,
+            }));
+          }
         }
       },
       onResetAllStates: (data: any) => {
@@ -5692,10 +5773,17 @@ const RunOfShowPage: React.FC = () => {
       },
       onSubCueTimerStopped: (data: any) => {
         if (data && data.event_id === event?.id) {
-          // Clear hybrid timer data sub-cue timer (ClockPage style)
-          setHybridTimerData(prev => ({
+          Object.keys(subCueTimers).forEach((timerId) => {
+            if (subCueTimers[parseInt(timerId, 10)]) {
+              clearInterval(subCueTimers[parseInt(timerId, 10)]);
+            }
+          });
+          setSubCueTimers({});
+          setSubCueTimerProgress({});
+          setSecondaryTimer(null);
+          setHybridTimerData((prev) => ({
             ...prev,
-            secondaryTimer: null
+            secondaryTimer: null,
           }));
           console.log('✅ RunOfShow: Sub-cue timer stopped via WebSocket');
         }
@@ -5812,8 +5900,9 @@ const RunOfShowPage: React.FC = () => {
             console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);
             
             // Convert array to object format for consistency
-            const completedCuesObject = completedCuesArray.reduce((acc, cue) => {
-              acc[cue.item_id] = true;
+            const completedCuesObject = completedCuesArray.reduce((acc: Record<number, boolean>, cue: { item_id?: unknown }) => {
+              const id = normalizeScheduleItemId(cue.item_id);
+              if (id != null) acc[id] = true;
               return acc;
             }, {});
             
@@ -8437,21 +8526,24 @@ const RunOfShowPage: React.FC = () => {
       const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
       const isHybridRunning = Boolean(isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
       const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running);
-      if (item.isIndented && isSubCueResolumeSyncedRow(item.id)) {
-        classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
-        return;
-      }
-      if (item.isIndented && isSubCueResolumeArmedRow(item.id)) {
-        classNames.set(item.id, 'bg-purple-950/60 ring-1 ring-inset ring-purple-400');
-        return;
-      }
-      if (isHybridRunning) {
+      const isCompleted = isItemCompleted(item.id);
+      const isStopped = stoppedItems.has(item.id);
+
+      if (isHybridRunning && !isCompleted && !isStopped) {
         classNames.set(
           item.id,
           isResolumeSynced(hybridTimerData?.activeTimer)
             ? RESOLUME_RUNNING_ROW_CLASS
             : 'bg-green-950'
         );
+        return;
+      }
+      if (item.isIndented && !isCompleted && isSubCueResolumeSyncedRow(item.id)) {
+        classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
+        return;
+      }
+      if (isCompleted || isStopped) {
+        classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }
       if (isHybridLoaded) {
@@ -8463,8 +8555,10 @@ const RunOfShowPage: React.FC = () => {
         );
         return;
       }
-      if (completedCues[item.id]) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
-      if (stoppedItems.has(item.id)) { classNames.set(item.id, 'bg-gray-900 opacity-40'); return; }
+      if (item.isIndented && isSubCueResolumeArmedRow(item.id)) {
+        classNames.set(item.id, 'bg-purple-950/60 ring-1 ring-inset ring-purple-400');
+        return;
+      }
       if (loadedCueDependents.has(item.id)) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
       if (indentedCues[item.id]) {
         const parentId = indentedCues[item.id].parentId;
@@ -8484,6 +8578,7 @@ const RunOfShowPage: React.FC = () => {
   }, [
     filteredSchedule,
     hybridTimerData?.activeTimer,
+    hybridTimerData?.secondaryTimer,
     completedCues,
     stoppedItems,
     loadedCueDependents,
@@ -10010,7 +10105,8 @@ const RunOfShowPage: React.FC = () => {
                     hybridTimerData.activeTimer.is_active && (
                     <div className="text-xs text-purple-300/90">Countdown synced to Resolume clip</div>
                   )}
-                  {(hybridSecondaryTimer || secondaryTimer) && (
+                  {((hybridSecondaryTimer?.is_running && hybridSecondaryTimer?.is_active !== false) ||
+                    (secondaryTimer && secondaryTimer.timerState === 'running')) && (
                       <div className="flex flex-col items-center mt-0.5 gap-0.5">
                         {(() => {
                           const subCueData: any = hybridSecondaryTimer;
@@ -10030,9 +10126,7 @@ const RunOfShowPage: React.FC = () => {
                             const startedAt = new Date(subCueData.started_at || subCueData.created_at);
                             const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
                             const total = Number(subCueData.duration_seconds || subCueData.duration || 60);
-                            remaining = isSubCueResolumeRunning(subCueData) || isResolumeSynced(subCueData)
-                              ? total - elapsed
-                              : Math.max(0, total - elapsed);
+                            remaining = Math.max(0, total - elapsed);
                           }
 
                           const colorClass = isSubCueResolumeRunning(subCueData)
@@ -10863,55 +10957,8 @@ const RunOfShowPage: React.FC = () => {
                                  getFilteredSchedule().map((item, index) => (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
-                     className={`border-b-2 border-slate-600 flex items-center justify-center gap-1 ${
-                       // Use hybrid timer data for real-time highlighting (ClockPage style)
-                       (() => {
-                         // Match item_id with both string and number comparison
-                         const hybridItemId = hybridTimerData?.activeTimer?.item_id;
-                         const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
-                         const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
-                         const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
-                         
-                         if (item.isIndented && isSubCueResolumeSyncedRow(item.id)) {
-                           return RESOLUME_RUNNING_ROW_NUM_CLASS;
-                         }
-                         
-                         // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
-                         if (isHybridRunning) {
-                           return isResolumeSynced(hybridTimerData?.activeTimer)
-                             ? RESOLUME_RUNNING_ROW_NUM_CLASS
-                             : 'bg-green-900 border-green-500';
-                         }
-                         if (isHybridLoaded) return 'bg-blue-900 border-blue-500';
-                         
-                         // Only use old logic for completed/stopped states (not active states)
-                         if (completedCues[item.id]) return 'bg-gray-900 border-gray-700 opacity-40';
-                         if (stoppedItems.has(item.id)) return 'bg-gray-900 border-gray-700 opacity-40';
-                         if (loadedCueDependents.has(item.id)) return 'bg-amber-800 border-amber-600';
-                         
-                         // Debug logging removed to prevent console spam
-                         
-                         // INDENTED CUES: Highlight when parent is loaded OR running
-                         if (indentedCues[item.id]) {
-                           const parentId = indentedCues[item.id].parentId;
-                           const currentlyLoadedItemId = hybridTimerData?.activeTimer?.item_id || activeItemId;
-                           
-                           // Check if parent is currently loaded
-                           const parentIsLoaded = currentlyLoadedItemId && (
-                             parseInt(String(currentlyLoadedItemId)) === parentId || 
-                             currentlyLoadedItemId === parentId || 
-                             String(currentlyLoadedItemId) === String(parentId)
-                           );
-                           
-                           // Check if parent is running
-                           const parentIsRunning = activeTimers[parentId] !== undefined;
-                           
-                           if (parentIsLoaded || parentIsRunning) return 'bg-amber-950 border-amber-600';
-                         }
-                         return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
-                       })()
-                     }`}
-                     style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
+                     className={`border-b-2 border-slate-600 flex items-center justify-center gap-1 ${getRowContainerClass(item.id, index)}`}
+                     style={getRowContainerStyle(item)}
                    >
                     <div className="flex flex-col items-center gap-1 relative">
                       <button
@@ -11068,10 +11115,8 @@ const RunOfShowPage: React.FC = () => {
                  getFilteredSchedule().map((item, index) => (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
-                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${
-                       index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900'
-                     }`}
-                     style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
+                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}`}
+                     style={getSideColumnRowStyle(item)}
                    >
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
@@ -11544,19 +11589,18 @@ const RunOfShowPage: React.FC = () => {
                      <div 
                        key={item.id}
                        data-item-id={item.id}
-                       className={`border-b-2 border-slate-600 flex ${rowClassNames.get(item.id) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900')}`}
-                       style={{ 
-                         height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns),
+                       className={`border-b-2 border-slate-600 flex ${getRowContainerClass(item.id, index)}`}
+                       style={getRowContainerStyle(item, {
                          textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
                          textDecorationThickness: item.programType === 'KILLED' ? '4px' : 'auto',
                          textDecorationColor: item.programType === 'KILLED' ? '#DC2626' : 'auto',
                          color: item.programType === 'KILLED' ? '#9CA3AF' : 'inherit',
-                         opacity: item.programType === 'KILLED' ? 0.7 : 1
-                       }}
+                       })}
                      >
                       <ScheduleRow
                         asFragment
                         className=""
+                        isRowDimmed={isItemDimmed(item.id)}
                         item={item}
                         index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}
@@ -11650,20 +11694,14 @@ const RunOfShowPage: React.FC = () => {
                    const isSubResolumePlayingRow = isSubCueResolumeSyncedRow(item.id);
                    const subPlaying =
                      hybridSecondaryTimer &&
-                     itemMatchesTimerRow(item.id, hybridSecondaryTimer);
+                     itemMatchesTimerRow(item.id, hybridSecondaryTimer) &&
+                     hybridSecondaryTimer.is_running === true &&
+                     hybridSecondaryTimer.is_active !== false;
                    return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
-                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${
-                       isResolumeRunningRow || isSubResolumePlayingRow
-                         ? RESOLUME_RUNNING_ROW_CLASS
-                         : isResolumeArmedRow || isSubCueResolumeArmedRow(item.id)
-                           ? 'bg-purple-950/60 ring-1 ring-inset ring-purple-400'
-                           : index % 2 === 0
-                             ? 'bg-slate-800'
-                             : 'bg-slate-900'
-                     }`}
-                     style={{ height: getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) }}
+                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}`}
+                     style={getSideColumnRowStyle(item)}
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
                       <div className="text-sm font-mono text-slate-300">

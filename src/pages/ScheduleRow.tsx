@@ -49,6 +49,7 @@ export interface ScheduleRowProps {
   showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
   originalDuration?: { durationHours: number; durationMinutes: number; durationSeconds: number } | null;
   showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
+  isRowDimmed?: boolean;
 }
 
 const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
@@ -99,8 +100,19 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   asFragment,
   showMode = 'in-show',
   originalDuration,
-  showWasUnderDuration = false
+  showWasUnderDuration = false,
+  isRowDimmed = false
 }) => {
+  const cellFill = isRowDimmed
+    ? 'bg-purple-950/55 border-purple-700/50 text-slate-500'
+    : 'bg-slate-700 border-slate-600 text-white';
+  const cellFillInteractive = isRowDimmed
+    ? 'bg-purple-950/55 border-purple-700/50 text-slate-500 cursor-pointer hover:bg-purple-950/70'
+    : 'bg-slate-700 border-slate-600 text-white cursor-pointer hover:bg-slate-600';
+  const cellFocus = isRowDimmed
+    ? 'bg-purple-950/55 border-purple-600/50 text-slate-500 focus:border-purple-500/55'
+    : 'bg-slate-700 border-slate-500 text-white focus:border-blue-500';
+
   // Helper functions
   const handleSelectFocus = () => {
     handleModalEditing();
@@ -229,12 +241,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               handleModalClosed();
             }}
             disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-            className="w-full px-3 py-2 border-2 rounded text-base transition-colors bg-slate-700 border-slate-500 text-white focus:border-blue-500"
+            className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}`}
             style={{ 
-              backgroundColor: programTypeColors[item.programType] || '#374151', 
-              color: item.programType === 'Sub Cue' || item.programType === 'KILLED' ? '#000000' : '#ffffff', 
+              backgroundColor: isRowDimmed
+                ? 'rgba(59, 20, 96, 0.65)'
+                : (programTypeColors[item.programType] || '#374151'),
+              color: isRowDimmed
+                ? '#ada3bf'
+                : (item.programType === 'Sub Cue' || item.programType === 'KILLED' ? '#000000' : '#ffffff'),
               textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
-              opacity: 1
             }}
             title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit program type' : 'Select program type'}
           >
@@ -297,8 +312,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 );
               }}
               disabled={currentUserRole === 'VIEWER'}
-              className="w-14 px-2 py-2 border border-slate-600 rounded text-center text-lg font-mono font-bold transition-colors bg-slate-700 text-white"
-              style={{ opacity: 1 }}
+              className={`w-14 px-2 py-2 border rounded text-center text-lg font-mono font-bold transition-colors ${cellFill}`}
               title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit hours'}
             />
             <span className="text-slate-400 text-xl font-bold">:</span>
@@ -336,8 +350,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 );
               }}
               disabled={currentUserRole === 'VIEWER'}
-              className="w-14 px-2 py-2 border border-slate-600 rounded text-center text-lg font-mono font-bold transition-colors bg-slate-700 text-white"
-              style={{ opacity: 1 }}
+              className={`w-14 px-2 py-2 border rounded text-center text-lg font-mono font-bold transition-colors ${cellFill}`}
               title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit minutes'}
             />
             <span className="text-slate-400 text-xl font-bold">:</span>
@@ -375,8 +388,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 );
               }}
               disabled={currentUserRole === 'VIEWER'}
-              className="w-14 px-2 py-2 border border-slate-600 rounded text-center text-lg font-mono font-bold transition-colors bg-slate-700 text-white"
-              style={{ opacity: 1 }}
+              className={`w-14 px-2 py-2 border rounded text-center text-lg font-mono font-bold transition-colors ${cellFill}`}
               title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit seconds'}
             />
           </div>
@@ -432,11 +444,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               );
             }}
             disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-            className={`w-full px-3 py-2 border border-slate-600 rounded text-base transition-colors ${
-              currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
-                ? 'bg-slate-700 text-white'
-                : 'bg-slate-700 text-white'
-            }`}
+            className={`w-full px-3 py-2 border rounded text-base transition-colors ${cellFill}`}
             placeholder={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
             title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit segment names' : 'Edit segment name'}
           />
@@ -480,8 +488,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               handleModalClosed();
             }}
             disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-            className="w-full px-3 py-2 border-2 rounded text-base transition-colors bg-slate-700 border-slate-500 text-white focus:border-blue-500"
-            style={{ opacity: 1, zIndex: 10, position: 'relative' }}
+            className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}`}
+            style={{ zIndex: 10, position: 'relative' }}
             title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit shot type' : 'Select shot type'}
           >
             <option value="">Select Shot Type</option>
@@ -529,8 +537,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     }
                   );
                 }}
-                className="w-6 h-6 rounded border-2 border-slate-400 bg-slate-700"
-                style={{ opacity: 1 }}
+                className={`w-6 h-6 rounded border-2 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
                 title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit PPT settings' : 'Toggle PPT'}
               />
               <span className="text-base font-medium text-white">PPT</span>
@@ -566,8 +573,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     }
                   );
                 }}
-                className="w-6 h-6 rounded border-2 border-slate-400 bg-slate-700"
-                style={{ opacity: 1 }}
+                className={`w-6 h-6 rounded border-2 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
                 title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit Q&A settings' : 'Toggle Q&A'}
               />
               <span className="text-base font-medium text-white">Q&A</span>
@@ -595,7 +601,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setEditingNotesItem && setEditingNotesItem(item.id);
               setShowNotesModal && setShowNotesModal(true);
             }}
-            className="w-full px-3 py-2 border border-slate-600 rounded text-white text-base transition-colors bg-slate-700 cursor-pointer hover:bg-slate-600"
+            className={`w-full px-3 py-2 border rounded text-base transition-colors ${cellFillInteractive}`}
             title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit notes' : currentUserRole === 'OPERATOR' ? 'Click to view notes (read-only)' : 'Click to edit notes'}
           >
             {item.notes ? (
@@ -640,7 +646,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setEditingAssetsItem && setEditingAssetsItem(item.id);
               setShowAssetsModal && setShowAssetsModal(true);
             }}
-            className="w-full px-3 py-2 border border-slate-600 rounded text-white text-base transition-colors flex items-center justify-center bg-slate-700 cursor-pointer hover:bg-slate-600"
+            className={`w-full px-3 py-2 border rounded text-base transition-colors flex items-center justify-center ${cellFillInteractive}`}
             title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Click to view assets (read-only)' : 'Click to edit assets'}
           >
             {item.assets ? (
@@ -680,7 +686,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setEditingSpeakersItem && setEditingSpeakersItem(item.id);
               setShowSpeakersModal && setShowSpeakersModal(true);
             }}
-            className="w-full px-3 py-2 border border-slate-600 rounded text-white text-base transition-colors flex items-start justify-start bg-slate-700 cursor-pointer hover:bg-slate-600"
+            className={`w-full px-3 py-2 border rounded text-base transition-colors flex items-start justify-start ${cellFillInteractive}`}
             style={{ 
               height: getSpeakersHeight ? getSpeakersHeight(item.speakersText) : undefined,
               minHeight: getSpeakersHeight ? getSpeakersHeight(item.speakersText) : undefined,
@@ -735,8 +741,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 saveToAPI();
               }
             }}
-            className="w-5 h-5 rounded border-2 border-slate-500 bg-slate-700 text-blue-600"
-            style={{ opacity: 1 }}
+            className={`w-5 h-5 rounded border-2 text-blue-600 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/55' : 'border-slate-500 bg-slate-700'}`}
             title={currentUserRole === 'VIEWER' ? 'Viewers cannot change public status' : 'Toggle public visibility'}
           />
         </div>
@@ -783,7 +788,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             }}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            className="w-full min-w-0 max-w-full rounded border border-slate-500 bg-slate-700 text-white text-sm py-1 px-2 disabled:opacity-70 disabled:cursor-not-allowed"
+            className={`w-full min-w-0 max-w-full rounded border text-sm py-1 px-2 disabled:opacity-70 disabled:cursor-not-allowed ${cellFocus}`}
             disabled={currentUserRole === 'VIEWER'}
             title={currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can change' : 'Clock page: Countdown, Count Up, Time of Day, or TOD Only'}
           >
@@ -813,7 +818,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setEditingParticipantsItem && setEditingParticipantsItem(item.id);
               setShowParticipantsModal && setShowParticipantsModal(true);
             }}
-            className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-base cursor-pointer hover:bg-slate-600"
+            className={`w-full px-3 py-2 border rounded text-base ${cellFillInteractive}`}
             title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit participants' : currentUserRole === 'OPERATOR' ? 'Click to view participants (read-only)' : 'Click to edit participants'}
           >
             {(displaySpeakers ? displaySpeakers(item.speakers || '') : String(item.speakers || '')) || 'Click to add participants...'}
@@ -863,7 +868,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   }
                 );
               }}
-              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-base resize-none"
+              className={`w-full px-3 py-2 border rounded text-base resize-none ${cellFill}`}
               style={{
                 height: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)` as any : undefined,
                 maxHeight: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)` as any : undefined,
