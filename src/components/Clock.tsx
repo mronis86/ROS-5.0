@@ -72,6 +72,52 @@ const Clock: React.FC<ClockProps> = ({
     return Math.floor((syncedNow.getTime() - start.getTime()) / 1000);
   };
 
+  const isResolumeSynced = (timer: { resolume_state?: string; time_source?: string } | null | undefined) =>
+    timer?.resolume_state === 'synced' ||
+    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
+
+  const isResolumeArmed = (timer: { resolume_state?: string } | null | undefined) =>
+    timer?.resolume_state === 'armed';
+
+  const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
+    timer?.user_name === 'Resolume Sync' || timer?.user_id === 'companion-resolume';
+
+  const enrichSubCueTimer = (timer: any) => {
+    if (!timer || typeof timer !== 'object') return timer;
+    if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
+    if (!isResolumeCompanionSubCue(timer)) return timer;
+    return {
+      ...timer,
+      time_source: 'resolume',
+      resolume_state: timer.is_running ? 'synced' : 'armed',
+    };
+  };
+
+  const getRemainingFromTimer = (
+    timer: { started_at?: string; duration_seconds?: number } | null | undefined,
+    offsetMs: number
+  ) => {
+    if (!timer?.started_at || timer.duration_seconds == null) return null;
+    const startedMs = new Date(timer.started_at).getTime();
+    if (!Number.isFinite(startedMs)) return null;
+    return timer.duration_seconds - (Date.now() + offsetMs - startedMs) / 1000;
+  };
+
+  const shouldRejectResolumeAlignReset = (
+    prev: { started_at?: string; duration_seconds?: number; is_running?: boolean } | null | undefined,
+    next: { started_at?: string; duration_seconds?: number; is_running?: boolean; resolume_state?: string; time_source?: string },
+    offsetMs: number
+  ) => {
+    if (!prev?.is_running || !next.is_running || !isResolumeSynced(next)) return false;
+    if (!prev.started_at || !next.started_at || prev.started_at === next.started_at) return false;
+    const dur = next.duration_seconds ?? prev.duration_seconds ?? 0;
+    if (dur <= 0) return false;
+    const prevRem = getRemainingFromTimer(prev, offsetMs);
+    const nextRem = getRemainingFromTimer(next, offsetMs);
+    if (prevRem == null || nextRem == null) return false;
+    return prevRem <= 15 && nextRem > dur * 0.85;
+  };
+
   // Update timer progress when props change (non-WebSocket mode)
   useEffect(() => {
     if (!supabaseOnly) {
@@ -224,7 +270,7 @@ const Clock: React.FC<ClockProps> = ({
             if (runningSubCueTimer) {
               setHybridTimerData(prev => ({
                 ...prev,
-                secondaryTimer: runningSubCueTimer
+                secondaryTimer: enrichSubCueTimer(runningSubCueTimer)
               }));
               console.log('✅ Clock: Initial load - sub-cue timer loaded:', runningSubCueTimer);
             }
@@ -338,9 +384,13 @@ const Clock: React.FC<ClockProps> = ({
           console.log('🔍 [CLOCK DEBUG] Updating hybridTimerData with WebSocket data');
           setHybridTimerData(prev => {
             console.log('🔍 [CLOCK DEBUG] Previous hybridTimerData:', prev);
+            let activeTimer = data;
+            if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
+              activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
+            }
             const newData = {
               ...prev,
-              activeTimer: data
+              activeTimer
             };
             console.log('🔍 [CLOCK DEBUG] New hybridTimerData:', newData);
             return newData;
@@ -379,10 +429,13 @@ const Clock: React.FC<ClockProps> = ({
           } else {
             console.log('🔍 [CLOCK DEBUG] Timer is active - updating hybridTimerData');
             // Update timer data directly from WebSocket
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: timerData
-            }));
+            setHybridTimerData(prev => {
+              let activeTimer = timerData;
+              if (shouldRejectResolumeAlignReset(prev?.activeTimer, timerData, clockOffset)) {
+                activeTimer = { ...timerData, started_at: prev!.activeTimer!.started_at };
+              }
+              return { ...prev, activeTimer };
+            });
             console.log('✅ Clock: Active timer updated via WebSocket');
           }
         } else {
@@ -414,11 +467,15 @@ const Clock: React.FC<ClockProps> = ({
       onSubCueTimerStarted: (data: any) => {
         console.log('🔄 Clock: WebSocket sub-cue timer started:', data);
         if (data && data.event_id === eventId) {
-          // Update secondary timer data
-          setHybridTimerData(prev => ({
-            ...prev,
-            secondaryTimer: data
-          }));
+          setHybridTimerData(prev => {
+            const enriched = enrichSubCueTimer(data);
+            let secondaryTimer = enriched;
+            if (shouldRejectResolumeAlignReset(prev?.secondaryTimer, enriched, clockOffset)) {
+              secondaryTimer = { ...enriched, started_at: prev!.secondaryTimer!.started_at };
+              console.log('🎬 Clock: Ignoring Resolume sub-cue align that reset countdown to full clip');
+            }
+            return { ...prev, secondaryTimer };
+          });
           console.log('✅ Clock: Sub-cue timer started via WebSocket:', data);
         }
       },
@@ -457,7 +514,7 @@ const Clock: React.FC<ClockProps> = ({
             if (runningSubCueTimer) {
               setHybridTimerData(prev => ({
                 ...prev,
-                secondaryTimer: runningSubCueTimer
+                secondaryTimer: enrichSubCueTimer(runningSubCueTimer),
               }));
               console.log('✅ Clock: Initial sync - sub-cue timer loaded:', runningSubCueTimer);
             }
@@ -547,7 +604,7 @@ const Clock: React.FC<ClockProps> = ({
     });
   };
 
-  // Get remaining time (same logic as RunOfShowPage) - allow negative values
+  // Get remaining time (same logic as RunOfShowPage) - allow negative values except Resolume sync
   const getRemainingTime = () => {
     const progress = timerProgress;
     const remaining = progress.total - progress.elapsed;
@@ -665,6 +722,22 @@ const Clock: React.FC<ClockProps> = ({
   const elapsedForDisplay = getElapsedTime();
   const isOvertimeCountUp = useCountUp && timerProgress.total > 0 && elapsedForDisplay > timerProgress.total;
   const overtimeAmount = isOvertimeCountUp ? elapsedForDisplay - timerProgress.total : 0;
+  const secondarySubTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
+  const secondaryDisplayColor =
+    secondarySubTimer && isResolumeSynced(secondarySubTimer) ? 'text-yellow-300' : 'text-orange-400';
+  const secondaryResolumeLabel = secondarySubTimer
+    ? isResolumeSynced(secondarySubTimer)
+      ? ' · RESOLUME'
+      : isResolumeArmed(secondarySubTimer)
+        ? ' · RESOLUME (armed)'
+        : ''
+    : '';
+  const secondaryStatusPrefix =
+    secondarySubTimer && isResolumeSynced(secondarySubTimer) && secondarySubTimer.is_running
+      ? 'RUNNING · RESOLUME - '
+      : secondarySubTimer && isResolumeArmed(secondarySubTimer)
+        ? 'LOADED · RESOLUME (armed) - '
+        : '';
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
@@ -962,7 +1035,7 @@ const Clock: React.FC<ClockProps> = ({
           return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         })() ? '0' : '-80px' }}>
           {/* CUE and Segment Name - Separated from countdown */}
-          <div className={`absolute left-1/2 transform -translate-x-1/2 text-orange-400 font-bold animate-in slide-in-from-top duration-500 ${(() => {
+          <div className={`absolute left-1/2 transform -translate-x-1/2 ${secondaryDisplayColor} font-bold animate-in slide-in-from-top duration-500 ${(() => {
             // When supabaseOnly is true, only check Supabase messages
             if (supabaseOnly) {
               return supabaseMessage && supabaseMessage.enabled ? 'text-lg md:text-xl lg:text-2xl' : 'text-xl md:text-2xl lg:text-3xl';
@@ -994,7 +1067,10 @@ const Clock: React.FC<ClockProps> = ({
                 const cue = currentSecondaryTimer.cue_display || currentSecondaryTimer.cue || currentSecondaryTimer.cue_is || '';
                 const segmentName = currentSecondaryTimer.segment_name || currentSecondaryTimer.segmentName || '';
                 const formattedCue = cue.replace(/CUE(\d+)/, 'CUE $1');
-                return segmentName ? `${formattedCue} - ${segmentName}` : formattedCue;
+                const line = segmentName ? `${formattedCue} - ${segmentName}` : formattedCue;
+                return secondaryStatusPrefix
+                  ? `${secondaryStatusPrefix}${line}`
+                  : `${line}${secondaryResolumeLabel}`;
               } else {
                 // Clock always runs in WebSocket-only mode
                 return 'No CUE';
@@ -1003,7 +1079,7 @@ const Clock: React.FC<ClockProps> = ({
           </div>
           {/* Large Time without Outline */}
           <div
-            className={`text-orange-400 font-mono font-bold animate-in zoom-in duration-500 ${(() => {
+            className={`${secondaryDisplayColor} font-mono font-bold animate-in zoom-in duration-500 ${(() => {
               const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
               if (!currentSecondaryTimer) return 'text-3xl md:text-4xl lg:text-5xl';
               
@@ -1014,38 +1090,33 @@ const Clock: React.FC<ClockProps> = ({
               if (supabaseOnly) {
                 // Supabase data structure - calculate remaining time in real-time
                 if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                  // Calculate remaining time based on start time and duration
-                  const now = new Date();
+                  const syncedNow = Date.now() + clockOffset;
                   const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                  const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+                  const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
                   const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = Math.max(0, totalDuration - elapsed);
+                  remaining = totalDuration - elapsed;
                 } else {
-                  // Timer is not running, show full duration
                   remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
                 }
               } else {
                 remaining = currentSecondaryTimer.remaining || 0;
               }
               
-              const hours = Math.floor(remaining / 3600);
+              const hours = Math.floor(Math.abs(remaining) / 3600);
               
-              // When supabaseOnly is true, only check Supabase messages
               if (supabaseOnly) {
                 const displayMessage = hybridTimerData?.timerMessage || supabaseMessage;
                 if (displayMessage && displayMessage.enabled) {
                   return 'text-3xl md:text-4xl lg:text-5xl';
                 }
               } else {
-                // When supabaseOnly is false, check both local and Supabase messages
               if ((messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled)) {
                 return 'text-3xl md:text-4xl lg:text-5xl';
                 }
               }
-              // Increase size by 25% when no hours (MM:SS format)
               return hours === 0 
-                ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]' // 25% larger
-                : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]'; // Original size
+                ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
             })()}`}
             style={{
               lineHeight: '1'
@@ -1062,29 +1133,28 @@ const Clock: React.FC<ClockProps> = ({
               if (supabaseOnly) {
                 // Supabase data structure - calculate remaining time in real-time
                 if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                  // Calculate remaining time based on start time and duration
-                  const now = new Date();
+                  const syncedNow = Date.now() + clockOffset;
                   const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                  const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+                  const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
                   const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = Math.max(0, totalDuration - elapsed);
+                  remaining = totalDuration - elapsed;
                 } else {
-                  // Timer is not running, show full duration
                   remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
                 }
               } else {
-                // Clock always runs in WebSocket-only mode
                 remaining = 0;
               }
               
-              const hours = Math.floor(remaining / 3600);
-              const minutes = Math.floor((remaining % 3600) / 60);
-              const seconds = remaining % 60;
+              const absRemaining = Math.abs(remaining);
+              const hours = Math.floor(absRemaining / 3600);
+              const minutes = Math.floor((absRemaining % 3600) / 60);
+              const seconds = absRemaining % 60;
+              const prefix = remaining < 0 ? '-' : '';
 
               if (hours === 0) {
-                return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
               } else {
-                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
               }
             })()}
           </div>
@@ -1168,14 +1238,14 @@ const Clock: React.FC<ClockProps> = ({
         
         return hasSecondaryTimer && hasMessage;
       })() && (
-        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 right-10 text-orange-400">
+        <div className={`text-center transition-all duration-500 ease-in-out absolute bottom-20 right-10 ${secondaryDisplayColor}`}>
           {/* Sub-cue CUE and Segment Name */}
           <div className="text-lg mb-2 font-bold">
             {(() => {
               const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
               const cueDisplay = currentSecondaryTimer.cue_display || currentSecondaryTimer.cue || `CUE ${currentSecondaryTimer.item_id}`;
               const segmentName = currentSecondaryTimer.segment_name || currentSecondaryTimer.segmentName || 'Segment';
-              return `${cueDisplay} - ${segmentName}`;
+              return `${cueDisplay} - ${segmentName}${secondaryResolumeLabel}`;
             })()}
           </div>
           
@@ -1185,7 +1255,9 @@ const Clock: React.FC<ClockProps> = ({
               const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
               const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
               const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-              const remaining = Math.max(0, totalDuration - elapsed);
+              const remaining = isResolumeSynced(currentSecondaryTimer)
+                ? totalDuration - elapsed
+                : Math.max(0, totalDuration - elapsed);
               
               const hours = Math.floor(remaining / 3600);
               const minutes = Math.floor((remaining % 3600) / 60);

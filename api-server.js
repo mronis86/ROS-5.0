@@ -59,10 +59,19 @@ const pool = new Pool({
 const resolumeTimeSourceByEvent = new Map(); // eventId -> { time_source, item_id, align_seq, align_reason }
 const resolumePendingByEvent = new Map(); // eventId -> { item_id } — armed, waiting for OSC align
 
-function applyResolumeMeta(eventId, timerRow) {
+function applyResolumeMeta(eventId, timerRow, options = {}) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
+  const wantsSubCue = options.isSubCue === true;
+  const rowItemId = timerRow.item_id != null ? String(timerRow.item_id) : '';
+
   const synced = resolumeTimeSourceByEvent.get(eventId);
   if (synced?.time_source === 'resolume') {
+    if (!!synced.is_sub_cue !== wantsSubCue) {
+      return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
+    }
+    if (String(synced.item_id) !== rowItemId) {
+      return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
+    }
     return {
       ...timerRow,
       time_source: 'resolume',
@@ -71,10 +80,15 @@ function applyResolumeMeta(eventId, timerRow) {
       resolume_align_reason: synced.align_reason ?? null,
     };
   }
+
   const pending = resolumePendingByEvent.get(eventId);
-  const rowItemId = timerRow.item_id != null ? String(timerRow.item_id) : '';
-  if (pending && rowItemId === String(pending.item_id)) {
-    return { ...timerRow, time_source: 'resolume', resolume_state: 'armed' };
+  if (pending) {
+    if (!!pending.is_sub_cue !== wantsSubCue) {
+      return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
+    }
+    if (rowItemId === String(pending.item_id)) {
+      return { ...timerRow, time_source: 'resolume', resolume_state: 'armed' };
+    }
   }
   return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
 }
@@ -96,8 +110,14 @@ async function ensureCalendarEventExists(eventId, eventName = 'Quick Mode') {
 }
 
 function broadcastTimerUpdated(eventId, timerRow) {
-  const data = applyResolumeMeta(eventId, timerRow);
+  const data = applyResolumeMeta(eventId, timerRow, { isSubCue: false });
   io.to(`event:${eventId}`).emit('update', { type: 'timerUpdated', data });
+  return data;
+}
+
+function broadcastSubCueTimerUpdated(eventId, timerRow) {
+  const data = applyResolumeMeta(eventId, timerRow, { isSubCue: true });
+  io.to(`event:${eventId}`).emit('update', { type: 'subCueTimerStarted', data });
   return data;
 }
 
@@ -1515,8 +1535,37 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Event not found' });
     }
-    
-    res.json(result.rows[0]);
+
+    const row = result.rows[0];
+    try {
+      const indentedResult = await pool.query(
+        'SELECT item_id FROM indented_cues WHERE event_id = $1',
+        [eventId]
+      );
+      const indentedIds = new Set(
+        indentedResult.rows.map((r) => String(r.item_id))
+      );
+      if (indentedIds.size > 0 && row.schedule_items) {
+        let items =
+          typeof row.schedule_items === 'string'
+            ? JSON.parse(row.schedule_items)
+            : row.schedule_items;
+        if (Array.isArray(items)) {
+          items = items.map((item) => ({
+            ...item,
+            isIndented: !!(item.isIndented || indentedIds.has(String(item.id))),
+          }));
+          row.schedule_items =
+            typeof result.rows[0].schedule_items === 'string'
+              ? JSON.stringify(items)
+              : items;
+        }
+      }
+    } catch (indentErr) {
+      console.warn('Could not merge indented_cues into schedule_items:', indentErr.message);
+    }
+
+    res.json(row);
   } catch (error) {
     console.error('Error fetching run of show data:', error);
     res.status(500).json({ error: 'Failed to fetch run of show data' });
@@ -2727,7 +2776,8 @@ app.get('/api/sub-cue-timers/:eventId', async (req, res) => {
       'SELECT * FROM sub_cue_timers WHERE event_id = $1 AND is_running = true ORDER BY created_at DESC',
       [eventId]
     );
-    res.json(result.rows);
+    const rows = result.rows.map((row) => applyResolumeMeta(eventId, row, { isSubCue: true }));
+    res.json(rows);
   } catch (error) {
     console.error('Error fetching sub-cue timers:', error);
     res.status(500).json({ error: 'Failed to fetch sub-cue timers' });
@@ -2787,8 +2837,8 @@ app.post('/api/sub-cue-timers', async (req, res) => {
       ]
     );
     
-    // Broadcast update via WebSocket
-    broadcastUpdate(event_id, 'subCueTimerStarted', result.rows[0]);
+    // Broadcast update via WebSocket (includes Resolume meta when sub-cue is Resolume-synced)
+    broadcastSubCueTimerUpdated(event_id, result.rows[0]);
     
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -3634,19 +3684,34 @@ app.post('/api/timers/reset', async (req, res) => {
 // Resolume: mark cue armed (loaded, waiting for OSC) — UI shows "armed" on Run of Show
 app.post('/api/timers/resolume-arm', async (req, res) => {
   try {
-    const { event_id, item_id } = req.body;
+    const { event_id, item_id, is_sub_cue } = req.body;
     if (!event_id || item_id == null) {
       return res.status(400).json({ error: 'event_id and item_id are required' });
     }
+    const isSubCue = !!is_sub_cue;
     clearResolumeTimeSource(event_id);
-    resolumePendingByEvent.set(event_id, { item_id: parseInt(item_id, 10) });
-    const timerResult = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [event_id]
-    );
-    const timerData = timerResult.rows[0];
-    if (timerData) broadcastTimerUpdated(event_id, timerData);
-    res.json({ success: true, event_id, item_id: parseInt(item_id, 10), resolume_state: 'armed' });
+    resolumePendingByEvent.set(event_id, { item_id: parseInt(item_id, 10), is_sub_cue: isSubCue });
+    if (isSubCue) {
+      const subResult = await pool.query(
+        'SELECT * FROM sub_cue_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      if (subResult.rows[0]) broadcastSubCueTimerUpdated(event_id, subResult.rows[0]);
+    } else {
+      const timerResult = await pool.query(
+        'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      const timerData = timerResult.rows[0];
+      if (timerData) broadcastTimerUpdated(event_id, timerData);
+    }
+    res.json({
+      success: true,
+      event_id,
+      item_id: parseInt(item_id, 10),
+      is_sub_cue: isSubCue,
+      resolume_state: 'armed',
+    });
   } catch (error) {
     console.error('Error in resolume-arm:', error);
     res.status(500).json({ error: 'Failed to resolume-arm', details: error.message });
@@ -3674,7 +3739,19 @@ app.post('/api/timers/resolume-disarm', async (req, res) => {
 // Resolume: one-shot align from Companion OSC (low egress — not per-tick HTTP)
 app.post('/api/timers/resolume-sync-align', async (req, res) => {
   try {
-    const { event_id, item_id, duration_seconds, remaining_seconds, cue_is, user_id, align_at, latency_compensation_ms, align_reason } = req.body;
+    const {
+      event_id,
+      item_id,
+      duration_seconds,
+      remaining_seconds,
+      cue_is,
+      user_id,
+      align_at,
+      latency_compensation_ms,
+      align_reason,
+      is_sub_cue,
+      row_number,
+    } = req.body;
     if (!event_id || item_id == null) {
       return res.status(400).json({ error: 'event_id and item_id are required' });
     }
@@ -3682,8 +3759,29 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
       return res.status(400).json({ error: 'remaining_seconds is required' });
     }
 
+    const isSubCue = !!is_sub_cue;
     const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
-    const rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
+    let rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
+
+    const existingTable = isSubCue ? 'sub_cue_timers' : 'active_timers';
+    const existingTimer = await pool.query(
+      `SELECT started_at, duration_seconds, is_running FROM ${existingTable} WHERE event_id = $1 LIMIT 1`,
+      [event_id]
+    );
+    if (existingTimer.rows[0]?.is_running && existingTimer.rows[0].started_at) {
+      const existingDur = Number(existingTimer.rows[0].duration_seconds) || dur;
+      const startedMs = new Date(existingTimer.rows[0].started_at).getTime();
+      if (Number.isFinite(startedMs) && startedMs < Date.now() + 86400000) {
+        const existingRem = existingDur - (Date.now() - startedMs) / 1000;
+        if (existingRem <= 15 && rem > existingDur * 0.85) {
+          console.log(
+            `🎬 Resolume sync-align: clamping full-clip reset (was ~${Math.round(existingRem)}s left, align wanted ${Math.round(rem)}s)`
+          );
+          rem = Math.max(0, Math.min(rem, Math.max(0, existingRem)));
+        }
+      }
+    }
+
     const elapsed = dur - rem; // fractional OK — tighter started_at
     const alignMs = align_at ? new Date(align_at).getTime() : Date.now();
     const compensationMs = Math.max(0, Math.min(15000, parseInt(latency_compensation_ms, 10) || 0));
@@ -3701,55 +3799,102 @@ app.post('/api/timers/resolume-sync-align', async (req, res) => {
       item_id: parseInt(item_id, 10),
       align_seq: alignSeq,
       align_reason: reason,
+      is_sub_cue: isSubCue,
     });
 
     console.log(
-      `🎬 Resolume sync-align #${alignSeq} (${reason}) - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s, latency_ms: ${compensationMs}`
+      `🎬 Resolume sync-align #${alignSeq} (${reason})${isSubCue ? ' [sub-cue]' : ''} - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s, latency_ms: ${compensationMs}`
     );
 
-    await pool.query(`
-      INSERT INTO active_timers (
-        event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running,
-        started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, 'running', true, true, $8::timestamptz, $2, $6, $7, 0, NOW(), NOW())
-      ON CONFLICT (event_id)
-      DO UPDATE SET
-        item_id = $2,
-        user_id = $3,
-        user_name = $4,
-        user_role = $5,
-        timer_state = 'running',
-        is_active = true,
-        is_running = true,
-        started_at = $8::timestamptz,
-        last_loaded_cue_id = $2,
-        cue_is = COALESCE($6, active_timers.cue_is),
-        duration_seconds = $7,
-        elapsed_seconds = 0,
-        updated_at = NOW()
-    `, [
-      event_id,
-      parseInt(item_id, 10),
-      user_id || 'companion-resolume',
-      'Resolume Sync',
-      'OPERATOR',
-      cue_is || `CUE ${item_id}`,
-      dur,
-      startedAt,
-    ]);
+    let broadcastData;
+    if (isSubCue) {
+      const rowNum = Number.isFinite(Number(row_number)) ? parseInt(row_number, 10) : 0;
+      await pool.query(
+        `INSERT INTO sub_cue_timers
+         (event_id, item_id, user_id, user_name, user_role, duration_seconds, row_number, cue_display, timer_id,
+          is_active, is_running, started_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, true, $10::timestamptz, NOW(), NOW())
+         ON CONFLICT (event_id) DO UPDATE SET
+           item_id = EXCLUDED.item_id,
+           user_id = EXCLUDED.user_id,
+           user_name = EXCLUDED.user_name,
+           user_role = EXCLUDED.user_role,
+           duration_seconds = EXCLUDED.duration_seconds,
+           row_number = EXCLUDED.row_number,
+           cue_display = EXCLUDED.cue_display,
+           is_active = true,
+           is_running = true,
+           started_at = EXCLUDED.started_at,
+           updated_at = NOW()`,
+        [
+          event_id,
+          parseInt(item_id, 10),
+          user_id || 'companion-resolume',
+          'Resolume Sync',
+          'OPERATOR',
+          dur,
+          rowNum,
+          cue_is || `CUE ${item_id}`,
+          null,
+          startedAt,
+        ]
+      );
+      const subResult = await pool.query(
+        'SELECT * FROM sub_cue_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      broadcastData = broadcastSubCueTimerUpdated(event_id, subResult.rows[0]);
+      const mainResult = await pool.query(
+        'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      if (mainResult.rows[0]) broadcastTimerUpdated(event_id, mainResult.rows[0]);
+    } else {
+      await pool.query(`
+        INSERT INTO active_timers (
+          event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running,
+          started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, 'running', true, true, $8::timestamptz, $2, $6, $7, 0, NOW(), NOW())
+        ON CONFLICT (event_id)
+        DO UPDATE SET
+          item_id = $2,
+          user_id = $3,
+          user_name = $4,
+          user_role = $5,
+          timer_state = 'running',
+          is_active = true,
+          is_running = true,
+          started_at = $8::timestamptz,
+          last_loaded_cue_id = $2,
+          cue_is = COALESCE($6, active_timers.cue_is),
+          duration_seconds = $7,
+          elapsed_seconds = 0,
+          updated_at = NOW()
+      `, [
+        event_id,
+        parseInt(item_id, 10),
+        user_id || 'companion-resolume',
+        'Resolume Sync',
+        'OPERATOR',
+        cue_is || `CUE ${item_id}`,
+        dur,
+        startedAt,
+      ]);
 
-    const timerResult = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [event_id]
-    );
-    const timerData = timerResult.rows[0];
-    const broadcastData = broadcastTimerUpdated(event_id, timerData);
+      const timerResult = await pool.query(
+        'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      const timerData = timerResult.rows[0];
+      broadcastData = broadcastTimerUpdated(event_id, timerData);
+    }
 
     res.json({
       success: true,
-      message: 'Resolume timer aligned',
+      message: isSubCue ? 'Resolume sub-cue timer aligned' : 'Resolume timer aligned',
       event_id,
       item_id: parseInt(item_id, 10),
+      is_sub_cue: isSubCue,
       duration_seconds: dur,
       remaining_seconds: rem,
       time_source: 'resolume',
@@ -3782,6 +3927,13 @@ app.post('/api/timers/resolume-end', async (req, res) => {
     const timerData = timerResult.rows[0] || null;
     if (timerData) {
       broadcastTimerUpdated(event_id, timerData);
+    }
+    const subResult = await pool.query(
+      'SELECT * FROM sub_cue_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    if (subResult.rows[0]) {
+      broadcastSubCueTimerUpdated(event_id, subResult.rows[0]);
     }
 
     res.json({ success: true, message: 'Resolume time source cleared', event_id });

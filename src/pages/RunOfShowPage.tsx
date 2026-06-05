@@ -892,6 +892,86 @@ const RunOfShowPage: React.FC = () => {
     timer?.resolume_state === 'synced' ||
     (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
 
+  /** Sub-cue started by Companion Resolume align (detectable from DB fields without in-memory API state). */
+  const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
+    timer?.user_name === 'Resolume Sync' || timer?.user_id === 'companion-resolume';
+
+  const enrichSubCueTimer = (timer: any) => {
+    if (!timer || typeof timer !== 'object') return timer;
+    if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
+    if (!isResolumeCompanionSubCue(timer)) return timer;
+    return {
+      ...timer,
+      time_source: 'resolume',
+      resolume_state: timer.is_running ? 'synced' : 'armed',
+    };
+  };
+
+  const isSubCueResolumeRunning = (timer: any) => {
+    const enriched = enrichSubCueTimer(timer);
+    return isResolumeSynced(enriched) && !!enriched?.is_running;
+  };
+
+  /** Bright yellow — distinct from amber sub-cue / dependent rows (amber-950). */
+  const RESOLUME_RUNNING_ROW_CLASS =
+    'bg-yellow-400/25 ring-2 ring-inset ring-yellow-300 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.35)]';
+  const RESOLUME_RUNNING_ROW_NUM_CLASS = 'bg-yellow-400/35 border-2 border-yellow-300';
+
+  const hybridSecondaryTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
+
+  const itemMatchesTimerRow = (itemId: number, timer: { item_id?: unknown } | null | undefined) => {
+    const tid = timer?.item_id;
+    if (tid == null) return false;
+    return (
+      parseInt(String(tid), 10) === itemId ||
+      tid === itemId ||
+      String(tid) === String(itemId)
+    );
+  };
+
+  const isSubCueResolumeSyncedRow = (itemId: number) =>
+    Boolean(
+      hybridSecondaryTimer &&
+      itemMatchesTimerRow(itemId, hybridSecondaryTimer) &&
+      isSubCueResolumeRunning(hybridSecondaryTimer)
+    );
+
+  const isSubCueResolumeArmedRow = (itemId: number) =>
+    Boolean(
+      hybridSecondaryTimer &&
+      itemMatchesTimerRow(itemId, hybridSecondaryTimer) &&
+      !hybridSecondaryTimer.is_running &&
+      (isResolumeArmed(hybridSecondaryTimer) ||
+        (isResolumeCompanionSubCue(hybridSecondaryTimer) && !hybridSecondaryTimer.is_running))
+    );
+
+  const getRemainingFromTimer = (
+    timer: { started_at?: string; duration_seconds?: number } | null | undefined,
+    offsetMs: number
+  ) => {
+    if (!timer?.started_at || timer.duration_seconds == null) return null;
+    const startedMs = new Date(timer.started_at).getTime();
+    if (!Number.isFinite(startedMs)) return null;
+    const elapsed = (Date.now() + offsetMs - startedMs) / 1000;
+    return timer.duration_seconds - elapsed;
+  };
+
+  /** Reject align when OSC position loops to 0 and would snap countdown back to full clip length. */
+  const shouldRejectResolumeAlignReset = (
+    prev: { started_at?: string; duration_seconds?: number; is_running?: boolean } | null | undefined,
+    next: { started_at?: string; duration_seconds?: number; is_running?: boolean; resolume_state?: string; time_source?: string },
+    offsetMs: number
+  ) => {
+    if (!prev?.is_running || !next.is_running || !isResolumeSynced(next)) return false;
+    if (!prev.started_at || !next.started_at || prev.started_at === next.started_at) return false;
+    const dur = next.duration_seconds ?? prev.duration_seconds ?? 0;
+    if (dur <= 0) return false;
+    const prevRem = getRemainingFromTimer(prev, offsetMs);
+    const nextRem = getRemainingFromTimer(next, offsetMs);
+    if (prevRem == null || nextRem == null) return false;
+    return prevRem <= 15 && nextRem > dur * 0.85;
+  };
+
   const shouldTriggerResolumeSyncPulse = (
     prev: {
       started_at?: string;
@@ -2230,6 +2310,10 @@ const RunOfShowPage: React.FC = () => {
           startedAt: startedAt,
           timerState: 'running'
         });
+        setHybridTimerData(prev => ({
+          ...prev,
+          secondaryTimer: enrichSubCueTimer(subCueTimerData),
+        }));
         console.log('🟠 Set secondaryTimer state for top UI');
         
         // Clear sync flag after sync is complete
@@ -3860,8 +3944,7 @@ const RunOfShowPage: React.FC = () => {
     // Use hybrid timer data (ClockPage style) for real-time updates
     if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
-      const remaining = progress.total - progress.elapsed;
-      return remaining;
+      return progress.total - progress.elapsed;
     }
     
     // Fallback to old logic for compatibility
@@ -5476,9 +5559,14 @@ const RunOfShowPage: React.FC = () => {
             if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, data)) {
               queueMicrotask(() => triggerResolumeSyncPulse());
             }
+            let activeTimer = data;
+            if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
+              activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
+              console.log('🎬 Ignoring Resolume sync that reset countdown to full clip time');
+            }
             return {
               ...prev,
-              activeTimer: data,
+              activeTimer,
             };
           });
           
@@ -5568,11 +5656,37 @@ const RunOfShowPage: React.FC = () => {
       },
       onSubCueTimerStarted: (data: any) => {
         if (data && data.event_id === event?.id) {
-          // Update hybrid timer data with sub-cue timer (ClockPage style)
-          setHybridTimerData(prev => ({
-            ...prev,
-            secondaryTimer: data
-          }));
+          setHybridTimerData(prev => {
+            const enrichedIncoming = enrichSubCueTimer(data);
+            if (shouldTriggerResolumeSyncPulse(prev?.secondaryTimer, enrichedIncoming)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
+            }
+            let secondaryTimer = enrichedIncoming;
+            if (shouldRejectResolumeAlignReset(prev?.secondaryTimer, enrichedIncoming, clockOffset)) {
+              secondaryTimer = { ...enrichedIncoming, started_at: prev!.secondaryTimer!.started_at };
+              console.log('🎬 Ignoring Resolume sub-cue align that reset countdown to full clip');
+            }
+            return {
+              ...prev,
+              secondaryTimer,
+            };
+          });
+          const numericItemId =
+            typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
+          if (numericItemId != null) {
+            setSecondaryTimer({
+              itemId: numericItemId,
+              remaining: Math.max(0, (data.duration_seconds || 0) - (data.elapsed_seconds || 0)),
+              duration: data.duration_seconds || 0,
+              isActive: true,
+              isRunning: true,
+              startedAt: data.started_at ? new Date(data.started_at) : new Date(),
+              timerState: 'running',
+              rowNumber: data.row_number,
+              cueDisplay: data.cue_display,
+              timerId: data.timer_id,
+            });
+          }
           console.log('✅ RunOfShow: Sub-cue timer started via WebSocket:', data);
         }
       },
@@ -8323,11 +8437,19 @@ const RunOfShowPage: React.FC = () => {
       const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
       const isHybridRunning = Boolean(isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
       const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running);
+      if (item.isIndented && isSubCueResolumeSyncedRow(item.id)) {
+        classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
+        return;
+      }
+      if (item.isIndented && isSubCueResolumeArmedRow(item.id)) {
+        classNames.set(item.id, 'bg-purple-950/60 ring-1 ring-inset ring-purple-400');
+        return;
+      }
       if (isHybridRunning) {
         classNames.set(
           item.id,
           isResolumeSynced(hybridTimerData?.activeTimer)
-            ? 'bg-purple-950 ring-1 ring-inset ring-purple-500'
+            ? RESOLUME_RUNNING_ROW_CLASS
             : 'bg-green-950'
         );
         return;
@@ -9888,41 +10010,48 @@ const RunOfShowPage: React.FC = () => {
                     hybridTimerData.activeTimer.is_active && (
                     <div className="text-xs text-purple-300/90">Countdown synced to Resolume clip</div>
                   )}
-                  {(hybridTimerData?.secondaryTimer || secondaryTimer) && (
-                      <div className="text-lg text-orange-400 mt-0.5 font-bold">
+                  {(hybridSecondaryTimer || secondaryTimer) && (
+                      <div className="flex flex-col items-center mt-0.5 gap-0.5">
                         {(() => {
-                          // Debug: Log sub-cue timer data
-                          console.log('🔍 RunOfShow: Sub-cue timer check:', {
-                            hasHybridSecondary: !!hybridTimerData?.secondaryTimer,
-                            hasOldSecondary: !!secondaryTimer,
-                            hybridData: hybridTimerData?.secondaryTimer
-                          });
-                          
-                          // Use hybrid timer data first, fallback to old secondaryTimer
-                          const subCueTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
-                          if (hybridTimerData?.secondaryTimer) {
-                            // Use hybrid timer data (ClockPage style)
-                            const scheduleItem = schedule.find(item => 
-                              item.id === hybridTimerData.secondaryTimer.item_id || 
-                              item.id === parseInt(hybridTimerData.secondaryTimer.item_id)
-                            );
-                            const cueDisplay = scheduleItem?.customFields?.cue || 
-                                              hybridTimerData.secondaryTimer.cue_display || 
-                                              hybridTimerData.secondaryTimer.cue || 
-                                              `CUE ${hybridTimerData.secondaryTimer.item_id}`;
-                            
-                            // Calculate remaining time for sub-cue
+                          const subCueData: any = hybridSecondaryTimer;
+                          const itemId = subCueData?.item_id != null
+                            ? (typeof subCueData.item_id === 'string' ? parseInt(subCueData.item_id, 10) : subCueData.item_id)
+                            : secondaryTimer?.itemId;
+                          const scheduleItem = schedule.find(item => item.id === itemId);
+                          const cueDisplay = scheduleItem?.customFields?.cue ||
+                            subCueData?.cue_display ||
+                            subCueData?.cue ||
+                            (itemId != null ? `CUE ${itemId}` : 'CUE');
+                          const formattedCue = formatCueDisplay(cueDisplay);
+
+                          let remaining = secondaryTimer?.remaining ?? 0;
+                          if (subCueData) {
                             const now = getCurrentTimeUTC();
-                            const startedAt = new Date(hybridTimerData.secondaryTimer.started_at || hybridTimerData.secondaryTimer.created_at);
+                            const startedAt = new Date(subCueData.started_at || subCueData.created_at);
                             const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                            const total = hybridTimerData.secondaryTimer.duration_seconds || hybridTimerData.secondaryTimer.duration || 60;
-                            const remaining = Math.max(0, total - elapsed);
-                            
-                            return `${formatCueDisplay(cueDisplay)} - ${formatSubCueTime(remaining)}`;
-                          } else {
-                            // Fallback to old secondaryTimer logic
-                            return `${formatCueDisplay(schedule.find(item => item.id === secondaryTimer?.itemId)?.customFields.cue)} - ${formatSubCueTime(secondaryTimer?.remaining ?? 0)}`;
+                            const total = Number(subCueData.duration_seconds || subCueData.duration || 60);
+                            remaining = isSubCueResolumeRunning(subCueData) || isResolumeSynced(subCueData)
+                              ? total - elapsed
+                              : Math.max(0, total - elapsed);
                           }
+
+                          const colorClass = isSubCueResolumeRunning(subCueData)
+                            ? 'text-yellow-300'
+                            : subCueData && isResolumeArmed(subCueData)
+                              ? 'text-purple-300'
+                              : 'text-orange-400';
+                          const statusLine = isSubCueResolumeRunning(subCueData)
+                            ? `RUNNING · RESOLUME - ${formattedCue}`
+                            : subCueData && isResolumeArmed(subCueData)
+                              ? `LOADED · RESOLUME (armed) - ${formattedCue}`
+                              : `${formattedCue} -`;
+
+                          return (
+                            <>
+                              <div className={`text-lg font-bold ${colorClass}`}>{statusLine}</div>
+                              <div className={`text-lg font-bold ${colorClass}`}>{formatSubCueTime(remaining)}</div>
+                            </>
+                          );
                         })()}
                       </div>
                     )}
@@ -10743,10 +10872,16 @@ const RunOfShowPage: React.FC = () => {
                          const isHybridRunning = isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active;
                          const isHybridLoaded = isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running;
                          
-                         // Debug logging removed to prevent console spam
+                         if (item.isIndented && isSubCueResolumeSyncedRow(item.id)) {
+                           return RESOLUME_RUNNING_ROW_NUM_CLASS;
+                         }
                          
                          // Use ONLY hybrid timer data for highlighting (no fallback to old logic)
-                         if (isHybridRunning) return 'bg-green-900 border-green-500';
+                         if (isHybridRunning) {
+                           return isResolumeSynced(hybridTimerData?.activeTimer)
+                             ? RESOLUME_RUNNING_ROW_NUM_CLASS
+                             : 'bg-green-900 border-green-500';
+                         }
                          if (isHybridLoaded) return 'bg-blue-900 border-blue-500';
                          
                          // Only use old logic for completed/stopped states (not active states)
@@ -11512,13 +11647,17 @@ const RunOfShowPage: React.FC = () => {
                        hybridTimerData?.activeTimer?.is_active &&
                        isResolumeSynced(hybridTimerData?.activeTimer)
                    );
+                   const isSubResolumePlayingRow = isSubCueResolumeSyncedRow(item.id);
+                   const subPlaying =
+                     hybridSecondaryTimer &&
+                     itemMatchesTimerRow(item.id, hybridSecondaryTimer);
                    return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                      className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${
-                       isResolumeRunningRow
-                         ? 'bg-purple-950 ring-1 ring-inset ring-purple-500'
-                         : isResolumeArmedRow
+                       isResolumeRunningRow || isSubResolumePlayingRow
+                         ? RESOLUME_RUNNING_ROW_CLASS
+                         : isResolumeArmedRow || isSubCueResolumeArmedRow(item.id)
                            ? 'bg-purple-950/60 ring-1 ring-inset ring-purple-400'
                            : index % 2 === 0
                              ? 'bg-slate-800'
@@ -11585,7 +11724,7 @@ const RunOfShowPage: React.FC = () => {
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeTimers[item.id]
                                     ? isResolumeRunningRow
-                                      ? 'bg-purple-700 hover:bg-purple-600 text-white'
+                                      ? 'bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-bold'
                                       : 'bg-red-600 hover:bg-red-500 text-white'
                                     : activeItemId === item.id && Object.keys(activeTimers).length === 0
                                     ? 'bg-green-600 hover:bg-green-500 text-white'
@@ -11607,14 +11746,16 @@ const RunOfShowPage: React.FC = () => {
                                 }
                                 startSecondaryTimer(item.id);
                               }}
-                              disabled={secondaryTimer?.itemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
+                              disabled={subPlaying || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
                                 currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : !isParentCueRunning(item.id)
                                     ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                    : secondaryTimer?.itemId === item.id
-                                      ? 'bg-orange-600 text-white cursor-default'
+                                    : subPlaying
+                                      ? isSubResolumePlayingRow
+                                        ? 'bg-yellow-400 text-slate-900 cursor-default'
+                                        : 'bg-orange-600 text-white cursor-default'
                                       : 'bg-orange-500 hover:bg-orange-400 text-white'
                               }`}
                               title={
@@ -11625,7 +11766,7 @@ const RunOfShowPage: React.FC = () => {
                                     : 'Start secondary timer'
                               }
                             >
-                              {secondaryTimer?.itemId === item.id ? 'PLAYING' : 'PLAY'}
+                              {subPlaying ? 'PLAYING' : 'PLAY'}
                             </button>
                             <button
                               onClick={() => {
@@ -11635,14 +11776,16 @@ const RunOfShowPage: React.FC = () => {
                                 }
                                 stopSecondaryTimer();
                               }}
-                              disabled={secondaryTimer?.itemId !== item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
+                              disabled={!subPlaying || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
                                 currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : !isParentCueRunning(item.id)
                                     ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                    : secondaryTimer?.itemId === item.id
-                                      ? 'bg-red-600 hover:bg-red-500 text-white'
+                                    : subPlaying
+                                      ? isSubResolumePlayingRow
+                                        ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900'
+                                        : 'bg-red-600 hover:bg-red-500 text-white'
                                       : 'bg-slate-600 text-slate-400 cursor-not-allowed'
                               }`}
                               title={currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' ? 'Only OPERATORs can stop secondary timers' : 'Stop secondary timer'}

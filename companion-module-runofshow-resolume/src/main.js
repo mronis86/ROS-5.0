@@ -20,6 +20,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		super(internal)
 		this.events = []
 		this.scheduleItems = []
+		this.indentedCueIds = new Set()
 		this.activeTimer = null
 		this.resolumeArm = null
 		this.oscPort = null
@@ -201,6 +202,15 @@ class RunOfShowResolumeInstance extends InstanceBase {
 					} catch (_) {}
 				}
 				const nowMs = Date.now()
+				// Clip looped to start (position≈0) while we were near end — would reset ROS to full duration
+				if (
+					arm.lastPosition < 0.02 &&
+					self.lastSyncRemaining != null &&
+					self.lastSyncRemaining <= 20
+				) {
+					self.log('info', 'Skipping periodic align — position at clip start after near-end playback')
+					return
+				}
 				const resolumeRem = remainingFromPositionPrecise(arm.inferredDuration, arm.lastPosition, false)
 				const rosRem = self.getRosRemainingSeconds()
 				const drift =
@@ -358,16 +368,40 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		return this.events
 	}
 
+	async fetchIndentedCueIds(eventId) {
+		try {
+			const rows = await this.fetch(`/api/indented-cues/${eventId}`)
+			if (!Array.isArray(rows)) return new Set()
+			return new Set(rows.map((r) => String(r.item_id)))
+		} catch {
+			return new Set()
+		}
+	}
+
+	isScheduleItemSubCue(item) {
+		if (!item) return false
+		if (item.isIndented) return true
+		return this.indentedCueIds?.has(String(item.id))
+	}
+
 	async fetchRunOfShow(eventId, day = 1) {
 		const data = await this.fetch(`/api/run-of-show-data/${eventId}`)
 		if (!data || !data.schedule_items) {
 			this.scheduleItems = []
+		this.indentedCueIds = new Set()
 			return []
 		}
 		let items = typeof data.schedule_items === 'string' ? JSON.parse(data.schedule_items) : data.schedule_items
 		if (!Array.isArray(items)) items = []
 		const dayNum = parseInt(day, 10) || 1
-		this.scheduleItems = items.filter((item) => (item.day || 1) === dayNum)
+		const indentedIds = await this.fetchIndentedCueIds(eventId)
+		this.indentedCueIds = indentedIds
+		this.scheduleItems = items
+			.filter((item) => (item.day || 1) === dayNum)
+			.map((item) => ({
+				...item,
+				isIndented: !!(item.isIndented || indentedIds.has(String(item.id))),
+			}))
 		return this.scheduleItems
 	}
 
@@ -423,6 +457,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		if (!eventId) {
 			this.events = []
 			this.scheduleItems = []
+		this.indentedCueIds = new Set()
 			this.activeTimer = null
 			this.log('warn', 'Event ID is empty — set Event ID in module config to load cues')
 			return
@@ -453,7 +488,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			return
 		}
 		const item = this.scheduleItems.find((s) => String(s.id) === String(itemId))
-		const isSub = !!item?.isIndented
+		const isSub = this.isScheduleItemSubCue(item)
 		if (requireSubCue && !isSub) {
 			this.log('warn', 'Arm sub-cue: select an indented sub-cue row')
 			return
@@ -475,8 +510,8 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		}
 		try {
 			await this.loadCueForResolume(eventId, loadItemId)
-			this.setResolumeArm({ itemId: String(armTrackItemId), layer, clip })
-			await this.notifyResolumeArm(loadItemId)
+			this.setResolumeArm({ itemId: String(armTrackItemId), layer, clip, isSubCue: !!requireSubCue })
+			await this.notifyResolumeArm(armTrackItemId, { isSubCue: requireSubCue })
 			if (triggerOnArm) {
 				this.sendResolumeTrigger({ triggerType, layer, clip, column })
 			}
@@ -503,7 +538,7 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			return
 		}
 		const item = this.scheduleItems.find((s) => String(s.id) === String(itemId))
-		const isSub = !!item?.isIndented
+		const isSub = this.isScheduleItemSubCue(item)
 		if (requireSubCue && !isSub) {
 			this.log('warn', 'Set sub-cue duration: select an indented sub-cue row')
 			return
@@ -561,23 +596,25 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		this.updateVariableValues()
 	}
 
-	async notifyResolumeArm(itemId) {
+	async notifyResolumeArm(itemId, { isSubCue = false } = {}) {
 		const eventId = this.config?.eventId
 		if (!eventId || !itemId) return
 		try {
 			await this.apiPost('/api/timers/resolume-arm', {
 				event_id: eventId,
 				item_id: parseInt(itemId, 10),
+				is_sub_cue: !!isSubCue,
 			})
 		} catch (err) {
 			this.log('warn', `resolume-arm notify failed: ${err.message}`)
 		}
 	}
 
-	setResolumeArm({ itemId, layer, clip }) {
+	setResolumeArm({ itemId, layer, clip, isSubCue = false }) {
 		const scheduleDurationSeconds = this.getScheduleDurationSeconds(itemId)
 		this.resolumeArm = {
 			itemId: String(itemId),
+			isSubCue: !!isSubCue,
 			layer,
 			clip,
 			phase: 'idle',
@@ -835,6 +872,13 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		const itemId = this.resolumeArm.itemId
 		const item = this.scheduleItems.find((s) => String(s.id) === String(itemId))
 		const cueIs = item?.customFields?.cue ?? `CUE ${itemId}`
+		const isSubCue =
+			this.resolumeArm?.isSubCue === true ||
+			this.isScheduleItemSubCue(item)
+
+		if (isSubCue) {
+			this.log('info', `Resolume align → sub-cue timer (item ${itemId})`)
+		}
 
 		try {
 			await this.postResolumeAlign({
@@ -845,6 +889,8 @@ class RunOfShowResolumeInstance extends InstanceBase {
 				remainingSeconds,
 				alignAtMs: alignAtMs || Date.now(),
 				alignReason: reason,
+				isSubCue,
+				rowNumber: item?.rowNumber ?? item?.row_number ?? 0,
 			})
 			this.recordSyncSuccess(reason, remainingSeconds, durationSeconds)
 			const drift = this.getEstimatedDriftSeconds()
@@ -869,6 +915,8 @@ class RunOfShowResolumeInstance extends InstanceBase {
 		remainingSeconds,
 		alignAtMs,
 		alignReason,
+		isSubCue = false,
+		rowNumber = 0,
 	}) {
 		if (!eventId || !itemId) throw new Error('event_id and item_id required')
 		const alignAt = new Date(alignAtMs || Date.now()).toISOString()
@@ -882,6 +930,8 @@ class RunOfShowResolumeInstance extends InstanceBase {
 			align_at: alignAt,
 			latency_compensation_ms: this.getNetworkDelayMs(),
 			align_reason: alignReason || 'align',
+			is_sub_cue: !!isSubCue,
+			row_number: rowNumber,
 		})
 		await this.fetchActiveTimer(eventId)
 		this.updateVariableValues()
