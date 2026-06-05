@@ -79,6 +79,22 @@ function applyResolumeMeta(eventId, timerRow) {
   return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** active_timers.event_id is UUID in Neon — ensure a calendar_events row exists. */
+async function ensureCalendarEventExists(eventId, eventName = 'Quick Mode') {
+  if (!eventId || !UUID_RE.test(String(eventId))) return false;
+  const existing = await pool.query('SELECT 1 FROM calendar_events WHERE id::text = $1', [eventId]);
+  if (existing.rows.length > 0) return true;
+  await pool.query(
+    `INSERT INTO calendar_events (id, name, date, schedule_data, created_at, updated_at)
+     VALUES ($1::uuid, $2, CURRENT_DATE, $3, NOW(), NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [eventId, eventName, JSON.stringify({ quickMode: true, source: 'quick-mode' })]
+  );
+  return true;
+}
+
 function broadcastTimerUpdated(eventId, timerRow) {
   const data = applyResolumeMeta(eventId, timerRow);
   io.to(`event:${eventId}`).emit('update', { type: 'timerUpdated', data });
@@ -102,6 +118,10 @@ function clearAllResolumeState(eventId) {
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
+function getUpstashCacheUrl(key) {
+  return new URL(`/get/${encodeURIComponent(String(key))}`, UPSTASH_URL).toString();
+}
+
 async function setUpstashCache(key, value, expirySeconds = 3600) {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) {
     console.log('⚠️ Upstash not configured, skipping cache update');
@@ -109,7 +129,15 @@ async function setUpstashCache(key, value, expirySeconds = 3600) {
   }
   
   try {
-    const response = await fetch(`${UPSTASH_URL}/set/${key}/${value}?EX=${expirySeconds}`, {
+    const encodedKey = encodeURIComponent(String(key));
+    const encodedValue = encodeURIComponent(String(value));
+    const safeExpiry = Number.isFinite(Number(expirySeconds))
+      ? Math.max(1, Math.floor(Number(expirySeconds)))
+      : 3600;
+    const upstashEndpoint = new URL(`/set/${encodedKey}/${encodedValue}`, UPSTASH_URL);
+    upstashEndpoint.searchParams.set('EX', String(safeExpiry));
+
+    const response = await fetch(upstashEndpoint.toString(), {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${UPSTASH_TOKEN}`
@@ -243,8 +271,8 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
     });
     
     // Update Lower Thirds in Upstash
-    await setUpstashCache(`lower-thirds-xml-${eventId}`, encodeURIComponent(fullXML), 3600);
-    await setUpstashCache(`lower-thirds-csv-${eventId}`, encodeURIComponent(csv), 3600);
+    await setUpstashCache(`lower-thirds-xml-${eventId}`, fullXML, 3600);
+    await setUpstashCache(`lower-thirds-csv-${eventId}`, csv, 3600);
     
     // ========================================
     // Generate Schedule XML & CSV
@@ -278,8 +306,8 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
       scheduleCsv += `${index + 1},${escapeCsv(item.customFields?.cue || '')},${escapeCsv(item.programType || '')},${escapeCsv(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsv(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'}\n`;
     });
     
-    await setUpstashCache(`schedule-xml-${eventId}`, encodeURIComponent(scheduleXml), 3600);
-    await setUpstashCache(`schedule-csv-${eventId}`, encodeURIComponent(scheduleCsv), 3600);
+    await setUpstashCache(`schedule-xml-${eventId}`, scheduleXml, 3600);
+    await setUpstashCache(`schedule-csv-${eventId}`, scheduleCsv, 3600);
     
     // ========================================
     // Generate Custom Columns XML & CSV
@@ -318,8 +346,8 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
         customColumnsCsv += '\n';
       });
       
-      await setUpstashCache(`custom-columns-xml-${eventId}`, encodeURIComponent(customColumnsXml), 3600);
-      await setUpstashCache(`custom-columns-csv-${eventId}`, encodeURIComponent(customColumnsCsv), 3600);
+      await setUpstashCache(`custom-columns-xml-${eventId}`, customColumnsXml, 3600);
+      await setUpstashCache(`custom-columns-csv-${eventId}`, customColumnsCsv, 3600);
     }
     
     console.log('✅ Upstash cache regenerated for event (Lower Thirds + Schedule + Custom Columns):', eventId);
@@ -1186,22 +1214,18 @@ app.get('/api/test-upstash', async (req, res) => {
     const testKey = 'test-key';
     const testValue = 'test-value-' + Date.now();
     
-    const writeResponse = await fetch(`${UPSTASH_URL}/set/${testKey}/${encodeURIComponent(testValue)}`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
-    });
+    const writeSuccess = await setUpstashCache(testKey, testValue, 3600);
     
-    if (!writeResponse.ok) {
+    if (!writeSuccess) {
       return res.json({
         configured: true,
         writeSuccess: false,
-        writeStatus: writeResponse.status,
-        writeError: await writeResponse.text()
+        message: 'Upstash write failed'
       });
     }
     
     // Try to read it back
-    const readResponse = await fetch(`${UPSTASH_URL}/get/${testKey}`, {
+    const readResponse = await fetch(getUpstashCacheUrl(testKey), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -1618,7 +1642,7 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
 
     // Cache to Upstash for fast access by Singular.Live, vMix, etc.
     const fullXML = xmlHeader + xmlContent;
-    await setUpstashCache(`lower-thirds-xml-${eventId}`, encodeURIComponent(fullXML), 3600);
+    await setUpstashCache(`lower-thirds-xml-${eventId}`, fullXML, 3600);
     
     res.set({
       'Content-Type': 'application/xml; charset=utf-8',
@@ -1658,7 +1682,7 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
     // Get from Upstash cache
-    const response = await fetch(`${UPSTASH_URL}/get/lower-thirds-xml-${eventId}`, {
+    const response = await fetch(getUpstashCacheUrl(`lower-thirds-xml-${eventId}`), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -1703,7 +1727,7 @@ app.get('/api/cache/lower-thirds.csv', async (req, res) => {
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
     // Get from Upstash cache
-    const response = await fetch(`${UPSTASH_URL}/get/lower-thirds-csv-${eventId}`, {
+    const response = await fetch(getUpstashCacheUrl(`lower-thirds-csv-${eventId}`), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -1747,7 +1771,7 @@ app.get('/api/cache/schedule.xml', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(`${UPSTASH_URL}/get/schedule-xml-${eventId}`, {
+    const response = await fetch(getUpstashCacheUrl(`schedule-xml-${eventId}`), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -1790,7 +1814,7 @@ app.get('/api/cache/schedule.csv', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(`${UPSTASH_URL}/get/schedule-csv-${eventId}`, {
+    const response = await fetch(getUpstashCacheUrl(`schedule-csv-${eventId}`), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -1833,7 +1857,7 @@ app.get('/api/cache/custom-columns.xml', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(`${UPSTASH_URL}/get/custom-columns-xml-${eventId}`, {
+    const response = await fetch(getUpstashCacheUrl(`custom-columns-xml-${eventId}`), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -1876,7 +1900,7 @@ app.get('/api/cache/custom-columns.csv', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(`${UPSTASH_URL}/get/custom-columns-csv-${eventId}`, {
+    const response = await fetch(getUpstashCacheUrl(`custom-columns-csv-${eventId}`), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -1965,7 +1989,7 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
     });
 
     // Cache to Upstash for fast access
-    await setUpstashCache(`lower-thirds-csv-${eventId}`, encodeURIComponent(csv), 3600);
+    await setUpstashCache(`lower-thirds-csv-${eventId}`, csv, 3600);
     
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',
@@ -2358,6 +2382,9 @@ app.delete('/api/indented-cues/:eventId/:itemId', async (req, res) => {
 app.get('/api/active-timers/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!UUID_RE.test(String(eventId))) {
+      return res.json([]);
+    }
     const result = await pool.query(
       'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
       [eventId]
@@ -2374,6 +2401,13 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
 app.post('/api/active-timers', async (req, res) => {
   try {
     const { event_id, item_id, user_id, timer_state, is_active, is_running, started_at, last_loaded_cue_id, cue_is, duration_seconds } = req.body;
+
+    if (!event_id || !UUID_RE.test(String(event_id))) {
+      return res.status(400).json({
+        error: 'event_id must be a valid UUID. Quick Mode must register a calendar event first.'
+      });
+    }
+    await ensureCalendarEventExists(event_id, `Quick Mode ${event_id}`);
     
     // Provide default values for required fields
     const user_name = 'Unknown User';
@@ -2463,7 +2497,7 @@ app.post('/api/active-timers', async (req, res) => {
     
     res.status(201).json(timerData);
   } catch (error) {
-    console.error('Error saving active timer:', error);
+    console.error('Error saving active timer:', error.message || error);
     res.status(500).json({ error: 'Failed to save active timer' });
   }
 });

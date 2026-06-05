@@ -42,7 +42,10 @@ node scripts/zip-portable.js
 echo "========== Building full Companion module zip =========="
 node scripts/zip-companion-module-full.js
 
-# Step 5: Vite build. prebuild zips companion (slim) + python app; Vite copies public/ (including full zip) to dist.
+echo "========== Building Resolume Companion module zip =========="
+node scripts/zip-companion-module-resolume-full.js
+
+# Step 5: Vite build.
 echo "========== Building Vite app =========="
 npm run build
 

@@ -482,6 +482,18 @@ const Clock: React.FC<ClockProps> = ({
           // Reload timer when reconnected
           loadActiveTimer();
         }
+      },
+      onResetAllStates: (data: any) => {
+        if (data?.event_id === eventId || !data?.event_id) {
+          setHybridTimerData((prev) => ({
+            ...prev,
+            activeTimer: null,
+            secondaryTimer: null
+          }));
+          setLastActiveTimerId(null);
+          setLastActiveItemId(null);
+          setLastActiveStartTime(null);
+        }
       }
     };
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getApiBaseUrl } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
@@ -35,8 +35,24 @@ const nowRemainingMs = (timer: QuickTimer, nowMs: number) => {
   return Math.max(0, timer.remainingMs - (nowMs - timer.startedAtMs));
 };
 
-const buildQuickEventId = () =>
-  `quick-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const isValidEventUuid = (id: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+
+/** Railway/Neon active_timers.event_id is UUID — register a calendar event and use its id. */
+const createQuickCalendarEvent = async (): Promise<string> => {
+  const res = await fetch(`${getApiBaseUrl()}/api/calendar-events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `Quick Mode ${new Date().toLocaleDateString()}`,
+      date: new Date().toISOString().slice(0, 10),
+      schedule_data: { quickMode: true, source: 'quick-mode' }
+    })
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return String(data.id);
+};
 
 const toScheduleItem = (timer: QuickTimer) => {
   const totalSeconds = Math.max(1, Math.floor(timer.durationMs / 1000));
@@ -80,22 +96,35 @@ const QuickModePage: React.FC = () => {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [isCompanionSyncing, setIsCompanionSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  const clockWindowRef = useRef<Window | null>(null);
 
   const storageKey = useMemo(() => (eventId ? `${STORAGE_KEY_PREFIX}${eventId}` : ''), [eventId]);
 
   useEffect(() => {
-    const fromQuery = (searchParams.get('eventId') || '').trim();
-    if (fromQuery) {
-      setEventId(fromQuery);
-      return;
-    }
-    const generated = buildQuickEventId();
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev);
-      p.set('eventId', generated);
-      return p;
-    }, { replace: true });
-    setEventId(generated);
+    let cancelled = false;
+    (async () => {
+      const fromQuery = (searchParams.get('eventId') || '').trim();
+      if (fromQuery && isValidEventUuid(fromQuery) && !fromQuery.startsWith('quick-')) {
+        setEventId(fromQuery);
+        return;
+      }
+      let id: string;
+      try {
+        id = await createQuickCalendarEvent();
+      } catch {
+        id = crypto.randomUUID();
+      }
+      if (cancelled) return;
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev);
+        p.set('eventId', id);
+        return p;
+      }, { replace: true });
+      setEventId(id);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
@@ -170,7 +199,7 @@ const QuickModePage: React.FC = () => {
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        if (!cancelled) setSyncMessage('Companion sync ready');
+        if (!cancelled) setSyncMessage('Synced to Railway (clock + Companion)');
       } catch {
         if (!cancelled) setSyncMessage('Local only (API unavailable)');
       } finally {
@@ -244,31 +273,33 @@ const QuickModePage: React.FC = () => {
 
     hydrateFromApi();
 
-    socketClient.connect(eventId, {});
-    const socket = socketClient.getSocket();
-    const onUpdate = (message: any) => {
-      if (!message?.type) return;
-      const data = message.data || {};
-      if (message.type === 'timerUpdated') {
-        applyServerTimerRow(data);
-      }
-      if (message.type === 'activeTimersUpdated') {
+    const callbacks = {
+      onTimerUpdated: (data: Record<string, unknown>) => applyServerTimerRow(data),
+      onActiveTimersUpdated: (data: unknown) => {
         const row = Array.isArray(data) ? data[0] : data;
         if (!row) {
           setLoadedTimerId(null);
           return;
         }
-        if (row.timer_state === 'stopped' || row.is_active === false) {
-          const itemId = Number(row.item_id);
+        const r = row as Record<string, unknown>;
+        if (r.timer_state === 'stopped' || r.is_active === false) {
+          const itemId = Number(r.item_id);
           setTimers((prev) =>
             prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t))
           );
           setLoadedTimerId((prev) => (prev === itemId ? null : prev));
           return;
         }
-        applyServerTimerRow(row);
-      }
-      if (message.type === 'timerStopped' || message.type === 'timersStopped') {
+        applyServerTimerRow(r);
+      },
+      onTimerStopped: (data: Record<string, unknown>) => {
+        const itemId = Number(data.item_id);
+        if (Number.isFinite(itemId)) {
+          setTimers((prev) => prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t)));
+          setLoadedTimerId((prev) => (prev === itemId ? null : prev));
+        }
+      },
+      onTimersStopped: (data: Record<string, unknown>) => {
         const itemId = Number(data.item_id);
         if (Number.isFinite(itemId)) {
           setTimers((prev) => prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t)));
@@ -277,19 +308,34 @@ const QuickModePage: React.FC = () => {
           setTimers((prev) => prev.map((t) => ({ ...t, isRunning: false, startedAtMs: null })));
           setLoadedTimerId(null);
         }
-      }
-      if (message.type === 'resetAllStates') {
+      },
+      onResetAllStates: () => {
         setTimers((prev) => prev.map((t) => ({ ...t, remainingMs: t.durationMs, isRunning: false, startedAtMs: null })));
         setLoadedTimerId(null);
       }
     };
-    socket?.on('update', onUpdate);
+
+    socketClient.connect(eventId, callbacks);
     return () => {
       cancelled = true;
-      socket?.off('update', onUpdate);
       socketClient.disconnect(eventId);
     };
   }, [eventId]);
+
+  const openClock = () => {
+    if (!eventId) return;
+    if (clockWindowRef.current && !clockWindowRef.current.closed) {
+      clockWindowRef.current.focus();
+      return;
+    }
+    const clockUrl = `/clock?eventId=${encodeURIComponent(eventId)}`;
+    const win = window.open(
+      clockUrl,
+      'clock',
+      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+    );
+    if (win) clockWindowRef.current = win;
+  };
 
   const totals = useMemo(() => {
     const active = timers.filter((t) => t.isRunning).length;
@@ -308,7 +354,11 @@ const QuickModePage: React.FC = () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.error('Quick Mode API error:', path, res.status, detail);
+      throw new Error(`HTTP ${res.status}`);
+    }
   };
 
   const addTimer = () => {
@@ -454,7 +504,7 @@ const QuickModePage: React.FC = () => {
             <div className="hidden h-7 w-px shrink-0 bg-slate-600/80 sm:block" aria-hidden />
             <div className="min-w-0">
               <h1 className="text-base font-bold md:text-lg">Quick Mode</h1>
-              <p className="text-[11px] text-slate-400">Ad-hoc timer rundown with dedicated event ID</p>
+              <p className="text-[11px] text-slate-400">Ad-hoc timers — uses a real event ID for clock sync</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -463,10 +513,7 @@ const QuickModePage: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => {
-                if (!eventId) return;
-                navigate(`/clock?eventId=${encodeURIComponent(eventId)}`);
-              }}
+              onClick={openClock}
               className="rounded border border-emerald-500/70 px-2 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-900/30"
             >
               Open Clock

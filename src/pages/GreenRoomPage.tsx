@@ -1217,7 +1217,7 @@ const GreenRoomPage: React.FC = () => {
           let nextItemIndex = index + 1;
           while (nextItemIndex < schedule.length) {
             const nextItem = schedule[nextItemIndex];
-              if (nextItem && !isIndentedScheduleItem(nextItem, freshIndentedCues)) {
+              if (nextItem && !isIndentedScheduleItem(nextItem, indentedCues)) {
               const nextItemDay = nextItem.day || 1;
               const nextDaySpecificStartTime = dayStartTimes[nextItemDay] || masterStartTime;
               const nextStartTime = calculateStartTimeWithOvertime(

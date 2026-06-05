@@ -72,6 +72,19 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
+              <div className="text-center mb-4">
+                <a
+                  href="/companion-module-runofshow-resolume-full.zip"
+                  download="companion-module-runofshow-resolume-full.zip"
+                  className="block bg-fuchsia-700 hover:bg-fuchsia-600 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  🎬 Companion Module — Resolume Sync
+                </a>
+                <div className="text-xs text-fuchsia-300 mt-2">
+                  Resolume OSC → ROS timer • Arm cue, clip sync, periodic re-sync • Separate module instance
+                </div>
+              </div>
+
               {/* Python OSC App (ros-osc-python-app) */}
               <div className="text-center mb-4">
                 <a
@@ -115,7 +128,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
               </div>
               
               <div className="text-xs text-slate-500 mt-2 text-center leading-tight">
-                <strong>Zips</strong> (updated by <code className="bg-slate-600 px-1 rounded">npm run prebuild</code> or <code className="bg-slate-600 px-1 rounded">node scripts/zip-companion-module.js</code> / <code className="bg-slate-600 px-1 rounded">zip-python-app.js</code>). Portable: <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code>. Then deploy.
+                <strong>Zips</strong> (updated by <code className="bg-slate-600 px-1 rounded">npm run prebuild</code>, <code className="bg-slate-600 px-1 rounded">node scripts/zip-companion-module-full.js</code>, <code className="bg-slate-600 px-1 rounded">node scripts/zip-companion-module-resolume-full.js</code>, or Netlify build). Portable: <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code>.
               </div>
             </div>
           </div>

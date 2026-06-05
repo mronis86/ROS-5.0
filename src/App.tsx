@@ -27,6 +27,7 @@ import TeleprompterPage from './pages/TeleprompterPage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import QuickModePage from './pages/QuickModePage';
+import ComparisonPage from './pages/ComparisonPage';
 
 function AppContent() {
   const location = useLocation();
@@ -43,12 +44,13 @@ function AppContent() {
   const isAdmin = location.pathname === '/admin';
   const isQuickMode = location.pathname === '/quick-mode';
   const isRunOfShowMobile = location.pathname === '/run-of-show-mobile';
+  const isComparison = location.pathname === '/comparison';
 
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isRunOfShowMobile && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isRunOfShowMobile && !isComparison && <AppHeader />}
       
       {!isPinNotesPopout && (
         <AuthGuard>
@@ -73,6 +75,7 @@ function AppContent() {
       {/* Pages that work without authentication (popout loads without auth) */}
       <Routes>
         <Route path="/admin" element={<AdminPage />} />
+        <Route path="/comparison" element={<ComparisonPage />} />
         <Route path="/pin-notes-popout" element={<PinNotesPopoutPage />} />
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />

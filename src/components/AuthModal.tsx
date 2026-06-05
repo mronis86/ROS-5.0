@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import DisclaimerModal from './DisclaimerModal';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -12,6 +13,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => 
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
 
   const { signIn } = useAuth();
 
@@ -45,7 +47,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => 
   if (!isOpen) return null;
 
   return (
-    <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md mx-auto border border-slate-700">
+    <>
+      <DisclaimerModal isOpen={showDisclaimer} onClose={() => setShowDisclaimer(false)} />
+
+      <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md mx-auto border border-slate-700">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-white text-center">
           Enter Your Information
@@ -79,6 +84,17 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => 
             placeholder="Enter your email"
             required
           />
+          <p className="mt-2 text-xs leading-relaxed text-slate-400">
+            If you would like, please{' '}
+            <button
+              type="button"
+              onClick={() => setShowDisclaimer(true)}
+              className="font-medium text-blue-400 underline underline-offset-2 hover:text-blue-300"
+            >
+              click here to read the Terms of Service
+            </button>
+            . By signing in, you automatically agree to these terms.
+          </p>
         </div>
 
         {error && (
@@ -96,6 +112,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => 
         </button>
       </form>
     </div>
+    </>
   );
 };
 
