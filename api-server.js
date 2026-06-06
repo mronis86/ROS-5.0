@@ -755,6 +755,32 @@ app.post('/api/admin/backup-config/create-table', async (req, res) => {
   }
 });
 
+// Personal notes popout: create table if missing (safe to run on every startup)
+async function runUserEventNotesSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.user_event_notes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      user_name TEXT,
+      schedule_item_id BIGINT NOT NULL,
+      column_key TEXT NOT NULL DEFAULT 'personal',
+      content TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (event_id, user_id, schedule_item_id, column_key)
+    )
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_user_event_notes_event_user
+      ON public.user_event_notes (event_id, user_id)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_user_event_notes_item
+      ON public.user_event_notes (event_id, schedule_item_id)
+  `);
+}
+
 // Full sync: create table if missing with all columns, or add any missing columns. Safe to run anytime.
 async function runBackupConfigSyncTable(db) {
   await db.query(`
@@ -2224,6 +2250,55 @@ app.delete('/api/completed-cues', async (req, res) => {
   } catch (error) {
     console.error('Error unmarking cue as completed:', error);
     res.status(500).json({ error: 'Failed to unmark cue as completed' });
+  }
+});
+
+// Personal notes for Notes popout (per user, per event — not stored in run_of_show_data)
+app.get('/api/user-event-notes/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { user_id } = req.query;
+    if (!eventId || !user_id) {
+      return res.status(400).json({ error: 'eventId and user_id are required' });
+    }
+    const result = await pool.query(
+      `SELECT schedule_item_id, column_key, content, updated_at
+       FROM user_event_notes
+       WHERE event_id = $1 AND user_id = $2
+       ORDER BY schedule_item_id, column_key`,
+      [eventId, user_id]
+    );
+    res.json({ notes: result.rows });
+  } catch (error) {
+    console.error('Error fetching user event notes:', error);
+    res.status(500).json({ error: 'Failed to fetch user event notes' });
+  }
+});
+
+app.put('/api/user-event-notes', async (req, res) => {
+  try {
+    const { event_id, user_id, user_name, schedule_item_id, column_key, content } = req.body;
+    if (!event_id || !user_id || schedule_item_id == null) {
+      return res.status(400).json({ error: 'event_id, user_id, and schedule_item_id are required' });
+    }
+    const key = column_key || 'personal';
+    const text = content != null ? String(content) : '';
+    const result = await pool.query(
+      `INSERT INTO user_event_notes
+         (event_id, user_id, user_name, schedule_item_id, column_key, content, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (event_id, user_id, schedule_item_id, column_key)
+       DO UPDATE SET
+         content = EXCLUDED.content,
+         user_name = COALESCE(EXCLUDED.user_name, user_event_notes.user_name),
+         updated_at = NOW()
+       RETURNING schedule_item_id, column_key, content, updated_at`,
+      [event_id, user_id, user_name || null, schedule_item_id, key, text]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error saving user event note:', error);
+    res.status(500).json({ error: 'Failed to save user event note' });
   }
 });
 
@@ -4653,7 +4728,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server on all network interfaces (allows local network access)
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 API Server running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🌐 Network access: http://<your-ip>:${PORT}/health`);
@@ -4662,6 +4737,14 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`🔌 Socket.IO endpoint: ws://localhost:${PORT}`);
   console.log(`🔐 Auth: Using direct database connection`);
   console.log(`💡 Tip: Use 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find your IP address`);
+  if (process.env.NEON_DATABASE_URL) {
+    try {
+      await runUserEventNotesSyncTable(pool);
+      console.log('✅ user_event_notes table synced');
+    } catch (err) {
+      console.warn('⚠️ user_event_notes sync skipped:', err.message || err);
+    }
+  }
 });
 
 // Graceful shutdown

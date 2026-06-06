@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Event, DAYS_OPTIONS, LOCATION_OPTIONS } from '../../types/Event';
 import QuickModeBoltIcon from '../QuickModeBoltIcon';
+import EventListRowActions from '../EventListRowActions';
 
 type Tab = 'upcoming' | 'past' | 'quickMode';
 type MobileSortKey = 'date_asc' | 'date_desc' | 'name_asc';
@@ -336,49 +337,15 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                     {selected ? 'Hide actions' : 'Select'}
                   </button>
                   {selected ? (
-                    <div className={`mt-2 grid gap-1.5 ${activeTab === 'quickMode' ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                      {activeTab === 'quickMode' ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => onOpenQuickModeSession?.(event)}
-                            className="min-h-[36px] rounded-md bg-purple-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-purple-500"
-                          >
-                            Open
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onDelete(event)}
-                            className="min-h-[36px] rounded-md bg-red-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-red-500"
-                          >
-                            Delete
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                      <button
-                        type="button"
-                        onClick={() => onLaunch(event)}
-                        className="min-h-[36px] rounded-md bg-blue-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-blue-500"
-                      >
-                        Launch
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onEdit(event)}
-                        className="min-h-[36px] rounded-md bg-green-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-green-500"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDelete(event)}
-                        className="min-h-[36px] rounded-md bg-red-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-red-500"
-                      >
-                        Delete
-                      </button>
-                        </>
-                      )}
+                    <div className="mt-2">
+                      <EventListRowActions
+                        layout="mobile"
+                        mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}
+                        onLaunch={() => onLaunch(event)}
+                        onEdit={() => onEdit(event)}
+                        onDelete={() => onDelete(event)}
+                        onOpenQuickMode={() => onOpenQuickModeSession?.(event)}
+                      />
                     </div>
                   ) : null}
                 </div>

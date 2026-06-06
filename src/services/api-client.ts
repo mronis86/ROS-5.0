@@ -356,6 +356,39 @@ class ApiClient {
   async getTimerMessages(eventId: string) {
     return this.request(`/api/timer-messages/${eventId}`);
   }
+
+  // Personal notes (Notes popout — per user, stored separately from run_of_show_data)
+  async getUserEventNotes(eventId: string, userId: string) {
+    return this.request<{ notes: UserEventNoteRow[] }>(
+      `/api/user-event-notes/${eventId}?user_id=${encodeURIComponent(userId)}`,
+      {},
+      `userEventNotes_${eventId}_${userId}`,
+      15 * 1000
+    );
+  }
+
+  async saveUserEventNote(data: {
+    event_id: string;
+    user_id: string;
+    user_name?: string;
+    schedule_item_id: number;
+    column_key?: string;
+    content: string;
+  }) {
+    const result = await this.request<UserEventNoteRow>('/api/user-event-notes', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    this.cache.delete(`userEventNotes_${data.event_id}_${data.user_id}`);
+    return result;
+  }
+}
+
+export interface UserEventNoteRow {
+  schedule_item_id: number;
+  column_key: string;
+  content: string;
+  updated_at?: string;
 }
 
 export const apiClient = new ApiClient();

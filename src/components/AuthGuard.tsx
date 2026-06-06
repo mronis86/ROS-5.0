@@ -2,6 +2,8 @@ import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
 import AppHeader from './AppHeader';
+import AppLogo from './AppLogo';
+import AppBrandTitle from './AppBrandTitle';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -37,10 +39,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
               <div className="text-center max-w-2xl mx-auto p-8">
                 <div className="mb-8">
                   <div className="flex items-center justify-center gap-3 mb-4">
-                    <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center">
-                      <span className="text-white font-bold text-2xl">R</span>
-                    </div>
-                    <h1 className="text-4xl font-bold text-white">Run of Show</h1>
+                    <AppLogo size="lg" />
+                    <AppBrandTitle
+                      titleClassName="text-4xl font-bold text-white leading-tight"
+                      showTagline={false}
+                    />
                   </div>
                   <p className="text-slate-300 text-lg">Please sign in to access the Run of Show application.</p>
                 </div>

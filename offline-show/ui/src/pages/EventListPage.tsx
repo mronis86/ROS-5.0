@@ -13,8 +13,9 @@ import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { getOfflineDisplayName, getOfflineUserId } from '../services/offline-user';
 import RoleSelectionModal from '../components/RoleSelectionModal';
-import { isQuickModeCalendarEvent } from '../lib/quickModeEvent';
+import { isQuickModeCalendarEvent, clearQuickModeNewSessionDedupe } from '../lib/quickModeEvent';
 import QuickModeBoltIcon from '../components/QuickModeBoltIcon';
+import EventListRowActions from '../components/EventListRowActions';
 
 type EventListTab = 'upcoming' | 'past' | 'quickMode';
 
@@ -59,6 +60,11 @@ const EventListPage: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [quickModeSelectedIds, setQuickModeSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<Event[]>([]);
+
+  const openNewQuickMode = () => {
+    clearQuickModeNewSessionDedupe();
+    navigate('/quick-mode?new=1');
+  };
 
   const generateDeleteCode = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -721,7 +727,7 @@ const EventListPage: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/quick-mode?new=1')}
+            onClick={openNewQuickMode}
             className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-colors"
             title="Open Quick Mode for ad-hoc timers"
           >
@@ -857,7 +863,7 @@ const EventListPage: React.FC = () => {
                     {activeTab === 'quickMode' && (
                       <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Created</th>
                     )}
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm">Actions</th>
+                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -952,46 +958,15 @@ const EventListPage: React.FC = () => {
                             {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
                           </td>
                         )}
-                        <td className="px-3 py-2">
-                          <div className="flex gap-2 justify-center flex-wrap">
-                            {activeTab === 'quickMode' ? (
-                              <>
-                                <button
-                                  onClick={() => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
-                                  className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium rounded transition-colors"
-                                >
-                                  Open
-                                </button>
-                                <button
-                                  onClick={() => openDeleteConfirmModal(event)}
-                                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
-                                >
-                                  Delete
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                            <button
-                              onClick={() => launchRunOfShow(event)}
-                              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors"
-                            >
-                              Launch
-                            </button>
-                            <button
-                              onClick={() => openEditModal(event)}
-                              className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded transition-colors"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => openDeleteConfirmModal(event)}
-                              className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
-                            >
-                              Delete
-                            </button>
-                              </>
-                            )}
-                          </div>
+                        <td className="px-2 py-2 min-w-[9.5rem] text-center">
+                          <EventListRowActions
+                            layout="table"
+                            mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}
+                            onLaunch={() => launchRunOfShow(event)}
+                            onEdit={() => openEditModal(event)}
+                            onDelete={() => openDeleteConfirmModal(event)}
+                            onOpenQuickMode={() => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
+                          />
                         </td>
                       </tr>
                     ))

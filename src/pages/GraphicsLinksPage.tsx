@@ -26,6 +26,8 @@ interface ScheduleItem {
   start?: string;
 }
 
+const BRAND_LOWER_THIRD_COLOR_UPDATER_URL = 'https://mronis-chamber.github.io/LoopColors/';
+
 const GraphicsLinksPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -50,27 +52,7 @@ const GraphicsLinksPage: React.FC = () => {
   const [isUpdating, setIsUpdating] = useState(false);
 
   const openBrandLowerThirdColorUpdater = () => {
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Brand Lower Third Color Updater</title>
-  <style>
-    body { font-family: system-ui, sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto; }
-    h1 { color: #1e293b; }
-    p { color: #475569; }
-  </style>
-</head>
-<body>
-  <h1>Brand Lower Third Color Updater</h1>
-  <p>This page opens locally in your browser. Replace this content with your color updater UI.</p>
-</body>
-</html>`;
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    URL.revokeObjectURL(url);
+    window.open(BRAND_LOWER_THIRD_COLOR_UPDATER_URL, '_blank', 'noopener,noreferrer');
   };
 
   // Initialize schedule data - optimized for minimal egress

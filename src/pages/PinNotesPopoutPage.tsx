@@ -1,16 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { socketClient } from '../services/socket-client';
-import { getApiBaseUrl } from '../services/api-client';
+import { apiClient, getApiBaseUrl } from '../services/api-client';
+import {
+  getStoredOperatorName,
+  operatorUserId,
+  storeOperatorName,
+} from '../lib/pinNotesOperator';
 
 const RESIZE_HANDLE_WIDTH = 6;
-const MIN_COLUMN_FRACTION = 0.08; // each column at least ~8% of width
+const MIN_COLUMN_FRACTION = 0.08;
 const API_BASE = getApiBaseUrl();
 
 const ZOOM_STORAGE_KEY = 'pin-notes-popout-zoom';
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.25;
+const SAVE_DEBOUNCE_MS = 600;
 
 function getStoredZoom(): number {
   try {
@@ -29,22 +35,28 @@ interface ScheduleItem {
   customFields?: Record<string, string>;
 }
 
-type ColumnSpec = { type: 'notes' | 'custom' | 'cue'; id: string; name: string };
+type RosColumnSpec = { type: 'notes' | 'custom' | 'cue'; id: string; name: string };
+type MyNotesColumnSpec = { type: 'my-notes'; id: 'my-notes'; name: string };
+type DisplayColumn = RosColumnSpec | MyNotesColumnSpec;
 
 interface PinNotesMessage {
   type: 'PIN_NOTES_UPDATE';
   eventId?: string | null;
   schedule: ScheduleItem[];
   activeItemId: number | null;
-  columns: ColumnSpec[];
-  availableColumns: ColumnSpec[];
+  columns: RosColumnSpec[];
+  availableColumns: RosColumnSpec[];
 }
 
-function colKey(col: ColumnSpec): string {
+function colKey(col: DisplayColumn): string {
   return col.type + '_' + col.id;
 }
 
-const CUE_COLUMN: ColumnSpec = { type: 'cue', id: 'cue', name: 'Cue' };
+function personalNoteKey(itemId: number): string {
+  return `${itemId}:personal`;
+}
+
+const CUE_COLUMN: RosColumnSpec = { type: 'cue', id: 'cue', name: 'Cue' };
 
 const PinNotesPopoutPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -53,15 +65,111 @@ const PinNotesPopoutPage: React.FC = () => {
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [lastLoadedCueId, setLastLoadedCueId] = useState<number | null>(null);
-  const [columns, setColumns] = useState<ColumnSpec[]>([]);
-  const [availableColumns, setAvailableColumns] = useState<ColumnSpec[]>([]);
+  const [columns, setColumns] = useState<RosColumnSpec[]>([]);
+  const [availableColumns, setAvailableColumns] = useState<RosColumnSpec[]>([]);
   const [showColumnPicker, setShowColumnPicker] = useState(false);
-  const [pickerSelected, setPickerSelected] = useState<ColumnSpec[]>([]);
-  // Fraction of content width per column (0–1), sums to 1. Columns always fill page width.
+  const [pickerSelected, setPickerSelected] = useState<RosColumnSpec[]>([]);
+  const [personalNotes, setPersonalNotes] = useState<Record<string, string>>({});
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [operatorName, setOperatorName] = useState<string | null>(() => getStoredOperatorName());
+  const [myNotesEnabled, setMyNotesEnabled] = useState(() => !!getStoredOperatorName());
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
   const [columnFractions, setColumnFractions] = useState<Record<string, number>>({});
   const [zoomLevel, setZoomLevel] = useState<number>(getStoredZoom);
+
+  const eventIdRef = useRef<string>(eventIdFromUrl);
+  const operatorUserIdRef = useRef<string | null>(
+    operatorName ? operatorUserId(operatorName) : null
+  );
+  const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingSavesRef = useRef<Set<string>>(new Set());
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<{ colIndex: number; startX: number; startFrac: number; nextStartFrac: number } | null>(null);
+  const lastLoadedCueIdRef = useRef<number | null>(null);
+
+  const eventId = eventIdFromUrl || undefined;
+
+  useEffect(() => {
+    eventIdRef.current = eventIdFromUrl;
+  }, [eventIdFromUrl]);
+
+  useEffect(() => {
+    lastLoadedCueIdRef.current = lastLoadedCueId;
+  }, [lastLoadedCueId]);
+
+  const myNotesColumn: MyNotesColumnSpec | null = React.useMemo(() => {
+    if (!myNotesEnabled || !operatorName) return null;
+    return { type: 'my-notes', id: 'my-notes', name: `My notes (${operatorName})` };
+  }, [myNotesEnabled, operatorName]);
+
+  const displayColumns = React.useMemo((): DisplayColumn[] => {
+    const ros = columns.filter((c) => c.type !== 'cue');
+    return myNotesColumn ? [CUE_COLUMN, ...ros, myNotesColumn] : [CUE_COLUMN, ...ros];
+  }, [columns, myNotesColumn]);
+
+  const loadPersonalNotes = useCallback(async (evId: string, opUserId: string) => {
+    try {
+      const data = await apiClient.getUserEventNotes(evId, opUserId);
+      const map: Record<string, string> = {};
+      for (const row of data.notes || []) {
+        map[`${row.schedule_item_id}:${row.column_key}`] = row.content || '';
+      }
+      setPersonalNotes(map);
+    } catch {
+      /* API/table may not be deployed yet */
+    }
+  }, []);
+
+  const activateOperator = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      storeOperatorName(trimmed);
+      const opId = operatorUserId(trimmed);
+      operatorUserIdRef.current = opId;
+      setOperatorName(trimmed);
+      setMyNotesEnabled(true);
+      setShowNameModal(false);
+      setNameDraft('');
+      const evId = eventIdRef.current;
+      if (evId) loadPersonalNotes(evId, opId);
+    },
+    [loadPersonalNotes]
+  );
+
+  useEffect(() => {
+    if (operatorName) {
+      operatorUserIdRef.current = operatorUserId(operatorName);
+      const evId = eventIdFromUrl;
+      if (evId && myNotesEnabled) {
+        loadPersonalNotes(evId, operatorUserId(operatorName));
+      }
+    }
+  }, [eventIdFromUrl, operatorName, myNotesEnabled, loadPersonalNotes]);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data as PinNotesMessage;
+      if (data?.type !== 'PIN_NOTES_UPDATE') return;
+      setSchedule(Array.isArray(data.schedule) ? data.schedule : []);
+      setColumns(Array.isArray(data.columns) ? data.columns : []);
+      setAvailableColumns(Array.isArray(data.availableColumns) ? data.availableColumns : []);
+      if (data.eventId) eventIdRef.current = data.eventId;
+      if (data.eventId && operatorUserIdRef.current && myNotesEnabled) {
+        loadPersonalNotes(data.eventId, operatorUserIdRef.current);
+      }
+      if (!eventIdFromUrl && !eventIdRef.current) {
+        setActiveItemId(data.activeItemId ?? null);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    if (window.opener) {
+      window.opener.postMessage({ type: 'PIN_NOTES_READY' }, '*');
+    }
+    return () => window.removeEventListener('message', handleMessage);
+  }, [eventIdFromUrl, loadPersonalNotes, myNotesEnabled]);
 
   const setZoom = useCallback((value: number) => {
     const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(value / ZOOM_STEP) * ZOOM_STEP));
@@ -73,7 +181,6 @@ const PinNotesPopoutPage: React.FC = () => {
     }
   }, []);
 
-  // Apply zoom via root font-size so all rem-based Tailwind (text, spacing, etc.) scales
   useEffect(() => {
     const root = document.documentElement;
     root.style.fontSize = `${zoomLevel * 100}%`;
@@ -82,13 +189,6 @@ const PinNotesPopoutPage: React.FC = () => {
     };
   }, [zoomLevel]);
 
-  // Cue is always the first (left) column; user-selected columns follow
-  const displayColumns = React.useMemo(
-    () => [CUE_COLUMN, ...columns],
-    [columns]
-  );
-
-  // Initialize fractions for non-Cue columns only (sum to 1) so they fill the remaining width
   const columnKeysStr = displayColumns.map((c) => colKey(c)).join(',');
   useEffect(() => {
     if (displayColumns.length === 0) return;
@@ -111,38 +211,6 @@ const PinNotesPopoutPage: React.FC = () => {
   }, [columnKeysStr]);
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const data = event.data as PinNotesMessage;
-      if (data?.type === 'PIN_NOTES_UPDATE') {
-        setSchedule(Array.isArray(data.schedule) ? data.schedule : []);
-        setColumns(Array.isArray(data.columns) ? data.columns : []);
-        setAvailableColumns(Array.isArray(data.availableColumns) ? data.availableColumns : []);
-        if (!eventIdFromUrl && !eventIdRef.current) {
-          setActiveItemId(data.activeItemId ?? null);
-        }
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    if (window.opener) {
-      window.opener.postMessage({ type: 'PIN_NOTES_READY' }, '*');
-    }
-    return () => window.removeEventListener('message', handleMessage);
-  }, [eventIdFromUrl]);
-
-  const eventIdRef = useRef<string>(eventIdFromUrl);
-  useEffect(() => {
-    eventIdRef.current = eventIdFromUrl;
-  }, [eventIdFromUrl]);
-
-  const eventId = eventIdFromUrl || undefined;
-  const lastLoadedCueIdRef = useRef<number | null>(null);
-  useEffect(() => {
-    lastLoadedCueIdRef.current = lastLoadedCueId;
-  }, [lastLoadedCueId]);
-
-  // WebSocket for current cue (same as Photo View / Green Room)
-  useEffect(() => {
     if (!eventId) return;
 
     const loadActiveTimer = async () => {
@@ -158,7 +226,7 @@ const PinNotesPopoutPage: React.FC = () => {
           setLastLoadedCueId(id);
         }
       } catch {
-        // ignore
+        /* ignore */
       }
     };
 
@@ -204,7 +272,6 @@ const PinNotesPopoutPage: React.FC = () => {
     return () => socketClient.disconnect(eventId);
   }, [eventId]);
 
-  // Sync picker when opening the panel
   useEffect(() => {
     if (showColumnPicker) setPickerSelected(columns);
   }, [showColumnPicker, columns]);
@@ -222,18 +289,74 @@ const PinNotesPopoutPage: React.FC = () => {
     ) as ScheduleItem[];
   }, [schedule, activeItemId]);
 
-  const getCellValue = (item: ScheduleItem, col: ColumnSpec): string => {
+  const getSharedCellValue = (item: ScheduleItem, col: RosColumnSpec): string => {
     if (col.type === 'notes') return item.notes || '';
     if (col.type === 'cue') {
       const raw = (item.customFields?.cue ?? '').trim();
       return raw.replace(/^cue\s+/i, '') || '—';
     }
-    return (item.customFields && item.customFields[col.name]) || '';
+    return (
+      (item.customFields && item.customFields[col.id]) ||
+      (item.customFields && item.customFields[col.name]) ||
+      ''
+    );
   };
 
-  const isNotes = (col: ColumnSpec) => col.type === 'notes';
+  const flushSave = useCallback(
+    async (itemId: number, content: string) => {
+      const evId = eventIdRef.current;
+      const opId = operatorUserIdRef.current;
+      if (!evId || !opId || !operatorName) return;
+      const key = personalNoteKey(itemId);
+      pendingSavesRef.current.add(key);
+      setSaveStatus('saving');
+      try {
+        await apiClient.saveUserEventNote({
+          event_id: evId,
+          user_id: opId,
+          user_name: operatorName,
+          schedule_item_id: itemId,
+          column_key: 'personal',
+          content,
+        });
+        pendingSavesRef.current.delete(key);
+        setSaveStatus(pendingSavesRef.current.size > 0 ? 'saving' : 'saved');
+        if (pendingSavesRef.current.size === 0) {
+          setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
+        }
+      } catch {
+        pendingSavesRef.current.delete(key);
+        setSaveStatus('error');
+      }
+    },
+    [operatorName]
+  );
 
-  const togglePickerColumn = (col: ColumnSpec) => {
+  const handlePersonalNoteChange = useCallback(
+    (itemId: number, value: string) => {
+      const key = personalNoteKey(itemId);
+      setPersonalNotes((prev) => ({ ...prev, [key]: value }));
+      if (saveTimersRef.current[key]) clearTimeout(saveTimersRef.current[key]);
+      saveTimersRef.current[key] = setTimeout(() => {
+        flushSave(itemId, value);
+        delete saveTimersRef.current[key];
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [flushSave]
+  );
+
+  useEffect(() => {
+    return () => {
+      Object.values(saveTimersRef.current).forEach(clearTimeout);
+    };
+  }, []);
+
+  const openNameModal = () => {
+    setNameDraft(operatorName || '');
+    setShowNameModal(true);
+  };
+
+  const togglePickerColumn = (col: RosColumnSpec) => {
     setPickerSelected((prev) => {
       const has = prev.some((c) => c.id === col.id && c.type === col.type);
       if (has) {
@@ -252,7 +375,7 @@ const PinNotesPopoutPage: React.FC = () => {
   };
 
   const getColFraction = useCallback(
-    (col: ColumnSpec) => {
+    (col: DisplayColumn) => {
       const f = columnFractions[colKey(col)];
       return typeof f === 'number' && f > 0 ? f : 1 / Math.max(1, displayColumns.length);
     },
@@ -311,7 +434,6 @@ const PinNotesPopoutPage: React.FC = () => {
     };
   }, [displayColumns]);
 
-  // Cue column is content-sized with no resize after it; other columns use fractions and have resize handles between them.
   const gridTemplateColumns =
     displayColumns.length === 0
       ? '1fr'
@@ -333,22 +455,71 @@ const PinNotesPopoutPage: React.FC = () => {
             return parts.join(' ');
           })();
 
-  // Grid positions: Cue has no handle after it, so col 0 at 1, col 1 at 2, handle at 3, col 2 at 4, ...
   const getGridColumn = (j: number) => (j === 0 ? 1 : 2 * j);
   const getHandleGridColumn = (j: number) => 2 * j + 1;
+
+  const isMyNotesCol = (col: DisplayColumn): col is MyNotesColumnSpec => col.type === 'my-notes';
 
   return (
     <div className="min-h-screen min-w-0 w-full bg-slate-900 text-slate-100 font-sans box-border">
       <div className="min-w-0 w-full max-w-[100vw] mx-auto p-4 sm:p-6 box-border" style={{ width: '100%' }}>
         <header className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-600">
-          <h1 className="text-2xl font-bold text-white min-w-0">
-            {columns.length === 0
-              ? 'Notes popout'
-              : columns.length === 1
-                ? columns[0].name
-                : `${columns.map((c) => c.name).join(' • ')}`}
-          </h1>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold text-white min-w-0">Notes popout</h1>
+            {myNotesEnabled && operatorName && (
+              <p className="text-emerald-300 text-sm mt-1">
+                My notes as <span className="font-medium">{operatorName}</span> — saved to the cloud for this event
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {saveStatus === 'saving' && <span className="text-amber-300 text-sm">Saving…</span>}
+            {saveStatus === 'saved' && <span className="text-emerald-400 text-sm">Saved</span>}
+            {saveStatus === 'error' && <span className="text-red-400 text-sm">Save failed — is the API deployed?</span>}
+
+            {!myNotesEnabled ? (
+              operatorName ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMyNotesEnabled(true);
+                    const evId = eventIdRef.current;
+                    const opId = operatorUserId(operatorName);
+                    operatorUserIdRef.current = opId;
+                    if (evId) loadPersonalNotes(evId, opId);
+                  }}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  Show my notes ({operatorName})
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={openNameModal}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  Set up my notes
+                </button>
+              )
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setMyNotesEnabled(false)}
+                  className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg transition-colors"
+                >
+                  Hide my notes
+                </button>
+                <button
+                  type="button"
+                  onClick={openNameModal}
+                  className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition-colors"
+                >
+                  Change name
+                </button>
+              </>
+            )}
+
             <span className="text-slate-400 text-sm mr-1">Zoom:</span>
             <div className="flex items-center gap-0.5 bg-slate-700 rounded-lg p-0.5 border border-slate-600">
               <button
@@ -378,7 +549,6 @@ const PinNotesPopoutPage: React.FC = () => {
                 type="button"
                 onClick={() => setZoom(1)}
                 className="px-2 py-1 text-slate-400 hover:text-white text-sm rounded-md transition-colors"
-                title="Reset to 100%"
               >
                 Reset
               </button>
@@ -393,24 +563,69 @@ const PinNotesPopoutPage: React.FC = () => {
           </div>
         </header>
 
+        {showNameModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="bg-slate-800 border border-slate-600 rounded-xl p-6 w-full max-w-md shadow-xl">
+              <h2 className="text-xl font-bold text-white mb-2">Your name</h2>
+              <p className="text-slate-300 text-sm mb-4">
+                Enter the name you want your notes saved under. Use the same name on any computer or browser to
+                load your notes for this event.
+              </p>
+              <input
+                type="text"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && activateOperator(nameDraft)}
+                placeholder="e.g. Sarah — Graphics"
+                autoFocus
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white mb-4 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowNameModal(false)}
+                  className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => activateOperator(nameDraft)}
+                  disabled={!nameDraft.trim()}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg"
+                >
+                  {operatorName ? 'Switch to this name' : 'Start my notes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showColumnPicker && (
           <div className="mb-6 p-4 bg-slate-800 rounded-xl border border-slate-600">
-            <p className="text-slate-300 text-sm mb-3">Show these columns (Cue is always shown on the left):</p>
+            <p className="text-slate-300 text-sm mb-3">
+              Shared columns from the Run of Show (read-only here). Cue is always shown on the left.
+            </p>
             <div className="flex flex-wrap gap-2 mb-3">
-              {availableColumns.filter((col) => !(col.type === 'cue' && col.id === 'cue')).map((col) => (
-                <label
-                  key={col.type + col.id}
-                  className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
-                >
-                  <input
-                    type="checkbox"
-                    checked={pickerSelected.some((c) => c.id === col.id && c.type === col.type)}
-                    onChange={() => togglePickerColumn(col)}
-                    className="w-4 h-4 rounded border-slate-500"
-                  />
-                  <span className="text-white text-sm">{col.name}</span>
-                </label>
-              ))}
+              {(availableColumns.length > 0
+                ? availableColumns
+                : [{ type: 'notes' as const, id: 'notes', name: 'Notes' }]
+              )
+                .filter((col) => !(col.type === 'cue' && col.id === 'cue'))
+                .map((col) => (
+                  <label
+                    key={col.type + col.id}
+                    className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={pickerSelected.some((c) => c.id === col.id && c.type === col.type)}
+                      onChange={() => togglePickerColumn(col)}
+                      className="w-4 h-4 rounded border-slate-500"
+                    />
+                    <span className="text-white text-sm">{col.name}</span>
+                  </label>
+                ))}
             </div>
             <div className="flex gap-2">
               <button
@@ -455,17 +670,27 @@ const PinNotesPopoutPage: React.FC = () => {
                 boxSizing: 'border-box',
               }}
             >
-              {/* Header row: column names (no resize handle after Cue) */}
               {displayColumns.map((col, j) => (
                 <div
                   key={'h-' + colKey(col)}
                   style={{ gridColumn: getGridColumn(j), gridRow: 1 }}
-                  className="px-3 py-2 bg-slate-700 border-b border-r border-slate-600 flex items-center min-w-0"
+                  className="px-3 py-2 bg-slate-700 border-b border-r border-slate-600 flex items-center gap-2 min-w-0"
                 >
-                  <h2 className="text-base font-bold text-white truncate">{col.name}</h2>
+                  <h2 className="text-base font-bold text-white truncate">
+                    {isMyNotesCol(col) ? 'My notes' : col.name}
+                  </h2>
+                  {isMyNotesCol(col) ? (
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-800 text-emerald-200 flex-shrink-0">
+                      Yours
+                    </span>
+                  ) : col.type !== 'cue' ? (
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-600 text-slate-300 flex-shrink-0">
+                      Shared
+                    </span>
+                  ) : null}
                 </div>
               ))}
-              {/* Resize handles: only between non-Cue columns (not after Cue) */}
+
               {displayColumns.map(
                 (_, j) =>
                   j >= 1 &&
@@ -483,13 +708,14 @@ const PinNotesPopoutPage: React.FC = () => {
                     </div>
                   )
               )}
-              {/* Data rows: 4 rows × N columns — each row gets same height from grid */}
+
               {displayRows.map((item, rowIndex) =>
                 displayColumns.map((col, colIndex) => {
-                  const value = getCellValue(item, col);
                   const isCurrent = rowIndex === 0;
                   const label = isCurrent ? 'Current' : `Next ${rowIndex}`;
+
                   if (col.type === 'cue') {
+                    const value = getSharedCellValue(item, col);
                     return (
                       <div
                         key={item.id + '-' + colKey(col)}
@@ -504,6 +730,11 @@ const PinNotesPopoutPage: React.FC = () => {
                       </div>
                     );
                   }
+
+                  const value = isMyNotesCol(col)
+                    ? personalNotes[personalNoteKey(item.id)] || ''
+                    : getSharedCellValue(item, col);
+
                   return (
                     <div
                       key={item.id + '-' + colKey(col)}
@@ -531,16 +762,25 @@ const PinNotesPopoutPage: React.FC = () => {
                           {item.segmentName || `Row ${item.id}`}
                         </h3>
                       </div>
-                      <div className="text-left whitespace-pre-wrap break-words text-slate-200 text-sm flex-1 min-h-0 overflow-auto">
-                        {isNotes(col) && value ? (
-                          <div
-                            className="notes-display prose prose-invert prose-sm max-w-none"
-                            dangerouslySetInnerHTML={{ __html: value }}
-                          />
-                        ) : (
-                          <span className={value ? '' : 'text-slate-500'}>{value || '—'}</span>
-                        )}
-                      </div>
+                      {isMyNotesCol(col) ? (
+                        <textarea
+                          value={value}
+                          onChange={(e) => handlePersonalNoteChange(item.id, e.target.value)}
+                          placeholder="Your private notes for this cue…"
+                          className="w-full flex-1 min-h-[6rem] resize-y bg-slate-900/80 border border-emerald-700/50 rounded-md p-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
+                        />
+                      ) : (
+                        <div className="text-left whitespace-pre-wrap break-words text-slate-200 text-sm flex-1 min-h-0 overflow-auto">
+                          {col.type === 'notes' && value ? (
+                            <div
+                              className="notes-display prose prose-invert prose-sm max-w-none"
+                              dangerouslySetInnerHTML={{ __html: value }}
+                            />
+                          ) : (
+                            <span className={value ? '' : 'text-slate-500'}>{value || '—'}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -549,8 +789,11 @@ const PinNotesPopoutPage: React.FC = () => {
           </div>
         )}
 
-        {columns.length === 0 && displayRows.length > 0 && (
-          <p className="text-slate-500">Only Cue column shown. Use “Change columns” to add Notes or other columns.</p>
+        {columns.length === 0 && !myNotesEnabled && displayRows.length > 0 && (
+          <p className="text-slate-500 mt-3">
+            Only Cue shown. Use &ldquo;Change columns&rdquo; for shared ROS columns, or &ldquo;Set up my notes&rdquo; for
+            your private column.
+          </p>
         )}
       </div>
     </div>

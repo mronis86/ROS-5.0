@@ -44,7 +44,8 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
           </button>
         </div>
         <p className="text-slate-300 text-sm mb-4">
-          Choose one or more columns to show. The window will follow the current cue and show the current row plus the next 3 rows. You can change columns later inside the popout.
+          Choose shared columns from the Run of Show to display here. To add your own private notes, use
+          &ldquo;Set up my notes&rdquo; inside the popout window.
         </p>
         <div className="space-y-2 mb-6">
           {allOptions.map((col) => (

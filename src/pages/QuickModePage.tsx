@@ -90,6 +90,7 @@ const QuickModePage: React.FC = () => {
   const [isCompanionSyncing, setIsCompanionSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const clockWindowRef = useRef<Window | null>(null);
+  const resolvedForUrlRef = useRef<string | null>(null);
 
   const eventIdParam = searchParams.get('eventId') ?? '';
   const forceNewSession = searchParams.get('new') === '1';
@@ -97,6 +98,13 @@ const QuickModePage: React.FC = () => {
   const storageKey = useMemo(() => (eventId ? `${STORAGE_KEY_PREFIX}${eventId}` : ''), [eventId]);
 
   useEffect(() => {
+    // Skip re-resolve when this mount just updated the URL with the new event id
+    if (!forceNewSession && eventIdParam && resolvedForUrlRef.current === eventIdParam) {
+      setEventId((prev) => (prev === eventIdParam ? prev : eventIdParam));
+      setEventIdError('');
+      return;
+    }
+
     let cancelled = false;
 
     (async () => {
@@ -113,6 +121,7 @@ const QuickModePage: React.FC = () => {
           }
         });
         if (cancelled) return;
+        resolvedForUrlRef.current = id;
         setSearchParams((prev) => {
           const p = new URLSearchParams(prev);
           if (p.get('eventId') === id && !p.has('new')) return prev;

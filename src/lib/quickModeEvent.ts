@@ -6,6 +6,10 @@ export type QuickModeCalendarLike = {
 };
 
 export const QUICK_MODE_SESSION_EVENT_KEY = 'ros.quickMode.sessionEventId';
+const QUICK_MODE_LAST_CREATED_ID_KEY = 'ros.quickMode.lastCreatedId';
+const QUICK_MODE_LAST_CREATED_AT_KEY = 'ros.quickMode.lastCreatedAt';
+/** Strict Mode remount window — reuse id if forceNew fires again within this ms */
+const FORCE_NEW_DEDUPE_MS = 5000;
 
 export const isValidQuickModeEventUuid = (id: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
@@ -31,13 +35,43 @@ export const isQuickModeCalendarEvent = (calEvent: QuickModeCalendarLike): boole
 
 let quickModeEventCreationPromise: Promise<string> | null = null;
 
+const readRecentForceNewId = (): string | null => {
+  try {
+    const id = sessionStorage.getItem(QUICK_MODE_LAST_CREATED_ID_KEY)?.trim() || '';
+    const at = Number(sessionStorage.getItem(QUICK_MODE_LAST_CREATED_AT_KEY) || '0');
+    if (id && isValidQuickModeEventUuid(id) && Date.now() - at < FORCE_NEW_DEDUPE_MS) {
+      return id;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
+const markRecentForceNewId = (id: string): void => {
+  try {
+    sessionStorage.setItem(QUICK_MODE_LAST_CREATED_ID_KEY, id);
+    sessionStorage.setItem(QUICK_MODE_LAST_CREATED_AT_KEY, String(Date.now()));
+  } catch {
+    // ignore
+  }
+};
+
 export function clearQuickModeSessionEventId(): void {
   try {
     sessionStorage.removeItem(QUICK_MODE_SESSION_EVENT_KEY);
   } catch {
     // ignore private mode / quota
   }
-  quickModeEventCreationPromise = null;
+}
+
+export function clearQuickModeNewSessionDedupe(): void {
+  try {
+    sessionStorage.removeItem(QUICK_MODE_LAST_CREATED_ID_KEY);
+    sessionStorage.removeItem(QUICK_MODE_LAST_CREATED_AT_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 const persistEventId = (id: string): string | null => {
@@ -62,8 +96,9 @@ export async function resolveQuickModeEventId(
   const forceNew = options?.forceNew === true;
   const verifyEventId = options?.verifyEventId;
 
-  if (forceNew) {
-    clearQuickModeSessionEventId();
+  // Reuse in-flight create (Strict Mode double mount or overlapping effects)
+  if (quickModeEventCreationPromise) {
+    return quickModeEventCreationPromise;
   }
 
   const tryReuseId = async (id: string): Promise<string | null> => {
@@ -74,6 +109,14 @@ export async function resolveQuickModeEventId(
     }
     return persistEventId(id);
   };
+
+  if (forceNew) {
+    clearQuickModeSessionEventId();
+    const recentId = readRecentForceNewId();
+    if (recentId) {
+      return recentId;
+    }
+  }
 
   const queryId = fromQuery.trim();
   if (queryId && !forceNew) {
@@ -95,19 +138,20 @@ export async function resolveQuickModeEventId(
     clearQuickModeSessionEventId();
   }
 
-  if (!quickModeEventCreationPromise) {
-    quickModeEventCreationPromise = createCalendarEvent()
-      .then((id) => {
-        const resolved = persistEventId(id);
-        if (!resolved) {
-          throw new Error('Quick Mode session was created without a valid event ID');
-        }
-        return resolved;
-      })
-      .finally(() => {
-        quickModeEventCreationPromise = null;
-      });
-  }
+  quickModeEventCreationPromise = createCalendarEvent()
+    .then((id) => {
+      const resolved = persistEventId(id);
+      if (!resolved) {
+        throw new Error('Quick Mode session was created without a valid event ID');
+      }
+      if (forceNew) {
+        markRecentForceNewId(resolved);
+      }
+      return resolved;
+    })
+    .finally(() => {
+      quickModeEventCreationPromise = null;
+    });
 
   return quickModeEventCreationPromise;
 }

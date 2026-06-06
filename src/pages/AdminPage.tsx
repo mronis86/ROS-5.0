@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
+import {
+  getLogoVariant,
+  getLogoVariantId,
+  LOGO_VARIANTS,
+  setLogoVariantId,
+  type LogoVariantId,
+} from '../lib/branding';
+import AppLogo from '../components/AppLogo';
+import AppBrandTitle from '../components/AppBrandTitle';
 
 const ADMIN_PASSWORD = '1615';
 const ADMIN_UNLOCK_KEY = 'ros_admin_unlocked';
@@ -135,6 +144,12 @@ export default function AdminPage() {
   const [addDomainInput, setAddDomainInput] = useState('');
   const [addDomainLoading, setAddDomainLoading] = useState(false);
   const [scriptCopied, setScriptCopied] = useState(false);
+  const [logoVariantId, setLogoVariantIdState] = useState<LogoVariantId>(() => getLogoVariantId());
+
+  const handleLogoVariantChange = (id: LogoVariantId) => {
+    setLogoVariantId(id);
+    setLogoVariantIdState(id);
+  };
 
   useEffect(() => {
     setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
@@ -761,6 +776,78 @@ export default function AdminPage() {
         </button>
       </header>
       <main className="p-6 max-w-4xl mx-auto space-y-6">
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-violet-500/20 text-violet-400">
+                <Image className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Header logo</h2>
+                <p className="text-slate-400 text-sm">Preview branding without a code deploy. Saved in this browser only.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-2">
+              <span className="text-slate-400 text-xs uppercase tracking-wide">Preview</span>
+              <AppLogo size="md" />
+              <AppBrandTitle titleClassName="text-lg font-bold text-white leading-tight" />
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {LOGO_VARIANTS.map((variant) => {
+              const selected = logoVariantId === variant.id;
+              return (
+                <button
+                  key={variant.id}
+                  type="button"
+                  onClick={() => handleLogoVariantChange(variant.id)}
+                  className={`rounded-xl border p-4 text-left transition-colors ${
+                    selected
+                      ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                      : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-white">{variant.label}</p>
+                      <p className="mt-1 text-sm text-slate-400">{variant.description}</p>
+                      {variant.type === 'image' && variant.src ? (
+                        <p className="mt-2 font-mono text-xs text-slate-500 break-all">{variant.src}</p>
+                      ) : null}
+                    </div>
+                    <span
+                      className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border ${
+                        selected ? 'border-blue-400 bg-blue-500' : 'border-slate-500'
+                      }`}
+                      aria-hidden
+                    />
+                  </div>
+                  <div className="mt-4 flex min-h-[48px] items-center rounded-lg bg-slate-800 px-3 py-2">
+                    {variant.type === 'image' && variant.src ? (
+                      <img
+                        src={variant.src}
+                        alt=""
+                        className="h-8 w-auto max-w-full object-contain object-left"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
+                        R
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-4 text-xs text-slate-500">
+            Active: <span className="text-slate-300">{getLogoVariant(logoVariantId).appTitle}</span>
+            {' '}({getLogoVariant(logoVariantId).label}). Switch anytime — saved in this browser only.
+          </p>
+        </section>
+
         <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
             <h2 className="text-lg font-semibold text-white">Services</h2>
