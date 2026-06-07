@@ -7,18 +7,29 @@ $DateStr = Get-Date -Format "yyyy-MM-dd"
 $UploadDir = Join-Path $ProjectRoot "netlify-$DateStr-V2"
 $DistDir = Join-Path $ProjectRoot 'dist'
 $OscDist = Join-Path (Join-Path $ProjectRoot 'ros-osc-control') 'dist'
+$publicDir = Join-Path $ProjectRoot 'public'
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+
+Write-Host "========== Building portable Electron app =========="
+Push-Location (Join-Path $ProjectRoot 'ros-osc-control')
+try {
+    npm install 2>$null
+    npm run build:portable
+} catch {
+    Write-Warning "Portable Electron build failed or skipped: $_"
+} finally {
+    Pop-Location
+}
 
 Write-Host "========== Creating portable zip from ros-osc-control/dist =========="
-$ZipPath = Join-Path (Join-Path $ProjectRoot 'public') 'ROS-OSC-Control-portable.zip'
+$ZipPath = Join-Path $publicDir 'ROS-OSC-Control-portable.zip'
 $WinUnpacked = Join-Path $OscDist 'win-unpacked'
-$publicDir = Join-Path $ProjectRoot 'public'
 if (-not (Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
 if (Test-Path $OscDist) {
     try {
         Compress-Archive -Path $OscDist -DestinationPath $ZipPath -Force
         Write-Host "Created ROS-OSC-Control-portable.zip from dist"
     } catch {
-        # Portable exe may be locked; zip win-unpacked only (contains runnable app)
         if (Test-Path $WinUnpacked) {
             Compress-Archive -Path $WinUnpacked -DestinationPath $ZipPath -Force
             Write-Host "Created ROS-OSC-Control-portable.zip from win-unpacked (exe was in use)"
@@ -30,11 +41,13 @@ if (Test-Path $OscDist) {
     Write-Warning "ros-osc-control/dist not found. Build it first: cd ros-osc-control && npm run build:portable"
 }
 
-Write-Host "========== Building Vite app (prebuild creates companion + python zips) =========="
+Write-Host "========== Building Vite app (prebuild + companion zips) =========="
 Push-Location $ProjectRoot
 try {
     npm install 2>$null
     npm run build
+    node scripts/zip-companion-module-full.js
+    node scripts/zip-companion-module-resolume-full.js
 } finally {
     Pop-Location
 }
@@ -57,37 +70,45 @@ Get-ChildItem -Path $DistDir -Force | ForEach-Object {
     }
 }
 
-# Ensure portable zip is in the deploy folder (for OSC modal download)
-if (Test-Path $ZipPath) {
-    Copy-Item -Path $ZipPath -Destination (Join-Path $UploadDir 'ROS-OSC-Control-portable.zip') -Force
-    Write-Host "Added ROS-OSC-Control-portable.zip for OSC modal download"
-}
-# Companion full zip (from public, Vite copies to dist; ensure redirect exists)
-$CompanionFullZip = Join-Path $publicDir 'companion-module-runofshow-full.zip'
-if (Test-Path $CompanionFullZip) {
-    Copy-Item -Path $CompanionFullZip -Destination (Join-Path $UploadDir 'companion-module-runofshow-full.zip') -Force
-    Write-Host "Added companion-module-runofshow-full.zip for OSC modal download"
-}
-$OfflineShowZip = Join-Path $publicDir 'offline-show.zip'
-if (Test-Path $OfflineShowZip) {
-    Copy-Item -Path $OfflineShowZip -Destination (Join-Path $UploadDir 'offline-show.zip') -Force
-    Write-Host "Added offline-show.zip for OSC modal download"
+function Copy-DeployZip($fileName) {
+    $src = Join-Path $publicDir $fileName
+    if (Test-Path $src) {
+        Copy-Item -Path $src -Destination (Join-Path $UploadDir $fileName) -Force
+        Write-Host "Added $fileName for OSC modal download"
+    }
 }
 
-# Netlify config (zip downloads must be served directly before SPA fallback)
+Copy-DeployZip 'ROS-OSC-Control-portable.zip'
+Copy-DeployZip 'companion-module-runofshow-full.zip'
+Copy-DeployZip 'companion-module-runofshow-resolume-full.zip'
+Copy-DeployZip 'offline-show.zip'
+
+$BuildInfo = @"
+build_date=$(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+build_id=$([Guid]::NewGuid().ToString("N"))
+deploy_folder=netlify-$DateStr-V2
+"@
+[System.IO.File]::WriteAllText((Join-Path $UploadDir 'build-info.txt'), $BuildInfo, $utf8NoBom)
+Write-Host "Wrote build-info.txt (forces fresh deploy)"
+
+# Zip downloads must be served directly before SPA fallback
 $RedirectsContent = @"
-/companion-module-runofshow.zip       /companion-module-runofshow.zip       200
-/companion-module-runofshow-full.zip /companion-module-runofshow-full.zip 200
-/ros-osc-python-app.zip              /ros-osc-python-app.zip              200
-/ROS-OSC-Control-portable.zip        /ROS-OSC-Control-portable.zip        200
-/electron-osc-app.zip                /electron-osc-app.zip                200
-/offline-show.zip                    /offline-show.zip                    200
+/companion-module-runofshow.zip                 /companion-module-runofshow.zip                 200
+/companion-module-runofshow-full.zip            /companion-module-runofshow-full.zip            200
+/companion-module-runofshow-resolume-full.zip   /companion-module-runofshow-resolume-full.zip   200
+/ros-osc-python-app.zip                         /ros-osc-python-app.zip                         200
+/ROS-OSC-Control-portable.zip                   /ROS-OSC-Control-portable.zip                   200
+/electron-osc-app.zip                           /electron-osc-app.zip                           200
+/offline-show.zip                               /offline-show.zip                               200
 
 /*    /index.html   200
 "@
-Set-Content -Path (Join-Path $UploadDir '_redirects') -Value $RedirectsContent -Encoding UTF8
+[System.IO.File]::WriteAllText((Join-Path $UploadDir '_redirects'), $RedirectsContent, $utf8NoBom)
 
 $TomlContent = @"
+# Netlify config for UPLOAD DEPLOY (netlify-$DateStr-V2)
+# Upload this folder to Netlify - dated deploy forces fresh content
+
 [build]
   publish = "."
 
@@ -100,6 +121,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/companion-module-runofshow-full.zip"
   to = "/companion-module-runofshow-full.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/companion-module-runofshow-resolume-full.zip"
+  to = "/companion-module-runofshow-resolume-full.zip"
   status = 200
   force = true
 
@@ -138,16 +165,30 @@ $TomlContent = @"
     X-Frame-Options = "DENY"
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/build-info.txt"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
 
 [[headers]]
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
 "@
-# UTF-8 without BOM (Netlify fails on BOM)
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText((Join-Path $UploadDir 'netlify.toml'), $TomlContent, $utf8NoBom)
 
 Write-Host "========== Done =========="
 Write-Host "Upload folder: $UploadDir"
-Write-Host "Contains: site + all OSC zips (portable, Python, Companion)"
+Write-Host "Contains: site + OSC zips + build-info.txt + _redirects + netlify.toml"
