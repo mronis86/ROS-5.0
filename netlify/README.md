@@ -22,6 +22,16 @@ This folder contains the **Netlify build script** used when deploying. The main 
 - Use **Trigger deploy → Clear cache and deploy site** once to clear caches.
 - Confirm `netlify.toml` at the **root** of the repo is the one being used (no duplicate in a subdirectory).
 
+## Manual upload deploy (drag-and-drop)
+
+For deploys without Git integration, run from the repo root:
+
+```bat
+create-netlify-deploy.bat
+```
+
+This builds into **`netlify-YYYY-MM-DD-V2`** — upload that dated folder to Netlify Deploys.
+
 ## Editing the build
 
 - Change the **command** or **ignore** logic in **`netlify.toml`** (repo root).
