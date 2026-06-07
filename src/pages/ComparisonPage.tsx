@@ -56,6 +56,30 @@ const FEATURES: FeatureRow[] = [
 
 const GROUPS = [...new Set(FEATURES.map((f) => f.group))];
 
+type SystemId = 'sheets' | 'ontime' | 'ros';
+
+/** Accent colors only — kept away from checkmark greens (yes) and ambers (partial). */
+const SYSTEM_STYLES: Record<
+  SystemId,
+  {
+    shortLabel: string;
+    accent: string;
+  }
+> = {
+  sheets: {
+    shortLabel: 'Sheets',
+    accent: '#0891B2', // cyan — distinct from yes/partial checkmarks and other columns
+  },
+  ontime: {
+    shortLabel: 'OnTime',
+    accent: '#E11D48', // timer red (not orange/amber)
+  },
+  ros: {
+    shortLabel: 'ROS',
+    accent: '#A855F7', // purple — clear of yes/partial/no markers
+  },
+};
+
 const ComparisonPage: React.FC = () => {
   useEffect(() => {
     document.title = 'ROS vs Sheets + OnTime · Comparison';
@@ -74,9 +98,9 @@ const ComparisonPage: React.FC = () => {
 
         <div className="mb-8 grid gap-3 sm:grid-cols-3">
           <SystemCard
+            system="sheets"
             title="Google Sheets"
             subtitle="Spreadsheet + Apps Script"
-            tone="amber"
             bullets={[
               'Schedule lives in rows and columns',
               'Formulas for times; tabs for extra days',
@@ -85,9 +109,9 @@ const ComparisonPage: React.FC = () => {
             ]}
           />
           <SystemCard
+            system="ontime"
             title="OnTime"
             subtitle="Local network only"
-            tone="slate"
             bullets={[
               'Timer software on the show LAN',
               'Countdown on a local display',
@@ -96,9 +120,9 @@ const ComparisonPage: React.FC = () => {
             ]}
           />
           <SystemCard
+            system="ros"
             title="ROS 5.0"
             subtitle="Browser app (cloud)"
-            tone="cyan"
             bullets={[
               'Schedule + timers in one app',
               'Mobile event list & run of show layouts',
@@ -109,7 +133,7 @@ const ComparisonPage: React.FC = () => {
           />
         </div>
 
-        <div className="mb-3 flex flex-wrap gap-4 text-xs text-slate-400">
+        <div className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-400">
           <LegendItem support="yes" label="Yes" />
           <LegendItem support="partial" label="Partial / manual" />
           <LegendItem support="no" label="No" />
@@ -119,17 +143,20 @@ const ComparisonPage: React.FC = () => {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-slate-700 bg-slate-950/80 text-left">
+                <tr className="border-b border-slate-700 bg-slate-950/90 text-left">
                   <th className="px-4 py-3 font-semibold text-white">Feature</th>
-                  <th className="w-28 px-2 py-3 text-center text-[11px] font-bold uppercase tracking-wide text-amber-300/90">
-                    Sheets
-                  </th>
-                  <th className="w-28 px-2 py-3 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">
-                    OnTime
-                  </th>
-                  <th className="w-28 px-2 py-3 text-center text-[11px] font-bold uppercase tracking-wide text-cyan-300/90">
-                    ROS
-                  </th>
+                  {(['sheets', 'ontime', 'ros'] as SystemId[]).map((system) => (
+                    <th
+                      key={system}
+                      className="w-28 border-l border-slate-800 px-2 py-3 text-center text-[11px] font-bold uppercase tracking-wide"
+                      style={{
+                        color: SYSTEM_STYLES[system].accent,
+                        boxShadow: `inset 0 -3px 0 0 ${SYSTEM_STYLES[system].accent}`,
+                      }}
+                    >
+                      {SYSTEM_STYLES[system].shortLabel}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -162,10 +189,12 @@ const ComparisonPage: React.FC = () => {
         </div>
 
         <p className="mt-6 text-xs leading-relaxed text-slate-500">
-          <strong className="text-slate-400">Sheets + Apps Script</strong> = spreadsheet first; scripts add the extra
-          pieces. <strong className="text-slate-400">OnTime</strong> = timers on the local network only — separate from
-          the sheet. <strong className="text-slate-400">ROS</strong> = schedule and timers stay in sync for everyone
-          online. Edit this list in <code className="text-slate-400">src/pages/ComparisonPage.tsx</code>.
+          <strong style={{ color: SYSTEM_STYLES.sheets.accent }}>Sheets + Apps Script</strong> = spreadsheet first;
+          scripts add the extra pieces.{' '}
+          <strong style={{ color: SYSTEM_STYLES.ontime.accent }}>OnTime</strong> = timers on the local network only
+          — separate from the sheet. <strong style={{ color: SYSTEM_STYLES.ros.accent }}>ROS</strong> = schedule and
+          timers stay in sync for everyone online. Edit this list in{' '}
+          <code className="text-slate-400">src/pages/ComparisonPage.tsx</code>.
         </p>
       </div>
     </div>
@@ -216,23 +245,25 @@ function LegendItem({ support, label }: { support: Support; label: string }) {
 }
 
 function SystemCard({
+  system,
   title,
   subtitle,
-  tone,
   bullets,
 }: {
+  system: SystemId;
   title: string;
   subtitle: string;
-  tone: 'amber' | 'slate' | 'cyan';
   bullets: string[];
 }) {
-  const border =
-    tone === 'amber' ? 'border-amber-700/40' : tone === 'cyan' ? 'border-cyan-700/40' : 'border-slate-600';
-  const accent =
-    tone === 'amber' ? 'text-amber-300' : tone === 'cyan' ? 'text-cyan-300' : 'text-slate-300';
+  const accent = SYSTEM_STYLES[system].accent;
   return (
-    <div className={`rounded-xl border ${border} bg-slate-900/60 p-4`}>
-      <h2 className={`text-base font-bold ${accent}`}>{title}</h2>
+    <div
+      className="rounded-xl border border-slate-700 bg-slate-900/90 p-4 pl-3"
+      style={{ borderLeftWidth: 4, borderLeftColor: accent }}
+    >
+      <h2 className="text-base font-bold" style={{ color: accent }}>
+        {title}
+      </h2>
       <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">{subtitle}</p>
       <ul className="space-y-1.5 text-xs leading-snug text-slate-400">
         {bullets.map((b) => (

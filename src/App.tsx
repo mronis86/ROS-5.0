@@ -52,7 +52,7 @@ function AppContent() {
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isRunOfShowMobile && !isComparison && <AppHeader />}
       
-      {!isPinNotesPopout && (
+      {!isPinNotesPopout && !isComparison && (
         <AuthGuard>
           <Routes>
             <Route path="/admin" element={null} />
