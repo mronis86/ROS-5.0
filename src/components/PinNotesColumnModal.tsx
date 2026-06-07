@@ -44,8 +44,8 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
           </button>
         </div>
         <p className="text-slate-300 text-sm mb-4">
-          Choose shared columns from the Run of Show to display here. To add your own private notes, use
-          &ldquo;Set up my notes&rdquo; inside the popout window.
+          Choose shared columns from the Run of Show to display here. In the popout, use &ldquo;Set up my notes&rdquo; to
+          save your private notes, then &ldquo;Change columns&rdquo; to load any operator&apos;s saved notes as a column.
         </p>
         <div className="space-y-2 mb-6">
           {allOptions.map((col) => (

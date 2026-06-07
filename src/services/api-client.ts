@@ -358,6 +358,28 @@ class ApiClient {
   }
 
   // Personal notes (Notes popout — per user, stored separately from run_of_show_data)
+  async listUserEventNoteOperators(eventId: string) {
+    const cacheKey = `userEventNoteOperators_${eventId}`;
+    const endpoints = [
+      `/api/user-event-notes/${eventId}?list=operators`,
+      `/api/user-event-notes/${eventId}/operators`,
+    ];
+    let lastError: unknown;
+    for (const endpoint of endpoints) {
+      try {
+        return await this.request<{ operators: UserEventNoteOperator[] }>(
+          endpoint,
+          {},
+          cacheKey,
+          30 * 1000
+        );
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
   async getUserEventNotes(eventId: string, userId: string) {
     return this.request<{ notes: UserEventNoteRow[] }>(
       `/api/user-event-notes/${eventId}?user_id=${encodeURIComponent(userId)}`,
@@ -380,6 +402,7 @@ class ApiClient {
       body: JSON.stringify(data),
     });
     this.cache.delete(`userEventNotes_${data.event_id}_${data.user_id}`);
+    this.cache.delete(`userEventNoteOperators_${data.event_id}`);
     return result;
   }
 }
@@ -388,6 +411,13 @@ export interface UserEventNoteRow {
   schedule_item_id: number;
   column_key: string;
   content: string;
+  updated_at?: string;
+}
+
+export interface UserEventNoteOperator {
+  user_id: string;
+  user_name: string | null;
+  note_count: number;
   updated_at?: string;
 }
 

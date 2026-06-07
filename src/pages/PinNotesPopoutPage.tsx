@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { socketClient } from '../services/socket-client';
-import { apiClient, getApiBaseUrl } from '../services/api-client';
+import { apiClient, getApiBaseUrl, type UserEventNoteOperator } from '../services/api-client';
 import {
   getStoredOperatorName,
   operatorUserId,
@@ -37,7 +37,8 @@ interface ScheduleItem {
 
 type RosColumnSpec = { type: 'notes' | 'custom' | 'cue'; id: string; name: string };
 type MyNotesColumnSpec = { type: 'my-notes'; id: 'my-notes'; name: string };
-type DisplayColumn = RosColumnSpec | MyNotesColumnSpec;
+type OperatorNotesColumnSpec = { type: 'operator-notes'; id: string; name: string; userId: string };
+type DisplayColumn = RosColumnSpec | MyNotesColumnSpec | OperatorNotesColumnSpec;
 
 interface PinNotesMessage {
   type: 'PIN_NOTES_UPDATE';
@@ -69,6 +70,11 @@ const PinNotesPopoutPage: React.FC = () => {
   const [availableColumns, setAvailableColumns] = useState<RosColumnSpec[]>([]);
   const [showColumnPicker, setShowColumnPicker] = useState(false);
   const [pickerSelected, setPickerSelected] = useState<RosColumnSpec[]>([]);
+  const [pickerSelectedOperators, setPickerSelectedOperators] = useState<OperatorNotesColumnSpec[]>([]);
+  const [operatorColumns, setOperatorColumns] = useState<OperatorNotesColumnSpec[]>([]);
+  const [savedOperators, setSavedOperators] = useState<UserEventNoteOperator[]>([]);
+  const [operatorsLoadError, setOperatorsLoadError] = useState<string | null>(null);
+  const [operatorNotesByUser, setOperatorNotesByUser] = useState<Record<string, Record<string, string>>>({});
   const [personalNotes, setPersonalNotes] = useState<Record<string, string>>({});
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [operatorName, setOperatorName] = useState<string | null>(() => getStoredOperatorName());
@@ -103,21 +109,67 @@ const PinNotesPopoutPage: React.FC = () => {
     return { type: 'my-notes', id: 'my-notes', name: `My notes (${operatorName})` };
   }, [myNotesEnabled, operatorName]);
 
+  const currentOpId = operatorName ? operatorUserId(operatorName) : null;
+
   const displayColumns = React.useMemo((): DisplayColumn[] => {
     const ros = columns.filter((c) => c.type !== 'cue');
-    return myNotesColumn ? [CUE_COLUMN, ...ros, myNotesColumn] : [CUE_COLUMN, ...ros];
-  }, [columns, myNotesColumn]);
+    const opCols = operatorColumns.filter(
+      (col) => !(myNotesColumn && col.userId === currentOpId)
+    );
+    return myNotesColumn
+      ? [CUE_COLUMN, ...ros, ...opCols, myNotesColumn]
+      : [CUE_COLUMN, ...ros, ...opCols];
+  }, [columns, myNotesColumn, operatorColumns, currentOpId]);
+
+  const operatorDisplayName = (op: UserEventNoteOperator) =>
+    op.user_name?.trim() || op.user_id.replace(/^operator:/, '').replace(/-/g, ' ');
+
+  const notesRowsToMap = (rows: { schedule_item_id: number; column_key: string; content: string }[]) => {
+    const map: Record<string, string> = {};
+    for (const row of rows || []) {
+      map[`${row.schedule_item_id}:${row.column_key}`] = row.content || '';
+    }
+    return map;
+  };
 
   const loadPersonalNotes = useCallback(async (evId: string, opUserId: string) => {
     try {
       const data = await apiClient.getUserEventNotes(evId, opUserId);
-      const map: Record<string, string> = {};
-      for (const row of data.notes || []) {
-        map[`${row.schedule_item_id}:${row.column_key}`] = row.content || '';
-      }
-      setPersonalNotes(map);
+      setPersonalNotes(notesRowsToMap(data.notes || []));
     } catch {
       /* API/table may not be deployed yet */
+    }
+  }, []);
+
+  const loadOperatorNotes = useCallback(async (evId: string, opUserId: string) => {
+    try {
+      const data = await apiClient.getUserEventNotes(evId, opUserId);
+      setOperatorNotesByUser((prev) => ({
+        ...prev,
+        [opUserId]: notesRowsToMap(data.notes || []),
+      }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const refreshSavedOperators = useCallback(async (evId: string) => {
+    try {
+      const data = await apiClient.listUserEventNoteOperators(evId);
+      setSavedOperators(data.operators || []);
+      setOperatorsLoadError(null);
+    } catch (error) {
+      setSavedOperators([]);
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('404')) {
+        setOperatorsLoadError(
+          'The Railway API has not been redeployed yet with the operator-notes list endpoint. Redeploy api-server.js on Railway, then refresh this page.'
+        );
+      } else {
+        setOperatorsLoadError(
+          'Could not reach the API to load saved operator names. Your own notes can still save if the API is running.'
+        );
+      }
     }
   }, []);
 
@@ -147,6 +199,20 @@ const PinNotesPopoutPage: React.FC = () => {
       }
     }
   }, [eventIdFromUrl, operatorName, myNotesEnabled, loadPersonalNotes]);
+
+  useEffect(() => {
+    if (!eventIdFromUrl) return;
+    refreshSavedOperators(eventIdFromUrl);
+  }, [eventIdFromUrl, refreshSavedOperators]);
+
+  useEffect(() => {
+    if (!eventIdFromUrl) return;
+    for (const col of operatorColumns) {
+      if (!operatorNotesByUser[col.userId]) {
+        loadOperatorNotes(eventIdFromUrl, col.userId);
+      }
+    }
+  }, [eventIdFromUrl, operatorColumns, operatorNotesByUser, loadOperatorNotes]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -273,8 +339,18 @@ const PinNotesPopoutPage: React.FC = () => {
   }, [eventId]);
 
   useEffect(() => {
-    if (showColumnPicker) setPickerSelected(columns);
-  }, [showColumnPicker, columns]);
+    if (!showColumnPicker) return;
+    setPickerSelected(columns);
+    setPickerSelectedOperators(operatorColumns);
+    const evId = eventIdRef.current;
+    if (evId) refreshSavedOperators(evId);
+  }, [showColumnPicker, columns, operatorColumns, refreshSavedOperators]);
+
+  useEffect(() => {
+    if (!showNameModal) return;
+    const evId = eventIdRef.current;
+    if (evId) refreshSavedOperators(evId);
+  }, [showNameModal, refreshSavedOperators]);
 
   const displayRows = React.useMemo(() => {
     if (schedule.length === 0) return [];
@@ -323,13 +399,14 @@ const PinNotesPopoutPage: React.FC = () => {
         setSaveStatus(pendingSavesRef.current.size > 0 ? 'saving' : 'saved');
         if (pendingSavesRef.current.size === 0) {
           setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
+          refreshSavedOperators(evId);
         }
       } catch {
         pendingSavesRef.current.delete(key);
         setSaveStatus('error');
       }
     },
-    [operatorName]
+    [operatorName, refreshSavedOperators]
   );
 
   const handlePersonalNoteChange = useCallback(
@@ -367,11 +444,50 @@ const PinNotesPopoutPage: React.FC = () => {
     });
   };
 
+  const operatorColumnFromSaved = (op: UserEventNoteOperator): OperatorNotesColumnSpec => {
+    const label = operatorDisplayName(op);
+    return {
+      type: 'operator-notes',
+      id: op.user_id,
+      userId: op.user_id,
+      name: `${label}'s notes`,
+    };
+  };
+
+  const togglePickerOperator = (op: UserEventNoteOperator) => {
+    const col = operatorColumnFromSaved(op);
+    setPickerSelectedOperators((prev) => {
+      const has = prev.some((c) => c.userId === col.userId);
+      if (has) return prev.filter((c) => c.userId !== col.userId);
+      return [...prev, col];
+    });
+  };
+
   const applyColumnPicker = () => {
-    if (pickerSelected.length > 0 && window.opener) {
+    if (pickerSelected.length === 0) return;
+    if (window.opener) {
       window.opener.postMessage({ type: 'PIN_NOTES_SET_COLUMNS', columns: pickerSelected }, '*');
-      setShowColumnPicker(false);
     }
+    setOperatorColumns(pickerSelectedOperators);
+    const evId = eventIdRef.current;
+    if (evId) {
+      for (const col of pickerSelectedOperators) {
+        loadOperatorNotes(evId, col.userId);
+      }
+    }
+    setShowColumnPicker(false);
+  };
+
+  const recallSavedOperator = (op: UserEventNoteOperator) => {
+    const name = op.user_name?.trim() || operatorDisplayName(op);
+    storeOperatorName(name);
+    operatorUserIdRef.current = op.user_id;
+    setOperatorName(name);
+    setMyNotesEnabled(true);
+    setShowNameModal(false);
+    setNameDraft('');
+    const evId = eventIdRef.current;
+    if (evId) loadPersonalNotes(evId, op.user_id);
   };
 
   const getColFraction = useCallback(
@@ -459,6 +575,8 @@ const PinNotesPopoutPage: React.FC = () => {
   const getHandleGridColumn = (j: number) => 2 * j + 1;
 
   const isMyNotesCol = (col: DisplayColumn): col is MyNotesColumnSpec => col.type === 'my-notes';
+  const isOperatorNotesCol = (col: DisplayColumn): col is OperatorNotesColumnSpec =>
+    col.type === 'operator-notes';
 
   return (
     <div className="min-h-screen min-w-0 w-full bg-slate-900 text-slate-100 font-sans box-border">
@@ -580,6 +698,31 @@ const PinNotesPopoutPage: React.FC = () => {
                 autoFocus
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white mb-4 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
+              {operatorsLoadError && (
+                <p className="text-amber-300 text-sm mb-3">{operatorsLoadError}</p>
+              )}
+              {savedOperators.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">
+                    Load notes saved for this event
+                  </p>
+                  <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
+                    {savedOperators.map((op) => (
+                      <button
+                        key={op.user_id}
+                        type="button"
+                        onClick={() => recallSavedOperator(op)}
+                        className="text-left px-3 py-2 bg-slate-700 hover:bg-emerald-800/60 border border-slate-600 hover:border-emerald-600 rounded-lg transition-colors"
+                      >
+                        <span className="text-white font-medium">{operatorDisplayName(op)}</span>
+                        <span className="text-slate-400 text-xs ml-2">
+                          {op.note_count} saved note{op.note_count === 1 ? '' : 's'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex gap-2 justify-end">
                 <button
                   type="button"
@@ -606,7 +749,8 @@ const PinNotesPopoutPage: React.FC = () => {
             <p className="text-slate-300 text-sm mb-3">
               Shared columns from the Run of Show (read-only here). Cue is always shown on the left.
             </p>
-            <div className="flex flex-wrap gap-2 mb-3">
+            <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">Shared columns</p>
+            <div className="flex flex-wrap gap-2 mb-4">
               {(availableColumns.length > 0
                 ? availableColumns
                 : [{ type: 'notes' as const, id: 'notes', name: 'Notes' }]
@@ -627,6 +771,46 @@ const PinNotesPopoutPage: React.FC = () => {
                   </label>
                 ))}
             </div>
+
+            <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">
+              Operator notes saved for this event
+            </p>
+            {operatorsLoadError ? (
+              <p className="text-amber-300 text-sm mb-4">{operatorsLoadError}</p>
+            ) : savedOperators.length === 0 ? (
+              <p className="text-slate-500 text-sm mb-4">
+                No operator notes saved yet. Use &ldquo;Set up my notes&rdquo; to create yours — it will appear here
+                for you and others to load as a column.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {savedOperators.map((op) => {
+                  const col = operatorColumnFromSaved(op);
+                  const isSelf = currentOpId === op.user_id;
+                  return (
+                    <label
+                      key={op.user_id}
+                      className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={pickerSelectedOperators.some((c) => c.userId === op.user_id)}
+                        onChange={() => togglePickerOperator(op)}
+                        className="w-4 h-4 rounded border-slate-500"
+                      />
+                      <span className="text-white text-sm">
+                        {operatorDisplayName(op)}
+                        {isSelf ? ' (you)' : ''}
+                      </span>
+                      <span className="text-slate-400 text-xs">
+                        {op.note_count} note{op.note_count === 1 ? '' : 's'}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button
                 type="button"
@@ -683,6 +867,10 @@ const PinNotesPopoutPage: React.FC = () => {
                     <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-800 text-emerald-200 flex-shrink-0">
                       Yours
                     </span>
+                  ) : isOperatorNotesCol(col) ? (
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-900 text-violet-200 flex-shrink-0">
+                      Operator
+                    </span>
                   ) : col.type !== 'cue' ? (
                     <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-600 text-slate-300 flex-shrink-0">
                       Shared
@@ -733,7 +921,9 @@ const PinNotesPopoutPage: React.FC = () => {
 
                   const value = isMyNotesCol(col)
                     ? personalNotes[personalNoteKey(item.id)] || ''
-                    : getSharedCellValue(item, col);
+                    : isOperatorNotesCol(col)
+                      ? operatorNotesByUser[col.userId]?.[personalNoteKey(item.id)] || ''
+                      : getSharedCellValue(item, col);
 
                   return (
                     <div
@@ -769,6 +959,10 @@ const PinNotesPopoutPage: React.FC = () => {
                           placeholder="Your private notes for this cue…"
                           className="w-full flex-1 min-h-[6rem] resize-y bg-slate-900/80 border border-emerald-700/50 rounded-md p-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
                         />
+                      ) : isOperatorNotesCol(col) ? (
+                        <div className="text-left whitespace-pre-wrap break-words text-violet-100 text-sm flex-1 min-h-0 overflow-auto bg-violet-950/20 border border-violet-800/40 rounded-md p-2">
+                          <span className={value ? '' : 'text-slate-500'}>{value || '—'}</span>
+                        </div>
                       ) : (
                         <div className="text-left whitespace-pre-wrap break-words text-slate-200 text-sm flex-1 min-h-0 overflow-auto">
                           {col.type === 'notes' && value ? (

@@ -57,6 +57,19 @@ if (-not (Test-Path $DistDir)) {
     exit 1
 }
 
+$distIndexHtml = Join-Path $DistDir 'index.html'
+$distAssetsDir = Join-Path $DistDir 'assets'
+if (-not (Test-Path $distIndexHtml)) {
+    Write-Error "dist/index.html missing - Vite build did not complete."
+    exit 1
+}
+$assetFiles = @(Get-ChildItem -Path $distAssetsDir -File -ErrorAction SilentlyContinue)
+if ($assetFiles.Count -lt 2) {
+    Write-Error "dist/assets is missing or incomplete (expected Vite CSS + JS). Re-run npm run build before deploying."
+    exit 1
+}
+Write-Host ("Verified dist/assets: {0} files (e.g. {1})" -f $assetFiles.Count, $assetFiles[0].Name)
+
 Write-Host "========== Copying to $UploadDir =========="
 if (-not (Test-Path $UploadDir)) {
     New-Item -ItemType Directory -Path $UploadDir -Force | Out-Null
@@ -188,6 +201,13 @@ $TomlContent = @"
     Cache-Control = "no-cache, no-store, must-revalidate"
 "@
 [System.IO.File]::WriteAllText((Join-Path $UploadDir 'netlify.toml'), $TomlContent, $utf8NoBom)
+
+$uploadAssets = @(Get-ChildItem -Path (Join-Path $UploadDir 'assets') -File -ErrorAction SilentlyContinue)
+if ($uploadAssets.Count -lt 2) {
+    Write-Error "Upload folder is missing dist/assets - deploy would break CSS/JS loading. Aborting."
+    exit 1
+}
+Write-Host ("Verified upload assets: {0} files" -f $uploadAssets.Count)
 
 Write-Host "========== Done =========="
 Write-Host "Upload folder: $UploadDir"

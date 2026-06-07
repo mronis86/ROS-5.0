@@ -2254,11 +2254,47 @@ app.delete('/api/completed-cues', async (req, res) => {
 });
 
 // Personal notes for Notes popout (per user, per event — not stored in run_of_show_data)
+async function listUserEventNoteOperators(eventId) {
+  const result = await pool.query(
+    `SELECT user_id,
+            MAX(user_name) AS user_name,
+            COUNT(*)::int AS note_count,
+            MAX(updated_at) AS updated_at
+     FROM user_event_notes
+     WHERE event_id = $1
+     GROUP BY user_id
+     ORDER BY MAX(user_name) NULLS LAST, user_id`,
+    [eventId]
+  );
+  return result.rows;
+}
+
+app.get('/api/user-event-notes/:eventId/operators', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    const operators = await listUserEventNoteOperators(eventId);
+    res.json({ operators });
+  } catch (error) {
+    console.error('Error listing user event note operators:', error);
+    res.status(500).json({ error: 'Failed to list note operators' });
+  }
+});
+
 app.get('/api/user-event-notes/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { user_id } = req.query;
-    if (!eventId || !user_id) {
+    const { user_id, list } = req.query;
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    if (list === 'operators') {
+      const operators = await listUserEventNoteOperators(eventId);
+      return res.json({ operators });
+    }
+    if (!user_id) {
       return res.status(400).json({ error: 'eventId and user_id are required' });
     }
     const result = await pool.query(
