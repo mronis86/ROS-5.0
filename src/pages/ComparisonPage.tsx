@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ShowcaseGallery from '../showcase/ShowcaseGallery';
 
 type Support = 'yes' | 'partial' | 'no';
 
@@ -134,11 +135,12 @@ const SYSTEM_STYLES: Record<
   },
 };
 
-type ComparisonTab = 'top10' | 'compare';
+type ComparisonTab = 'top10' | 'compare' | 'screens';
 
 const COMPARISON_TABS: { id: ComparisonTab; label: string; hint: string }[] = [
   { id: 'top10', label: 'Top 10', hint: 'Key ROS improvements' },
   { id: 'compare', label: 'Full comparison', hint: 'Overview + feature checklist' },
+  { id: 'screens', label: 'Screens', hint: 'Mini UI previews' },
 ];
 
 const ComparisonPage: React.FC = () => {
@@ -150,7 +152,7 @@ const ComparisonPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 text-slate-200 py-10">
-      <div className="mx-auto max-w-4xl px-4 sm:px-6">
+      <div className={`mx-auto px-4 sm:px-6 ${activeTab === 'screens' ? 'max-w-6xl' : 'max-w-4xl'}`}>
         <header className="mb-8 space-y-3 text-center">
           <h1 className="text-2xl font-bold text-white sm:text-3xl">What we had vs ROS 5.0</h1>
           <p className="mx-auto max-w-2xl text-sm text-slate-400">
@@ -160,7 +162,7 @@ const ComparisonPage: React.FC = () => {
 
         <div className="mb-8 flex justify-center">
           <div
-            className="inline-grid w-full max-w-xl grid-cols-2 gap-1 rounded-2xl border border-slate-700/80 bg-slate-950/60 p-1.5 shadow-inner"
+            className="inline-grid w-full max-w-2xl grid-cols-3 gap-1 rounded-2xl border border-slate-700/80 bg-slate-950/60 p-1.5 shadow-inner"
             role="tablist"
             aria-label="Comparison sections"
           >
@@ -181,9 +183,18 @@ const ComparisonPage: React.FC = () => {
                   style={
                     selected
                       ? {
-                          backgroundColor: tab.id === 'top10' ? 'rgba(168, 85, 247, 0.22)' : 'rgb(51 65 85 / 0.9)',
+                          backgroundColor:
+                            tab.id === 'top10'
+                              ? 'rgba(168, 85, 247, 0.22)'
+                              : tab.id === 'screens'
+                                ? 'rgba(6, 182, 212, 0.15)'
+                                : 'rgb(51 65 85 / 0.9)',
                           boxShadow:
-                            tab.id === 'top10' ? 'inset 0 -2px 0 0 rgba(168, 85, 247, 0.8)' : 'inset 0 -2px 0 0 #0891B2',
+                            tab.id === 'top10'
+                              ? 'inset 0 -2px 0 0 rgba(168, 85, 247, 0.8)'
+                              : tab.id === 'screens'
+                                ? 'inset 0 -2px 0 0 #0891B2'
+                                : 'inset 0 -2px 0 0 #0891B2',
                         }
                       : undefined
                   }
@@ -200,6 +211,7 @@ const ComparisonPage: React.FC = () => {
 
         {activeTab === 'top10' && <TopTenPanel />}
         {activeTab === 'compare' && <ComparePanel />}
+        {activeTab === 'screens' && <ShowcaseGallery />}
       </div>
     </div>
   );
