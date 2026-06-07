@@ -1,4 +1,5 @@
 import React from 'react';
+import { ContentReviewDriveShowcaseContent, ContentReviewFollowShowcaseContent } from './MockContentReview';
 import { PinNotesShowcaseContent } from './MockPinNotes';
 import { AddItemShowcaseContent } from './MockAddItem';
 import { AgendaShowcaseContent } from './MockAgendaModal';
@@ -91,6 +92,26 @@ export const SHOWCASE_SCREENS: ShowcaseScreenMeta[] = [
     designHeight: 1400,
     compactMaxHeight: 580,
     render: () => <PinNotesShowcaseContent />,
+  },
+  {
+    id: 'content-review-drive',
+    title: 'Content Review — Drive',
+    subtitle: 'Drive tour + Edit On demo on CUE 4 (segment save)',
+    designWidth: 1280,
+    designHeight: 960,
+    compactMaxHeight: 300,
+    galleryGroup: 'content-review',
+    render: () => <ContentReviewDriveShowcaseContent />,
+  },
+  {
+    id: 'content-review-follow',
+    title: 'Content Review — Follow',
+    subtitle: 'Approve without notes; type notes only on Needs Review cues (3 & 7)',
+    designWidth: 1280,
+    designHeight: 960,
+    compactMaxHeight: 300,
+    galleryGroup: 'content-review',
+    render: () => <ContentReviewFollowShowcaseContent />,
   },
 ];
 

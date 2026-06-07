@@ -14,5 +14,7 @@ export type ShowcaseScreenMeta = {
   enlargeFit?: ShowcaseEnlargeFit;
   /** Override auto modal width (default: derived from designWidth). */
   enlargeMaxWidth?: '6xl' | '7xl';
+  /** Gallery layout group (default: main 3×3 grid). */
+  galleryGroup?: 'main' | 'content-review';
   render: () => React.ReactNode;
 };
