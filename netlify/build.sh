@@ -45,6 +45,9 @@ node scripts/zip-companion-module-full.js
 echo "========== Building Resolume Companion module zip =========="
 node scripts/zip-companion-module-resolume-full.js
 
+echo "========== Building Offline Show zip =========="
+node scripts/zip-offline-show.js
+
 # Step 5: Vite build.
 echo "========== Building Vite app =========="
 npm run build

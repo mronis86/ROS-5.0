@@ -68,6 +68,11 @@ if (Test-Path $CompanionFullZip) {
     Copy-Item -Path $CompanionFullZip -Destination (Join-Path $UploadDir 'companion-module-runofshow-full.zip') -Force
     Write-Host "Added companion-module-runofshow-full.zip for OSC modal download"
 }
+$OfflineShowZip = Join-Path $publicDir 'offline-show.zip'
+if (Test-Path $OfflineShowZip) {
+    Copy-Item -Path $OfflineShowZip -Destination (Join-Path $UploadDir 'offline-show.zip') -Force
+    Write-Host "Added offline-show.zip for OSC modal download"
+}
 
 # Netlify config (zip downloads must be served directly before SPA fallback)
 $RedirectsContent = @"
@@ -76,6 +81,7 @@ $RedirectsContent = @"
 /ros-osc-python-app.zip              /ros-osc-python-app.zip              200
 /ROS-OSC-Control-portable.zip        /ROS-OSC-Control-portable.zip        200
 /electron-osc-app.zip                /electron-osc-app.zip                200
+/offline-show.zip                    /offline-show.zip                    200
 
 /*    /index.html   200
 "@
@@ -112,6 +118,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/electron-osc-app.zip"
   to = "/electron-osc-app.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/offline-show.zip"
+  to = "/offline-show.zip"
   status = 200
   force = true
 

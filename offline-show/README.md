@@ -63,7 +63,15 @@ Skip: Admin, Content Review, Teleprompter, XML exports, OSC, etc.
 - Show laptop only: pull from Railway before show, push after
 - “Offline / Online” toggle in status bar
 
-## Run (Phase 1)
+## Run (download zip from ROS OSC modal)
+
+1. Extract `offline-show.zip` anywhere (e.g. Desktop).
+2. Open `offline-show\launcher\start-standalone.bat`.
+3. Browser opens at http://127.0.0.1:3004/ — other devices use your LAN IP on port 3004.
+
+First run installs server deps (`npm install` in `offline-show/`). UI is pre-built inside the zip.
+
+## Run (from full ROS repo)
 
 From repo root (needs `npm install` once at root for Vite):
 

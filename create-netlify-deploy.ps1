@@ -17,8 +17,8 @@ try {
 }
 
 Write-Host "========== Creating portable zip (public/ROS-OSC-Control-portable.zip) =========="
-$ZipInPublic = Join-Path $ProjectRoot 'public' 'ROS-OSC-Control-portable.zip'
-$DistPath = Join-Path $ProjectRoot 'ros-osc-control' 'dist'
+$ZipInPublic = Join-Path (Join-Path $ProjectRoot 'public') 'ROS-OSC-Control-portable.zip'
+$DistPath = Join-Path (Join-Path $ProjectRoot 'ros-osc-control') 'dist'
 if (Test-Path $DistPath) {
     $publicDir = Join-Path $ProjectRoot 'public'
     if (-not (Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
@@ -56,7 +56,7 @@ Get-ChildItem -Path $DistDir -Force | ForEach-Object {
 }
 
 # Ensure portable zip is present in netlify-deploy
-$ZipInPublic = Join-Path $ProjectRoot 'public' 'ROS-OSC-Control-portable.zip'
+$ZipInPublic = Join-Path (Join-Path $ProjectRoot 'public') 'ROS-OSC-Control-portable.zip'
 $ZipInDeploy = Join-Path $UploadDir 'ROS-OSC-Control-portable.zip'
 if (Test-Path $ZipInPublic) {
     Copy-Item -Path $ZipInPublic -Destination $ZipInDeploy -Force
