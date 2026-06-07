@@ -761,6 +761,9 @@ const RunOfShowPage: React.FC = () => {
   const [moveRowsSelectedIds, setMoveRowsSelectedIds] = useState<Set<number>>(new Set());
   const [moveRowsTargetPosition, setMoveRowsTargetPosition] = useState(0); // 0-based index in movable parent list (insert after this index)
   const [backups, setBackups] = useState<BackupData[]>([]);
+  const [backupSearchTerm, setBackupSearchTerm] = useState('');
+  const [backupDateFilter, setBackupDateFilter] = useState('');
+  const [backupSortOrder, setBackupSortOrder] = useState<'newest' | 'oldest' | 'event' | 'type'>('newest');
   const [backupStats, setBackupStats] = useState({
     totalBackups: 0,
     lastBackup: null as string | null,
@@ -6519,6 +6522,66 @@ const RunOfShowPage: React.FC = () => {
       loadBackups();
     }
   }, [showBackupModal, event?.id]);
+
+  useEffect(() => {
+    if (!showBackupModal) {
+      setBackupSearchTerm('');
+      setBackupDateFilter('');
+      setBackupSortOrder('newest');
+    }
+  }, [showBackupModal]);
+
+  const filteredBackups = useMemo(() => {
+    const toLocalDateKey = (iso: string): string => {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    const term = backupSearchTerm.trim().toLowerCase();
+    let list = backups.filter((backup) => {
+      if (term) {
+        const haystack = [
+          backup.backup_name,
+          backup.event_name,
+          backup.backup_type,
+          backup.created_by_name,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
+      if (backupDateFilter) {
+        const created = backup.created_at || backup.backup_timestamp;
+        if (!created || toLocalDateKey(created) !== backupDateFilter) return false;
+      }
+      return true;
+    });
+
+    list = [...list].sort((a, b) => {
+      switch (backupSortOrder) {
+        case 'oldest':
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        case 'event':
+          return (a.event_name || a.backup_name || '').localeCompare(
+            b.event_name || b.backup_name || '',
+            undefined,
+            { sensitivity: 'base' }
+          );
+        case 'type':
+          return (a.backup_type || '').localeCompare(b.backup_type || '');
+        case 'newest':
+        default:
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+    });
+
+    return list;
+  }, [backups, backupSearchTerm, backupDateFilter, backupSortOrder]);
 
   // Page Visibility API - Pause syncing when tab is not active
   useEffect(() => {
@@ -13772,29 +13835,31 @@ const RunOfShowPage: React.FC = () => {
               <h3 className="text-lg font-semibold text-white mb-4">Filter & Search</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Search by Event Name</label>
+                  <label className="block text-slate-300 text-base font-medium mb-3">Search backups</label>
                   <input
                     type="text"
-                    placeholder="Filter by event name..."
+                    value={backupSearchTerm}
+                    placeholder="Filter by backup name, type, author..."
                     className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 text-base"
-                    onChange={(e) => {
-                      // TODO: Implement search filtering
-                    }}
+                    onChange={(e) => setBackupSearchTerm(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Filter by Date</label>
+                  <label className="block text-slate-300 text-base font-medium mb-3">Filter by backup date</label>
                   <input
                     type="date"
+                    value={backupDateFilter}
                     className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:border-blue-500 text-base"
-                    onChange={(e) => {
-                      // TODO: Implement date filtering
-                    }}
+                    onChange={(e) => setBackupDateFilter(e.target.value)}
                   />
                 </div>
                 <div>
                   <label className="block text-slate-300 text-base font-medium mb-3">Sort by</label>
-                  <select className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:border-blue-500 text-base">
+                  <select
+                    value={backupSortOrder}
+                    className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:border-blue-500 text-base"
+                    onChange={(e) => setBackupSortOrder(e.target.value as typeof backupSortOrder)}
+                  >
                     <option value="newest">Newest First</option>
                     <option value="oldest">Oldest First</option>
                     <option value="event">Event Name</option>
@@ -13807,7 +13872,14 @@ const RunOfShowPage: React.FC = () => {
             {/* Backup List */}
             <div className="bg-slate-700 rounded-lg p-6 flex-1 overflow-hidden flex flex-col">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-semibold text-white">Available Backups</h3>
+                <h3 className="text-xl font-semibold text-white">
+                  Available Backups
+                  {backups.length > 0 && filteredBackups.length !== backups.length && (
+                    <span className="text-slate-400 text-base font-normal ml-2">
+                      ({filteredBackups.length} of {backups.length})
+                    </span>
+                  )}
+                </h3>
                 <button
                   onClick={loadBackups}
                   className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-base font-medium rounded-lg transition-colors"
@@ -13821,9 +13893,13 @@ const RunOfShowPage: React.FC = () => {
                   <div className="text-slate-400 text-center py-12 text-lg">
                     No backups available. Use the "💾 Create Backup" button in the main interface to create a manual backup.
                   </div>
+                ) : filteredBackups.length === 0 ? (
+                  <div className="text-slate-400 text-center py-12 text-lg">
+                    No backups match your search or date filter.
+                  </div>
                 ) : (
                   <div className="space-y-4">
-                    {backups.map((backup) => (
+                    {filteredBackups.map((backup) => (
                       <div key={backup.id} className="bg-slate-600 p-6 rounded-lg flex justify-between items-center hover:bg-slate-500 transition-colors">
                         <div className="flex-1">
                           <div className="text-white font-semibold text-xl mb-2 flex items-center gap-3">

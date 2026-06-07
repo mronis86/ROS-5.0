@@ -5,6 +5,7 @@ import { apiClient, getApiBaseUrl, type UserEventNoteOperator } from '../service
 import {
   getStoredOperatorName,
   operatorUserId,
+  personColumnLabel,
   storeOperatorName,
 } from '../lib/pinNotesOperator';
 
@@ -106,7 +107,7 @@ const PinNotesPopoutPage: React.FC = () => {
 
   const myNotesColumn: MyNotesColumnSpec | null = React.useMemo(() => {
     if (!myNotesEnabled || !operatorName) return null;
-    return { type: 'my-notes', id: 'my-notes', name: `My notes (${operatorName})` };
+    return { type: 'my-notes', id: 'my-notes', name: personColumnLabel(operatorName) };
   }, [myNotesEnabled, operatorName]);
 
   const currentOpId = operatorName ? operatorUserId(operatorName) : null;
@@ -122,7 +123,9 @@ const PinNotesPopoutPage: React.FC = () => {
   }, [columns, myNotesColumn, operatorColumns, currentOpId]);
 
   const operatorDisplayName = (op: UserEventNoteOperator) =>
-    op.user_name?.trim() || op.user_id.replace(/^operator:/, '').replace(/-/g, ' ');
+    personColumnLabel(
+      op.user_name?.trim() || op.user_id.replace(/^operator:/, '').replace(/-/g, ' ')
+    );
 
   const notesRowsToMap = (rows: { schedule_item_id: number; column_key: string; content: string }[]) => {
     const map: Record<string, string> = {};
@@ -450,7 +453,7 @@ const PinNotesPopoutPage: React.FC = () => {
       type: 'operator-notes',
       id: op.user_id,
       userId: op.user_id,
-      name: `${label}'s notes`,
+      name: label,
     };
   };
 
@@ -578,6 +581,13 @@ const PinNotesPopoutPage: React.FC = () => {
   const isOperatorNotesCol = (col: DisplayColumn): col is OperatorNotesColumnSpec =>
     col.type === 'operator-notes';
 
+  const columnHeaderLabel = (col: DisplayColumn): string => {
+    if (col.type === 'cue') return col.name;
+    if (isMyNotesCol(col)) return personColumnLabel(operatorName || col.name);
+    if (isOperatorNotesCol(col)) return personColumnLabel(col.name);
+    return col.name;
+  };
+
   return (
     <div className="min-h-screen min-w-0 w-full bg-slate-900 text-slate-100 font-sans box-border">
       <div className="min-w-0 w-full max-w-[100vw] mx-auto p-4 sm:p-6 box-border" style={{ width: '100%' }}>
@@ -586,7 +596,7 @@ const PinNotesPopoutPage: React.FC = () => {
             <h1 className="text-2xl font-bold text-white min-w-0">Notes popout</h1>
             {myNotesEnabled && operatorName && (
               <p className="text-emerald-300 text-sm mt-1">
-                My notes as <span className="font-medium">{operatorName}</span> — saved to the cloud for this event
+                <span className="font-medium">{personColumnLabel(operatorName)}</span> — saved to the cloud for this event
               </p>
             )}
           </div>
@@ -608,7 +618,7 @@ const PinNotesPopoutPage: React.FC = () => {
                   }}
                   className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-medium rounded-lg transition-colors"
                 >
-                  Show my notes ({operatorName})
+                  Show {personColumnLabel(operatorName)}
                 </button>
               ) : (
                 <button
@@ -694,7 +704,7 @@ const PinNotesPopoutPage: React.FC = () => {
                 value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && activateOperator(nameDraft)}
-                placeholder="e.g. Sarah — Graphics"
+                placeholder="e.g. Sarah"
                 autoFocus
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white mb-4 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
@@ -715,9 +725,6 @@ const PinNotesPopoutPage: React.FC = () => {
                         className="text-left px-3 py-2 bg-slate-700 hover:bg-emerald-800/60 border border-slate-600 hover:border-emerald-600 rounded-lg transition-colors"
                       >
                         <span className="text-white font-medium">{operatorDisplayName(op)}</span>
-                        <span className="text-slate-400 text-xs ml-2">
-                          {op.note_count} saved note{op.note_count === 1 ? '' : 's'}
-                        </span>
                       </button>
                     ))}
                   </div>
@@ -772,9 +779,7 @@ const PinNotesPopoutPage: React.FC = () => {
                 ))}
             </div>
 
-            <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">
-              Operator notes saved for this event
-            </p>
+            <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">People</p>
             {operatorsLoadError ? (
               <p className="text-amber-300 text-sm mb-4">{operatorsLoadError}</p>
             ) : savedOperators.length === 0 ? (
@@ -784,10 +789,7 @@ const PinNotesPopoutPage: React.FC = () => {
               </p>
             ) : (
               <div className="flex flex-wrap gap-2 mb-4">
-                {savedOperators.map((op) => {
-                  const col = operatorColumnFromSaved(op);
-                  const isSelf = currentOpId === op.user_id;
-                  return (
+                {savedOperators.map((op) => (
                     <label
                       key={op.user_id}
                       className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
@@ -798,16 +800,9 @@ const PinNotesPopoutPage: React.FC = () => {
                         onChange={() => togglePickerOperator(op)}
                         className="w-4 h-4 rounded border-slate-500"
                       />
-                      <span className="text-white text-sm">
-                        {operatorDisplayName(op)}
-                        {isSelf ? ' (you)' : ''}
-                      </span>
-                      <span className="text-slate-400 text-xs">
-                        {op.note_count} note{op.note_count === 1 ? '' : 's'}
-                      </span>
+                      <span className="text-white text-sm">{operatorDisplayName(op)}</span>
                     </label>
-                  );
-                })}
+                  ))}
               </div>
             )}
 
@@ -860,16 +855,10 @@ const PinNotesPopoutPage: React.FC = () => {
                   style={{ gridColumn: getGridColumn(j), gridRow: 1 }}
                   className="px-3 py-2 bg-slate-700 border-b border-r border-slate-600 flex items-center gap-2 min-w-0"
                 >
-                  <h2 className="text-base font-bold text-white truncate">
-                    {isMyNotesCol(col) ? 'My notes' : col.name}
-                  </h2>
-                  {isMyNotesCol(col) ? (
-                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-800 text-emerald-200 flex-shrink-0">
-                      Yours
-                    </span>
-                  ) : isOperatorNotesCol(col) ? (
-                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-900 text-violet-200 flex-shrink-0">
-                      Operator
+                  <h2 className="text-base font-bold text-white truncate">{columnHeaderLabel(col)}</h2>
+                  {isMyNotesCol(col) || isOperatorNotesCol(col) ? (
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-600 text-slate-300 flex-shrink-0">
+                      User notes
                     </span>
                   ) : col.type !== 'cue' ? (
                     <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-600 text-slate-300 flex-shrink-0">
