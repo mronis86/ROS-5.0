@@ -25,6 +25,12 @@ try {
   process.exit(1);
 }
 
+const uiDistIndex = path.join(sourcePath, 'ui', 'dist', 'index.html');
+if (!fs.existsSync(uiDistIndex)) {
+  console.error('zip-offline-show: ui/dist/index.html missing after build.');
+  process.exit(1);
+}
+
 const publicDir = path.dirname(zipPath);
 if (!fs.existsSync(publicDir)) {
   fs.mkdirSync(publicDir, { recursive: true });

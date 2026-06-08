@@ -8,6 +8,7 @@ Self-contained **local show mode** for ROS — separate from the Netlify/Railway
 2. **Copy and trim** only what you need into `offline-show/ui/`.
 3. **Online vs offline** is explicit in this app only — main hosted app is never modified.
 4. **One folder** — server, UI, launcher, and docs live here.
+5. **Self-contained deps** — `offline-show/` and `offline-show/ui/` have their own `package.json`. Launchers run `npm install` automatically; **repo root `npm install` is not required**.
 
 ## Folder layout
 
@@ -66,18 +67,19 @@ Skip: Admin, Content Review, Teleprompter, XML exports, OSC, etc.
 ## Run (download zip from ROS OSC modal)
 
 1. Extract `offline-show.zip` anywhere (e.g. Desktop).
-2. Open `offline-show\launcher\start-standalone.bat`.
-3. Browser opens at http://127.0.0.1:3004/ — other devices use your LAN IP on port 3004.
-
-First run installs server deps (`npm install` in `offline-show/`). UI is pre-built inside the zip.
+2. **Requires [Node.js](https://nodejs.org/)** on the show laptop (for `npm install` on first run).
+3. Double-click `offline-show\launcher\start-standalone.bat`.
+4. First run installs server dependencies and opens http://127.0.0.1:3004/ — UI is **pre-built** in `ui/dist` inside the zip.
 
 ## Run (from full ROS repo)
 
-From repo root (needs `npm install` once at root for Vite):
+No repo root `npm install` needed — offline-show installs its own deps:
 
 ```bat
 offline-show\launcher\start-offline-show.bat
 ```
+
+This rebuilds the UI from source, then starts the server on port 3004.
 
 The launcher waits until `/health` responds before opening the browser (avoids Chrome `chrome-error://` if the tab opens too early).
 

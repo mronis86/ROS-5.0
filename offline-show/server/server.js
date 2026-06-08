@@ -24,6 +24,8 @@ function resolveUiDist() {
 }
 
 function loadVite() {
+  const localVite = path.join(OFFLINE_ROOT, 'ui', 'node_modules', 'vite');
+  if (fs.existsSync(localVite)) return require(localVite);
   return require(path.join(REPO_ROOT, 'node_modules', 'vite'));
 }
 

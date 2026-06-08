@@ -1,13 +1,25 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const { execSync } = require('child_process');
 
-const repoRoot = path.join(__dirname, '..', '..');
 const uiRoot = path.join(__dirname, '..', 'ui');
-const viteBin = path.join(repoRoot, 'node_modules', 'vite', 'bin', 'vite.js');
+
+function ensureUiDeps() {
+  const viteBin = path.join(uiRoot, 'node_modules', 'vite', 'bin', 'vite.js');
+  if (fs.existsSync(viteBin)) return viteBin;
+
+  console.log('Installing offline UI dependencies (first time or after update)...');
+  execSync('npm install', { cwd: uiRoot, stdio: 'inherit' });
+  if (!fs.existsSync(viteBin)) {
+    throw new Error('vite not found after npm install in offline-show/ui');
+  }
+  return viteBin;
+}
 
 console.log('📦 Building offline UI (Tailwind + React)...');
+const viteBin = ensureUiDeps();
 execSync(`node "${viteBin}" build`, {
   cwd: uiRoot,
   stdio: 'inherit',
