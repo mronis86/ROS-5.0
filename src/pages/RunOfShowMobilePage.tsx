@@ -859,8 +859,8 @@ const RunOfShowMobilePage: React.FC = () => {
   }, [effectivePrimaryLive, liveTick, clockOffsetMs]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100 pb-40 pt-24 sm:pt-28">
-      <div className="mx-auto max-w-xl px-3 space-y-3">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100 pb-40 pt-[var(--app-header-height)]">
+      <div className="mx-auto max-w-xl space-y-3 px-3 pt-2">
         <div className="rounded-xl border border-slate-600 bg-slate-900/80 p-3">
           <div className="flex items-start justify-between gap-2">
             <div>

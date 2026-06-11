@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-route
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { ActiveViewersProvider } from './contexts/ActiveViewersContext';
+import { AppHeaderCollapseProvider } from './contexts/AppHeaderCollapseContext';
 import AuthGuard from './components/AuthGuard';
 import AppHeader from './components/AppHeader';
 import EventListPage from './pages/EventListPage';
@@ -43,14 +44,13 @@ function AppContent() {
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
   const isAdmin = location.pathname === '/admin';
   const isQuickMode = location.pathname === '/quick-mode';
-  const isRunOfShowMobile = location.pathname === '/run-of-show-mobile';
   const isComparison = location.pathname === '/comparison';
 
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isRunOfShowMobile && !isComparison && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && <AppHeader />}
       
       {!isPinNotesPopout && !isComparison && (
         <AuthGuard>
@@ -97,7 +97,9 @@ function App() {
   return (
     <AuthProvider>
       <Router>
-        <AppContent />
+        <AppHeaderCollapseProvider>
+          <AppContent />
+        </AppHeaderCollapseProvider>
       </Router>
     </AuthProvider>
   );

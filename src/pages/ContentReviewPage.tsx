@@ -1952,7 +1952,7 @@ const ContentReviewPage: React.FC = () => {
   }, [displayItem?.notes]);
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-16 z-0 flex flex-col bg-slate-900 text-white">
+    <div className="fixed inset-x-0 bottom-0 top-[var(--app-header-height)] z-0 flex flex-col bg-slate-900 text-white">
       {/* Slim top bar — page chrome; body does not scroll */}
       <header className="shrink-0 border-b border-slate-700 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-3 py-2.5 md:px-5">
         <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-2 md:gap-3">

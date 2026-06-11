@@ -9695,8 +9695,8 @@ const RunOfShowPage: React.FC = () => {
         `}
       </style>
       {/* Fixed Header - Always Visible */}
-      <div className="fixed top-16 left-0 right-0 z-40 bg-slate-900 shadow-lg border-b border-slate-600" style={{ height: showGridHeaders ? '240px' : '150px' }}>
-        <div className="py-2 pt-4">
+      <div className="fixed top-[var(--app-header-height)] left-0 right-0 z-40 bg-slate-900 shadow-lg border-b border-slate-600" style={{ height: showGridHeaders ? '240px' : '150px' }}>
+        <div className="py-2">
           <div className="flex justify-between items-center mb-2 px-8">
             <div className="flex items-center gap-3">
               <button

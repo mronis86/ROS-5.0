@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fixed AppHeader height — keep Run of Show / page offsets in sync (see top-[var(--app-header-height)]) */
+:root {
+  --app-header-height: 3.5rem; /* 56px / Tailwind h-14 */
+}
+
 /* Custom scrollbar styles */
 .overflow-x-auto::-webkit-scrollbar {
   height: 12px;

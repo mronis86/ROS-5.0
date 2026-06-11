@@ -8,6 +8,7 @@ import { NeonBackupService, BackupData } from '../services/neon-backup-service';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
+import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import RoleSelectionModal from '../components/RoleSelectionModal';
@@ -715,6 +716,9 @@ const RunOfShowPage: React.FC = () => {
   const [secondaryTimerInterval, setSecondaryTimerInterval] = useState<NodeJS.Timeout | null>(null);
   
   const [showGridHeaders, setShowGridHeaders] = useState(false);
+  const { collapsed: appHeaderCollapsed, toggleCollapsed: toggleAppHeaderCollapsed } = useAppHeaderCollapse();
+  const rosToolbarHeightPx = showGridHeaders ? 240 : 150;
+  const schedulePaddingTopPx = getAppHeaderOffsetPx(appHeaderCollapsed) + rosToolbarHeightPx + 8;
   const [activeRowMenu, setActiveRowMenu] = useState<number | null>(null);
   const [activeItemMenu, setActiveItemMenu] = useState<number | null>(null);
   const [activeJumpMenu, setActiveJumpMenu] = useState<number | null>(null);
@@ -9745,8 +9749,8 @@ const RunOfShowPage: React.FC = () => {
         `}
       </style>
       {/* Fixed Header - Always Visible */}
-      <div className="fixed top-16 left-0 right-0 z-40 bg-slate-900 shadow-lg border-b border-slate-600" style={{ height: showGridHeaders ? '240px' : '150px' }}>
-        <div className="py-2 pt-4">
+      <div className="fixed top-[var(--app-header-height)] left-0 right-0 z-40 bg-slate-900 shadow-lg border-b border-slate-600" style={{ height: showGridHeaders ? '240px' : '150px' }}>
+        <div className="py-2">
           <div className="flex justify-between items-center mb-2 px-8">
             <div className="flex items-center gap-3">
               <button
@@ -9755,9 +9759,7 @@ const RunOfShowPage: React.FC = () => {
               >
                 ← Back to Events
               </button>
-              
-              
-              
+
               {/* Menu Dropdown */}
               <div className="relative" ref={menuDropdownContainerRef}>
                 <button
@@ -9775,8 +9777,34 @@ const RunOfShowPage: React.FC = () => {
                 </button>
                 
                 {showMenuDropdown && (
-                  <div className="absolute top-full left-0 mt-1 w-48 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-50">
+                  <div className="absolute top-full left-0 mt-1 w-52 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-50">
                     <div className="py-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleAppHeaderCollapsed();
+                          setShowMenuDropdown(false);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16M4 5a2 2 0 012-2h12a2 2 0 012 2M4 11h16v8a2 2 0 01-2 2H6a2 2 0 01-2-2v-8z" />
+                        </svg>
+                        <span className="flex-1">Top logo bar</span>
+                        <span
+                          className={`w-4 h-4 flex-shrink-0 rounded border flex items-center justify-center ${
+                            appHeaderCollapsed ? 'border-slate-500' : 'border-emerald-400 bg-emerald-400/15'
+                          }`}
+                          aria-hidden
+                        >
+                          {!appHeaderCollapsed && (
+                            <svg className="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </span>
+                      </button>
+                      <div className="my-1 border-t border-slate-600" />
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -10785,7 +10813,7 @@ const RunOfShowPage: React.FC = () => {
 
 
       {/* Schedule Container */}
-      <div className="max-w-[95%] mx-auto px-6" style={{ paddingTop: '250px' }}>
+      <div className="max-w-[95%] mx-auto px-6" style={{ paddingTop: `${schedulePaddingTopPx}px` }}>
         <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '133.33%', marginLeft: '-16.67%' }}>
           <div className="flex justify-between items-center mb-6">
             <div>

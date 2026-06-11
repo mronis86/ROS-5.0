@@ -666,11 +666,7 @@ const EventListPage: React.FC = () => {
   const bulkDeleteSelection = filteredEvents.filter((e) => quickModeSelectedIds.has(e.id));
 
   return (
-    <div
-      className={`min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 ${
-        isNarrowViewport ? 'pt-14' : 'pt-16'
-      }`}
-    >
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 pt-[var(--app-header-height)]">
       {/* Header */}
       <div className="text-center py-3 pt-4 mt-0">
         <h1 className="text-xl font-bold text-white mb-0.5">

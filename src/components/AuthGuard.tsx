@@ -27,7 +27,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     <>
       {children}
       {showBlockingOverlay && (
-        <div className="fixed inset-0 z-[100] min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 pt-16">
+        <div className="fixed inset-0 z-[100] min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 pt-[var(--app-header-height)]">
           <AppHeader />
           <div className="flex items-center justify-center h-[calc(100vh-80px)]">
             {loading ? (

@@ -514,7 +514,7 @@ const GraphicsLinksPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white pt-16">
+    <div className="min-h-screen bg-slate-900 text-white pt-[var(--app-header-height)]">
       {/* Header */}
       <div className="bg-slate-800 border-b border-slate-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

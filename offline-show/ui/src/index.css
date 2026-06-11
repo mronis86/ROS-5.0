@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --app-header-height: 3.5rem; /* 56px — matches main AppHeader / Run of Show toolbar offset */
+}
+
 /* Match main app global styles (App.css) */
 .overflow-x-auto::-webkit-scrollbar {
   height: 12px;

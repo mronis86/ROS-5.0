@@ -514,7 +514,7 @@ const QuickModePage: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-7rem)] flex-col bg-slate-900 text-white pt-16">
+    <div className="flex min-h-[calc(100vh-7rem)] flex-col bg-slate-900 text-white pt-[var(--app-header-height)]">
       <header className="shrink-0 border-b border-slate-700 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-3 py-2 md:px-4">
         <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">

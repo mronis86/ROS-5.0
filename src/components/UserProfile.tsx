@@ -39,13 +39,12 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
     if (!user) return;
 
     try {
-      // Use local auth user data directly
       const profileData = {
         id: user.id,
         full_name: user.full_name || user.email || 'Unknown',
         role: user.role || 'VIEWER',
         email: user.email || '',
-        created_at: user.created_at || new Date().toISOString()
+        created_at: user.created_at || new Date().toISOString(),
       };
       setProfile(profileData);
       setFullName(profileData.full_name);
@@ -62,18 +61,20 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
 
     setSaving(true);
     try {
-      // Update profile using the local auth system
       await updateProfile({
         full_name: fullName,
-        role: role
+        role: role,
       });
 
-      // Update local state
-      setProfile(prev => prev ? {
-        ...prev,
-        full_name: fullName,
-        role: role
-      } : null);
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              full_name: fullName,
+              role: role,
+            }
+          : null
+      );
 
       setEditing(false);
       setError(null);
@@ -94,29 +95,22 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-slate-300">
-        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+        <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-blue-500"></div>
         Loading...
       </div>
     );
   }
 
   if (!profile) {
-    return (
-      <div className="text-slate-300">
-        Profile not found
-      </div>
-    );
+    return <div className="text-slate-300">Profile not found</div>;
   }
 
   return (
-    <div className="bg-slate-800 p-4 rounded-lg shadow-2xl w-80 border border-slate-700">
-      <div className="flex items-center justify-between mb-4">
+    <div className="w-80 rounded-lg border border-slate-700 bg-slate-800 p-4 shadow-2xl">
+      <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-bold text-white">Profile</h3>
         {onClose && (
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white transition-colors"
-          >
+          <button onClick={onClose} className="text-slate-400 transition-colors hover:text-white">
             ✕
           </button>
         )}
@@ -125,26 +119,22 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
       {editing ? (
         <div className="space-y-3">
           <div>
-            <label className="block text-slate-300 text-sm font-medium mb-1">
-              Full Name
-            </label>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Full Name</label>
             <input
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+              className="w-full rounded border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white"
               placeholder="Enter your full name"
             />
           </div>
-          
+
           <div>
-            <label className="block text-slate-300 text-sm font-medium mb-1">
-              Role
-            </label>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Role</label>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+              className="w-full rounded border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white"
             >
               {roles.map((roleOption) => (
                 <option key={roleOption.value} value={roleOption.value}>
@@ -155,22 +145,20 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
           </div>
 
           {error && (
-            <div className="bg-red-900 border border-red-700 text-red-200 px-3 py-2 rounded text-sm">
-              {error}
-            </div>
+            <div className="rounded border border-red-700 bg-red-900 px-3 py-2 text-sm text-red-200">{error}</div>
           )}
 
           <div className="flex gap-2">
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex-1 px-3 py-2 bg-green-600 hover:bg-green-500 disabled:bg-slate-600 text-white text-sm rounded transition-colors"
+              className="flex-1 rounded bg-green-600 px-3 py-2 text-sm text-white transition-colors hover:bg-green-500 disabled:bg-slate-600"
             >
               {saving ? 'Saving...' : 'Save'}
             </button>
             <button
               onClick={() => setEditing(false)}
-              className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition-colors"
+              className="rounded bg-slate-600 px-3 py-2 text-sm text-white transition-colors hover:bg-slate-500"
             >
               Cancel
             </button>
@@ -179,26 +167,26 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
       ) : (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white font-medium">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-600 font-medium text-white">
               {(profile.full_name || 'U').charAt(0).toUpperCase()}
             </div>
             <div>
-              <div className="text-white font-medium">{profile.full_name}</div>
-              <div className="text-slate-400 text-sm">{profile.role}</div>
-              <div className="text-slate-500 text-xs">{user?.email}</div>
+              <div className="font-medium text-white">{profile.full_name}</div>
+              <div className="text-sm text-slate-400">{profile.role}</div>
+              <div className="text-xs text-slate-500">{user?.email}</div>
             </div>
           </div>
 
           <div className="flex gap-2">
             <button
               onClick={() => setEditing(true)}
-              className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
+              className="flex-1 rounded bg-blue-600 px-3 py-2 text-sm text-white transition-colors hover:bg-blue-500"
             >
               Edit Profile
             </button>
             <button
               onClick={handleSignOut}
-              className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition-colors"
+              className="rounded bg-red-600 px-3 py-2 text-sm text-white transition-colors hover:bg-red-500"
               title="Sign out"
             >
               Sign Out

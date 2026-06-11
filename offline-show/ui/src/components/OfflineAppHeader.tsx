@@ -8,8 +8,8 @@ const OfflineAppHeader: React.FC = () => {
   const displayName = getOfflineDisplayName();
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-slate-800 border-b border-slate-700 px-5 py-2">
-      <div className="flex items-center justify-between gap-4">
+    <header className="fixed top-0 left-0 right-0 z-50 h-[var(--app-header-height)] box-border bg-slate-800 border-b border-slate-700 px-5">
+      <div className="flex h-full items-center justify-between gap-4">
         <div className="flex items-center gap-4 shrink-0">
           <div className="flex items-center gap-1.5">
             <AppLogo size="sm" />
