@@ -27,6 +27,18 @@
   force = true
 
 [[redirects]]
+  from = "/companion-module-runofshow-resolume-full.zip"
+  to = "/companion-module-runofshow-resolume-full.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/offline-show.zip"
+  to = "/offline-show.zip"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/ros-osc-python-app.zip"
   to = "/ros-osc-python-app.zip"
   status = 200

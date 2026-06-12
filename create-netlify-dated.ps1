@@ -48,6 +48,7 @@ try {
     npm run build
     node scripts/zip-companion-module-full.js
     node scripts/zip-companion-module-resolume-full.js
+    node scripts/zip-offline-show.js
 } finally {
     Pop-Location
 }

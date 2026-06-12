@@ -1,12 +1,27 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 
 const OFFLINE_ROOT = path.join(__dirname, '..');
 const REPO_ROOT = path.join(OFFLINE_ROOT, '..');
 
 function loadSocketIoClient() {
-  return require(path.join(REPO_ROOT, 'node_modules', 'socket.io-client'));
+  try {
+    return require('socket.io-client');
+  } catch {
+    /* fall through */
+  }
+  const candidates = [
+    path.join(OFFLINE_ROOT, 'node_modules', 'socket.io-client'),
+    path.join(REPO_ROOT, 'node_modules', 'socket.io-client'),
+  ];
+  for (const mod of candidates) {
+    if (fs.existsSync(mod)) return require(mod);
+  }
+  throw new Error(
+    'socket.io-client is not installed. From offline-show folder run: npm install'
+  );
 }
 
 const { getCloudMode } = require('./cloud-mode');

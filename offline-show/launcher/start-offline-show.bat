@@ -1,27 +1,36 @@
 @echo off
 setlocal EnableDelayedExpansion
-set "OFFLINE=%~dp0.."
 
 echo ========================================
 echo   ROS Offline Show (from full repo)
 echo ========================================
 echo.
 
-cd /d "%OFFLINE%"
+pushd "%~dp0.."
+if errorlevel 1 (
+  echo Could not open offline-show folder.
+  pause
+  exit /b 1
+)
+
 call "%~dp0bootstrap.bat" --rebuild-ui
-if errorlevel 1 exit /b 1
+if errorlevel 1 (
+  popd
+  exit /b 1
+)
 
 echo Stopping anything on port 3004...
 call npx --yes kill-port 3004 2>nul
 
 echo Starting offline server on port 3004...
-start "ROS Offline Show" cmd /k "cd /d \"%OFFLINE%\" && node server\server.js"
+start "ROS Offline Show" cmd /k "%~dp0_start-server-window.bat"
 
 echo Waiting for server (up to 90s — first start can be slow)...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-for-server.ps1"
 if errorlevel 1 (
   echo.
   echo Server did not start. Check the "ROS Offline Show" window for errors.
+  popd
   pause
   exit /b 1
 )
@@ -40,7 +49,8 @@ if errorlevel 1 (
 )
 
 echo Server is up. Opening browser...
-for /f "delims=" %%I in ('powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown' } | Select-Object -First 1 -ExpandProperty IPAddress)"') do set "LAN_IP=%%I"
+set "LAN_IP="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0get-lan-ip.ps1"`) do set "LAN_IP=%%I"
 if defined LAN_IP (
   echo LAN devices ^(iPad, etc.^): http://!LAN_IP!:3004/
   echo.
@@ -51,4 +61,6 @@ echo.
 echo Installs its own dependencies under offline-show\ ^(no repo root npm install required^).
 echo Main app: port 3003 ^| Offline show: port 3004
 echo.
+popd
 pause
+endlocal

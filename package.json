@@ -45,6 +45,7 @@
     "zip:offline-show": "node scripts/zip-offline-show.js",
     "zip:companion-full": "node scripts/zip-companion-module-full.js",
     "zip:companion-resolume": "node scripts/zip-companion-module-resolume-full.js",
+    "zip:master-backup": "node scripts/zip-master-backup.js --branch master",
     "build": "vite build",
     "preview": "vite preview",
     "test": "react-scripts test",
