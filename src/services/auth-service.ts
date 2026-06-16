@@ -257,8 +257,11 @@ class AuthService {
         }
 
         const immediateToken = extractTokenFromAuthResult(result);
-        if (immediateToken) setApiAccessToken(immediateToken);
-        await this.syncApiTokenFromNeon();
+        if (immediateToken) {
+          setApiAccessToken(immediateToken);
+        } else {
+          await this.syncApiTokenFromNeon();
+        }
         const token = getApiAccessToken();
         if (!token) {
           return {
