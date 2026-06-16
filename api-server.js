@@ -2696,7 +2696,13 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
       return res.json([]);
     }
     const result = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      `SELECT *,
+        CASE
+          WHEN is_running = true AND started_at IS NOT NULL AND started_at < TIMESTAMPTZ '2090-01-01'
+          THEN EXTRACT(EPOCH FROM (NOW() - started_at))::integer
+          ELSE COALESCE(elapsed_seconds, 0)
+        END AS elapsed_seconds
+       FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1`,
       [eventId]
     );
     const rows = result.rows.map((row) => applyResolumeMeta(eventId, row));

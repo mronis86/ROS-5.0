@@ -2135,34 +2135,61 @@ const RunOfShowPage: React.FC = () => {
       
       if (activeTimer) {
         console.log('🔄 Loading timer from API:', activeTimer);
+
+        const isRunningTimer =
+          activeTimer.timer_state === 'running' ||
+          (activeTimer.is_running === true && activeTimer.is_active !== false);
+        const startedAtRaw = activeTimer.started_at;
+        const hasRealStart =
+          startedAtRaw &&
+          !String(startedAtRaw).startsWith('2099') &&
+          new Date(startedAtRaw).getFullYear() < 2090;
         
         // Set the active item
         setActiveItemId(activeTimer.item_id);
         setLoadedItems(prev => ({ ...prev, [activeTimer.item_id]: true }));
         
-        if (activeTimer.timer_state === 'running') {
+        if (isRunningTimer && hasRealStart) {
           // Timer is running - set up with server timing
           console.log('🔄 Timer is running, setting up with server timing');
+          const startedAt = new Date(startedAtRaw);
+          let elapsed = Number(activeTimer.elapsed_seconds) || 0;
+          if (!elapsed && startedAt.getTime() <= Date.now()) {
+            elapsed = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
+          }
           setTimerProgress(prev => ({
             ...prev,
             [activeTimer.item_id]: {
-              elapsed: activeTimer.elapsed_seconds,
+              elapsed,
               total: activeTimer.duration_seconds,
-              startedAt: new Date(activeTimer.started_at)
+              startedAt,
             }
           }));
+          setActiveTimers(prev => ({ ...prev, [activeTimer.item_id]: true }));
 
           // Start local timer interval that recalculates from server time every second
           const timer = setInterval(async () => {
             try {
               const currentTimer = await DatabaseService.getActiveTimer(event.id);
-              if (currentTimer && currentTimer.item_id === activeTimer.item_id) {
+              const stillRunning =
+                currentTimer &&
+                currentTimer.item_id === activeTimer.item_id &&
+                (currentTimer.timer_state === 'running' ||
+                  (currentTimer.is_running === true && currentTimer.is_active !== false));
+              if (stillRunning) {
+                  const tickStart = currentTimer.started_at && !String(currentTimer.started_at).startsWith('2099')
+                    ? new Date(currentTimer.started_at)
+                    : startedAt;
+                  let tickElapsed = Number(currentTimer.elapsed_seconds) || 0;
+                  if (!tickElapsed && tickStart.getTime() <= Date.now()) {
+                    tickElapsed = Math.max(0, Math.floor((Date.now() - tickStart.getTime()) / 1000));
+                  }
                   setTimerProgress(prev => ({
                     ...prev,
                     [activeTimer.item_id]: {
-                      elapsed: currentTimer.elapsed_seconds,
+                      elapsed: tickElapsed,
                       total: currentTimer.duration_seconds,
-                      startedAt: new Date(currentTimer.started_at)
+                      startedAt: tickStart,
                     }
                   }));
               }
@@ -2172,7 +2199,7 @@ const RunOfShowPage: React.FC = () => {
           }, 1000);
           
           setActiveTimerIntervals(prev => ({ ...prev, [activeTimer.item_id]: timer }));
-        } else if (activeTimer.timer_state === 'loaded') {
+        } else if (activeTimer.timer_state === 'loaded' || isRunningTimer) {
           // Timer is loaded but not started
           console.log('🔄 Timer is loaded but not started');
           setTimerProgress(prev => ({
