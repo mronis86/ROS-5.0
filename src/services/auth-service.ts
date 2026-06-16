@@ -4,7 +4,14 @@
 
 import { getApiBaseUrl } from './api-client';
 import { getApiAccessToken, setApiAccessToken } from '../lib/sessionAuth';
-import { fetchNeonAccessToken, getNeonAuthClient, isNeonAuthJwt, isNeonAuthEnabled } from '../lib/neonAuthClient';
+import {
+  collectNeonAuthCredentials,
+  fetchNeonAccessToken,
+  getNeonAuthClient,
+  isNeonAuthJwt,
+  isNeonAuthEnabled,
+  type NeonAuthCredentials,
+} from '../lib/neonAuthClient';
 
 const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
 const DOMAIN_CHECK_TIMEOUT_MS = 5000;
@@ -82,7 +89,10 @@ class AuthService {
     );
   }
 
-  private async exchangeNeonSessionForApiToken(fullNameHint?: string): Promise<{
+  private async exchangeNeonSessionForApiToken(
+    fullNameHint?: string,
+    neonHints?: Partial<NeonAuthCredentials>
+  ): Promise<{
     ok: boolean;
     token: string | null;
     status: AccessStatus;
@@ -97,25 +107,21 @@ class AuthService {
       return { ok: false, token: null, status: 'none', error: 'Neon Auth is not configured.' };
     }
 
-    let jwt: string | null = null;
-    let opaqueSessionToken: string | null = null;
+    let jwt: string | null = neonHints?.jwt ?? null;
+    let opaqueSessionToken: string | null = neonHints?.sessionToken ?? null;
+    let signedSessionToken: string | null = neonHints?.signedSessionToken ?? null;
+
     try {
-      jwt = await fetchNeonAccessToken();
-      const sessionResult = await client.getSession();
-      const rawSessionToken = sessionResult.data?.session?.token ?? null;
-      if (rawSessionToken) {
-        if (isNeonAuthJwt(rawSessionToken)) {
-          jwt = jwt || rawSessionToken;
-        } else {
-          opaqueSessionToken = rawSessionToken;
-        }
-      }
+      const collected = await collectNeonAuthCredentials();
+      jwt = jwt || collected.jwt;
+      opaqueSessionToken = opaqueSessionToken || collected.sessionToken;
+      signedSessionToken = signedSessionToken || collected.signedSessionToken;
     } catch {
       setApiAccessToken(null);
       return { ok: false, token: null, status: 'none', error: 'No active Neon Auth session.' };
     }
 
-    const bearer = opaqueSessionToken || jwt;
+    const bearer = signedSessionToken || opaqueSessionToken || jwt;
     if (!bearer) {
       setApiAccessToken(null);
       return { ok: false, token: null, status: 'none', error: 'No Neon Auth session token available.' };
@@ -130,6 +136,7 @@ class AuthService {
       },
       body: JSON.stringify({
         session_token: opaqueSessionToken || undefined,
+        signed_session_token: signedSessionToken || undefined,
         jwt: jwt || undefined,
         full_name: fullNameHint || '',
       }),
@@ -344,13 +351,26 @@ class AuthService {
           return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
         }
 
-        const result = await neonAuthClient.signIn.email({ email, password });
+        let signInHints: Partial<NeonAuthCredentials> = {};
+        const result = await neonAuthClient.signIn.email({
+          email,
+          password,
+          fetchOptions: {
+            onSuccess: (ctx: { response: Response }) => {
+              const headerJwt = ctx.response.headers.get('set-auth-jwt');
+              const headerSession = ctx.response.headers.get('set-auth-token');
+              if (headerJwt) signInHints.jwt = headerJwt;
+              if (headerSession) signInHints.signedSessionToken = headerSession;
+            },
+          },
+        });
         if (result.error) {
           return { error: { message: formatNeonAuthError(result.error.message || 'Sign in failed.') } };
         }
 
         const exchange = await this.exchangeNeonSessionForApiToken(
-          fullName || email.split('@')[0] || 'User'
+          fullName || email.split('@')[0] || 'User',
+          signInHints
         );
         if (!exchange.ok || !exchange.token) {
           return { error: { message: exchange.error || 'Failed to connect Neon sign-in to the API.' } };

@@ -79,9 +79,69 @@ async function readJwtFromSessionFetch(client: NeonAuthClient, forceFetch: boole
   return readJwtFromSession(sessionResult.data?.session);
 }
 
+export type NeonAuthCredentials = {
+  jwt: string | null;
+  sessionToken: string | null;
+  signedSessionToken: string | null;
+};
+
+function readAuthHeaders(ctx: { response: Response }): Pick<NeonAuthCredentials, 'jwt' | 'signedSessionToken'> {
+  const headerJwt = ctx.response.headers.get('set-auth-jwt');
+  const headerSession = ctx.response.headers.get('set-auth-token');
+  return {
+    jwt: headerJwt && isNeonAuthJwt(headerJwt) ? headerJwt : null,
+    signedSessionToken: headerSession || null,
+  };
+}
+
+/** Collect JWT + signed session token from Neon (response headers are authoritative). */
+export async function collectNeonAuthCredentials(): Promise<NeonAuthCredentials> {
+  const client = getNeonAuthClient();
+  if (!client) return { jwt: null, sessionToken: null, signedSessionToken: null };
+
+  let jwt: string | null = null;
+  let signedSessionToken: string | null = null;
+  let sessionToken: string | null = null;
+
+  try {
+    await client.getSession({
+      fetchOptions: {
+        headers: { 'X-Force-Fetch': 'true' },
+        onSuccess: (ctx) => {
+          const headers = readAuthHeaders(ctx);
+          jwt = headers.jwt;
+          signedSessionToken = headers.signedSessionToken;
+        },
+      },
+    });
+  } catch {
+    /* ignore */
+  }
+
+  if (!jwt) {
+    try {
+      jwt = await fetchNeonAccessToken();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  try {
+    const sessionResult = await client.getSession();
+    const raw = sessionResult.data?.session?.token ?? null;
+    if (raw) {
+      if (isNeonAuthJwt(raw)) jwt = jwt || raw;
+      else sessionToken = raw;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return { jwt, sessionToken, signedSessionToken };
+}
+
 /**
  * Cross-domain Railway API auth requires a Neon JWT from authClient.token().
- * Session tokens (opaque) do not validate on the API — see Neon JWT plugin docs.
  */
 export async function fetchNeonAccessToken(): Promise<string | null> {
   const client = getNeonAuthClient();
