@@ -8,6 +8,7 @@ const TABLES = [
   'api_sessions',
   'api_integration_tokens',
   'api_user_access',
+  'api_neon_sessions',
   'admin_approved_domains',
 ];
 

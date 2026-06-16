@@ -115,7 +115,9 @@ class AuthService {
         ok: false,
         token: null,
         status: 'none',
-        error: [data.error, data.hint, data.code ? `(${data.code})` : null].filter(Boolean).join(' — ') ||
+        error: [data.error, data.hint, data.databaseHost ? `DB: ${data.databaseHost}` : null, data.code ? `(${data.code})` : null]
+          .filter(Boolean)
+          .join(' — ') ||
           'Could not sign in. Confirm Railway has NEON_AUTH_BASE_URL and migrations 027/028 applied.',
       };
     }
@@ -290,36 +292,6 @@ class AuthService {
           setApiAccessToken(null);
         }
 
-        const neonAuthClient = getNeonAuthClient();
-        if (!neonAuthClient) {
-          this.authState.loading = false;
-          return;
-        }
-        const sessionResult = await neonAuthClient.getSession();
-        const neonUser = sessionResult.data?.user;
-        if (neonUser) {
-          const exchange = await this.exchangeNeonSessionForApiToken(
-            neonUser.name || neonUser.email?.split('@')[0] || 'User'
-          );
-          if (exchange.ok && exchange.token) {
-            const user: User = {
-              id: exchange.neon_user_id || neonUser.id,
-              email: exchange.email || neonUser.email || '',
-              full_name: exchange.full_name || neonUser.name || '',
-              role: 'VIEWER',
-              is_admin: exchange.is_admin,
-              accessStatus: exchange.status,
-            };
-            this.authState = {
-              user,
-              isAuthenticated: true,
-              loading: false,
-              accessStatus: exchange.status,
-            };
-            this.persistUserSession(user, exchange.status);
-            return;
-          }
-        }
         setApiAccessToken(null);
         this.authState = { user: null, isAuthenticated: false, loading: false, accessStatus: 'none' };
         return;
