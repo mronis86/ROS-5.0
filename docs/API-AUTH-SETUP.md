@@ -31,7 +31,9 @@ Use the **same URL** for both (with/without `VITE_` prefix).
 
 **Important:** `NEON_DATABASE_URL` on Railway must be the **same Neon branch** where Auth is enabled. Auth on `ep-icy-rice-...` with the database on a different branch will break access requests and approval.
 
-Run migrations **026** and **027** on Neon if not already applied.
+Run migrations **026**, **027**, and **028** on Neon if not already applied.
+
+Migration **028** (`api_neon_sessions`) is required for the Neon → Railway session exchange used by local/Netlify frontends.
 
 ---
 

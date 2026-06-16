@@ -82,10 +82,79 @@ class AuthService {
     );
   }
 
-  private async syncApiTokenFromNeon() {
-    const token = await fetchNeonAccessToken();
-    if (token) setApiAccessToken(token);
-    return token;
+  private async exchangeNeonSessionForApiToken(fullNameHint?: string): Promise<{
+    ok: boolean;
+    token: string | null;
+    status: AccessStatus;
+    email?: string;
+    full_name?: string;
+    is_admin?: boolean;
+    neon_user_id?: string;
+    error?: string;
+  }> {
+    const client = getNeonAuthClient();
+    if (!client) {
+      return { ok: false, token: null, status: 'none', error: 'Neon Auth is not configured.' };
+    }
+
+    let bearer: string | null = null;
+    let sessionToken: string | null = null;
+    try {
+      bearer = await fetchNeonAccessToken();
+      const sessionResult = await client.getSession();
+      sessionToken = sessionResult.data?.session?.token ?? null;
+      if (!bearer && sessionToken) bearer = sessionToken;
+    } catch {
+      setApiAccessToken(null);
+      return { ok: false, token: null, status: 'none', error: 'No active Neon Auth session.' };
+    }
+
+    if (!bearer && !sessionToken) {
+      setApiAccessToken(null);
+      return { ok: false, token: null, status: 'none', error: 'No Neon Auth session token available.' };
+    }
+
+    const base = getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/neon-exchange`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      },
+      body: JSON.stringify({
+        session_token: sessionToken || undefined,
+        full_name: fullNameHint || '',
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.token) {
+      setApiAccessToken(null);
+      return {
+        ok: false,
+        token: null,
+        status: 'none',
+        error:
+          data.error ||
+          data.hint ||
+          'Could not connect your Neon sign-in to the API. Confirm Railway has NEON_AUTH_BASE_URL and migration 028 applied.',
+      };
+    }
+
+    setApiAccessToken(data.token);
+    return {
+      ok: true,
+      token: data.token,
+      status: (data.status as AccessStatus) || 'none',
+      email: data.email,
+      full_name: data.full_name,
+      is_admin: data.is_admin,
+      neon_user_id: data.neon_user_id,
+    };
+  }
+
+  private async syncApiTokenFromNeon(fullNameHint?: string) {
+    const exchange = await this.exchangeNeonSessionForApiToken(fullNameHint);
+    return exchange.token;
   }
 
   private async fetchAccessStatus(token: string): Promise<{
@@ -140,36 +209,48 @@ class AuthService {
         const sessionResult = await neonAuthClient.getSession();
         const neonUser = sessionResult.data?.user;
         if (neonUser) {
-          await this.syncApiTokenFromNeon();
-          const token = getApiAccessToken();
-          if (token) {
-            let access = await this.fetchAccessStatus(token);
-            if (access.status === 'none') {
-              try {
-                const req = await this.submitAccessRequest(
-                  token,
-                  neonUser.name || neonUser.email?.split('@')[0] || 'User'
-                );
-                access = { ...access, status: req.status as AccessStatus, is_admin: req.is_admin };
-              } catch {
-                /* user may need to retry from UI */
-              }
+          const existingToken = getApiAccessToken();
+          if (existingToken?.startsWith('ros_nsess_')) {
+            const access = await this.fetchAccessStatus(existingToken);
+            if (access.neon_user_id || access.status !== 'none') {
+              const user: User = {
+                id: access.neon_user_id || neonUser.id,
+                email: access.email || neonUser.email || '',
+                full_name: access.full_name || neonUser.name || '',
+                role: 'VIEWER',
+                is_admin: access.is_admin,
+                accessStatus: access.status,
+              };
+              this.authState = {
+                user,
+                isAuthenticated: true,
+                loading: false,
+                accessStatus: access.status,
+              };
+              this.persistUserSession(user, access.status);
+              return;
             }
+          }
+
+          const exchange = await this.exchangeNeonSessionForApiToken(
+            neonUser.name || neonUser.email?.split('@')[0] || 'User'
+          );
+          if (exchange.ok && exchange.token) {
             const user: User = {
-              id: access.neon_user_id || neonUser.id,
-              email: access.email || neonUser.email || '',
-              full_name: access.full_name || neonUser.name || '',
+              id: exchange.neon_user_id || neonUser.id,
+              email: exchange.email || neonUser.email || '',
+              full_name: exchange.full_name || neonUser.name || '',
               role: 'VIEWER',
-              is_admin: access.is_admin,
-              accessStatus: access.status,
+              is_admin: exchange.is_admin,
+              accessStatus: exchange.status,
             };
             this.authState = {
               user,
               isAuthenticated: true,
               loading: false,
-              accessStatus: access.status,
+              accessStatus: exchange.status,
             };
-            this.persistUserSession(user, access.status);
+            this.persistUserSession(user, exchange.status);
             return;
           }
         }
@@ -256,54 +337,30 @@ class AuthService {
           return { error: { message: formatNeonAuthError(result.error.message || 'Sign in failed.') } };
         }
 
-        await this.syncApiTokenFromNeon();
-        const token = getApiAccessToken();
-        if (!token) {
-          return {
-            error: {
-              message:
-                'Could not obtain a Neon JWT for the API. Sign in again. If this persists, confirm Railway has NEON_AUTH_BASE_URL set to the same Auth URL as VITE_NEON_AUTH_URL.',
-            },
-          };
-        }
-
-        let access = await this.fetchAccessStatus(token);
-        if (access.status === 'none') {
-          try {
-            const req = await this.submitAccessRequest(token, fullName || email.split('@')[0] || 'User');
-            access = {
-              ...access,
-              status: req.status as AccessStatus,
-              is_admin: req.is_admin,
-            };
-          } catch (err: any) {
-            return {
-              error: {
-                message:
-                  err?.message ||
-                  'Signed in to Neon Auth but the API rejected your token. On Railway, set NEON_AUTH_BASE_URL to your Neon Auth URL and use the same Neon database branch as Auth.',
-              },
-            };
-          }
+        const exchange = await this.exchangeNeonSessionForApiToken(
+          fullName || email.split('@')[0] || 'User'
+        );
+        if (!exchange.ok || !exchange.token) {
+          return { error: { message: exchange.error || 'Failed to connect Neon sign-in to the API.' } };
         }
 
         const neonUser = result.data?.user;
         const user: User = {
-          id: access.neon_user_id || neonUser?.id || '',
-          email: access.email || neonUser?.email || email,
-          full_name: access.full_name || neonUser?.name || fullName || '',
+          id: exchange.neon_user_id || neonUser?.id || '',
+          email: exchange.email || neonUser?.email || email,
+          full_name: exchange.full_name || neonUser?.name || fullName || '',
           role: 'VIEWER',
-          is_admin: access.is_admin,
-          accessStatus: access.status,
+          is_admin: exchange.is_admin,
+          accessStatus: exchange.status,
         };
 
         this.authState = {
           user,
           isAuthenticated: true,
           loading: false,
-          accessStatus: access.status,
+          accessStatus: exchange.status,
         };
-        this.persistUserSession(user, access.status);
+        this.persistUserSession(user, exchange.status);
         return { error: null };
       }
 
@@ -444,10 +501,20 @@ class AuthService {
   async refreshAccessStatus(): Promise<AccessStatus> {
     const token = getApiAccessToken();
     if (!token || !isNeonAuthEnabled) return this.authState.accessStatus;
-    await this.syncApiTokenFromNeon();
-    const freshToken = getApiAccessToken();
-    if (!freshToken) return this.authState.accessStatus;
-    const access = await this.fetchAccessStatus(freshToken);
+    if (!token.startsWith('ros_nsess_')) {
+      const exchange = await this.exchangeNeonSessionForApiToken(this.authState.user?.full_name);
+      if (exchange.ok) {
+        this.authState.accessStatus = exchange.status;
+        if (this.authState.user) {
+          this.authState.user.accessStatus = exchange.status;
+          this.authState.user.is_admin = exchange.is_admin;
+          this.persistUserSession(this.authState.user, exchange.status);
+        }
+        return exchange.status;
+      }
+      return this.authState.accessStatus;
+    }
+    const access = await this.fetchAccessStatus(token);
     this.authState.accessStatus = access.status;
     if (this.authState.user) {
       this.authState.user.accessStatus = access.status;
