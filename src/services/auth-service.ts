@@ -4,7 +4,7 @@
 
 import { getApiBaseUrl } from './api-client';
 import { getApiAccessToken, setApiAccessToken } from '../lib/sessionAuth';
-import { fetchNeonAccessToken, getNeonAuthClient, isNeonAuthEnabled } from '../lib/neonAuthClient';
+import { extractTokenFromAuthResult, fetchNeonAccessToken, getNeonAuthClient, isNeonAuthEnabled } from '../lib/neonAuthClient';
 
 const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
 const DOMAIN_CHECK_TIMEOUT_MS = 5000;
@@ -42,6 +42,17 @@ function fetchWithTimeout(url: string, options: RequestInit, ms: number): Promis
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ms);
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
+function formatNeonAuthError(message: string): string {
+  if (!/invalid origin/i.test(message)) return message;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const isLocalhost =
+    /^https?:\/\/localhost(:\d+)?$/i.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin);
+  if (origin && !isLocalhost) {
+    return `Invalid origin (${origin}). Neon Auth only auto-trusts localhost. Open http://localhost:3003 or add "${origin}" in Neon Console → Auth → Configuration → Domains.`;
+  }
+  return 'Invalid origin. Enable Allow Localhost in Neon Console → Settings → Auth, and add your app URL under Auth → Configuration → Domains.';
 }
 
 class AuthService {
@@ -242,13 +253,20 @@ class AuthService {
 
         const result = await neonAuthClient.signIn.email({ email, password });
         if (result.error) {
-          return { error: { message: result.error.message || 'Sign in failed.' } };
+          return { error: { message: formatNeonAuthError(result.error.message || 'Sign in failed.') } };
         }
 
+        const immediateToken = extractTokenFromAuthResult(result);
+        if (immediateToken) setApiAccessToken(immediateToken);
         await this.syncApiTokenFromNeon();
         const token = getApiAccessToken();
         if (!token) {
-          return { error: { message: 'Could not obtain session token from Neon Auth.' } };
+          return {
+            error: {
+              message:
+                'Could not obtain session token from Neon Auth. Try signing in again. If you just registered, check your email for a verification link first.',
+            },
+          };
         }
 
         let access = await this.fetchAccessStatus(token);
@@ -333,7 +351,7 @@ class AuthService {
           password,
         });
         if (result.error) {
-          return { error: { message: result.error.message || 'Sign up failed.' } };
+          return { error: { message: formatNeonAuthError(result.error.message || 'Sign up failed.') } };
         }
 
         return this.signIn(email, password, fullName);
