@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { resolveQuickModeEventId } from '../lib/quickModeEvent';
 
@@ -210,7 +211,7 @@ const QuickModePage: React.FC = () => {
         };
         const res = await fetch(`${getApiBaseUrl()}/api/run-of-show-data`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiJsonHeaders(),
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -366,7 +367,7 @@ const QuickModePage: React.FC = () => {
   const callApi = async (path: string, method: 'POST' | 'PUT', body: Record<string, any>) => {
     const res = await fetch(`${getApiBaseUrl()}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiJsonHeaders(),
       body: JSON.stringify(body)
     });
     if (!res.ok) {

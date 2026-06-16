@@ -1,5 +1,6 @@
 import { DatabaseService } from './database';
 import { getApiBaseUrl } from './api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -34,9 +35,7 @@ export class NeonBackupService {
       
       const response = await fetch(`${API_BASE_URL}/api/backups/test`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
       });
       
       if (!response.ok) {
@@ -119,9 +118,7 @@ export class NeonBackupService {
       console.log(`🔍 Full URL: ${fullUrl}`);
       const response = await fetch(fullUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify(backupPayload),
       });
       
@@ -151,9 +148,7 @@ export class NeonBackupService {
       
       const response = await fetch(`${API_BASE_URL}/api/backups/event/${eventId}`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
       });
       
       if (!response.ok) {
@@ -197,9 +192,7 @@ export class NeonBackupService {
       
       const response = await fetch(`${API_BASE_URL}/api/backups?${queryParams.toString()}`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
       });
       
       if (!response.ok) {
@@ -234,9 +227,7 @@ export class NeonBackupService {
       
       const response = await fetch(`${API_BASE_URL}/api/backups/${backupId}/restore`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
       });
       
       if (!response.ok) {
@@ -276,9 +267,7 @@ export class NeonBackupService {
       
       const response = await fetch(`${API_BASE_URL}/api/backups/${backupId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
       });
       
       if (!response.ok) {

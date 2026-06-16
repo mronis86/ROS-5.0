@@ -67,14 +67,35 @@ When `REQUIRE_API_AUTH` is enabled, paste token into Companion **API Token** fie
 
 ---
 
-## 5. Enable API lockdown (when ready)
+## 5. Enable API lockdown (rollout)
+
+**Phase 1 — `writes` (recommended first):**
+
+- Blocks anonymous **POST/PUT/DELETE** (timer start, save run-of-show, etc.).
+- **GET** polling still works without a token (Companion sync keeps working until you add a token for **commands**).
+
+**Phase 2 — `all` (optional, later):**
+
+- Blocks anonymous **reads** too (full audit fix for GET leaks).
 
 | Variable | Value |
 |----------|--------|
-| `REQUIRE_API_AUTH` | `writes` then `all` |
-| `ALLOW_LEGACY_PUBLIC_API` | `false` |
+| `REQUIRE_API_AUTH` | `writes` then optionally `all` |
+| `ALLOW_LEGACY_PUBLIC_API` | leave **unset** or `false` |
 
-Rollout: web sign-in working → Companion tokens deployed → lock writes → lock reads.
+### Rollout checklist
+
+1. **Deploy** latest frontend (sends `ros_nsess_*` on all save/timer calls).
+2. **Sign in** to the web app and smoke-test save + timer.
+3. **Admin → Integration API tokens** → create token with scopes `read, control` (name e.g. "Companion show floor").
+4. **Companion module config** → paste token in **API Token** field → test load cue / start timer.
+5. **Railway** → set `REQUIRE_API_AUTH=writes` → redeploy API.
+6. Re-test web app (signed in) + Companion commands.
+7. Later: `REQUIRE_API_AUTH=all` + ensure Companion token includes `read` (already included in step 3).
+
+**vMix / Netlify graphics URLs** are separate feeds and are not affected by Railway `REQUIRE_API_AUTH`.
+
+**Offline show** (LAN port 3004) is unaffected; cloud sync to Railway will need a signed-in web session or integration token when enforcement is on.
 
 ---
 

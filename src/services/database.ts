@@ -1,4 +1,5 @@
 import { apiClient, getApiBaseUrl } from './api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import type { DashboardSummaryResponse } from '../types/dashboard';
 
 // Always use Railway (single source of truth from api-client)
@@ -865,9 +866,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
@@ -901,9 +900,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
@@ -938,9 +935,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers/stop`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
@@ -971,9 +966,7 @@ export class DatabaseService {
 
       const response = await fetch(`${API_BASE_URL}/api/active-timers/${eventId}/${itemId}/duration`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           duration_seconds: newDurationSeconds
         })
@@ -1000,9 +993,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers/stop-all`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           user_id: userId,
@@ -1104,9 +1095,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
@@ -1165,9 +1154,7 @@ export class DatabaseService {
       // Update all sub-cue timers for this event to stopped
       const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers/stop`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId || null
@@ -1371,9 +1358,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/active-timers/stop-all`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId
         })
@@ -1418,9 +1403,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/completed-cues`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
@@ -1452,9 +1435,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/completed-cues`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId
@@ -1482,9 +1463,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/completed-cues/${eventId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        headers: apiJsonHeaders(),
       });
 
       if (!response.ok) {
@@ -1507,9 +1486,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/overtime-minutes/${eventId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        headers: apiJsonHeaders(),
       });
 
       if (!response.ok) {
@@ -1539,7 +1516,7 @@ export class DatabaseService {
     try {
       const response = await fetch(`${API_BASE_URL}/api/content-review/${eventId}`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiJsonHeaders(),
       });
       if (!response.ok) {
         console.error('Failed to get content review data:', response.status, response.statusText);
@@ -1567,7 +1544,7 @@ export class DatabaseService {
     try {
       const response = await fetch(`${API_BASE_URL}/api/content-review/${eventId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiJsonHeaders(),
         body: JSON.stringify(payload),
       });
       if (!response.ok) {
@@ -1590,9 +1567,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        headers: apiJsonHeaders(),
       });
 
       if (!response.ok) {
@@ -1616,9 +1591,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/indented-cues`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId,
           item_id: itemId,
@@ -1650,9 +1623,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}/${itemId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        headers: apiJsonHeaders(),
       });
 
       if (!response.ok) {
@@ -1675,9 +1646,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        headers: apiJsonHeaders(),
       });
 
       if (!response.ok) {
@@ -1778,9 +1747,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/timer-messages`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify(message)
       });
 
@@ -1820,9 +1787,7 @@ export class DatabaseService {
       
       const response = await fetch(`${API_BASE_URL}/api/timer-messages/${id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: apiJsonHeaders(),
         body: JSON.stringify(updates)
       });
 

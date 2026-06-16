@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { getApiBaseUrl } from '../services/api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -697,7 +698,7 @@ const ScriptsFollowPage: React.FC = () => {
         // Update the script in database
         const response = await fetch(`${getApiBaseUrl()}/api/scripts/${currentScriptId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiJsonHeaders(),
           body: JSON.stringify({ 
             script_text: editScriptText,
             script_name: currentScriptName 
@@ -713,7 +714,7 @@ const ScriptsFollowPage: React.FC = () => {
             if (originalComment && originalComment.lineNumber !== comment.lineNumber) {
               await fetch(`${getApiBaseUrl()}/api/script-comments/${comment.id}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: apiJsonHeaders(),
                 body: JSON.stringify({ 
                   line_number: comment.lineNumber,
                   comment_text: comment.text,
@@ -787,7 +788,7 @@ const ScriptsFollowPage: React.FC = () => {
       
       const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiJsonHeaders(),
         body: JSON.stringify({
           script_name: scriptName,
           script_text: scriptText,
@@ -804,7 +805,8 @@ const ScriptsFollowPage: React.FC = () => {
       
       // Delete all existing comments for this script
       await fetch(`${getApiBaseUrl()}/api/script-comments/script/${savedScript.id}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: apiJsonHeaders(),
       });
       console.log('🗑️ Deleted existing comments');
       
@@ -812,7 +814,7 @@ const ScriptsFollowPage: React.FC = () => {
       for (const comment of comments) {
         await fetch(`${getApiBaseUrl()}/api/script-comments`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiJsonHeaders(),
           body: JSON.stringify({
             script_id: savedScript.id,
             line_number: comment.lineNumber,
@@ -871,7 +873,8 @@ const ScriptsFollowPage: React.FC = () => {
 
     try {
       await fetch(`${getApiBaseUrl()}/api/scripts/${scriptId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: apiJsonHeaders(),
       });
       
       alert(`Script "${scriptName}" deleted!`);

@@ -22,11 +22,19 @@ C:\Users\audre\OneDrive\Desktop\ROS-5.0
 
 Companion will scan that folder for subfolders that contain `companion/manifest.json`.
 
-### 2. Required files
+### 2. API Token (when Railway `REQUIRE_API_AUTH` is enabled)
+
+1. In the web app: **Admin** (admin key) → **Integration API tokens** → Create with scopes **`read, control`**.
+2. Copy the token once (starts with `ros_itok_`).
+3. In Companion: module config → **API Token** → paste and save.
+
+With **`writes`** enforcement: Companion **GET** polling works without a token; **start/stop timer and load cue** (POST) require the token.
+
+With **`all`** enforcement: paste the token before any sync/commands.
+
+### 3. Required files
 
 Confirm this structure:
-
-```
 companion-module-runofshow/
 ├── companion/
 │   ├── manifest.json   ← required

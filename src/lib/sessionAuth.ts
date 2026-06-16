@@ -17,3 +17,8 @@ export function authHeaders(): Record<string, string> {
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
+
+/** JSON API requests from the signed-in web app (includes ros_nsess / legacy session token). */
+export function apiJsonHeaders(extra?: Record<string, string>): Record<string, string> {
+  return { 'Content-Type': 'application/json', ...authHeaders(), ...extra };
+}

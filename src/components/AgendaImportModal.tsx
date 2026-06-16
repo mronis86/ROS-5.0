@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { getApiBaseUrl } from '../services/api-client';
+import { authHeaders } from '../lib/sessionAuth';
 import {
   parseAgenda,
   parseTimeToMinutes,
@@ -495,7 +496,7 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
 
       let res: Response;
       try {
-        res = await fetch(url, { method: 'POST', body: form });
+        res = await fetch(url, { method: 'POST', headers: authHeaders(), body: form });
       } catch (fetchErr: any) {
         // Network-level failure (CORS, server down, wrong URL)
         console.warn('[AgendaImport] Server fetch failed:', fetchErr?.message, '— trying client-side extraction');
