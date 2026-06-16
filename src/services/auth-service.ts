@@ -89,6 +89,49 @@ class AuthService {
     );
   }
 
+  private async neonAuthApiRequest(
+    path: '/api/auth/neon-login' | '/api/auth/neon-register',
+    body: { email: string; password: string; full_name?: string }
+  ): Promise<{
+    ok: boolean;
+    token: string | null;
+    status: AccessStatus;
+    email?: string;
+    full_name?: string;
+    is_admin?: boolean;
+    neon_user_id?: string;
+    error?: string;
+  }> {
+    const base = getApiBaseUrl();
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.token) {
+      setApiAccessToken(null);
+      return {
+        ok: false,
+        token: null,
+        status: 'none',
+        error: [data.error, data.hint, data.code ? `(${data.code})` : null].filter(Boolean).join(' — ') ||
+          'Could not sign in. Confirm Railway has NEON_AUTH_BASE_URL and migrations 027/028 applied.',
+      };
+    }
+
+    setApiAccessToken(data.token);
+    return {
+      ok: true,
+      token: data.token,
+      status: (data.status as AccessStatus) || 'none',
+      email: data.email,
+      full_name: data.full_name,
+      is_admin: data.is_admin,
+      neon_user_id: data.neon_user_id,
+    };
+  }
+
   private async exchangeNeonSessionForApiToken(
     fullNameHint?: string,
     neonHints?: Partial<NeonAuthCredentials>
@@ -220,6 +263,33 @@ class AuthService {
   private async loadFromStorage() {
     try {
       if (isNeonAuthEnabled) {
+        const existingToken = getApiAccessToken();
+        if (existingToken?.startsWith('ros_nsess_')) {
+          const access = await this.fetchAccessStatus(existingToken);
+          if (access.status !== 'none') {
+            const stored = localStorage.getItem('ros_user_session');
+            const parsed = stored ? JSON.parse(stored) : null;
+            const storedUser = parsed?.user as User | undefined;
+            const user: User = {
+              id: access.neon_user_id || storedUser?.id || '',
+              email: access.email || storedUser?.email || '',
+              full_name: access.full_name || storedUser?.full_name || '',
+              role: 'VIEWER',
+              is_admin: access.is_admin,
+              accessStatus: access.status,
+            };
+            this.authState = {
+              user,
+              isAuthenticated: true,
+              loading: false,
+              accessStatus: access.status,
+            };
+            this.persistUserSession(user, access.status);
+            return;
+          }
+          setApiAccessToken(null);
+        }
+
         const neonAuthClient = getNeonAuthClient();
         if (!neonAuthClient) {
           this.authState.loading = false;
@@ -228,29 +298,6 @@ class AuthService {
         const sessionResult = await neonAuthClient.getSession();
         const neonUser = sessionResult.data?.user;
         if (neonUser) {
-          const existingToken = getApiAccessToken();
-          if (existingToken?.startsWith('ros_nsess_')) {
-            const access = await this.fetchAccessStatus(existingToken);
-            if (access.neon_user_id || access.status !== 'none') {
-              const user: User = {
-                id: access.neon_user_id || neonUser.id,
-                email: access.email || neonUser.email || '',
-                full_name: access.full_name || neonUser.name || '',
-                role: 'VIEWER',
-                is_admin: access.is_admin,
-                accessStatus: access.status,
-              };
-              this.authState = {
-                user,
-                isAuthenticated: true,
-                loading: false,
-                accessStatus: access.status,
-              };
-              this.persistUserSession(user, access.status);
-              return;
-            }
-          }
-
           const exchange = await this.exchangeNeonSessionForApiToken(
             neonUser.name || neonUser.email?.split('@')[0] || 'User'
           );
@@ -342,45 +389,24 @@ class AuthService {
   async signIn(email: string, password: string, fullName?: string): Promise<{ error: any }> {
     try {
       if (isNeonAuthEnabled) {
-        const neonAuthClient = getNeonAuthClient();
-        if (!neonAuthClient) {
-          return { error: { message: 'Neon Auth is not configured (missing VITE_NEON_AUTH_URL).' } };
-        }
         const domainCheck = await this.checkDomain(email);
         if (!domainCheck.allowed) {
           return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
         }
 
-        let signInHints: Partial<NeonAuthCredentials> = {};
-        const result = await neonAuthClient.signIn.email({
+        const exchange = await this.neonAuthApiRequest('/api/auth/neon-login', {
           email,
           password,
-          fetchOptions: {
-            onSuccess: (ctx: { response: Response }) => {
-              const headerJwt = ctx.response.headers.get('set-auth-jwt');
-              const headerSession = ctx.response.headers.get('set-auth-token');
-              if (headerJwt) signInHints.jwt = headerJwt;
-              if (headerSession) signInHints.signedSessionToken = headerSession;
-            },
-          },
+          full_name: fullName || email.split('@')[0] || 'User',
         });
-        if (result.error) {
-          return { error: { message: formatNeonAuthError(result.error.message || 'Sign in failed.') } };
-        }
-
-        const exchange = await this.exchangeNeonSessionForApiToken(
-          fullName || email.split('@')[0] || 'User',
-          signInHints
-        );
         if (!exchange.ok || !exchange.token) {
-          return { error: { message: exchange.error || 'Failed to connect Neon sign-in to the API.' } };
+          return { error: { message: exchange.error || 'Sign in failed.' } };
         }
 
-        const neonUser = result.data?.user;
         const user: User = {
-          id: exchange.neon_user_id || neonUser?.id || '',
-          email: exchange.email || neonUser?.email || email,
-          full_name: exchange.full_name || neonUser?.name || fullName || '',
+          id: exchange.neon_user_id || '',
+          email: exchange.email || email,
+          full_name: exchange.full_name || fullName || '',
           role: 'VIEWER',
           is_admin: exchange.is_admin,
           accessStatus: exchange.status,
@@ -437,25 +463,37 @@ class AuthService {
   async signUp(email: string, password: string, fullName: string): Promise<{ error: any }> {
     try {
       if (isNeonAuthEnabled) {
-        const neonAuthClient = getNeonAuthClient();
-        if (!neonAuthClient) {
-          return { error: { message: 'Neon Auth is not configured (missing VITE_NEON_AUTH_URL).' } };
-        }
         const domainCheck = await this.checkDomain(email);
         if (!domainCheck.allowed) {
           return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
         }
 
-        const result = await neonAuthClient.signUp.email({
-          name: fullName,
+        const exchange = await this.neonAuthApiRequest('/api/auth/neon-register', {
           email,
           password,
+          full_name: fullName,
         });
-        if (result.error) {
-          return { error: { message: formatNeonAuthError(result.error.message || 'Sign up failed.') } };
+        if (!exchange.ok || !exchange.token) {
+          return { error: { message: exchange.error || 'Registration failed.' } };
         }
 
-        return this.signIn(email, password, fullName);
+        const user: User = {
+          id: exchange.neon_user_id || '',
+          email: exchange.email || email,
+          full_name: exchange.full_name || fullName,
+          role: 'VIEWER',
+          is_admin: exchange.is_admin,
+          accessStatus: exchange.status,
+        };
+
+        this.authState = {
+          user,
+          isAuthenticated: true,
+          loading: false,
+          accessStatus: exchange.status,
+        };
+        this.persistUserSession(user, exchange.status);
+        return { error: null };
       }
 
       return {

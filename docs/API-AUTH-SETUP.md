@@ -25,9 +25,11 @@ VITE_NEON_AUTH_URL=https://ep-xxx.neonauth....neon.build/neondb/auth
 **Railway (API):**
 ```bash
 NEON_AUTH_BASE_URL=https://ep-xxx.neonauth....neon.build/neondb/auth
+# Optional if Netlify origin is not in Neon Domains list:
+# NEON_AUTH_CLIENT_ORIGIN=https://your-site.netlify.app
 ```
 
-Use the **same URL** for both (with/without `VITE_` prefix).
+Sign-in uses **server-side Neon Auth** (`POST /api/auth/neon-login`): the browser sends email/password to Railway, Railway talks to Neon directly, then issues a `ros_nsess_*` API token. This avoids broken cross-domain JWT handoff from the browser.
 
 **Important:** `NEON_DATABASE_URL` on Railway must be the **same Neon branch** where Auth is enabled. Auth on `ep-icy-rice-...` with the database on a different branch will break access requests and approval.
 
