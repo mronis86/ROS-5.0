@@ -1,4 +1,5 @@
 import { apiClient, getApiBaseUrl } from './api-client';
+import type { DashboardSummaryResponse } from '../types/dashboard';
 
 // Always use Railway (single source of truth from api-client)
 const API_BASE_URL = getApiBaseUrl();
@@ -83,6 +84,34 @@ export class DatabaseService {
       console.error('Error fetching calendar events:', error);
       console.log('🔄 Falling back to localStorage...');
       return this.getCalendarFromLocalStorage();
+    }
+  }
+
+  static async getDashboardSummary(): Promise<DashboardSummaryResponse | null> {
+    try {
+      const data = await apiClient.getDashboardSummary();
+      return data as DashboardSummaryResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const is404 = message.includes('404');
+      if (is404) {
+        console.warn(
+          'Dashboard summary API not deployed yet — building from calendar, ROS, and content review endpoints.'
+        );
+        try {
+          const { buildDashboardSummaryFromExistingApis } = await import('../lib/buildDashboardSummary');
+          return await buildDashboardSummaryFromExistingApis({
+            getCalendarEvents: () => this.getCalendarEvents(),
+            getRunOfShowData: (eventId) => this.getRunOfShowData(eventId),
+            getContentReviewData: (eventId) => this.getContentReviewData(eventId),
+          });
+        } catch (fallbackError) {
+          console.error('Dashboard fallback build failed:', fallbackError);
+          return null;
+        }
+      }
+      console.error('Error fetching dashboard summary:', error);
+      return null;
     }
   }
 

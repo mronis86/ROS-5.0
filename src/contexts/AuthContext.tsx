@@ -1,11 +1,14 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { authService, User } from '../services/auth-service';
+import { authService, User, AccessStatus } from '../services/auth-service';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  signIn: (email: string, fullName: string) => Promise<{ error: any }>;
+  accessStatus: import('../services/auth-service').AccessStatus;
+  signIn: (email: string, password: string, fullName?: string) => Promise<{ error: any }>;
+  signUp: (email: string, password: string, fullName: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
+  refreshAccessStatus: () => Promise<import('../services/auth-service').AccessStatus>;
   updateProfile: (updates: { full_name?: string; role?: string }) => Promise<{ error: any }>;
 }
 
@@ -26,33 +29,49 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accessStatus, setAccessStatus] = useState<AccessStatus>('none');
 
   useEffect(() => {
-    // Initialize auth state from our service
-    const authState = authService.getAuthState();
-    setUser(authState.user);
-    setLoading(authState.loading);
+    const sync = () => {
+      const authState = authService.getAuthState();
+      setUser(authState.user);
+      setAccessStatus(authState.accessStatus);
+      setLoading(authState.loading);
+    };
+    sync();
+    const timer = window.setTimeout(sync, 800);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const signUp = async (email: string, password: string, fullName: string) => {
     const result = await authService.signUp(email, password, fullName);
     if (!result.error) {
       setUser(authService.getCurrentUser());
+      setAccessStatus(authService.getAccessStatus());
     }
     return result;
   };
 
-  const signIn = async (email: string, fullName: string) => {
-    const result = await authService.signIn(email, fullName);
+  const signIn = async (email: string, password: string, fullName?: string) => {
+    const result = await authService.signIn(email, password, fullName);
     if (!result.error) {
       setUser(authService.getCurrentUser());
+      setAccessStatus(authService.getAccessStatus());
     }
     return result;
+  };
+
+  const refreshAccessStatus = async () => {
+    const status = await authService.refreshAccessStatus();
+    setAccessStatus(status);
+    setUser(authService.getCurrentUser());
+    return status;
   };
 
   const signOut = async () => {
     await authService.signOut();
     setUser(null);
+    setAccessStatus('none');
   };
 
   const updateProfile = async (updates: { full_name?: string; role?: string }) => {
@@ -71,9 +90,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const value = {
     user,
     loading,
+    accessStatus,
     signUp,
     signIn,
     signOut,
+    refreshAccessStatus,
     updateProfile,
   };
 

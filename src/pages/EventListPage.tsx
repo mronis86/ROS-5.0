@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS, EVENT_TYPE_OPTIONS, RECORD_STREAMING_OPTIONS } from '../types/Event';
 import { DatabaseService } from '../services/database';
-import { apiClient } from '../services/api-client';
+import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
@@ -101,7 +101,7 @@ const EventListPage: React.FC = () => {
       setIsLoading(true);
       apiClient.invalidateCalendarEventsCache();
       console.log('🔄 Loading events from Neon database...');
-      console.log('🌐 API Base URL:', import.meta.env.VITE_API_BASE_URL || 'Not set (using default)');
+      console.log('🌐 API Base URL:', getApiBaseUrl());
       console.log('🌐 Environment:', import.meta.env.PROD ? 'Production' : 'Development');
       
       // Always try Supabase first
@@ -675,6 +675,13 @@ const EventListPage: React.FC = () => {
         <p className="text-sm text-slate-400 mb-1">
           Manage your events and schedules
         </p>
+        <button
+          type="button"
+          onClick={() => navigate('/dashboard')}
+          className="mt-2 rounded-lg border border-cyan-600/60 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50"
+        >
+          Open Production Dashboard
+        </button>
       </div>
 
       {/* Main Content */}

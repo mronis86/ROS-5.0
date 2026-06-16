@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@neondatabase/neon-js": "^0.6.2-beta",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.23",
@@ -15,6 +16,7 @@
     "express": "^5.1.0",
     "googleapis": "^144.0.0",
     "helmet": "^8.1.0",
+    "jose": "^6.2.3",
     "lucide-react": "^0.263.1",
     "mammoth": "^1.6.0",
     "moment": "^2.29.4",

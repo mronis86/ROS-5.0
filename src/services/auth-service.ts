@@ -1,12 +1,32 @@
-// Simple authentication service that works with our API
-// For now, we'll use localStorage for user sessions
+/**
+ * Authentication: Neon Auth (preferred) or legacy API login fallback.
+ */
 
 import { getApiBaseUrl } from './api-client';
+import { getApiAccessToken, setApiAccessToken } from '../lib/sessionAuth';
+import { fetchNeonAccessToken, getNeonAuthClient, isNeonAuthEnabled } from '../lib/neonAuthClient';
 
 const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
 const DOMAIN_CHECK_TIMEOUT_MS = 5000;
 
-/** True if base is localhost, 127.0.0.1, or a private IP (so we can fallback to Railway on failure). */
+export type AccessStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
+interface User {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  is_admin?: boolean;
+  accessStatus?: AccessStatus;
+}
+
+interface AuthState {
+  user: User | null;
+  isAuthenticated: boolean;
+  loading: boolean;
+  accessStatus: AccessStatus;
+}
+
 function isLocalBase(base: string): boolean {
   if (base.includes('localhost') || base.includes('127.0.0.1')) return true;
   try {
@@ -18,29 +38,10 @@ function isLocalBase(base: string): boolean {
   }
 }
 
-function fetchWithTimeout(
-  url: string,
-  options: RequestInit,
-  ms: number
-): Promise<Response> {
+function fetchWithTimeout(url: string, options: RequestInit, ms: number): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ms);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
-    clearTimeout(timeout)
-  );
-}
-
-interface User {
-  id: string;
-  email: string;
-  full_name: string;
-  role: string;
-}
-
-interface AuthState {
-  user: User | null;
-  isAuthenticated: boolean;
-  loading: boolean;
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
 }
 
 class AuthService {
@@ -48,7 +49,8 @@ class AuthService {
   private authState: AuthState = {
     user: null,
     isAuthenticated: false,
-    loading: true
+    loading: true,
+    accessStatus: 'none',
   };
 
   static getInstance(): AuthService {
@@ -59,132 +61,344 @@ class AuthService {
   }
 
   constructor() {
-    this.loadFromStorage();
+    void this.loadFromStorage();
   }
 
-  private loadFromStorage() {
+  private persistUserSession(user: User, accessStatus: AccessStatus) {
+    localStorage.setItem(
+      'ros_user_session',
+      JSON.stringify({ user, accessStatus, created_at: new Date().toISOString() })
+    );
+  }
+
+  private async syncApiTokenFromNeon() {
+    const token = await fetchNeonAccessToken();
+    if (token) setApiAccessToken(token);
+    return token;
+  }
+
+  private async fetchAccessStatus(token: string): Promise<{
+    status: AccessStatus;
+    email?: string;
+    full_name?: string;
+    is_admin?: boolean;
+    neon_user_id?: string;
+  }> {
+    const base = getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/access-status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      return { status: 'none' };
+    }
+    const data = await res.json();
+    return {
+      status: (data.status as AccessStatus) || 'none',
+      email: data.email,
+      full_name: data.full_name,
+      is_admin: data.is_admin,
+      neon_user_id: data.neon_user_id,
+    };
+  }
+
+  private async submitAccessRequest(token: string, fullName: string) {
+    const base = getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/access-request`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ full_name: fullName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || data.message || 'Failed to request access');
+    }
+    return data as { status: AccessStatus; is_admin?: boolean; message?: string };
+  }
+
+  private async loadFromStorage() {
     try {
-      const stored = localStorage.getItem('ros_user_session');
-      if (stored) {
-        const session = JSON.parse(stored);
-        this.authState = {
-          user: session.user,
-          isAuthenticated: true,
-          loading: false
-        };
-      } else {
-        this.authState.loading = false;
+      if (isNeonAuthEnabled) {
+        const neonAuthClient = getNeonAuthClient();
+        if (!neonAuthClient) {
+          this.authState.loading = false;
+          return;
+        }
+        const sessionResult = await neonAuthClient.getSession();
+        const neonUser = sessionResult.data?.user;
+        if (neonUser) {
+          await this.syncApiTokenFromNeon();
+          const token = getApiAccessToken();
+          if (token) {
+            let access = await this.fetchAccessStatus(token);
+            if (access.status === 'none') {
+              try {
+                const req = await this.submitAccessRequest(
+                  token,
+                  neonUser.name || neonUser.email?.split('@')[0] || 'User'
+                );
+                access = { ...access, status: req.status as AccessStatus, is_admin: req.is_admin };
+              } catch {
+                /* user may need to retry from UI */
+              }
+            }
+            const user: User = {
+              id: access.neon_user_id || neonUser.id,
+              email: access.email || neonUser.email || '',
+              full_name: access.full_name || neonUser.name || '',
+              role: 'VIEWER',
+              is_admin: access.is_admin,
+              accessStatus: access.status,
+            };
+            this.authState = {
+              user,
+              isAuthenticated: true,
+              loading: false,
+              accessStatus: access.status,
+            };
+            this.persistUserSession(user, access.status);
+            return;
+          }
+        }
+        setApiAccessToken(null);
+        this.authState = { user: null, isAuthenticated: false, loading: false, accessStatus: 'none' };
+        return;
       }
+
+      const token = getApiAccessToken();
+      if (token) {
+        const base = getApiBaseUrl();
+        const res = await fetch(`${base}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const user: User = {
+            id: data.user.id,
+            email: data.user.email,
+            full_name: data.user.full_name,
+            role: data.user.role || 'VIEWER',
+            is_admin: data.user.is_admin,
+            accessStatus: 'approved',
+          };
+          this.authState = {
+            user,
+            isAuthenticated: true,
+            loading: false,
+            accessStatus: 'approved',
+          };
+          this.persistUserSession(user, 'approved');
+          return;
+        }
+        setApiAccessToken(null);
+      }
+
+      this.authState.loading = false;
     } catch (error) {
       console.error('Error loading auth from storage:', error);
       this.authState.loading = false;
     }
   }
 
-  async signIn(email: string, fullName: string): Promise<{ error: any }> {
+  private async checkDomain(email: string): Promise<{ allowed: boolean; message?: string }> {
+    const base = getApiBaseUrl();
+    const domainCheckOpts: RequestInit = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    };
+
+    let checkRes: Response;
+    if (isLocalBase(base)) {
+      try {
+        checkRes = await fetchWithTimeout(`${RAILWAY_URL}/api/auth/check-domain`, domainCheckOpts, DOMAIN_CHECK_TIMEOUT_MS);
+      } catch {
+        checkRes = await fetchWithTimeout(`${base}/api/auth/check-domain`, domainCheckOpts, DOMAIN_CHECK_TIMEOUT_MS);
+      }
+    } else {
+      checkRes = await fetchWithTimeout(`${base}/api/auth/check-domain`, domainCheckOpts, DOMAIN_CHECK_TIMEOUT_MS);
+    }
+
+    if (!checkRes.ok && isLocalBase(base)) {
+      checkRes = await fetchWithTimeout(`${RAILWAY_URL}/api/auth/check-domain`, domainCheckOpts, DOMAIN_CHECK_TIMEOUT_MS);
+    }
+
+    return checkRes.json().catch(() => ({ allowed: false, message: 'Unable to verify domain.' }));
+  }
+
+  async signIn(email: string, password: string, fullName?: string): Promise<{ error: any }> {
     try {
-      // Domain check: only allow sign-in if email domain is approved (or list is empty)
+      if (isNeonAuthEnabled) {
+        const neonAuthClient = getNeonAuthClient();
+        if (!neonAuthClient) {
+          return { error: { message: 'Neon Auth is not configured (missing VITE_NEON_AUTH_URL).' } };
+        }
+        const domainCheck = await this.checkDomain(email);
+        if (!domainCheck.allowed) {
+          return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+        }
+
+        const result = await neonAuthClient.signIn.email({ email, password });
+        if (result.error) {
+          return { error: { message: result.error.message || 'Sign in failed.' } };
+        }
+
+        await this.syncApiTokenFromNeon();
+        const token = getApiAccessToken();
+        if (!token) {
+          return { error: { message: 'Could not obtain session token from Neon Auth.' } };
+        }
+
+        let access = await this.fetchAccessStatus(token);
+        if (access.status === 'none') {
+          const req = await this.submitAccessRequest(token, fullName || email.split('@')[0] || 'User');
+          access = { ...access, status: req.status as AccessStatus, is_admin: req.is_admin };
+        }
+
+        const neonUser = result.data?.user;
+        const user: User = {
+          id: access.neon_user_id || neonUser?.id || '',
+          email: access.email || neonUser?.email || email,
+          full_name: access.full_name || neonUser?.name || fullName || '',
+          role: 'VIEWER',
+          is_admin: access.is_admin,
+          accessStatus: access.status,
+        };
+
+        this.authState = {
+          user,
+          isAuthenticated: true,
+          loading: false,
+          accessStatus: access.status,
+        };
+        this.persistUserSession(user, access.status);
+        return { error: null };
+      }
+
+      const domainCheck = await this.checkDomain(email);
+      if (!domainCheck.allowed) {
+        return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+      }
+
       const base = getApiBaseUrl();
-      const domainCheckOpts = {
-        method: 'POST' as const,
-        headers: { 'Content-Type': 'application/json' as const },
-        body: JSON.stringify({ email })
-      };
-
-      let checkRes: Response;
-      // When current base is "local" (localhost or private IP), try Railway first so we don't
-      // wait for a timeout if the local server is down.
-      if (isLocalBase(base)) {
-        try {
-          checkRes = await fetchWithTimeout(
-            `${RAILWAY_URL}/api/auth/check-domain`,
-            domainCheckOpts,
-            DOMAIN_CHECK_TIMEOUT_MS
-          );
-        } catch {
-          checkRes = await fetchWithTimeout(
-            `${base}/api/auth/check-domain`,
-            domainCheckOpts,
-            DOMAIN_CHECK_TIMEOUT_MS
-          );
-        }
-      } else {
-        try {
-          checkRes = await fetchWithTimeout(
-            `${base}/api/auth/check-domain`,
-            domainCheckOpts,
-            DOMAIN_CHECK_TIMEOUT_MS
-          );
-        } catch (networkErr) {
-          throw networkErr;
-        }
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { error: { message: data.error || 'Invalid email or password.' } };
       }
 
-      // On failure when we used a local base, retry once with Railway (covers private IP + timeout)
-      if (!checkRes.ok && isLocalBase(base)) {
-        checkRes = await fetchWithTimeout(
-          `${RAILWAY_URL}/api/auth/check-domain`,
-          domainCheckOpts,
-          DOMAIN_CHECK_TIMEOUT_MS
-        );
-      }
-      const checkData = await checkRes.json().catch(() => ({}));
-      if (!checkData.allowed) {
-        return { error: { message: checkData.message || 'Your email domain is not on the approved list. Contact an administrator.' } };
-      }
-      if (!checkRes.ok) {
-        return { error: { message: 'Unable to verify domain. Please try again.' } };
-      }
-
-      // Simple user identification - no password needed
-      // This is just for tracking who made changes
+      setApiAccessToken(data.token);
       const user: User = {
-        id: `user_${Date.now()}`,
-        email,
-        full_name: fullName,
-        role: 'VIEWER' // Default role
+        id: data.user.id,
+        email: data.user.email,
+        full_name: data.user.full_name || fullName || '',
+        role: data.user.role || 'VIEWER',
+        is_admin: data.user.is_admin,
+        accessStatus: 'approved',
       };
-
-      const session = {
-        user,
-        created_at: new Date().toISOString()
-      };
-
-      localStorage.setItem('ros_user_session', JSON.stringify(session));
-      
       this.authState = {
         user,
         isAuthenticated: true,
-        loading: false
+        loading: false,
+        accessStatus: 'approved',
       };
-
+      this.persistUserSession(user, 'approved');
       return { error: null };
     } catch (error: any) {
-      const isTimeout = error?.name === 'AbortError';
-      const isNetwork = !error?.message || /failed to fetch|network error|load failed/i.test(String(error?.message));
-      if (isTimeout || isNetwork) {
-        return { error: { message: 'Unable to reach the server. Please check your connection and try again.' } };
-      }
-      return { error };
+      return { error: { message: error?.message || 'Sign in failed.' } };
     }
   }
 
-  async signUp(email: string, fullName: string): Promise<{ error: any }> {
-    // For now, same as sign in
-    return this.signIn(email, fullName);
+  async signUp(email: string, password: string, fullName: string): Promise<{ error: any }> {
+    try {
+      if (isNeonAuthEnabled) {
+        const neonAuthClient = getNeonAuthClient();
+        if (!neonAuthClient) {
+          return { error: { message: 'Neon Auth is not configured (missing VITE_NEON_AUTH_URL).' } };
+        }
+        const domainCheck = await this.checkDomain(email);
+        if (!domainCheck.allowed) {
+          return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+        }
+
+        const result = await neonAuthClient.signUp.email({
+          name: fullName,
+          email,
+          password,
+        });
+        if (result.error) {
+          return { error: { message: result.error.message || 'Sign up failed.' } };
+        }
+
+        return this.signIn(email, password, fullName);
+      }
+
+      const domainCheck = await this.checkDomain(email);
+      if (!domainCheck.allowed) {
+        return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+      }
+
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, full_name: fullName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { error: { message: data.error || 'Registration failed.' } };
+      }
+      return this.signIn(email, password, fullName);
+    } catch (error: any) {
+      return { error: { message: error?.message || 'Registration failed.' } };
+    }
   }
 
   async signOut(): Promise<void> {
+    if (isNeonAuthEnabled) {
+      const neonAuthClient = getNeonAuthClient();
+      if (neonAuthClient) {
+        try {
+          await neonAuthClient.signOut();
+        } catch {
+          /* ignore */
+        }
+      }
+    } else {
+      const token = getApiAccessToken();
+      if (token) {
+        try {
+          const base = getApiBaseUrl();
+          await fetch(`${base}/api/auth/logout`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    setApiAccessToken(null);
     localStorage.removeItem('ros_user_session');
-    this.authState = {
-      user: null,
-      isAuthenticated: false,
-      loading: false
-    };
+    this.authState = { user: null, isAuthenticated: false, loading: false, accessStatus: 'none' };
   }
 
   getCurrentUser(): User | null {
     return this.authState.user;
+  }
+
+  getAccessStatus(): AccessStatus {
+    return this.authState.accessStatus;
+  }
+
+  isAccessApproved(): boolean {
+    return this.authState.accessStatus === 'approved';
   }
 
   isAuthenticated(): boolean {
@@ -199,22 +413,29 @@ class AuthService {
     return { ...this.authState };
   }
 
-  // Update user role (for role selection)
   updateUserRole(role: string): void {
     if (this.authState.user) {
       this.authState.user.role = role;
-      
-      // Update in storage
-      const stored = localStorage.getItem('ros_user_session');
-      if (stored) {
-        const session = JSON.parse(stored);
-        session.user.role = role;
-        localStorage.setItem('ros_user_session', JSON.stringify(session));
-      }
+      this.persistUserSession(this.authState.user, this.authState.accessStatus);
     }
+  }
+
+  async refreshAccessStatus(): Promise<AccessStatus> {
+    const token = getApiAccessToken();
+    if (!token || !isNeonAuthEnabled) return this.authState.accessStatus;
+    await this.syncApiTokenFromNeon();
+    const freshToken = getApiAccessToken();
+    if (!freshToken) return this.authState.accessStatus;
+    const access = await this.fetchAccessStatus(freshToken);
+    this.authState.accessStatus = access.status;
+    if (this.authState.user) {
+      this.authState.user.accessStatus = access.status;
+      this.authState.user.is_admin = access.is_admin;
+      this.persistUserSession(this.authState.user, access.status);
+    }
+    return access.status;
   }
 }
 
 export const authService = AuthService.getInstance();
 export type { User, AuthState };
-

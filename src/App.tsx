@@ -29,6 +29,7 @@ import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import QuickModePage from './pages/QuickModePage';
 import ComparisonPage from './pages/ComparisonPage';
+import DashboardPage from './pages/DashboardPage';
 
 function AppContent() {
   const location = useLocation();
@@ -57,6 +58,7 @@ function AppContent() {
           <Routes>
             <Route path="/admin" element={null} />
             <Route path="/" element={<EventListPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/quick-mode" element={<QuickModePage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />
             <Route path="/run-of-show-mobile" element={<RunOfShowMobilePage />} />

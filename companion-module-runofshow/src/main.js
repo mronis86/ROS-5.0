@@ -72,13 +72,19 @@ class RunOfShowInstance extends InstanceBase {
 		return url || 'https://ros-50-production.up.railway.app'
 	}
 
+	getAuthHeaders() {
+		const token = (this.config?.apiToken || '').trim()
+		if (!token) return {}
+		return { Authorization: `Bearer ${token}` }
+	}
+
 	async fetch(url, options = {}) {
 		const baseUrl = this.getApiUrl()
 		const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`
 		try {
 			const res = await fetch(fullUrl, {
 				...options,
-				headers: { 'Content-Type': 'application/json', ...options.headers },
+				headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders(), ...options.headers },
 			})
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
 			const text = await res.text()
@@ -199,7 +205,7 @@ class RunOfShowInstance extends InstanceBase {
 		const baseUrl = this.getApiUrl()
 		const res = await fetch(`${baseUrl}${path}`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
 			body: JSON.stringify(body),
 		})
 		if (!res.ok) {
@@ -213,7 +219,7 @@ class RunOfShowInstance extends InstanceBase {
 		const baseUrl = this.getApiUrl()
 		const res = await fetch(`${baseUrl}${path}`, {
 			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
 			body: JSON.stringify(body),
 		})
 		if (!res.ok) {
@@ -225,7 +231,10 @@ class RunOfShowInstance extends InstanceBase {
 
 	async apiDelete(path) {
 		const baseUrl = this.getApiUrl()
-		const res = await fetch(`${baseUrl}${path}`, { method: 'DELETE' })
+		const res = await fetch(`${baseUrl}${path}`, {
+			method: 'DELETE',
+			headers: { ...this.getAuthHeaders() },
+		})
 		if (!res.ok) throw new Error(`HTTP ${res.status}`)
 		return res.json().catch(() => ({}))
 	}
@@ -239,6 +248,13 @@ class RunOfShowInstance extends InstanceBase {
 				width: 12,
 				default: 'https://ros-50-production.up.railway.app',
 				tooltip: 'Run of Show Railway API URL',
+			},
+			{
+				type: 'textinput',
+				id: 'apiToken',
+				label: 'API Token (optional until auth enforced)',
+				width: 12,
+				tooltip: 'Integration token from Admin → Integration API tokens. Required when Railway REQUIRE_API_AUTH is enabled.',
 			},
 			{
 				type: 'textinput',

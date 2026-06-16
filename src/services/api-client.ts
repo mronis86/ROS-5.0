@@ -1,8 +1,26 @@
 // API Client for communicating with our Express API server
 // Always use Railway (local API option disabled).
+import { authHeaders } from '../lib/sessionAuth';
+
 const RAILWAY_API_URL = 'https://ros-50-production.up.railway.app';
 
-const getApiBaseUrl = () => RAILWAY_API_URL;
+function isLocalhostApiUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
+/** Dev defaults to Railway unless VITE_API_BASE_URL is explicitly localhost (local api-server). */
+const getApiBaseUrl = () => {
+  const envUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  if (envUrl && (!import.meta.env.DEV || isLocalhostApiUrl(envUrl))) {
+    return envUrl.replace(/\/$/, '');
+  }
+  return RAILWAY_API_URL;
+};
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -79,6 +97,7 @@ class ApiClient {
     const defaultOptions: RequestInit = {
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
         ...options.headers,
       },
       ...options,
@@ -115,6 +134,10 @@ class ApiClient {
   // Calendar Events
   async getCalendarEvents() {
     return this.request('/api/calendar-events', {}, 'calendarEvents', this.CACHE_TTL.calendarEvents);
+  }
+
+  async getDashboardSummary() {
+    return this.request('/api/dashboard/summary', {}, 'dashboardSummary', 60_000);
   }
 
   async createCalendarEvent(event: { name: string; date: string; schedule_data: any }) {

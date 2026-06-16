@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
 import {
@@ -154,6 +154,37 @@ export default function AdminPage() {
   const [addDomainInput, setAddDomainInput] = useState('');
   const [addDomainLoading, setAddDomainLoading] = useState(false);
   const [scriptCopied, setScriptCopied] = useState(false);
+  const [integrationTokens, setIntegrationTokens] = useState<
+    Array<{
+      id: string;
+      name: string;
+      token_prefix: string;
+      scopes: string[];
+      event_id: string | null;
+      expires_at: string | null;
+      revoked_at: string | null;
+      created_at: string;
+    }>
+  >([]);
+  const [integrationTokensLoading, setIntegrationTokensLoading] = useState(false);
+  const [integrationTokensError, setIntegrationTokensError] = useState<string | null>(null);
+  const [newTokenName, setNewTokenName] = useState('');
+  const [newTokenEventId, setNewTokenEventId] = useState('');
+  const [newTokenScopes, setNewTokenScopes] = useState('read,control');
+  const [creatingToken, setCreatingToken] = useState(false);
+  const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
+  const [accessRequests, setAccessRequests] = useState<
+    Array<{
+      id: string;
+      email: string;
+      full_name: string;
+      status: string;
+      requested_at: string;
+      is_admin?: boolean;
+    }>
+  >([]);
+  const [accessRequestsLoading, setAccessRequestsLoading] = useState(false);
+  const [accessRequestsError, setAccessRequestsError] = useState<string | null>(null);
   const [logoVariantId, setLogoVariantIdState] = useState<LogoVariantId>(() => getLogoVariantId());
 
   const handleLogoVariantChange = (id: LogoVariantId) => {
@@ -504,7 +535,170 @@ export default function AdminPage() {
     } finally {
       setAddDomainLoading(false);
     }
-  }, [addDomainInput, fetchApprovedDomains]);
+  }, [fetchApprovedDomains]);
+
+  const fetchAccessRequests = useCallback(async () => {
+    setAccessRequestsLoading(true);
+    setAccessRequestsError(null);
+    try {
+      const res = await adminFetch('/api/admin/access-requests?status=pending');
+      if (res.status === 401) {
+        setAccessRequestsError('Unauthorized');
+        setAccessRequests([]);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setAccessRequestsError((err as { error?: string }).error || `HTTP ${res.status}`);
+        setAccessRequests([]);
+        return;
+      }
+      const data = (await res.json()) as { requests?: typeof accessRequests; needsMigration?: boolean };
+      if (data.needsMigration) {
+        setAccessRequestsError('Run migration 027 on Neon for access approval.');
+        setAccessRequests([]);
+        return;
+      }
+      setAccessRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch (e) {
+      setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
+      setAccessRequests([]);
+    } finally {
+      setAccessRequestsLoading(false);
+    }
+  }, []);
+
+  const approveAccessRequest = useCallback(
+    async (id: string, email: string, makeAdmin = false) => {
+      if (!confirm(`Approve access for ${email}?${makeAdmin ? ' (as administrator)' : ''}`)) return;
+      setAccessRequestsError(null);
+      try {
+        const res = await adminFetch(`/api/admin/access-requests/${id}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ make_admin: makeAdmin }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setAccessRequestsError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchAccessRequests();
+      } catch (e) {
+        setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
+      }
+    },
+    [fetchAccessRequests]
+  );
+
+  const rejectAccessRequest = useCallback(
+    async (id: string, email: string) => {
+      if (!confirm(`Reject access for ${email}?`)) return;
+      setAccessRequestsError(null);
+      try {
+        const res = await adminFetch(`/api/admin/access-requests/${id}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setAccessRequestsError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchAccessRequests();
+      } catch (e) {
+        setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
+      }
+    },
+    [fetchAccessRequests]
+  );
+
+  const fetchIntegrationTokens = useCallback(async () => {
+    setIntegrationTokensLoading(true);
+    setIntegrationTokensError(null);
+    try {
+      const res = await adminFetch('/api/admin/integration-tokens');
+      if (res.status === 401) {
+        setIntegrationTokensError('Unauthorized');
+        setIntegrationTokens([]);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setIntegrationTokensError((err as { error?: string }).error || `HTTP ${res.status}`);
+        setIntegrationTokens([]);
+        return;
+      }
+      const data = (await res.json()) as { tokens?: typeof integrationTokens; needsMigration?: boolean };
+      if (data.needsMigration) {
+        setIntegrationTokensError('Run migration 026 on Neon to enable API tokens.');
+        setIntegrationTokens([]);
+        return;
+      }
+      setIntegrationTokens(Array.isArray(data.tokens) ? data.tokens : []);
+    } catch (e) {
+      setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
+      setIntegrationTokens([]);
+    } finally {
+      setIntegrationTokensLoading(false);
+    }
+  }, []);
+
+  const createIntegrationToken = useCallback(async () => {
+    const name = newTokenName.trim();
+    if (!name) return;
+    setCreatingToken(true);
+    setIntegrationTokensError(null);
+    setCreatedTokenValue(null);
+    try {
+      const scopes = newTokenScopes
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const res = await adminFetch('/api/admin/integration-tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          scopes,
+          event_id: newTokenEventId.trim() || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setIntegrationTokensError((data as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      setCreatedTokenValue((data as { token?: string }).token || null);
+      setNewTokenName('');
+      setNewTokenEventId('');
+      await fetchIntegrationTokens();
+    } catch (e) {
+      setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setCreatingToken(false);
+    }
+  }, [newTokenName, newTokenEventId, newTokenScopes, fetchIntegrationTokens]);
+
+  const revokeIntegrationToken = useCallback(
+    async (id: string, name: string) => {
+      if (!confirm(`Revoke integration token "${name}"? Companion/vMix using it will stop working.`)) return;
+      setIntegrationTokensError(null);
+      try {
+        const res = await adminFetch(`/api/admin/integration-tokens/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setIntegrationTokensError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchIntegrationTokens();
+      } catch (e) {
+        setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
+      }
+    },
+    [fetchIntegrationTokens]
+  );
 
   const removeApprovedDomain = useCallback(async (domain: string) => {
     if (!confirm(`Remove domain "${domain}" from the approved list?`)) return;
@@ -534,7 +728,9 @@ export default function AdminPage() {
   useEffect(() => {
     if (!unlocked) return;
     fetchApprovedDomains();
-  }, [unlocked, fetchApprovedDomains]);
+    fetchIntegrationTokens();
+    fetchAccessRequests();
+  }, [unlocked, fetchApprovedDomains, fetchIntegrationTokens, fetchAccessRequests]);
 
   const disconnectUser = useCallback(async (eventId: string, userId: string) => {
     if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
@@ -1082,6 +1278,157 @@ export default function AdminPage() {
                         </li>
                       ))}
                     </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Users className="w-5 h-5 text-slate-400" />
+              Access requests
+            </h2>
+            <button
+              type="button"
+              onClick={fetchAccessRequests}
+              disabled={accessRequestsLoading}
+              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {accessRequestsLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          <p className="text-slate-500 text-sm mb-4">
+            Users who sign up via Neon Auth appear here until you approve them.
+          </p>
+          {accessRequestsError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              {accessRequestsError}
+            </div>
+          )}
+          {accessRequests.length === 0 ? (
+            <p className="text-slate-400 text-sm">No pending access requests.</p>
+          ) : (
+            <ul className="divide-y divide-slate-700/60 rounded-lg border border-slate-700/80">
+              {accessRequests.map((r) => (
+                <li key={r.id} className="px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-white">{r.full_name || r.email}</p>
+                    <p className="text-slate-400 truncate">{r.email}</p>
+                    <p className="text-slate-500 text-xs">{new Date(r.requested_at).toLocaleString()}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => approveAccessRequest(r.id, r.email, false)}
+                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs rounded-lg"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => approveAccessRequest(r.id, r.email, true)}
+                    className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded-lg"
+                  >
+                    Approve as admin
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rejectAccessRequest(r.id, r.email)}
+                    className="px-3 py-1.5 bg-red-900/80 hover:bg-red-800 text-red-100 text-xs rounded-lg"
+                  >
+                    Reject
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Key className="w-5 h-5 text-slate-400" />
+              Integration API tokens
+            </h2>
+            <button
+              type="button"
+              onClick={fetchIntegrationTokens}
+              disabled={integrationTokensLoading}
+              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {integrationTokensLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          <p className="text-slate-500 text-sm mb-4">
+            Scoped tokens for Bitfocus Companion, vMix, and other integrations. Use scopes{' '}
+            <code className="text-slate-400">read,control</code> for Companion on one event. When{' '}
+            <code className="text-slate-400">REQUIRE_API_AUTH</code> is enabled on Railway, integrations must send{' '}
+            <code className="text-slate-400">Authorization: Bearer &lt;token&gt;</code>.
+          </p>
+          {integrationTokensError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              {integrationTokensError}
+            </div>
+          )}
+          {createdTokenValue && (
+            <div className="mb-4 px-4 py-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50 text-emerald-100 text-sm">
+              <p className="font-medium mb-1">Copy this token now — it will not be shown again:</p>
+              <code className="block break-all text-xs bg-slate-900/60 p-2 rounded">{createdTokenValue}</code>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2 mb-4">
+            <input
+              type="text"
+              value={newTokenName}
+              onChange={(e) => setNewTokenName(e.target.value)}
+              placeholder="Token name (e.g. Companion - Main Stage)"
+              className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
+            />
+            <input
+              type="text"
+              value={newTokenEventId}
+              onChange={(e) => setNewTokenEventId(e.target.value)}
+              placeholder="Event ID (optional — limits token to one event)"
+              className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono"
+            />
+            <input
+              type="text"
+              value={newTokenScopes}
+              onChange={(e) => setNewTokenScopes(e.target.value)}
+              placeholder="Scopes: read,control,write,backup:export"
+              className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm sm:col-span-2"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={createIntegrationToken}
+            disabled={creatingToken || !newTokenName.trim()}
+            className="mb-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg"
+          >
+            {creatingToken ? 'Creating…' : 'Create token'}
+          </button>
+          {integrationTokens.length === 0 ? (
+            <p className="text-slate-400 text-sm">No integration tokens yet.</p>
+          ) : (
+            <ul className="divide-y divide-slate-700/60 rounded-lg border border-slate-700/80">
+              {integrationTokens.map((t) => (
+                <li key={t.id} className="px-4 py-3 flex flex-wrap items-center gap-2 text-sm">
+                  <span className="font-medium text-white">{t.name}</span>
+                  <code className="text-xs text-slate-400">{t.token_prefix}…</code>
+                  <span className="text-slate-500">{(t.scopes || []).join(', ')}</span>
+                  {t.event_id && <span className="text-slate-500 font-mono text-xs">{t.event_id}</span>}
+                  {t.revoked_at ? (
+                    <span className="text-red-400 text-xs">revoked</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => revokeIntegrationToken(t.id, t.name)}
+                      className="ml-auto text-xs text-amber-300 hover:text-amber-200"
+                    >
+                      Revoke
+                    </button>
                   )}
                 </li>
               ))}

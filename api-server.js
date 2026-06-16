@@ -25,9 +25,12 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createAdminAuthStatus } = require('./lib/admin-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes } = require('./lib/api-auth');
+const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const adminAuthStatus = createAdminAuthStatus(ADMIN_KEY);
+const apiAuthConfig = loadApiAuthConfig();
 const io = new Server(server, {
   cors: {
     origin: isProduction
@@ -393,6 +396,18 @@ app.use(cors(corsOptions));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
+// API auth: resolves Bearer/query tokens; enforces REQUIRE_API_AUTH when legacy mode is off
+app.use(createApiAuthMiddleware(pool, apiAuthConfig));
+registerAuthRoutes(app, pool, { requireAdminAuth });
+console.log(
+  `[api-auth] require=${apiAuthConfig.requireLevel} legacyPublic=${apiAuthConfig.allowLegacy} sessionTtlHours=${apiAuthConfig.sessionTtlHours}`
+);
+if (isNeonAuthConfigured()) {
+  console.log(`[api-auth] Neon Auth JWT validation enabled (${getNeonAuthBaseUrl()})`);
+} else {
+  console.warn('[api-auth] NEON_AUTH_BASE_URL not set — using legacy API login tokens only');
+}
+
 // Multer for agenda file upload (PDF / Word)
 const agendaUpload = multer({
   storage: multer.memoryStorage(),
@@ -614,36 +629,7 @@ app.post('/api/admin/disconnect-user', (req, res) => {
 });
 
 // --- Approved Email Domains (User Domain Admin Auth) ---
-
-// Public: check if email domain is allowed (no auth required)
-app.post('/api/auth/check-domain', async (req, res) => {
-  try {
-    const { email } = req.body || {};
-    const domain = typeof email === 'string' ? email.split('@')[1]?.trim().toLowerCase() : null;
-    if (!domain || !email.includes('@') || email.includes(' ')) {
-      return res.json({ allowed: false, message: 'Invalid email' });
-    }
-    const count = await pool.query('SELECT COUNT(*)::int AS n FROM public.admin_approved_domains');
-    const total = count.rows[0]?.n ?? 0;
-    if (total === 0) {
-      return res.json({ allowed: true });
-    }
-    const r = await pool.query(
-      'SELECT 1 FROM public.admin_approved_domains WHERE LOWER(domain) = $1',
-      [domain]
-    );
-    if (r.rows.length > 0) {
-      return res.json({ allowed: true });
-    }
-    return res.json({
-      allowed: false,
-      message: 'Your email domain is not on the approved list. Contact an administrator.'
-    });
-  } catch (err) {
-    console.error('[auth check-domain] error:', err);
-    res.status(500).json({ allowed: false, message: 'Unable to verify domain. Please try again.' });
-  }
-});
+// POST /api/auth/check-domain is registered in lib/api-auth.js (registerAuthRoutes)
 
 // Admin: list approved domains
 app.get('/api/admin/approved-domains', async (req, res) => {
