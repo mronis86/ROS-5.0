@@ -16,6 +16,8 @@ import {
   adminFetch,
   adminFetchWithCredentials,
   clearStoredAdminCredentials,
+  describeAdminAuthFailure,
+  fetchAdminAuthStatus,
   isAdminSessionUnlocked,
   setStoredAdminCredentials,
   ADMIN_UNLOCK_KEY,
@@ -620,7 +622,9 @@ export default function AdminPage() {
     try {
       const res = await adminFetchWithCredentials(key, '/api/admin/puzzle-config');
       if (res.status === 401) {
-        setError('Invalid admin key');
+        const body = (await res.json().catch(() => ({}))) as { reason?: string };
+        const status = await fetchAdminAuthStatus(key);
+        setError(describeAdminAuthFailure(status, body.reason));
         return;
       }
       if (res.status === 503) {

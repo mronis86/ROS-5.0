@@ -28,6 +28,41 @@ function buildAdminUrl(base: string, path: string, key: string): string {
   return url.toString();
 }
 
+export async function fetchAdminAuthStatus(key: string): Promise<{
+  adminKeyConfigured?: boolean;
+  expectedKeyLength?: number;
+  receivedKeyLength?: number;
+  keyMatches?: boolean;
+  pinRequired?: boolean;
+  pinProvided?: boolean;
+  pinMatches?: boolean;
+}> {
+  const base = getApiBaseUrl();
+  const url = new URL(`${base}/api/admin/auth-status`);
+  url.searchParams.set('key', key);
+  const res = await fetch(url.toString());
+  return res.json().catch(() => ({}));
+}
+
+export function describeAdminAuthFailure(
+  status: Awaited<ReturnType<typeof fetchAdminAuthStatus>>,
+  reason?: string
+): string {
+  if (status.pinRequired && !status.pinMatches) {
+    return 'Railway still has ADMIN_PIN set. Remove ADMIN_PIN from Railway variables — the Admin page does not send a PIN.';
+  }
+  if (reason === 'pin_required') {
+    return 'Railway requires ADMIN_PIN but none was sent. Delete ADMIN_PIN from Railway variables.';
+  }
+  if (!status.adminKeyConfigured) {
+    return 'ADMIN_KEY is not set on Railway. Add it in Railway → Variables and redeploy.';
+  }
+  if (!status.keyMatches) {
+    return `Admin key mismatch: you sent ${status.receivedKeyLength ?? '?'} characters but Railway ADMIN_KEY is ${status.expectedKeyLength ?? '?'} characters. Copy the value from Railway Variables and paste it here.`;
+  }
+  return 'Invalid admin key';
+}
+
 export async function adminFetchWithCredentials(
   key: string,
   path: string,

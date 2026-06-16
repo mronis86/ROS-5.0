@@ -24,9 +24,10 @@ const app = express();
 const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
-const { loadAdminAuthConfig, createRequireAdminAuth } = require('./lib/admin-auth');
+const { loadAdminAuthConfig, createRequireAdminAuth, createAdminAuthStatus } = require('./lib/admin-auth');
 const { adminKey: ADMIN_KEY, adminPin: ADMIN_PIN } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY, ADMIN_PIN);
+const adminAuthStatus = createAdminAuthStatus(ADMIN_KEY, ADMIN_PIN);
 const io = new Server(server, {
   cors: {
     origin: isProduction
@@ -447,6 +448,8 @@ app.get('/health', async (req, res) => {
 
 // Admin presence: active events and viewers (protected by admin key)
 // Registered early with other /api routes. Handler uses presenceByEvent (defined in Socket section).
+app.get('/api/admin/auth-status', adminAuthStatus);
+
 app.get('/api/admin/presence', async (req, res) => {
   if (!requireAdminAuth(req, res)) return;
   try {
