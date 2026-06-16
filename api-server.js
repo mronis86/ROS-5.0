@@ -25,9 +25,9 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createAdminAuthStatus } = require('./lib/admin-auth');
-const { adminKey: ADMIN_KEY, adminPin: ADMIN_PIN } = loadAdminAuthConfig(isProduction);
-const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY, ADMIN_PIN);
-const adminAuthStatus = createAdminAuthStatus(ADMIN_KEY, ADMIN_PIN);
+const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
+const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
+const adminAuthStatus = createAdminAuthStatus(ADMIN_KEY);
 const io = new Server(server, {
   cors: {
     origin: isProduction

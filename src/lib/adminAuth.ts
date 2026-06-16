@@ -33,9 +33,6 @@ export async function fetchAdminAuthStatus(key: string): Promise<{
   expectedKeyLength?: number;
   receivedKeyLength?: number;
   keyMatches?: boolean;
-  pinRequired?: boolean;
-  pinProvided?: boolean;
-  pinMatches?: boolean;
 }> {
   const base = getApiBaseUrl();
   const url = new URL(`${base}/api/admin/auth-status`);
@@ -46,14 +43,8 @@ export async function fetchAdminAuthStatus(key: string): Promise<{
 
 export function describeAdminAuthFailure(
   status: Awaited<ReturnType<typeof fetchAdminAuthStatus>>,
-  reason?: string
+  _reason?: string
 ): string {
-  if (status.pinRequired && !status.pinMatches) {
-    return 'Railway still has ADMIN_PIN set. Remove ADMIN_PIN from Railway variables — the Admin page does not send a PIN.';
-  }
-  if (reason === 'pin_required') {
-    return 'Railway requires ADMIN_PIN but none was sent. Delete ADMIN_PIN from Railway variables.';
-  }
   if (!status.adminKeyConfigured) {
     return 'ADMIN_KEY is not set on Railway. Add it in Railway → Variables and redeploy.';
   }
