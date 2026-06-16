@@ -16,59 +16,77 @@ export function getNeonAuthClient(): NeonAuthClient | null {
   return cachedClient;
 }
 
+/** JWTs have three base64url segments; session cookies/tokens are opaque strings. */
+export function isJwtFormat(token: string): boolean {
+  const parts = token.split('.');
+  return parts.length === 3 && parts.every((part) => part.length > 0);
+}
+
 type SessionLike = { token?: string; access_token?: string } | null | undefined;
 
-function readSessionToken(session: SessionLike): string | null {
+function readJwtFromSession(session: SessionLike): string | null {
   if (!session) return null;
-  if (typeof session.token === 'string' && session.token) return session.token;
-  if (typeof session.access_token === 'string' && session.access_token) return session.access_token;
+  const candidates = [session.token, session.access_token];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value && isJwtFormat(value)) return value;
+  }
   return null;
 }
 
 export function extractTokenFromAuthResult(result: unknown): string | null {
   const data = (result as { data?: { session?: SessionLike } })?.data;
-  return readSessionToken(data?.session);
+  return readJwtFromSession(data?.session);
 }
 
-async function readTokenFromSession(client: NeonAuthClient, forceFetch = false): Promise<string | null> {
-  const sessionResult = forceFetch
-    ? await client.getSession({ fetchOptions: { headers: { 'X-Force-Fetch': 'true' } } })
-    : await client.getSession();
-  return readSessionToken(sessionResult.data?.session);
-}
-
-async function readTokenFromTokenEndpoint(client: NeonAuthClient): Promise<string | null> {
+async function readJwtFromTokenEndpoint(client: NeonAuthClient): Promise<string | null> {
   if (typeof client.token !== 'function') return null;
   const tokenResult = await client.token();
   const value = tokenResult?.data?.token ?? tokenResult?.data?.access_token ?? tokenResult?.data?.jwt;
-  return typeof value === 'string' && value ? value : null;
+  if (typeof value === 'string' && value && isJwtFormat(value)) return value;
+  return null;
+}
+
+async function readJwtFromSessionFetch(client: NeonAuthClient, forceFetch: boolean): Promise<string | null> {
+  let jwtFromHeader: string | null = null;
+  const sessionResult = await client.getSession(
+    forceFetch
+      ? {
+          fetchOptions: {
+            headers: { 'X-Force-Fetch': 'true' },
+            onSuccess: (ctx: { response: Response }) => {
+              const headerJwt = ctx.response.headers.get('set-auth-jwt');
+              if (headerJwt && isJwtFormat(headerJwt)) jwtFromHeader = headerJwt;
+            },
+          },
+        }
+      : undefined
+  );
+
+  if (jwtFromHeader) return jwtFromHeader;
+  return readJwtFromSession(sessionResult.data?.session);
 }
 
 /**
- * Neon Auth JWT for Railway API Bearer auth.
- * Do NOT call client.getJWTToken() — the Better Auth proxy maps it to /get-j-w-t-token (404).
+ * Cross-domain Railway API auth requires a Neon JWT from authClient.token().
+ * Session tokens (opaque) do not validate on the API — see Neon JWT plugin docs.
  */
 export async function fetchNeonAccessToken(): Promise<string | null> {
   const client = getNeonAuthClient();
   if (!client) return null;
 
   try {
-    const cached = await readTokenFromSession(client, false);
-    if (cached) return cached;
+    const fromTokenEndpoint = await readJwtFromTokenEndpoint(client);
+    if (fromTokenEndpoint) return fromTokenEndpoint;
   } catch {
-    /* not signed in */
+    /* not signed in or token endpoint unavailable */
   }
 
   try {
-    const refreshed = await readTokenFromSession(client, true);
-    if (refreshed) return refreshed;
+    const fromSession = await readJwtFromSessionFetch(client, true);
+    if (fromSession) return fromSession;
   } catch {
-    /* session unavailable */
+    /* no session */
   }
 
-  try {
-    return await readTokenFromTokenEndpoint(client);
-  } catch {
-    return null;
-  }
+  return null;
 }

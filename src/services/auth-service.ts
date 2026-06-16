@@ -4,7 +4,7 @@
 
 import { getApiBaseUrl } from './api-client';
 import { getApiAccessToken, setApiAccessToken } from '../lib/sessionAuth';
-import { extractTokenFromAuthResult, fetchNeonAccessToken, getNeonAuthClient, isNeonAuthEnabled } from '../lib/neonAuthClient';
+import { fetchNeonAccessToken, getNeonAuthClient, isNeonAuthEnabled } from '../lib/neonAuthClient';
 
 const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
 const DOMAIN_CHECK_TIMEOUT_MS = 5000;
@@ -256,26 +256,35 @@ class AuthService {
           return { error: { message: formatNeonAuthError(result.error.message || 'Sign in failed.') } };
         }
 
-        const immediateToken = extractTokenFromAuthResult(result);
-        if (immediateToken) {
-          setApiAccessToken(immediateToken);
-        } else {
-          await this.syncApiTokenFromNeon();
-        }
+        await this.syncApiTokenFromNeon();
         const token = getApiAccessToken();
         if (!token) {
           return {
             error: {
               message:
-                'Could not obtain session token from Neon Auth. Try signing in again. If you just registered, check your email for a verification link first.',
+                'Could not obtain a Neon JWT for the API. Sign in again. If this persists, confirm Railway has NEON_AUTH_BASE_URL set to the same Auth URL as VITE_NEON_AUTH_URL.',
             },
           };
         }
 
         let access = await this.fetchAccessStatus(token);
         if (access.status === 'none') {
-          const req = await this.submitAccessRequest(token, fullName || email.split('@')[0] || 'User');
-          access = { ...access, status: req.status as AccessStatus, is_admin: req.is_admin };
+          try {
+            const req = await this.submitAccessRequest(token, fullName || email.split('@')[0] || 'User');
+            access = {
+              ...access,
+              status: req.status as AccessStatus,
+              is_admin: req.is_admin,
+            };
+          } catch (err: any) {
+            return {
+              error: {
+                message:
+                  err?.message ||
+                  'Signed in to Neon Auth but the API rejected your token. On Railway, set NEON_AUTH_BASE_URL to your Neon Auth URL and use the same Neon database branch as Auth.',
+              },
+            };
+          }
         }
 
         const neonUser = result.data?.user;

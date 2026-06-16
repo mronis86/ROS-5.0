@@ -29,6 +29,8 @@ NEON_AUTH_BASE_URL=https://ep-xxx.neonauth....neon.build/neondb/auth
 
 Use the **same URL** for both (with/without `VITE_` prefix).
 
+**Important:** `NEON_DATABASE_URL` on Railway must be the **same Neon branch** where Auth is enabled. Auth on `ep-icy-rice-...` with the database on a different branch will break access requests and approval.
+
 Run migrations **026** and **027** on Neon if not already applied.
 
 ---
@@ -80,3 +82,23 @@ After deploy, logs should show:
 ```
 
 If missing, set `NEON_AUTH_BASE_URL` on Railway and redeploy.
+
+---
+
+## 7. Trusted domains (fix “Invalid origin”)
+
+Neon Auth checks the browser **Origin** header. Only `http://localhost:*` is allowed automatically.
+
+| Where you open the app | What to do |
+|------------------------|------------|
+| `http://localhost:3003` | Should work (ensure **Allow Localhost** is on in Neon → Settings → Auth) |
+| `http://192.168.x.x:3003` (Vite Network URL) | **Not** auto-trusted — use localhost, or add the full origin in **Auth → Configuration → Domains** |
+| Netlify production | Add `https://your-site.netlify.app` under **Auth → Configuration → Domains**, then redeploy Netlify |
+
+Example domain entries (no trailing slash):
+
+```
+http://localhost:3003
+http://192.168.1.232:3003
+https://your-site.netlify.app
+```
