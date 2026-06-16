@@ -281,10 +281,10 @@ Before loading a new cue, the module may call **stop** on the current timer and 
 
 ### Admin Endpoints
 
-- Admin endpoints (e.g. `/api/admin/presence`, `/api/admin/backup-config`, `/api/admin/approved-domains`, `/api/admin/disconnect-user`, `/api/admin/stop-timer`) are protected by a **query key** (and optional **PIN** for 2-layer auth).
-- **API (Railway):** Set `ADMIN_KEY` (defaults to `1615` if unset) and optionally `ADMIN_PIN`. If `ADMIN_PIN` is set, every admin request must include both `key` and `pin` (e.g. `?key=...&pin=...`). The Admin page login form has a Password field (key) and an optional PIN field; both are sent with each request.
-- **Frontend (Netlify):** You can set `VITE_ADMIN_KEY` so the unlock form expects that key instead of the built-in default. Restrict Admin access to trusted users/networks; treat the key and PIN as secrets and rotate if exposed.
-- **Optional second gate (puzzle):** Set `ADMIN_PUZZLE_COLORS` on the API (e.g. `red,green,blue`) to require a color-selection puzzle after the password. The admin must pick the correct colors from a grid of 12; only those who know the configured colors can complete login.
+- Admin endpoints (e.g. `/api/admin/presence`, `/api/admin/backup-config`, `/api/admin/approved-domains`, `/api/admin/disconnect-user`, `/api/admin/stop-timer`) are protected by an **admin key** (and optional **PIN** for 2-layer auth).
+- **API (Railway):** Set **`ADMIN_KEY`** (required in production; no default). Optionally set **`ADMIN_PIN`** — if set, every admin request must include both key and PIN. Credentials are accepted via `X-Admin-Key` / `X-Admin-Pin` headers (preferred), `Authorization: Bearer`, or legacy `?key=` / `?pin=` query params (e.g. Google Apps Script).
+- **Frontend (Netlify):** The Admin page prompts for the key at login; it is stored in `sessionStorage` only for the browser session and sent via headers (not embedded in the build). Optionally set **`VITE_CLEAR_LOG_PASSWORD`** for the Run-of-Show “Clear All Logs” action.
+- **Optional second gate (puzzle):** Set `ADMIN_PUZZLE_COLORS` on the API (e.g. `red,green,blue`) to require a color-selection puzzle after the key. The admin must pick the correct colors from a grid of 12; only those who know the configured colors can complete login.
 
 ### CORS and Socket.IO
 
@@ -355,9 +355,9 @@ Before loading a new cue, the module may call **stop** on the current timer and 
 | `NODE_ENV` | Railway | `production` for prod; affects CORS/Socket.IO origins. |
 | `PORT` | Railway | Server port (Railway often sets this). |
 | `VITE_API_BASE_URL` | Netlify, local dev | Base URL of the API (e.g. Railway URL). Optional; app has default. |
-| `ADMIN_KEY` | Railway (API) | Secret for Admin API; defaults to `1615` if unset. |
-| `ADMIN_PIN` | Railway (API) | Optional second factor; if set, admin requests must include matching `pin`. |
-| `VITE_ADMIN_KEY` | Netlify (build) | Admin password expected by the login form; optional (app has default). |
+| `ADMIN_KEY` | Railway (API) | **Required** secret for Admin API (no default in production). |
+| `ADMIN_PIN` | Railway (API) | Optional second factor; if set, admin requests must include matching PIN. |
+| `VITE_CLEAR_LOG_PASSWORD` | Netlify (build) | Optional password for Run-of-Show “Clear All Logs”; also accepts admin key from an active Admin session. |
 | `ADMIN_PUZZLE_COLORS` | Railway (API) | Comma-separated colors (e.g. `red,green,blue`) to enable the post-password puzzle; leave unset to skip. |
 
 - **Local dev:** Copy `.env.example` to `.env` or `.env.local` and fill in; do not commit. Use `VITE_API_BASE_URL=http://localhost:3001` (or your local API port) when running the API locally.

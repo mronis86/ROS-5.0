@@ -12,8 +12,14 @@ import {
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 
-const ADMIN_PASSWORD = '1615';
-const ADMIN_UNLOCK_KEY = 'ros_admin_unlocked';
+import {
+  adminFetch,
+  adminFetchWithCredentials,
+  clearStoredAdminCredentials,
+  isAdminSessionUnlocked,
+  setStoredAdminCredentials,
+  ADMIN_UNLOCK_KEY,
+} from '../lib/adminAuth';
 
 // All 12 colors for the puzzle (must match server ADMIN_PUZZLE_COLORS subset). Names are lowercase for API.
 const PUZZLE_ALL_COLORS = [
@@ -111,6 +117,8 @@ interface RunningTimerRow {
 export default function AdminPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState('');
+  const [pendingAdminKey, setPendingAdminKey] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPuzzle, setShowPuzzle] = useState(false);
   const [puzzleCount, setPuzzleCount] = useState(3);
@@ -152,7 +160,7 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    setUnlocked(sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1');
+    setUnlocked(isAdminSessionUnlocked());
   }, []);
 
   const fetchHealth = useCallback(async () => {
@@ -201,8 +209,7 @@ export default function AdminPage() {
     setPresenceLoading(true);
     setPresenceError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/presence?key=${ADMIN_PASSWORD}`);
+      const res = await adminFetch('/api/admin/presence');
       if (res.status === 401) {
         setPresenceError('Unauthorized');
         setPresence([]);
@@ -250,8 +257,7 @@ export default function AdminPage() {
     setBackupConfigLoading(true);
     setBackupConfigError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/backup-config?key=${ADMIN_PASSWORD}`);
+      const res = await adminFetch('/api/admin/backup-config');
       if (res.status === 401) {
         setBackupConfigError('Unauthorized');
         return;
@@ -287,7 +293,6 @@ export default function AdminPage() {
     setBackupConfigSaving(true);
     setBackupConfigError(null);
     try {
-      const base = getApiBaseUrl();
       const body: { enabled: boolean; folderId: string | null; serviceAccountJson?: string | null } = {
         enabled: backupConfig.enabled,
         folderId: backupFolderIdInput.trim() || null,
@@ -295,7 +300,7 @@ export default function AdminPage() {
       if (backupServiceAccountInput.trim() !== '') {
         body.serviceAccountJson = backupServiceAccountInput.trim();
       }
-      const res = await fetch(`${base}/api/admin/backup-config?key=${ADMIN_PASSWORD}`, {
+      const res = await adminFetch('/api/admin/backup-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -329,8 +334,7 @@ export default function AdminPage() {
     setBackupConfigSaving(true);
     setBackupConfigError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/backup-config?key=${ADMIN_PASSWORD}`, {
+      const res = await adminFetch('/api/admin/backup-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ serviceAccountJson: null }),
@@ -352,8 +356,7 @@ export default function AdminPage() {
   const checkBackupTable = useCallback(async () => {
     setBackupTableCheck(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/backup-config/check-table?key=${ADMIN_PASSWORD}`);
+      const res = await adminFetch('/api/admin/backup-config/check-table');
       const data = (await res.json()) as { exists?: boolean; error?: string };
       setBackupTableCheck({ exists: data.exists, error: data.error });
       if (data.exists) await fetchBackupConfig();
@@ -366,8 +369,7 @@ export default function AdminPage() {
     setBackupCreatingTable(true);
     setBackupConfigError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/backup-config/create-table?key=${ADMIN_PASSWORD}`, { method: 'POST' });
+      const res = await adminFetch('/api/admin/backup-config/create-table', { method: 'POST' });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok) {
         setBackupConfigError((data as { error?: string }).error || `HTTP ${res.status}`);
@@ -388,8 +390,7 @@ export default function AdminPage() {
     setBackupSyncingTable(true);
     setBackupConfigError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/backup-config/sync-table?key=${ADMIN_PASSWORD}`, { method: 'POST' });
+      const res = await adminFetch('/api/admin/backup-config/sync-table', { method: 'POST' });
       const data = (await res.json()) as { ok?: boolean; error?: string; message?: string };
       if (!res.ok) {
         setBackupConfigError((data as { error?: string }).error || `HTTP ${res.status}`);
@@ -410,8 +411,7 @@ export default function AdminPage() {
     setBackupRunning(true);
     setBackupConfigError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/backup-config/run-now?key=${ADMIN_PASSWORD}`, { method: 'POST' });
+      const res = await adminFetch('/api/admin/backup-config/run-now', { method: 'POST' });
       const rawText = await res.text();
       const data = (() => {
         try {
@@ -451,8 +451,7 @@ export default function AdminPage() {
     setApprovedDomainsLoading(true);
     setApprovedDomainsError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/approved-domains?key=${ADMIN_PASSWORD}`);
+      const res = await adminFetch('/api/admin/approved-domains');
       if (res.status === 401) {
         setApprovedDomainsError('Unauthorized');
         setApprovedDomains([]);
@@ -480,8 +479,7 @@ export default function AdminPage() {
     setAddDomainLoading(true);
     setApprovedDomainsError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/approved-domains?key=${ADMIN_PASSWORD}`, {
+      const res = await adminFetch('/api/admin/approved-domains', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain }),
@@ -510,9 +508,8 @@ export default function AdminPage() {
     if (!confirm(`Remove domain "${domain}" from the approved list?`)) return;
     setApprovedDomainsError(null);
     try {
-      const base = getApiBaseUrl();
       const encoded = encodeURIComponent(domain);
-      const res = await fetch(`${base}/api/admin/approved-domains/${encoded}?key=${ADMIN_PASSWORD}`, {
+      const res = await adminFetch(`/api/admin/approved-domains/${encoded}`, {
         method: 'DELETE',
       });
       if (res.status === 401) {
@@ -541,8 +538,7 @@ export default function AdminPage() {
     if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
     setDisconnectingUserId(userId);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/disconnect-user?key=${ADMIN_PASSWORD}`, {
+      const res = await adminFetch('/api/admin/disconnect-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ eventId, userId }),
@@ -564,8 +560,7 @@ export default function AdminPage() {
     setRunningTimersLoading(true);
     setRunningTimersError(null);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/running-timers?key=${ADMIN_PASSWORD}`);
+      const res = await adminFetch('/api/admin/running-timers');
       if (res.status === 401) {
         setRunningTimersError('Unauthorized');
         setRunningTimers([]);
@@ -597,8 +592,7 @@ export default function AdminPage() {
   const stopTimerForEvent = useCallback(async (eventId: string) => {
     setStoppingEventId(eventId);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/stop-timer?key=${ADMIN_PASSWORD}`, {
+      const res = await adminFetch('/api/admin/stop-timer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event_id: eventId }),
@@ -617,45 +611,68 @@ export default function AdminPage() {
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (password !== ADMIN_PASSWORD) {
-      setError('Invalid password');
+    const key = password.trim();
+    if (!key) {
+      setError('Admin key required');
       return;
     }
-    let count = 3;
+    setIsLoggingIn(true);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/puzzle-config?key=${encodeURIComponent(ADMIN_PASSWORD)}`);
+      const res = await adminFetchWithCredentials(key, '/api/admin/puzzle-config');
+      if (res.status === 401) {
+        setError('Invalid admin key');
+        return;
+      }
+      if (res.status === 503) {
+        setError('Admin API is not configured on the server');
+        return;
+      }
       const data = await res.json().catch(() => ({}));
-      if (data.count) count = Math.max(1, Math.min(12, Number(data.count)));
+      if (!data.enabled) {
+        setStoredAdminCredentials(key);
+        sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
+        setUnlocked(true);
+        setPassword('');
+        return;
+      }
+      const count = data.count ? Math.max(1, Math.min(12, Number(data.count))) : 3;
+      setPendingAdminKey(key);
+      setPuzzleCount(count);
+      setPuzzleShuffled(shuffleArray(PUZZLE_ALL_COLORS));
+      setPuzzleSelected([]);
+      setPuzzleError(null);
+      setShowPuzzle(true);
+      setPassword('');
     } catch {
-      // Use default count
+      setError('Request failed. Check API connection.');
+    } finally {
+      setIsLoggingIn(false);
     }
-    setPuzzleCount(count);
-    setPuzzleShuffled(shuffleArray(PUZZLE_ALL_COLORS));
-    setPuzzleSelected([]);
-    setPuzzleError(null);
-    setShowPuzzle(true);
-    setPassword('');
   };
 
   const handlePuzzleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPuzzleError(null);
-    if (puzzleSelected.length !== puzzleCount) return;
+    if (puzzleSelected.length !== puzzleCount || !pendingAdminKey) return;
     setPuzzleVerifying(true);
     try {
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/admin/puzzle-verify?key=${encodeURIComponent(ADMIN_PASSWORD)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ colors: puzzleSelected }),
-      });
+      const res = await adminFetchWithCredentials(
+        pendingAdminKey,
+        '/api/admin/puzzle-verify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ colors: puzzleSelected }),
+        }
+      );
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
+        setStoredAdminCredentials(pendingAdminKey);
         sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
         setUnlocked(true);
         setShowPuzzle(false);
         setPuzzleSelected([]);
+        setPendingAdminKey('');
         return;
       }
       setPuzzleError(data.error || 'Wrong selection. Try again.');
@@ -675,9 +692,10 @@ export default function AdminPage() {
   };
 
   const handleLock = () => {
-    sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
+    clearStoredAdminCredentials();
     setUnlocked(false);
     setPassword('');
+    setPendingAdminKey('');
     setShowPuzzle(false);
     setPuzzleSelected([]);
     setError(null);
@@ -694,14 +712,15 @@ export default function AdminPage() {
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
             <div>
               <label className="block text-slate-300 text-sm font-medium mb-2">
-                Password
+                Admin key
               </label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                placeholder="Enter password"
+                placeholder="Enter admin key"
+                autoComplete="off"
                 autoFocus
               />
             </div>
@@ -712,9 +731,10 @@ export default function AdminPage() {
             )}
             <button
               type="submit"
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
+              disabled={isLoggingIn}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
             >
-              Continue
+              {isLoggingIn ? 'Checking…' : 'Continue'}
             </button>
           </form>
         </div>
@@ -756,6 +776,13 @@ export default function AdminPage() {
               className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
             >
               {puzzleVerifying ? 'Checking…' : `Submit (${puzzleSelected.length}/${puzzleCount})`}
+            </button>
+            <button
+              type="button"
+              onClick={handleLock}
+              className="w-full px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              Back to login
             </button>
           </form>
         </div>

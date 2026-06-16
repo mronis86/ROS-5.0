@@ -13,7 +13,7 @@
 
 const CONFIG = {
   API_BASE_URL: 'https://ros-50-production.up.railway.app',  // Your Railway API URL (no trailing slash)
-  API_KEY: '1615',
+  API_KEY: 'YOUR_ADMIN_KEY',
   DRIVE_FOLDER_ID: ''   // Optional: folder ID from drive.google.com/drive/folders/FOLDER_ID — leave '' for My Drive root
 };
 

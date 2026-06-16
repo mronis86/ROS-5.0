@@ -24,6 +24,9 @@ const app = express();
 const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
+const { loadAdminAuthConfig, createRequireAdminAuth } = require('./lib/admin-auth');
+const { adminKey: ADMIN_KEY, adminPin: ADMIN_PIN } = loadAdminAuthConfig(isProduction);
+const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY, ADMIN_PIN);
 const io = new Server(server, {
   cors: {
     origin: isProduction
@@ -379,9 +382,12 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
 // Middleware
 app.use(helmet());
 // In development allow any origin (so other computers on LAN can POST e.g. to /api/auth/check-domain)
-const corsOptions = process.env.NODE_ENV === 'production'
-  ? {}
-  : { origin: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] };
+const ADMIN_CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Admin-Key', 'X-Admin-Pin'];
+const corsOptions = {
+  origin: isProduction ? true : true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ADMIN_CORS_HEADERS,
+};
 app.use(cors(corsOptions));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
@@ -439,13 +445,10 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Admin presence: active events and viewers (protected by ?key=1615)
+// Admin presence: active events and viewers (protected by admin key)
 // Registered early with other /api routes. Handler uses presenceByEvent (defined in Socket section).
 app.get('/api/admin/presence', async (req, res) => {
-  if (req.query.key !== '1615') {
-    console.log('[admin presence] 401 Unauthorized (missing or wrong key)');
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     const eventIds = Array.from(presenceByEvent.keys());
     console.log('[admin presence] eventIds:', eventIds.length, eventIds.slice(0, 5));
@@ -487,9 +490,7 @@ const ADMIN_PUZZLE_COLORS = ADMIN_PUZZLE_COLORS_RAW
   : [];
 
 app.get('/api/admin/puzzle-config', (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   if (ADMIN_PUZZLE_COLORS.length === 0) {
     return res.json({ enabled: false });
   }
@@ -497,9 +498,7 @@ app.get('/api/admin/puzzle-config', (req, res) => {
 });
 
 app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   // Require ADMIN_PUZZLE_COLORS to be set; otherwise reject so wrong colors never get in
   if (ADMIN_PUZZLE_COLORS.length === 0) {
     return res.status(401).json({
@@ -517,11 +516,9 @@ app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
-// Admin running timers: list events with running timers (protected by ?key=1615)
+// Admin running timers: list events with running timers (protected by admin key)
 app.get('/api/admin/running-timers', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       `SELECT at.event_id, at.item_id, at.cue_is, at.duration_seconds, at.started_at, at.timer_state,
@@ -547,11 +544,9 @@ app.get('/api/admin/running-timers', async (req, res) => {
   }
 });
 
-// Admin stop timer: stop all timers for an event (protected by ?key=1615)
+// Admin stop timer: stop all timers for an event (protected by admin key)
 app.post('/api/admin/stop-timer', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   const { event_id } = req.body || {};
   if (!event_id) {
     return res.status(400).json({ error: 'event_id required' });
@@ -578,12 +573,10 @@ app.post('/api/admin/stop-timer', async (req, res) => {
   }
 });
 
-// Admin force-disconnect a user (protected by ?key=1615)
+// Admin force-disconnect a user (protected by admin key)
 // Requires presenceByEvent and socketToEvent from Socket section (defined later in file)
 app.post('/api/admin/disconnect-user', (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   const { eventId, userId } = req.body || {};
   if (!eventId || !userId) {
     return res.status(400).json({ error: 'eventId and userId required' });
@@ -651,9 +644,7 @@ app.post('/api/auth/check-domain', async (req, res) => {
 
 // Admin: list approved domains
 app.get('/api/admin/approved-domains', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       'SELECT domain FROM public.admin_approved_domains ORDER BY LOWER(domain)'
@@ -673,9 +664,7 @@ app.get('/api/admin/approved-domains', async (req, res) => {
 
 // Admin: add a domain
 app.post('/api/admin/approved-domains', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   const { domain: raw } = req.body || {};
   const domain = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   if (!domain || domain.includes(' ') || !domain.includes('.')) {
@@ -702,9 +691,7 @@ app.post('/api/admin/approved-domains', async (req, res) => {
 
 // Admin: remove a domain (domain in URL path)
 app.delete('/api/admin/approved-domains/:domain', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   const domain = typeof req.params.domain === 'string' ? req.params.domain.trim().toLowerCase() : '';
   if (!domain) {
     return res.status(400).json({ error: 'Domain required' });
@@ -727,9 +714,7 @@ app.delete('/api/admin/approved-domains/:domain', async (req, res) => {
 
 // Admin backup config: check if table exists (for debugging "migration required" when Neon says it's there)
 app.get('/api/admin/backup-config/check-table', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'admin_backup_config') AS "exists"`
@@ -742,9 +727,7 @@ app.get('/api/admin/backup-config/check-table', async (req, res) => {
 
 // Admin backup config: create table in API's DB (same as migration 022) - use when "API sees table: No"
 app.post('/api/admin/backup-config/create-table', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     await runBackupConfigSyncTable(pool);
     console.log('[admin backup-config] create-table: table created');
@@ -806,9 +789,7 @@ async function runBackupConfigSyncTable(db) {
 
 // Admin backup config: sync table (create if not exists, add missing columns). Use when Neon branch schema is wrong.
 app.post('/api/admin/backup-config/sync-table', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     await runBackupConfigSyncTable(pool);
     console.log('[admin backup-config] sync-table: schema synced');
@@ -819,12 +800,10 @@ app.post('/api/admin/backup-config/sync-table', async (req, res) => {
   }
 });
 
-// Admin backup config: GET (protected by ?key=1615)
+// Admin backup config: GET (protected by admin key)
 // If table does not exist (migration not run), returns default config + needsMigration so Admin page still loads
 app.get('/api/admin/backup-config', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       'SELECT gdrive_enabled, gdrive_folder_id, gdrive_last_run_at, gdrive_last_status, updated_at FROM public.admin_backup_config WHERE id = 1'
@@ -877,12 +856,10 @@ app.get('/api/admin/backup-config', async (req, res) => {
   }
 });
 
-// Admin backup config: PUT (protected by ?key=1615). Partial update: only provided fields are updated.
+// Admin backup config: PUT (protected by admin key). Partial update: only provided fields are updated.
 // serviceAccountJson: set from Admin (never returned by GET). Send null or '' to clear.
 app.put('/api/admin/backup-config', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   const { enabled, folderId, serviceAccountJson } = req.body || {};
   try {
     const existing = await pool.query(
@@ -1175,11 +1152,9 @@ async function runWeeklyBackupToDrive() {
 }
 
 // Export upcoming events as JSON (for Google Apps Script or other schedulers to fetch and save to Drive)
-// GET /api/backup/upcoming-export?key=1615 → { events: [ { eventId, eventName, eventDate, csv }, ... ] }
+// GET /api/backup/upcoming-export → { events: [ { eventId, eventName, eventDate, csv }, ... ] }
 app.get('/api/backup/upcoming-export', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     const result = await pool.query(
       `SELECT event_id, event_name, event_date, schedule_items, custom_columns
@@ -1223,9 +1198,7 @@ app.get('/api/backup/upcoming-export', async (req, res) => {
 });
 
 app.post('/api/admin/backup-config/run-now', async (req, res) => {
-  if (req.query.key !== '1615') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminAuth(req, res)) return;
   try {
     const result = await runWeeklyBackupToDrive();
     if (!result.ok) {
@@ -1387,6 +1360,111 @@ function normalizeCalendarEvent(row) {
   return row;
 }
 
+function isQuickModeScheduleData(scheduleData, name) {
+  const sd = scheduleData && typeof scheduleData === 'object' ? scheduleData : {};
+  if (sd.quickMode === true) return true;
+  if (sd.source === 'quick-mode') return true;
+  if (/^Quick Mode/i.test(String(name || ''))) return true;
+  return false;
+}
+
+function parseHHMMToMinutes(hhmm) {
+  if (!hhmm || typeof hhmm !== 'string') return 9 * 60;
+  const parts = hhmm.split(':');
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return 9 * 60;
+  return h * 60 + m;
+}
+
+function computeDayDurationMinutes(scheduleItems, day) {
+  let minutes = 0;
+  for (const item of scheduleItems || []) {
+    if ((item.day || 1) !== day) continue;
+    minutes += (item.durationHours || 0) * 60 + (item.durationMinutes || 0);
+    minutes += Math.floor((item.durationSeconds || 0) / 60);
+  }
+  return minutes;
+}
+
+function summarizeContentReviews(reviews, scheduleItems) {
+  const items = scheduleItems || [];
+  let approvedCues = 0;
+  let pendingCues = 0;
+  let needsUpdateCues = 0;
+  const reviewMap = reviews && typeof reviews === 'object' ? reviews : {};
+
+  for (const item of items) {
+    const key = String(item.id);
+    const entry = reviewMap[key] || reviewMap[item.id] || null;
+    const creative = entry?.creative?.status || 'pending';
+    const ros = entry?.ros?.status || 'pending';
+    if (creative === 'approved' && ros === 'approved') {
+      approvedCues += 1;
+    } else if (creative === 'needs_update' || ros === 'needs_update') {
+      needsUpdateCues += 1;
+    } else {
+      pendingCues += 1;
+    }
+  }
+
+  const totalCues = items.length;
+  const openCues = totalCues - approvedCues;
+  return {
+    totalCues,
+    approvedCues,
+    pendingCues,
+    needsUpdateCues,
+    openCues,
+    hasReviewData: Object.keys(reviewMap).length > 0,
+  };
+}
+
+function addDaysToDateString(dateStr, daysToAdd) {
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  dt.setDate(dt.getDate() + daysToAdd);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+function buildDashboardDayBlocks(eventDate, numberOfDays, settings, scheduleItems) {
+  const sd = settings && typeof settings === 'object' ? settings : {};
+  const masterStartTime = sd.masterStartTime || sd.dayStartTimes?.['1'] || '09:00';
+  const dayStartTimes = sd.dayStartTimes && typeof sd.dayStartTimes === 'object' ? sd.dayStartTimes : {};
+  const days = Math.max(1, parseInt(numberOfDays, 10) || 1);
+  const blocks = [];
+
+  for (let day = 1; day <= days; day++) {
+    const durationMinutes = computeDayDurationMinutes(scheduleItems, day);
+    const hasTimes = (scheduleItems || []).length > 0 && durationMinutes > 0;
+
+    if (!hasTimes) {
+      blocks.push({
+        dayNumber: day,
+        calendarDate: addDaysToDateString(eventDate, day - 1),
+        dateOnly: true,
+        startMinutes: 0,
+        endMinutes: 0,
+      });
+      continue;
+    }
+
+    const startMinutes = parseHHMMToMinutes(dayStartTimes[day] || dayStartTimes[String(day)] || masterStartTime);
+    blocks.push({
+      dayNumber: day,
+      calendarDate: addDaysToDateString(eventDate, day - 1),
+      dateOnly: false,
+      startMinutes,
+      endMinutes: startMinutes + durationMinutes,
+    });
+  }
+
+  return { blocks, masterStartTime, dayStartTimes, hasScheduleTimes: (scheduleItems || []).length > 0 };
+}
+
 app.get('/api/calendar-events', async (req, res) => {
   try {
     const result = await pool.query(
@@ -1397,6 +1475,89 @@ app.get('/api/calendar-events', async (req, res) => {
   } catch (error) {
     console.error('Error fetching calendar events:', error);
     res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
+
+app.get('/api/dashboard/summary', async (req, res) => {
+  try {
+    const [calendarResult, rosResult, reviewResult] = await Promise.all([
+      pool.query('SELECT * FROM calendar_events ORDER BY date ASC'),
+      pool.query('SELECT event_id, settings, schedule_items, updated_at FROM run_of_show_data'),
+      pool.query('SELECT event_id, reviews FROM content_review_data').catch((err) => {
+        if (err.code === '42P01') return { rows: [] };
+        throw err;
+      }),
+    ]);
+
+    const rosByEventId = new Map();
+    for (const row of rosResult.rows || []) {
+      rosByEventId.set(String(row.event_id), row);
+    }
+
+    const reviewByEventId = new Map();
+    for (const row of reviewResult.rows || []) {
+      reviewByEventId.set(String(row.event_id), row.reviews || {});
+    }
+
+    function resolveLinkedId(map, calendarRow) {
+      const sd = calendarRow.schedule_data || {};
+      const candidates = [String(calendarRow.id), sd.eventId].filter(Boolean);
+      for (const id of candidates) {
+        if (map.has(id)) return id;
+      }
+      return null;
+    }
+
+    function resolveLinkedRow(map, calendarRow) {
+      const id = resolveLinkedId(map, calendarRow);
+      return id ? { id, row: map.get(id) } : { id: null, row: null };
+    }
+
+    const events = (calendarResult.rows || []).map((row) => {
+      const normalized = normalizeCalendarEvent(row);
+      const sd = normalized.schedule_data || {};
+      const eventDate =
+        typeof normalized.date === 'string'
+          ? normalized.date.slice(0, 10)
+          : normalized.date instanceof Date
+            ? normalized.date.toISOString().slice(0, 10)
+            : String(normalized.date || '').slice(0, 10);
+
+      const rosLink = resolveLinkedRow(rosByEventId, normalized);
+      const rosRow = rosLink.row;
+      const scheduleItems = rosRow?.schedule_items || [];
+      const settings = rosRow?.settings || {};
+      const numberOfDays = sd.numberOfDays || 1;
+      const dayInfo = buildDashboardDayBlocks(eventDate, numberOfDays, settings, scheduleItems);
+      const rosEventId = rosLink.id;
+      const reviewEventId = resolveLinkedId(reviewByEventId, normalized);
+      const reviews = reviewEventId ? reviewByEventId.get(reviewEventId) : {};
+
+      return {
+        id: String(normalized.id),
+        name: normalized.name || 'Untitled event',
+        date: eventDate,
+        location: sd.location || 'Great Hall',
+        numberOfDays,
+        timezone: sd.timezone || 'America/New_York',
+        eventType: sd.eventType || 'Staged Production',
+        recordStreaming: sd.recordStreaming || 'None',
+        isQuickMode: isQuickModeScheduleData(sd, normalized.name),
+        rosEventId,
+        masterStartTime: dayInfo.masterStartTime,
+        dayStartTimes: dayInfo.dayStartTimes,
+        scheduleItemCount: scheduleItems.length,
+        dayBlocks: dayInfo.blocks,
+        hasScheduleTimes: dayInfo.hasScheduleTimes,
+        contentReview: summarizeContentReviews(reviews, scheduleItems),
+        rosUpdatedAt: rosRow?.updated_at || null,
+      };
+    });
+
+    res.json({ events, generatedAt: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error fetching dashboard summary:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard summary' });
   }
 });
 

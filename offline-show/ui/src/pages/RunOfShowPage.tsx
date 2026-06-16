@@ -28,6 +28,7 @@ import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
 } from '../lib/scheduleStartTime';
+import { verifyClearLogPassword } from '../lib/adminAuth';
 
 // Speaker interface/type definition
 interface Speaker {
@@ -2872,7 +2873,7 @@ const RunOfShowPage: React.FC = () => {
   // Password-protected clear function
   const clearAllChangeLogs = async () => {
     const password = prompt('Enter password to clear all change logs:');
-    if (password !== '1615') {
+    if (!password || !verifyClearLogPassword(password)) {
       alert('Incorrect password. Change logs not cleared.');
       return;
     }

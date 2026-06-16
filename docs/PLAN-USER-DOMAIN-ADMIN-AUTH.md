@@ -12,7 +12,7 @@
 | Component | Purpose |
 |-----------|---------|
 | **admin_approved_domains** table | Stores allowed domains (e.g. `company.com`, `partner.org`) |
-| **Admin API** | CRUD for domains (protected by `?key=1615`) |
+| **Admin API** | CRUD for domains (protected by admin key) |
 | **Public API** | `POST /api/auth/check-domain` — checks email domain without requiring login |
 | **Admin UI** | Section in Admin page to add/remove domains |
 | **Auth flow** | Before sign-in, validate email domain; reject if not in list |
@@ -79,7 +79,7 @@ COMMENT ON TABLE public.admin_approved_domains IS 'Domains allowed to sign in; e
 
 ---
 
-### 2.2 Admin: `GET /api/admin/approved-domains?key=1615`
+### 2.2 Admin: `GET /api/admin/approved-domains`
 
 **Purpose:** List approved domains (Admin only).
 
@@ -92,7 +92,7 @@ COMMENT ON TABLE public.admin_approved_domains IS 'Domains allowed to sign in; e
 
 ---
 
-### 2.3 Admin: `POST /api/admin/approved-domains?key=1615`
+### 2.3 Admin: `POST /api/admin/approved-domains`
 
 **Purpose:** Add a domain.
 
@@ -110,7 +110,7 @@ COMMENT ON TABLE public.admin_approved_domains IS 'Domains allowed to sign in; e
 
 ---
 
-### 2.4 Admin: `DELETE /api/admin/approved-domains/:domain?key=1615`
+### 2.4 Admin: `DELETE /api/admin/approved-domains/:domain`
 
 **Purpose:** Remove a domain. URL-encode the domain (e.g. `company.com`).
 
