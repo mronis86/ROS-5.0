@@ -4,7 +4,7 @@
 
 import { getApiBaseUrl } from './api-client';
 import { getApiAccessToken, setApiAccessToken } from '../lib/sessionAuth';
-import { fetchNeonAccessToken, getNeonAuthClient, isNeonAuthEnabled } from '../lib/neonAuthClient';
+import { fetchNeonAccessToken, getNeonAuthClient, isJwtFormat, isNeonAuthEnabled } from '../lib/neonAuthClient';
 
 const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
 const DOMAIN_CHECK_TIMEOUT_MS = 5000;
@@ -97,19 +97,26 @@ class AuthService {
       return { ok: false, token: null, status: 'none', error: 'Neon Auth is not configured.' };
     }
 
-    let bearer: string | null = null;
-    let sessionToken: string | null = null;
+    let jwt: string | null = null;
+    let opaqueSessionToken: string | null = null;
     try {
-      bearer = await fetchNeonAccessToken();
+      jwt = await fetchNeonAccessToken();
       const sessionResult = await client.getSession();
-      sessionToken = sessionResult.data?.session?.token ?? null;
-      if (!bearer && sessionToken) bearer = sessionToken;
+      const rawSessionToken = sessionResult.data?.session?.token ?? null;
+      if (rawSessionToken) {
+        if (isJwtFormat(rawSessionToken)) {
+          jwt = jwt || rawSessionToken;
+        } else {
+          opaqueSessionToken = rawSessionToken;
+        }
+      }
     } catch {
       setApiAccessToken(null);
       return { ok: false, token: null, status: 'none', error: 'No active Neon Auth session.' };
     }
 
-    if (!bearer && !sessionToken) {
+    const bearer = opaqueSessionToken || jwt;
+    if (!bearer) {
       setApiAccessToken(null);
       return { ok: false, token: null, status: 'none', error: 'No Neon Auth session token available.' };
     }
@@ -119,10 +126,11 @@ class AuthService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        Authorization: `Bearer ${bearer}`,
       },
       body: JSON.stringify({
-        session_token: sessionToken || undefined,
+        session_token: opaqueSessionToken || undefined,
+        jwt: jwt || undefined,
         full_name: fullNameHint || '',
       }),
     });
