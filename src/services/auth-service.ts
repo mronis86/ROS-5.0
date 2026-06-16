@@ -339,22 +339,13 @@ class AuthService {
         return this.signIn(email, password, fullName);
       }
 
-      const domainCheck = await this.checkDomain(email);
-      if (!domainCheck.allowed) {
-        return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
-      }
-
-      const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, full_name: fullName }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { error: { message: data.error || 'Registration failed.' } };
-      }
-      return this.signIn(email, password, fullName);
+      return {
+        error: {
+          message: import.meta.env.PROD
+            ? 'Neon Auth is not configured on this site. Add VITE_NEON_AUTH_URL in Netlify environment variables and redeploy.'
+            : 'Neon Auth is not configured. Add VITE_NEON_AUTH_URL to your .env file and restart the dev server.',
+        },
+      };
     } catch (error: any) {
       return { error: { message: error?.message || 'Registration failed.' } };
     }

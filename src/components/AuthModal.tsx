@@ -183,8 +183,10 @@ const AuthModal: React.FC<AuthModalProps> = ({
           </button>
 
           {!isNeonAuthEnabled && isRequestAccess && (
-            <p className="text-xs text-center text-slate-500">
-              First registered user becomes administrator when Neon Auth is not configured.
+            <p className="text-xs text-center text-amber-400/90">
+              Neon Auth is not configured for this build. Set{' '}
+              <span className="font-mono">VITE_NEON_AUTH_URL</span> in Netlify (or local{' '}
+              <span className="font-mono">.env</span>) and redeploy.
             </p>
           )}
         </form>
