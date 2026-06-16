@@ -4,7 +4,7 @@
 
 import { getApiBaseUrl } from './api-client';
 import { getApiAccessToken, setApiAccessToken } from '../lib/sessionAuth';
-import { fetchNeonAccessToken, getNeonAuthClient, isJwtFormat, isNeonAuthEnabled } from '../lib/neonAuthClient';
+import { fetchNeonAccessToken, getNeonAuthClient, isNeonAuthJwt, isNeonAuthEnabled } from '../lib/neonAuthClient';
 
 const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
 const DOMAIN_CHECK_TIMEOUT_MS = 5000;
@@ -104,7 +104,7 @@ class AuthService {
       const sessionResult = await client.getSession();
       const rawSessionToken = sessionResult.data?.session?.token ?? null;
       if (rawSessionToken) {
-        if (isJwtFormat(rawSessionToken)) {
+        if (isNeonAuthJwt(rawSessionToken)) {
           jwt = jwt || rawSessionToken;
         } else {
           opaqueSessionToken = rawSessionToken;
@@ -141,9 +141,13 @@ class AuthService {
         ok: false,
         token: null,
         status: 'none',
-        error:
-          data.error ||
-          data.hint ||
+        error: [
+          data.error,
+          data.hint,
+          data.neonAuthHost ? `API Neon Auth host: ${data.neonAuthHost}` : null,
+        ]
+          .filter(Boolean)
+          .join(' — ') ||
           'Could not connect your Neon sign-in to the API. Confirm Railway has NEON_AUTH_BASE_URL and migration 028 applied.',
       };
     }

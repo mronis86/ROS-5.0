@@ -16,10 +16,23 @@ export function getNeonAuthClient(): NeonAuthClient | null {
   return cachedClient;
 }
 
-/** JWTs have three base64url segments; session cookies/tokens are opaque strings. */
+/** Three-part token shape (JWT or Better Auth signed session cookie). */
 export function isJwtFormat(token: string): boolean {
   const parts = token.split('.');
   return parts.length === 3 && parts.every((part) => part.length > 0);
+}
+
+/** True only for Neon Auth EdDSA JWTs from authClient.token() — not signed session cookies. */
+export function isNeonAuthJwt(token: string): boolean {
+  if (!isJwtFormat(token)) return false;
+  try {
+    const headerB64 = token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = headerB64 + '='.repeat((4 - (headerB64.length % 4)) % 4);
+    const header = JSON.parse(atob(padded)) as { alg?: string };
+    return header.alg === 'EdDSA' || header.alg === 'Ed25519';
+  } catch {
+    return false;
+  }
 }
 
 type SessionLike = { token?: string; access_token?: string } | null | undefined;
@@ -28,7 +41,7 @@ function readJwtFromSession(session: SessionLike): string | null {
   if (!session) return null;
   const candidates = [session.token, session.access_token];
   for (const value of candidates) {
-    if (typeof value === 'string' && value && isJwtFormat(value)) return value;
+    if (typeof value === 'string' && value && isNeonAuthJwt(value)) return value;
   }
   return null;
 }
@@ -42,7 +55,7 @@ async function readJwtFromTokenEndpoint(client: NeonAuthClient): Promise<string 
   if (typeof client.token !== 'function') return null;
   const tokenResult = await client.token();
   const value = tokenResult?.data?.token ?? tokenResult?.data?.access_token ?? tokenResult?.data?.jwt;
-  if (typeof value === 'string' && value && isJwtFormat(value)) return value;
+  if (typeof value === 'string' && value && isNeonAuthJwt(value)) return value;
   return null;
 }
 
@@ -55,7 +68,7 @@ async function readJwtFromSessionFetch(client: NeonAuthClient, forceFetch: boole
             headers: { 'X-Force-Fetch': 'true' },
             onSuccess: (ctx: { response: Response }) => {
               const headerJwt = ctx.response.headers.get('set-auth-jwt');
-              if (headerJwt && isJwtFormat(headerJwt)) jwtFromHeader = headerJwt;
+              if (headerJwt && isNeonAuthJwt(headerJwt)) jwtFromHeader = headerJwt;
             },
           },
         }
