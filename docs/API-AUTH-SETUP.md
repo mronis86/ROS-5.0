@@ -51,6 +51,26 @@ Migration **028** (`api_neon_sessions`) is required for the Neon → Railway ses
 
 **Domain gate:** Approved email domains (`Admin → Approved email domains`) still apply at sign-up.
 
+**Email admins on new sign-up (optional):** When someone registers and is **pending** approval, the API emails every **approved admin** in `api_user_access` (`is_admin = true`). No admin panel URL is required in the email.
+
+Only two env vars on the API server (local `.env` or Railway):
+
+```bash
+RESEND_API_KEY=re_...
+ADMIN_NOTIFY_FROM="Run of Show <onboarding@resend.dev>"
+```
+
+Use Resend’s test sender while developing; switch to your verified domain for production. Sign-up is not blocked if email fails. The first bootstrap admin is auto-approved and does not trigger this email.
+
+**Test locally (before Netlify):**
+
+1. Add `RESEND_API_KEY` and `ADMIN_NOTIFY_FROM` to `.env`
+2. Ensure at least one approved admin exists in the database
+3. Dry run: `node scripts/test-admin-notify-email.js`
+4. Full flow: uncomment `VITE_API_BASE_URL=http://localhost:3001` in `.env`, run `npm run api` and `npm run dev`, sign up as a new user
+
+When satisfied, add the same two vars to Railway and redeploy. You do not need a Netlify URL for email to work.
+
 ---
 
 ## 3. Legacy fallback (no Neon Auth URL)
