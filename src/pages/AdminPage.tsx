@@ -15,6 +15,7 @@ import AppBrandTitle from '../components/AppBrandTitle';
 import {
   adminFetch,
   adminFetchWithCredentials,
+  canUseNeonAdminSession,
   clearStoredAdminCredentials,
   describeAdminAuthFailure,
   fetchAdminAuthStatus,
@@ -22,6 +23,7 @@ import {
   setStoredAdminCredentials,
   ADMIN_UNLOCK_KEY,
 } from '../lib/adminAuth';
+import { useAuth } from '../contexts/AuthContext';
 
 // All 12 colors for the puzzle (must match server ADMIN_PUZZLE_COLORS subset). Names are lowercase for API.
 const PUZZLE_ALL_COLORS = [
@@ -117,7 +119,9 @@ interface RunningTimerRow {
 }
 
 export default function AdminPage() {
+  const { user } = useAuth();
   const [unlocked, setUnlocked] = useState(false);
+  const [neonAdminVerifying, setNeonAdminVerifying] = useState(false);
   const [password, setPassword] = useState('');
   const [pendingAdminKey, setPendingAdminKey] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -193,8 +197,29 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    setUnlocked(isAdminSessionUnlocked());
-  }, []);
+    if (isAdminSessionUnlocked()) {
+      setUnlocked(true);
+      return;
+    }
+    if (!canUseNeonAdminSession()) return;
+
+    let cancelled = false;
+    setNeonAdminVerifying(true);
+    void (async () => {
+      try {
+        const res = await adminFetch('/api/admin/puzzle-config');
+        if (!cancelled && res.ok) {
+          setUnlocked(true);
+        }
+      } finally {
+        if (!cancelled) setNeonAdminVerifying(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.is_admin]);
 
   const fetchHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -903,12 +928,28 @@ export default function AdminPage() {
   };
 
   if (!unlocked && !showPuzzle) {
+    if (neonAdminVerifying) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4" />
+            <p className="text-slate-300">Verifying admin access…</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
         <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
           <h2 className="text-xl font-bold text-white text-center mb-6">
             Admin
           </h2>
+          <p className="text-slate-400 text-sm text-center mb-4">
+            {canUseNeonAdminSession()
+              ? 'Could not verify your admin session. Enter the shared admin key to continue.'
+              : 'Sign in to the app with an approved admin account, or enter the shared admin key.'}
+          </p>
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
             <div>
               <label className="block text-slate-300 text-sm font-medium mb-2">
