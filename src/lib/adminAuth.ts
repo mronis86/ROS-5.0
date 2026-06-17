@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from '../services/api-client';
+import { authHeaders, getApiAccessToken } from './sessionAuth';
 
 const ADMIN_KEY_STORAGE = 'ros_admin_key';
 export const ADMIN_UNLOCK_KEY = 'ros_admin_unlocked';
@@ -17,15 +18,40 @@ export function clearStoredAdminCredentials(): void {
 }
 
 export function isAdminSessionUnlocked(): boolean {
+  if (canUseNeonAdminSession()) return true;
   return sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1' && !!getStoredAdminKey();
 }
 
-function buildAdminUrl(base: string, path: string, key: string): string {
+/** Signed-in Neon user with is_admin — no shared ADMIN_KEY required. */
+export function canUseNeonAdminSession(): boolean {
+  const token = getApiAccessToken();
+  if (!token?.startsWith('ros_nsess_')) return false;
+  try {
+    const stored = localStorage.getItem('ros_user_session');
+    if (!stored) return false;
+    const parsed = JSON.parse(stored) as { user?: { is_admin?: boolean } };
+    return parsed.user?.is_admin === true;
+  } catch {
+    return false;
+  }
+}
+
+function buildAdminUrl(base: string, path: string): string {
   const normalizedBase = base.replace(/\/$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const url = new URL(`${normalizedBase}${normalizedPath}`);
-  url.searchParams.set('key', key);
-  return url.toString();
+  return `${normalizedBase}${normalizedPath}`;
+}
+
+function mergeAdminHeaders(key: string | null, init?: RequestInit): Headers {
+  const headers = new Headers(init?.headers);
+  if (key) {
+    headers.set('X-Admin-Key', key);
+  }
+  const session = authHeaders();
+  if (session.Authorization) {
+    headers.set('Authorization', session.Authorization);
+  }
+  return headers;
 }
 
 export async function fetchAdminAuthStatus(key: string): Promise<{
@@ -35,9 +61,9 @@ export async function fetchAdminAuthStatus(key: string): Promise<{
   keyMatches?: boolean;
 }> {
   const base = getApiBaseUrl();
-  const url = new URL(`${base}/api/admin/auth-status`);
-  url.searchParams.set('key', key);
-  const res = await fetch(url.toString());
+  const res = await fetch(buildAdminUrl(base, '/api/admin/auth-status'), {
+    headers: { 'X-Admin-Key': key },
+  });
   return res.json().catch(() => ({}));
 }
 
@@ -60,11 +86,21 @@ export async function adminFetchWithCredentials(
   init?: RequestInit
 ): Promise<Response> {
   const base = getApiBaseUrl();
-  const url = buildAdminUrl(base, path, key);
-  return fetch(url, init);
+  return fetch(buildAdminUrl(base, path), {
+    ...init,
+    headers: mergeAdminHeaders(key, init),
+  });
 }
 
 export async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
+  if (canUseNeonAdminSession()) {
+    const base = getApiBaseUrl();
+    return fetch(buildAdminUrl(base, path), {
+      ...init,
+      headers: mergeAdminHeaders(null, init),
+    });
+  }
+
   const key = getStoredAdminKey();
   if (!key) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -79,6 +115,7 @@ export async function adminFetch(path: string, init?: RequestInit): Promise<Resp
 export function verifyClearLogPassword(password: string): boolean {
   const envPassword = import.meta.env.VITE_CLEAR_LOG_PASSWORD as string | undefined;
   if (envPassword && password === envPassword) return true;
+  if (canUseNeonAdminSession()) return true;
   const adminKey = getStoredAdminKey();
   if (adminKey && password === adminKey) return true;
   return false;

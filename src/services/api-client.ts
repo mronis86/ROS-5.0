@@ -13,10 +13,30 @@ function isLocalhostApiUrl(url: string): boolean {
   }
 }
 
+function isPrivateLanHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    /^192\.168\.\d+\.\d+$/.test(host) ||
+    /^10\.\d+\.\d+\.\d+$/.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(host)
+  );
+}
+
 /** Dev defaults to Railway unless VITE_API_BASE_URL is explicitly localhost (local api-server). */
 const getApiBaseUrl = () => {
   const envUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
   if (envUrl && (!import.meta.env.DEV || isLocalhostApiUrl(envUrl))) {
+    // LAN clients cannot reach localhost:3001 — route /api through Vite on the dev machine.
+    if (
+      import.meta.env.DEV &&
+      typeof window !== 'undefined' &&
+      isLocalhostApiUrl(envUrl)
+    ) {
+      const pageHost = window.location.hostname.toLowerCase();
+      if (isPrivateLanHostname(pageHost)) {
+        return window.location.origin.replace(/\/$/, '');
+      }
+    }
     return envUrl.replace(/\/$/, '');
   }
   return RAILWAY_API_URL;
