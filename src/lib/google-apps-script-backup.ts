@@ -26,12 +26,9 @@ const CONFIG = {
  * Run this first to confirm API_BASE_URL and API_KEY work.
  */
 function testBackupConnection() {
-  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export';
+  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export?key=' + encodeURIComponent(CONFIG.API_KEY);
   try {
-    const response = UrlFetchApp.fetch(url, {
-      muteHttpExceptions: true,
-      headers: { 'X-Admin-Key': CONFIG.API_KEY },
-    });
+    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
     const code = response.getResponseCode();
     const text = response.getContentText();
     if (code !== 200) {
@@ -54,13 +51,10 @@ function testBackupConnection() {
  * Call this manually or via a time-driven trigger (e.g. weekly).
  */
 function runBackupToDrive() {
-  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export';
+  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export?key=' + encodeURIComponent(CONFIG.API_KEY);
   let response;
   try {
-    response = UrlFetchApp.fetch(url, {
-      muteHttpExceptions: true,
-      headers: { 'X-Admin-Key': CONFIG.API_KEY },
-    });
+    response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
   } catch (e) {
     Logger.log('Fetch error: ' + e.toString());
     throw new Error('Could not reach API: ' + e.toString());

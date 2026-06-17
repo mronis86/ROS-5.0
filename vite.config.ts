@@ -8,10 +8,6 @@ export default defineConfig({
     port: 3003,
     strictPort: true, // Fail if 3003 is in use instead of switching to 3004
     open: true,
-    // HMR over LAN: websocket uses the same host the browser opened (not localhost).
-    hmr: {
-      clientPort: 3003,
-    },
     proxy: {
       '/api': { target: 'http://localhost:3001', changeOrigin: true },
     },

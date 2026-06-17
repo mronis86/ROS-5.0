@@ -24,12 +24,11 @@ const app = express();
 const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
-const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
+const { loadAdminAuthConfig, createRequireAdminAuth, createAdminAuthStatus } = require('./lib/admin-auth');
 const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes } = require('./lib/api-auth');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
-const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
 const adminAuthStatus = createAdminAuthStatus(ADMIN_KEY);
 const apiAuthConfig = loadApiAuthConfig();
 const io = new Server(server, {
@@ -467,7 +466,7 @@ app.get('/health', async (req, res) => {
 app.get('/api/admin/auth-status', adminAuthStatus);
 
 app.get('/api/admin/presence', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     const eventIds = Array.from(presenceByEvent.keys());
     console.log('[admin presence] eventIds:', eventIds.length, eventIds.slice(0, 5));
@@ -509,7 +508,7 @@ const ADMIN_PUZZLE_COLORS = ADMIN_PUZZLE_COLORS_RAW
   : [];
 
 app.get('/api/admin/puzzle-config', (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   if (ADMIN_PUZZLE_COLORS.length === 0) {
     return res.json({ enabled: false });
   }
@@ -517,7 +516,7 @@ app.get('/api/admin/puzzle-config', (req, res) => {
 });
 
 app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   // Require ADMIN_PUZZLE_COLORS to be set; otherwise reject so wrong colors never get in
   if (ADMIN_PUZZLE_COLORS.length === 0) {
     return res.status(401).json({
@@ -537,7 +536,7 @@ app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
 
 // Admin running timers: list events with running timers (protected by admin key)
 app.get('/api/admin/running-timers', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       `SELECT at.event_id, at.item_id, at.cue_is, at.duration_seconds, at.started_at, at.timer_state,
@@ -565,7 +564,7 @@ app.get('/api/admin/running-timers', async (req, res) => {
 
 // Admin stop timer: stop all timers for an event (protected by admin key)
 app.post('/api/admin/stop-timer', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   const { event_id } = req.body || {};
   if (!event_id) {
     return res.status(400).json({ error: 'event_id required' });
@@ -595,7 +594,7 @@ app.post('/api/admin/stop-timer', async (req, res) => {
 // Admin force-disconnect a user (protected by admin key)
 // Requires presenceByEvent and socketToEvent from Socket section (defined later in file)
 app.post('/api/admin/disconnect-user', (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   const { eventId, userId } = req.body || {};
   if (!eventId || !userId) {
     return res.status(400).json({ error: 'eventId and userId required' });
@@ -634,7 +633,7 @@ app.post('/api/admin/disconnect-user', (req, res) => {
 
 // Admin: list approved domains
 app.get('/api/admin/approved-domains', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       'SELECT domain FROM public.admin_approved_domains ORDER BY LOWER(domain)'
@@ -654,7 +653,7 @@ app.get('/api/admin/approved-domains', async (req, res) => {
 
 // Admin: add a domain
 app.post('/api/admin/approved-domains', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   const { domain: raw } = req.body || {};
   const domain = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   if (!domain || domain.includes(' ') || !domain.includes('.')) {
@@ -681,7 +680,7 @@ app.post('/api/admin/approved-domains', async (req, res) => {
 
 // Admin: remove a domain (domain in URL path)
 app.delete('/api/admin/approved-domains/:domain', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   const domain = typeof req.params.domain === 'string' ? req.params.domain.trim().toLowerCase() : '';
   if (!domain) {
     return res.status(400).json({ error: 'Domain required' });
@@ -704,7 +703,7 @@ app.delete('/api/admin/approved-domains/:domain', async (req, res) => {
 
 // Admin backup config: check if table exists (for debugging "migration required" when Neon says it's there)
 app.get('/api/admin/backup-config/check-table', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'admin_backup_config') AS "exists"`
@@ -717,7 +716,7 @@ app.get('/api/admin/backup-config/check-table', async (req, res) => {
 
 // Admin backup config: create table in API's DB (same as migration 022) - use when "API sees table: No"
 app.post('/api/admin/backup-config/create-table', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     await runBackupConfigSyncTable(pool);
     console.log('[admin backup-config] create-table: table created');
@@ -779,7 +778,7 @@ async function runBackupConfigSyncTable(db) {
 
 // Admin backup config: sync table (create if not exists, add missing columns). Use when Neon branch schema is wrong.
 app.post('/api/admin/backup-config/sync-table', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     await runBackupConfigSyncTable(pool);
     console.log('[admin backup-config] sync-table: schema synced');
@@ -793,7 +792,7 @@ app.post('/api/admin/backup-config/sync-table', async (req, res) => {
 // Admin backup config: GET (protected by admin key)
 // If table does not exist (migration not run), returns default config + needsMigration so Admin page still loads
 app.get('/api/admin/backup-config', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     const r = await pool.query(
       'SELECT gdrive_enabled, gdrive_folder_id, gdrive_last_run_at, gdrive_last_status, updated_at FROM public.admin_backup_config WHERE id = 1'
@@ -849,7 +848,7 @@ app.get('/api/admin/backup-config', async (req, res) => {
 // Admin backup config: PUT (protected by admin key). Partial update: only provided fields are updated.
 // serviceAccountJson: set from Admin (never returned by GET). Send null or '' to clear.
 app.put('/api/admin/backup-config', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   const { enabled, folderId, serviceAccountJson } = req.body || {};
   try {
     const existing = await pool.query(
@@ -1144,7 +1143,7 @@ async function runWeeklyBackupToDrive() {
 // Export upcoming events as JSON (for Google Apps Script or other schedulers to fetch and save to Drive)
 // GET /api/backup/upcoming-export → { events: [ { eventId, eventName, eventDate, csv }, ... ] }
 app.get('/api/backup/upcoming-export', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     const result = await pool.query(
       `SELECT event_id, event_name, event_date, schedule_items, custom_columns
@@ -1188,7 +1187,7 @@ app.get('/api/backup/upcoming-export', async (req, res) => {
 });
 
 app.post('/api/admin/backup-config/run-now', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   try {
     const result = await runWeeklyBackupToDrive();
     if (!result.ok) {

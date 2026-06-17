@@ -11,8 +11,7 @@ This approach **avoids the Drive API from the webapp**. Instead:
 
 ## 1. API endpoint (already added)
 
-- **URL:** `GET https://YOUR-RAILWAY-API-URL/api/backup/upcoming-export`
-- **Auth:** `X-Admin-Key: YOUR_ADMIN_KEY` header (legacy `?key=` query param still works on the server)
+- **URL:** `GET https://YOUR-RAILWAY-API-URL/api/backup/upcoming-export?key=YOUR_ADMIN_KEY`
 - **Auth:** Query param `key=` with your Railway `ADMIN_KEY` value (same as Admin API).
 - **Response:** `{ "events": [ { "eventId", "eventName", "eventDate", "csv" }, ... ] }`  
   Each `csv` is the full CSV string for that event (same format as the in-app backup).
@@ -49,7 +48,7 @@ Replace `YOUR-RAILWAY-API-URL` with your real API base (e.g. `https://ros-50-pro
 
 | Step | Where | What |
 |------|--------|------|
-| 1 | Railway | API is live; set `ADMIN_KEY` on Railway; `GET /api/backup/upcoming-export` with `X-Admin-Key` header returns JSON. |
+| 1 | Railway | API is live; set `ADMIN_KEY` on Railway; endpoint `GET /api/backup/upcoming-export?key=YOUR_ADMIN_KEY` returns JSON. |
 | 2 | script.google.com | New project, paste **ros-weekly-backup-to-drive.gs**, set CONFIG (API_BASE_URL, API_KEY, optional DRIVE_FOLDER_ID). |
 | 3 | Script | Run **testBackupConnection** once; check logs to confirm API returns events. |
 | 4 | Script | Run **runBackupToDrive** once; authorize Drive. Check Drive for weekly folder (e.g. 2026-W06) and CSVs. |
