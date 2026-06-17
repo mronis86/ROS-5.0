@@ -72,13 +72,6 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
                   <p className="text-slate-400">
                     Your access request is pending. An administrator must approve your account before you can use Run of Show.
                   </p>
-                  <p className="text-slate-500 text-sm mt-4">
-                    Administrator? Open{' '}
-                    <a href="/admin" className="text-blue-400 hover:text-blue-300 underline">
-                      Admin
-                    </a>{' '}
-                    (admin key required) to approve access requests.
-                  </p>
                 </div>
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                   <button

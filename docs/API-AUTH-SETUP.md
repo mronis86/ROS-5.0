@@ -51,7 +51,7 @@ Migration **028** (`api_neon_sessions`) is required for the Neon → Railway ses
 
 **Domain gate:** Approved email domains (`Admin → Approved email domains`) still apply at sign-up.
 
-**Email admins on new sign-up (optional):** When someone registers and is **pending** approval, the API emails every **approved admin** in `api_user_access` (`is_admin = true`). No admin panel URL is required in the email.
+**Email admins on new sign-up (optional):** When someone registers and is **pending** approval, the API emails every **approved admin** in `api_user_access` (`is_admin = true`). When an admin **approves** or **rejects** a request on the Admin page, the user receives an email too. No app URL is required in these emails.
 
 Only two env vars on the API server (local `.env` or Railway):
 
