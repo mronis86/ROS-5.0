@@ -13,9 +13,43 @@ import {
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 
-import { adminFetch, canUseNeonAdminSession } from '../lib/adminAuth';
+import {
+  adminFetch,
+  adminFetchWithCredentials,
+  canUseNeonAdminSession,
+  clearStoredAdminCredentials,
+  describeAdminAuthFailure,
+  fetchAdminAuthStatus,
+  isAdminSessionUnlocked,
+  setStoredAdminCredentials,
+  ADMIN_UNLOCK_KEY,
+} from '../lib/adminAuth';
 import { useAuth } from '../contexts/AuthContext';
 import { isNeonAuthEnabled } from '../lib/neonAuthClient';
+
+const PUZZLE_ALL_COLORS = [
+  { name: 'red', bg: 'bg-red-500', border: 'border-red-400' },
+  { name: 'green', bg: 'bg-green-500', border: 'border-green-400' },
+  { name: 'blue', bg: 'bg-blue-500', border: 'border-blue-400' },
+  { name: 'orange', bg: 'bg-orange-500', border: 'border-orange-400' },
+  { name: 'purple', bg: 'bg-purple-500', border: 'border-purple-400' },
+  { name: 'yellow', bg: 'bg-yellow-500', border: 'border-yellow-400' },
+  { name: 'pink', bg: 'bg-pink-500', border: 'border-pink-400' },
+  { name: 'teal', bg: 'bg-teal-500', border: 'border-teal-400' },
+  { name: 'brown', bg: 'bg-amber-700', border: 'border-amber-500' },
+  { name: 'gray', bg: 'bg-gray-500', border: 'border-gray-400' },
+  { name: 'navy', bg: 'bg-blue-900', border: 'border-blue-600' },
+  { name: 'coral', bg: 'bg-red-400', border: 'border-red-300' },
+].slice(0, 12);
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
 
 interface ServiceStatus {
   connected?: boolean;
@@ -88,9 +122,16 @@ interface RunningTimerRow {
 export default function AdminPage() {
   const { user, loading: authLoading, accessStatus } = useAuth();
   const [unlocked, setUnlocked] = useState(false);
-  const [userLocked, setUserLocked] = useState(false);
-  const [neonAdminVerifying, setNeonAdminVerifying] = useState(false);
-  const [accessError, setAccessError] = useState<string | null>(null);
+  const [password, setPassword] = useState('');
+  const [pendingAdminKey, setPendingAdminKey] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showPuzzle, setShowPuzzle] = useState(false);
+  const [puzzleCount, setPuzzleCount] = useState(3);
+  const [puzzleSelected, setPuzzleSelected] = useState<string[]>([]);
+  const [puzzleShuffled, setPuzzleShuffled] = useState<typeof PUZZLE_ALL_COLORS>([]);
+  const [puzzleVerifying, setPuzzleVerifying] = useState(false);
+  const [puzzleError, setPuzzleError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [presence, setPresence] = useState<PresenceEvent[]>([]);
@@ -156,40 +197,13 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    if (authLoading || userLocked) return;
-
-    if (!canUseNeonAdminSession()) {
-      setUnlocked(false);
-      return;
+    if (isAdminSessionUnlocked()) {
+      setUnlocked(true);
     }
+  }, []);
 
-    let cancelled = false;
-    setNeonAdminVerifying(true);
-    setAccessError(null);
-    void (async () => {
-      try {
-        const res = await adminFetch('/api/admin/puzzle-config');
-        if (cancelled) return;
-        if (res.ok) {
-          setUnlocked(true);
-        } else {
-          setUnlocked(false);
-          setAccessError('Could not verify administrator access. Try signing out and back in.');
-        }
-      } catch {
-        if (!cancelled) {
-          setUnlocked(false);
-          setAccessError('Could not reach the API to verify admin access.');
-        }
-      } finally {
-        if (!cancelled) setNeonAdminVerifying(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading, userLocked, user?.id, user?.is_admin]);
+  const neonAdminMaySignIn =
+    !isNeonAuthEnabled || canUseNeonAdminSession() || user?.is_admin === true;
 
   const fetchHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -801,50 +815,115 @@ export default function AdminPage() {
     }
   }, [fetchRunningTimers]);
 
-  const handleLock = () => {
-    setUnlocked(false);
-    setUserLocked(true);
-    setAccessError(null);
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const key = password.trim();
+    if (!key) {
+      setError('Admin key required');
+      return;
+    }
+    setIsLoggingIn(true);
+    try {
+      const res = await adminFetchWithCredentials(key, '/api/admin/puzzle-config');
+      if (res.status === 401) {
+        const body = (await res.json().catch(() => ({}))) as { reason?: string };
+        const status = await fetchAdminAuthStatus(key);
+        setError(describeAdminAuthFailure(status, body.reason));
+        return;
+      }
+      if (res.status === 503) {
+        setError('Admin API is not configured on the server');
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!data.enabled) {
+        setStoredAdminCredentials(key);
+        sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
+        setUnlocked(true);
+        setPassword('');
+        return;
+      }
+      const count = data.count ? Math.max(1, Math.min(12, Number(data.count))) : 3;
+      setPendingAdminKey(key);
+      setPuzzleCount(count);
+      setPuzzleShuffled(shuffleArray(PUZZLE_ALL_COLORS));
+      setPuzzleSelected([]);
+      setPuzzleError(null);
+      setShowPuzzle(true);
+      setPassword('');
+    } catch {
+      setError('Request failed. Check API connection.');
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
-  const handleResumeAdmin = () => {
-    setUserLocked(false);
+  const handlePuzzleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPuzzleError(null);
+    if (puzzleSelected.length !== puzzleCount || !pendingAdminKey) return;
+    setPuzzleVerifying(true);
+    try {
+      const res = await adminFetchWithCredentials(
+        pendingAdminKey,
+        '/api/admin/puzzle-verify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ colors: puzzleSelected }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        setStoredAdminCredentials(pendingAdminKey);
+        sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
+        setUnlocked(true);
+        setShowPuzzle(false);
+        setPuzzleSelected([]);
+        setPendingAdminKey('');
+        return;
+      }
+      setPuzzleError(data.error || 'Wrong selection. Try again.');
+    } catch {
+      setPuzzleError('Request failed. Try again.');
+    } finally {
+      setPuzzleVerifying(false);
+    }
+  };
+
+  const togglePuzzleColor = (colorName: string) => {
+    setPuzzleSelected((prev) => {
+      if (prev.includes(colorName)) return prev.filter((c) => c !== colorName);
+      if (prev.length >= puzzleCount) return prev;
+      return [...prev, colorName];
+    });
+  };
+
+  const handleLock = () => {
+    clearStoredAdminCredentials();
+    setUnlocked(false);
+    setPassword('');
+    setPendingAdminKey('');
+    setShowPuzzle(false);
+    setPuzzleSelected([]);
+    setError(null);
+    setPuzzleError(null);
   };
 
   if (!unlocked) {
-    if (authLoading || neonAdminVerifying) {
+    if (authLoading) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4" />
-            <p className="text-slate-300">Verifying admin access…</p>
+            <p className="text-slate-300">Loading…</p>
           </div>
         </div>
       );
     }
 
-    if (userLocked && canUseNeonAdminSession()) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
-          <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700 text-center space-y-4">
-            <h2 className="text-xl font-bold text-white">Admin locked</h2>
-            <p className="text-slate-400 text-sm">Signed in as {user?.email}</p>
-            <button
-              type="button"
-              onClick={handleResumeAdmin}
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg"
-            >
-              Continue to Admin
-            </button>
-            <Link to="/" className="block text-sm text-slate-400 hover:text-slate-300">
-              Back to app
-            </Link>
-          </div>
-        </div>
-      );
-    }
-
-    if (!user) {
+    if (isNeonAuthEnabled && !user) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
           <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700 text-center space-y-4">
@@ -891,13 +970,15 @@ export default function AdminPage() {
       );
     }
 
-    if (!user.is_admin) {
+    if (isNeonAuthEnabled && !neonAdminMaySignIn) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
           <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700 text-center space-y-4">
             <h2 className="text-xl font-bold text-white">Administrator access required</h2>
             <p className="text-slate-400 text-sm">
-              Signed in as {user.email}, but this account is not an administrator.
+              {user
+                ? `Signed in as ${user.email}, but this account is not an administrator.`
+                : 'Sign in with an administrator account to access this page.'}
             </p>
             <Link to="/" className="block text-sm text-blue-400 hover:text-blue-300">
               Back to app
@@ -907,14 +988,90 @@ export default function AdminPage() {
       );
     }
 
+    if (showPuzzle) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+          <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
+            <h2 className="text-xl font-bold text-white text-center mb-2">Admin</h2>
+            <p className="text-slate-400 text-sm text-center mb-6">
+              Select the {puzzleCount} correct colors
+            </p>
+            <form onSubmit={handlePuzzleSubmit} className="space-y-6">
+              <div className="grid grid-cols-4 gap-3">
+                {puzzleShuffled.map(({ name, bg, border }) => {
+                  const selected = puzzleSelected.includes(name);
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => togglePuzzleColor(name)}
+                      className={`aspect-square rounded-xl transition-all ${bg} border-2 ${selected ? `${border} ring-2 ring-white ring-offset-2 ring-offset-slate-800` : 'border-transparent opacity-90 hover:opacity-100'}`}
+                      title={name}
+                    />
+                  );
+                })}
+              </div>
+              {puzzleError && (
+                <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-2 rounded-lg text-sm text-center">
+                  {puzzleError}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={puzzleSelected.length !== puzzleCount || puzzleVerifying}
+                className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+              >
+                {puzzleVerifying ? 'Checking…' : `Submit (${puzzleSelected.length}/${puzzleCount})`}
+              </button>
+              <button
+                type="button"
+                onClick={handleLock}
+                className="w-full px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                Back to login
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
-        <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700 text-center space-y-4">
-          <h2 className="text-xl font-bold text-white">Admin</h2>
-          <p className="text-slate-400 text-sm">
-            {accessError || 'Unable to open Admin with your current session.'}
-          </p>
-          <Link to="/" className="block text-sm text-blue-400 hover:text-blue-300">
+        <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
+          <h2 className="text-xl font-bold text-white text-center mb-2">Admin</h2>
+          {user?.email && (
+            <p className="text-slate-400 text-sm text-center mb-4">Signed in as {user.email}</p>
+          )}
+          <form onSubmit={handlePasswordSubmit} className="space-y-4">
+            <div>
+              <label className="block text-slate-300 text-sm font-medium mb-2">
+                Admin key
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                placeholder="Enter admin key"
+                autoComplete="off"
+                autoFocus
+              />
+            </div>
+            {error && (
+              <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-2 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+            >
+              {isLoggingIn ? 'Checking…' : 'Continue'}
+            </button>
+          </form>
+          <Link to="/" className="block text-center text-sm text-slate-400 hover:text-slate-300 mt-4">
             Back to app
           </Link>
         </div>

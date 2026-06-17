@@ -1,9 +1,23 @@
 import { getApiBaseUrl } from '../services/api-client';
-import { authHeaders, getApiAccessToken } from './sessionAuth';
+import { getApiAccessToken } from './sessionAuth';
 
 const ADMIN_KEY_STORAGE = 'ros_admin_key';
+export const ADMIN_UNLOCK_KEY = 'ros_admin_unlocked';
 
-/** Signed-in Neon user with is_admin — required for Admin page API calls. */
+export function getStoredAdminKey(): string | null {
+  return sessionStorage.getItem(ADMIN_KEY_STORAGE);
+}
+
+export function setStoredAdminCredentials(key: string): void {
+  sessionStorage.setItem(ADMIN_KEY_STORAGE, key);
+}
+
+export function clearStoredAdminCredentials(): void {
+  sessionStorage.removeItem(ADMIN_KEY_STORAGE);
+  sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
+}
+
+/** Signed-in Neon user with is_admin — required to reach Admin login (before key + puzzle). */
 export function canUseNeonAdminSession(): boolean {
   const token = getApiAccessToken();
   if (!token?.startsWith('ros_nsess_')) return false;
@@ -17,42 +31,76 @@ export function canUseNeonAdminSession(): boolean {
   }
 }
 
+export function isAdminSessionUnlocked(): boolean {
+  return sessionStorage.getItem(ADMIN_UNLOCK_KEY) === '1' && !!getStoredAdminKey();
+}
+
 function buildAdminUrl(base: string, path: string): string {
   const normalizedBase = base.replace(/\/$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${normalizedBase}${normalizedPath}`;
 }
 
-function neonAdminHeaders(init?: RequestInit): Headers {
+function adminKeyHeaders(key: string, init?: RequestInit): Headers {
   const headers = new Headers(init?.headers);
-  const session = authHeaders();
-  if (session.Authorization) {
-    headers.set('Authorization', session.Authorization);
-  }
+  headers.set('X-Admin-Key', key);
   return headers;
 }
 
-/** Admin API calls — Neon is_admin session only (Admin page). */
+export async function fetchAdminAuthStatus(key: string): Promise<{
+  adminKeyConfigured?: boolean;
+  expectedKeyLength?: number;
+  receivedKeyLength?: number;
+  keyMatches?: boolean;
+}> {
+  const base = getApiBaseUrl();
+  const res = await fetch(buildAdminUrl(base, '/api/admin/auth-status'), {
+    headers: { 'X-Admin-Key': key },
+  });
+  return res.json().catch(() => ({}));
+}
+
+export function describeAdminAuthFailure(
+  status: Awaited<ReturnType<typeof fetchAdminAuthStatus>>,
+  _reason?: string
+): string {
+  if (!status.adminKeyConfigured) {
+    return 'ADMIN_KEY is not set on Railway. Add it in Railway → Variables and redeploy.';
+  }
+  if (!status.keyMatches) {
+    return 'Invalid admin key.';
+  }
+  return 'Invalid admin key';
+}
+
+export async function adminFetchWithCredentials(
+  key: string,
+  path: string,
+  init?: RequestInit
+): Promise<Response> {
+  const base = getApiBaseUrl();
+  return fetch(buildAdminUrl(base, path), {
+    ...init,
+    headers: adminKeyHeaders(key, init),
+  });
+}
+
 export async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
-  if (!canUseNeonAdminSession()) {
+  const key = getStoredAdminKey();
+  if (!key) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  const base = getApiBaseUrl();
-  return fetch(buildAdminUrl(base, path), {
-    ...init,
-    headers: neonAdminHeaders(init),
-  });
+  return adminFetchWithCredentials(key, path, init);
 }
 
 /** Gate for destructive Run-of-Show actions (e.g. clear change log). */
-export function verifyClearLogPassword(_password: string): boolean {
+export function verifyClearLogPassword(password: string): boolean {
   const envPassword = import.meta.env.VITE_CLEAR_LOG_PASSWORD as string | undefined;
-  if (envPassword && _password === envPassword) return true;
-  if (canUseNeonAdminSession()) return true;
-  const legacyKey = sessionStorage.getItem(ADMIN_KEY_STORAGE);
-  if (legacyKey && _password === legacyKey) return true;
+  if (envPassword && password === envPassword) return true;
+  const adminKey = getStoredAdminKey();
+  if (adminKey && password === adminKey) return true;
   return false;
 }
