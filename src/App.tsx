@@ -30,6 +30,7 @@ import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import QuickModePage from './pages/QuickModePage';
 import ComparisonPage from './pages/ComparisonPage';
 import DashboardPage from './pages/DashboardPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 
 function AppContent() {
   const location = useLocation();
@@ -46,14 +47,15 @@ function AppContent() {
   const isAdmin = location.pathname === '/admin';
   const isQuickMode = location.pathname === '/quick-mode';
   const isComparison = location.pathname === '/comparison';
+  const isResetPassword = location.pathname === '/reset-password';
 
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && <AppHeader />}
       
-      {!isPinNotesPopout && !isComparison && (
+      {!isPinNotesPopout && !isComparison && !isResetPassword && (
         <AuthGuard>
           <Routes>
             <Route path="/admin" element={null} />
@@ -80,6 +82,7 @@ function AppContent() {
         <Route path="/comparison" element={<ComparisonPage />} />
         <Route path="/pin-notes-popout" element={<PinNotesPopoutPage />} />
         <Route path="/clock" element={<ClockPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
         <Route path="/schedule-xml" element={<ScheduleXMLPage />} />
