@@ -27,6 +27,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
 const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes } = require('./lib/api-auth');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
+const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -4967,6 +4968,11 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`📡 SSE endpoint: http://localhost:${PORT}/api/events/:eventId/stream`);
   console.log(`🔌 Socket.IO endpoint: ws://localhost:${PORT}`);
   console.log(`🔐 Auth: Using direct database connection`);
+  if (isAdminEmailNotifyConfigured()) {
+    console.log(`📧 Access emails: Resend configured (from ${(process.env.ADMIN_NOTIFY_FROM || '').trim()})`);
+  } else {
+    console.warn('📧 Access emails: disabled — set RESEND_API_KEY and ADMIN_NOTIFY_FROM on Railway');
+  }
   console.log(`💡 Tip: Use 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find your IP address`);
   if (process.env.NEON_DATABASE_URL) {
     try {

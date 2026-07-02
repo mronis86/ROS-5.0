@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
@@ -30,6 +30,23 @@ import {
 } from '../lib/adminAuth';
 import { useAuth } from '../contexts/AuthContext';
 import { isNeonAuthEnabled } from '../lib/neonAuthClient';
+
+type AccessStatus = 'pending' | 'approved' | 'rejected';
+type AccessSortKey = 'full_name' | 'email' | 'status' | 'requested_at' | 'reviewed_at';
+
+interface AccessRequestRow {
+  id: string;
+  email: string;
+  full_name: string;
+  status: AccessStatus;
+  requested_at: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  notes?: string | null;
+  is_admin?: boolean;
+  neon_user_id?: string | null;
+  password_set_at?: string | null;
+}
 
 const PUZZLE_ALL_COLORS = [
   { name: 'red', bg: 'bg-red-500', border: 'border-red-400' },
@@ -183,18 +200,14 @@ export default function AdminPage() {
   const [newTokenScopes, setNewTokenScopes] = useState('read,control');
   const [creatingToken, setCreatingToken] = useState(false);
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
-  const [accessRequests, setAccessRequests] = useState<
-    Array<{
-      id: string;
-      email: string;
-      full_name: string;
-      status: string;
-      requested_at: string;
-      is_admin?: boolean;
-    }>
-  >([]);
+  const [accessRequests, setAccessRequests] = useState<AccessRequestRow[]>([]);
   const [accessRequestsLoading, setAccessRequestsLoading] = useState(false);
   const [accessRequestsError, setAccessRequestsError] = useState<string | null>(null);
+  const [accessStatusFilter, setAccessStatusFilter] = useState<'all' | AccessStatus>('all');
+  const [accessSort, setAccessSort] = useState<{ key: AccessSortKey; dir: 'asc' | 'desc' }>({
+    key: 'requested_at',
+    dir: 'desc',
+  });
   const [logoVariantId, setLogoVariantIdState] = useState<LogoVariantId>(() => getLogoVariantId());
 
   const handleLogoVariantChange = (id: LogoVariantId) => {
@@ -582,7 +595,7 @@ export default function AdminPage() {
     setAccessRequestsLoading(true);
     setAccessRequestsError(null);
     try {
-      const res = await adminFetch('/api/admin/access-requests?status=pending');
+      const res = await adminFetch(`/api/admin/access-requests?status=${accessStatusFilter}`);
       if (res.status === 401) {
         setAccessRequestsError('Unauthorized');
         setAccessRequests([]);
@@ -594,7 +607,7 @@ export default function AdminPage() {
         setAccessRequests([]);
         return;
       }
-      const data = (await res.json()) as { requests?: typeof accessRequests; needsMigration?: boolean };
+      const data = (await res.json()) as { requests?: AccessRequestRow[]; needsMigration?: boolean };
       if (data.needsMigration) {
         setAccessRequestsError('Run migration 027 on Neon for access approval.');
         setAccessRequests([]);
@@ -607,7 +620,7 @@ export default function AdminPage() {
     } finally {
       setAccessRequestsLoading(false);
     }
-  }, []);
+  }, [accessStatusFilter]);
 
   const approveAccessRequest = useCallback(
     async (id: string, email: string, makeAdmin = false) => {
@@ -654,6 +667,90 @@ export default function AdminPage() {
     },
     [fetchAccessRequests]
   );
+
+  const updateAccessUser = useCallback(
+    async (
+      id: string,
+      email: string,
+      patch: { status?: AccessStatus; is_admin?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
+    ) => {
+      setAccessRequestsError(null);
+      try {
+        const res = await adminFetch(`/api/admin/access-requests/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setAccessRequestsError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchAccessRequests();
+      } catch (e) {
+        setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
+      }
+    },
+    [fetchAccessRequests]
+  );
+
+  const deleteAccessUser = useCallback(
+    async (id: string, email: string) => {
+      if (
+        !confirm(
+          `Permanently remove ${email} from Run of Show?\n\nThis deletes their access record and API sessions. Their Neon Auth login (if created) must be removed separately in Neon Console.`
+        )
+      ) {
+        return;
+      }
+      setAccessRequestsError(null);
+      try {
+        const res = await adminFetch(`/api/admin/access-requests/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setAccessRequestsError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchAccessRequests();
+      } catch (e) {
+        setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
+      }
+    },
+    [fetchAccessRequests]
+  );
+
+  const toggleAccessSort = (key: AccessSortKey) => {
+    setAccessSort((prev) =>
+      prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }
+    );
+  };
+
+  const sortedAccessRequests = useMemo(() => {
+    const rows = [...accessRequests];
+    const { key, dir } = accessSort;
+    const factor = dir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      const av = key === 'reviewed_at' ? a.reviewed_at || '' : String(a[key] || '');
+      const bv = key === 'reviewed_at' ? b.reviewed_at || '' : String(b[key] || '');
+      if (key === 'requested_at' || key === 'reviewed_at') {
+        return (new Date(av).getTime() - new Date(bv).getTime()) * factor;
+      }
+      return av.localeCompare(bv, undefined, { sensitivity: 'base' }) * factor;
+    });
+    return rows;
+  }, [accessRequests, accessSort]);
+
+  const accessSortIndicator = (key: AccessSortKey) =>
+    accessSort.key === key ? (accessSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+
+  const formatAccessDate = (value?: string | null) =>
+    value ? new Date(value).toLocaleString() : '—';
+
+  const accountSetupLabel = (row: AccessRequestRow) => {
+    if (row.status !== 'approved') return '—';
+    if (!row.neon_user_id) return 'Needs password';
+    return 'Ready';
+  };
 
   const fetchIntegrationTokens = useCallback(async () => {
     setIntegrationTokensLoading(true);
@@ -1410,7 +1507,7 @@ export default function AdminPage() {
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <Users className="w-5 h-5 text-slate-400" />
-              Access requests
+              User access
             </h2>
             <button
               type="button"
@@ -1422,48 +1519,161 @@ export default function AdminPage() {
             </button>
           </div>
           <p className="text-slate-500 text-sm mb-4">
-            Users who sign up via Neon Auth appear here until you approve them.
+            View all access requests, change status, and remove users. Deleting removes the app access record and API
+            sessions; Neon Auth logins must be removed separately in Neon Console if needed.
           </p>
+
+          <div className="flex flex-wrap gap-2 mb-4">
+            {(['all', 'pending', 'approved', 'rejected'] as const).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setAccessStatusFilter(filter)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                  accessStatusFilter === filter
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-700/80 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+              </button>
+            ))}
+          </div>
+
           {accessRequestsError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               {accessRequestsError}
             </div>
           )}
-          {accessRequests.length === 0 ? (
-            <p className="text-slate-400 text-sm">No pending access requests.</p>
+
+          {sortedAccessRequests.length === 0 ? (
+            <p className="text-slate-400 text-sm">
+              {accessStatusFilter === 'all' ? 'No users found.' : `No ${accessStatusFilter} users.`}
+            </p>
           ) : (
-            <ul className="divide-y divide-slate-700/60 rounded-lg border border-slate-700/80">
-              {accessRequests.map((r) => (
-                <li key={r.id} className="px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-white">{r.full_name || r.email}</p>
-                    <p className="text-slate-400 truncate">{r.email}</p>
-                    <p className="text-slate-500 text-xs">{new Date(r.requested_at).toLocaleString()}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => approveAccessRequest(r.id, r.email, false)}
-                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs rounded-lg"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => approveAccessRequest(r.id, r.email, true)}
-                    className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded-lg"
-                  >
-                    Approve as admin
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => rejectAccessRequest(r.id, r.email)}
-                    className="px-3 py-1.5 bg-red-900/80 hover:bg-red-800 text-red-100 text-xs rounded-lg"
-                  >
-                    Reject
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <div className="overflow-x-auto rounded-lg border border-slate-700/80">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-900/60 text-slate-400">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">
+                      <button type="button" onClick={() => toggleAccessSort('full_name')} className="hover:text-white">
+                        Name{accessSortIndicator('full_name')}
+                      </button>
+                    </th>
+                    <th className="text-left px-3 py-2 font-medium">
+                      <button type="button" onClick={() => toggleAccessSort('email')} className="hover:text-white">
+                        Email{accessSortIndicator('email')}
+                      </button>
+                    </th>
+                    <th className="text-left px-3 py-2 font-medium">
+                      <button type="button" onClick={() => toggleAccessSort('status')} className="hover:text-white">
+                        Status{accessSortIndicator('status')}
+                      </button>
+                    </th>
+                    <th className="text-left px-3 py-2 font-medium">Role</th>
+                    <th className="text-left px-3 py-2 font-medium">Account</th>
+                    <th className="text-left px-3 py-2 font-medium">
+                      <button type="button" onClick={() => toggleAccessSort('requested_at')} className="hover:text-white">
+                        Requested{accessSortIndicator('requested_at')}
+                      </button>
+                    </th>
+                    <th className="text-left px-3 py-2 font-medium">
+                      <button type="button" onClick={() => toggleAccessSort('reviewed_at')} className="hover:text-white">
+                        Reviewed{accessSortIndicator('reviewed_at')}
+                      </button>
+                    </th>
+                    <th className="text-right px-3 py-2 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-700/60">
+                  {sortedAccessRequests.map((r) => (
+                    <tr key={r.id} className="hover:bg-slate-900/30">
+                      <td className="px-3 py-3 text-white">{r.full_name || '—'}</td>
+                      <td className="px-3 py-3 text-slate-300">{r.email}</td>
+                      <td className="px-3 py-3">
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+                            r.status === 'approved'
+                              ? 'bg-emerald-900/50 text-emerald-200'
+                              : r.status === 'rejected'
+                                ? 'bg-red-900/50 text-red-200'
+                                : 'bg-amber-900/50 text-amber-200'
+                          }`}
+                        >
+                          {r.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">{r.is_admin ? 'Admin' : 'User'}</td>
+                      <td className="px-3 py-3 text-slate-400">{accountSetupLabel(r)}</td>
+                      <td className="px-3 py-3 text-slate-400 whitespace-nowrap">{formatAccessDate(r.requested_at)}</td>
+                      <td className="px-3 py-3 text-slate-400 whitespace-nowrap">{formatAccessDate(r.reviewed_at)}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          {r.status !== 'approved' && (
+                            <button
+                              type="button"
+                              onClick={() => approveAccessRequest(r.id, r.email, false)}
+                              className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white text-xs rounded"
+                            >
+                              Approve
+                            </button>
+                          )}
+                          {r.status !== 'approved' && (
+                            <button
+                              type="button"
+                              onClick={() => approveAccessRequest(r.id, r.email, true)}
+                              className="px-2 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded"
+                            >
+                              Approve admin
+                            </button>
+                          )}
+                          {r.status !== 'pending' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (confirm(`Set ${r.email} back to pending?`)) {
+                                  void updateAccessUser(r.id, r.email, { status: 'pending', reset_account: true, notify_user: false });
+                                }
+                              }}
+                              className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
+                            >
+                              Pending
+                            </button>
+                          )}
+                          {r.status !== 'rejected' && (
+                            <button
+                              type="button"
+                              onClick={() => rejectAccessRequest(r.id, r.email)}
+                              className="px-2 py-1 bg-red-900/80 hover:bg-red-800 text-red-100 text-xs rounded"
+                            >
+                              Reject
+                            </button>
+                          )}
+                          {r.status === 'approved' && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void updateAccessUser(r.id, r.email, { is_admin: !r.is_admin, notify_user: false })
+                              }
+                              className="px-2 py-1 bg-indigo-800 hover:bg-indigo-700 text-white text-xs rounded"
+                            >
+                              {r.is_admin ? 'Revoke admin' : 'Make admin'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => deleteAccessUser(r.id, r.email)}
+                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-600"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
 
