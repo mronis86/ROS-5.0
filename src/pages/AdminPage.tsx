@@ -46,6 +46,7 @@ interface AccessRequestRow {
   is_admin?: boolean;
   neon_user_id?: string | null;
   password_set_at?: string | null;
+  portal_url?: string | null;
 }
 
 const PUZZLE_ALL_COLORS = [
@@ -208,6 +209,7 @@ export default function AdminPage() {
     key: 'requested_at',
     dir: 'desc',
   });
+  const [copiedPortalUserId, setCopiedPortalUserId] = useState<string | null>(null);
   const [logoVariantId, setLogoVariantIdState] = useState<LogoVariantId>(() => getLogoVariantId());
 
   const handleLogoVariantChange = (id: LogoVariantId) => {
@@ -750,6 +752,17 @@ export default function AdminPage() {
     if (row.status !== 'approved') return '—';
     if (!row.neon_user_id) return 'Needs password';
     return 'Ready';
+  };
+
+  const copyPortalLink = async (userId: string, url?: string | null) => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedPortalUserId(userId);
+      window.setTimeout(() => setCopiedPortalUserId(null), 2500);
+    } catch {
+      setAccessRequestsError('Could not copy portal link.');
+    }
   };
 
   const fetchIntegrationTokens = useCallback(async () => {
@@ -1519,8 +1532,8 @@ export default function AdminPage() {
             </button>
           </div>
           <p className="text-slate-500 text-sm mb-4">
-            View all access requests, change status, and remove users. Deleting removes the app access record and API
-            sessions; Neon Auth logins must be removed separately in Neon Console if needed.
+            View all access requests, change status, and remove users. Copy a user&apos;s portal link to send it manually
+            (Teams, Slack, etc.) when email is not available. Deleting removes the app access record and API sessions.
           </p>
 
           <div className="flex flex-wrap gap-2 mb-4">
@@ -1658,6 +1671,16 @@ export default function AdminPage() {
                               className="px-2 py-1 bg-indigo-800 hover:bg-indigo-700 text-white text-xs rounded"
                             >
                               {r.is_admin ? 'Revoke admin' : 'Make admin'}
+                            </button>
+                          )}
+                          {r.portal_url && (
+                            <button
+                              type="button"
+                              onClick={() => void copyPortalLink(r.id, r.portal_url)}
+                              className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
+                              title="Copy portal link for this user"
+                            >
+                              {copiedPortalUserId === r.id ? 'Copied!' : 'Copy link'}
                             </button>
                           )}
                           <button

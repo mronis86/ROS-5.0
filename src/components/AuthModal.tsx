@@ -30,6 +30,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
   const [requestSent, setRequestSent] = useState(false);
   const [requestMessage, setRequestMessage] = useState<string | null>(null);
   const [requestPortalUrl, setRequestPortalUrl] = useState<string | null>(null);
+  const [requestPortalCopied, setRequestPortalCopied] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
 
   const { signIn, requestAccess } = useAuth();
@@ -45,6 +46,18 @@ const AuthModal: React.FC<AuthModalProps> = ({
     setRequestSent(false);
     setRequestMessage(null);
     setRequestPortalUrl(null);
+    setRequestPortalCopied(false);
+  };
+
+  const copyRequestPortalUrl = async () => {
+    if (!requestPortalUrl) return;
+    try {
+      await navigator.clipboard.writeText(requestPortalUrl);
+      setRequestPortalCopied(true);
+      window.setTimeout(() => setRequestPortalCopied(false), 2500);
+    } catch {
+      setError('Could not copy link. Select and copy it manually.');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -152,17 +165,42 @@ const AuthModal: React.FC<AuthModalProps> = ({
             <div className="bg-green-900/40 border border-green-700 text-green-200 px-4 py-3 rounded-lg text-sm">
               {requestMessage || (
                 <>
-                  We received your request for <span className="font-medium text-white">{email}</span>. Check your email
-                  for a link to view your status or set up your account after approval.
+                  We received your request for <span className="font-medium text-white">{email}</span>. Save your
+                  personal link below — you need it to check status and set your password after approval.
                 </>
               )}
             </div>
-            {requestPortalUrl && (
-              <p className="text-xs text-slate-400 break-all">
-                Dev link:{' '}
-                <a href={requestPortalUrl} className="text-blue-400 hover:text-blue-300 underline">
+            {requestPortalUrl ? (
+              <div className="rounded-lg border border-slate-600 bg-slate-900/60 p-4 space-y-3">
+                <p className="text-slate-300 text-sm font-medium">Your personal access link</p>
+                <p className="text-xs text-slate-400">
+                  Bookmark this or copy it now. If email is not configured, this is how you return after an admin
+                  approves you.
+                </p>
+                <code className="block text-xs text-slate-300 break-all bg-slate-950/60 p-2 rounded border border-slate-700">
                   {requestPortalUrl}
-                </a>
+                </code>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <a
+                    href={requestPortalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 text-center px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Open my access page
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void copyRequestPortalUrl()}
+                    className="flex-1 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    {requestPortalCopied ? 'Copied!' : 'Copy link'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-amber-300 text-xs">
+                No portal link was returned. Ask an administrator to resend your link from the Admin page.
               </p>
             )}
             <button
@@ -231,8 +269,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
             {isRequestAccess && (
               <p className="text-xs leading-relaxed text-slate-400">
-                Submit your name and email to request access. We&apos;ll email you a link to check your status. After
-                approval, you&apos;ll set your password from that link.
+                Submit your name and email to request access. You will get a personal link to save — use it to check
+                status and set your password after an admin approves you.
               </p>
             )}
 
