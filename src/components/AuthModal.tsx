@@ -27,9 +27,12 @@ const AuthModal: React.FC<AuthModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forgotSent, setForgotSent] = useState(false);
+  const [requestSent, setRequestSent] = useState(false);
+  const [requestMessage, setRequestMessage] = useState<string | null>(null);
+  const [requestPortalUrl, setRequestPortalUrl] = useState<string | null>(null);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
 
-  const { signIn, signUp } = useAuth();
+  const { signIn, requestAccess } = useAuth();
 
   const isRequestAccess = mode === 'request';
   const isForgotPassword = mode === 'forgot';
@@ -39,6 +42,9 @@ const AuthModal: React.FC<AuthModalProps> = ({
     setError(null);
     setPassword('');
     setForgotSent(false);
+    setRequestSent(false);
+    setRequestMessage(null);
+    setRequestPortalUrl(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -58,11 +64,15 @@ const AuthModal: React.FC<AuthModalProps> = ({
       }
 
       const result = isRequestAccess
-        ? await signUp(email, password, fullName)
+        ? await requestAccess(email, fullName)
         : await signIn(email, password, fullName);
 
       if (result.error) {
         setError(result.error.message || 'An error occurred');
+      } else if (isRequestAccess) {
+        setRequestSent(true);
+        setRequestMessage(result.message || 'Check your email for a link to view your access status.');
+        setRequestPortalUrl(result.portalUrl || null);
       } else {
         onSuccess();
         onClose();
@@ -137,6 +147,32 @@ const AuthModal: React.FC<AuthModalProps> = ({
               Back to sign in
             </button>
           </div>
+        ) : requestSent ? (
+          <div className="space-y-4">
+            <div className="bg-green-900/40 border border-green-700 text-green-200 px-4 py-3 rounded-lg text-sm">
+              {requestMessage || (
+                <>
+                  We received your request for <span className="font-medium text-white">{email}</span>. Check your email
+                  for a link to view your status or set up your account after approval.
+                </>
+              )}
+            </div>
+            {requestPortalUrl && (
+              <p className="text-xs text-slate-400 break-all">
+                Dev link:{' '}
+                <a href={requestPortalUrl} className="text-blue-400 hover:text-blue-300 underline">
+                  {requestPortalUrl}
+                </a>
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => switchMode('signin')}
+              className="w-full px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors"
+            >
+              Back to sign in
+            </button>
+          </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {isRequestAccess && (
@@ -167,11 +203,20 @@ const AuthModal: React.FC<AuthModalProps> = ({
               />
             </div>
 
-            {!isForgotPassword && (
+            {!isForgotPassword && !isRequestAccess && (
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-slate-300 text-sm font-medium">Password</label>
-                  {!isRequestAccess && isNeonAuthEnabled && (
+                <label className="block text-slate-300 text-sm font-medium mb-2">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                  placeholder="Your password"
+                  required
+                  autoComplete="current-password"
+                />
+                {isNeonAuthEnabled && (
+                  <div className="mt-2 text-right">
                     <button
                       type="button"
                       onClick={() => switchMode('forgot')}
@@ -179,39 +224,29 @@ const AuthModal: React.FC<AuthModalProps> = ({
                     >
                       Forgot password?
                     </button>
-                  )}
-                </div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                  placeholder={isRequestAccess ? 'At least 8 characters' : 'Your password'}
-                  required
-                  minLength={isRequestAccess ? 8 : undefined}
-                  autoComplete={isRequestAccess ? 'new-password' : 'current-password'}
-                />
+                  </div>
+                )}
               </div>
             )}
 
             {isRequestAccess && (
               <p className="text-xs leading-relaxed text-slate-400">
-                Submitting creates your account and sends an access request to an administrator.
-                You can sign in after your request is approved.
+                Submit your name and email to request access. We&apos;ll email you a link to check your status. After
+                approval, you&apos;ll set your password from that link.
               </p>
             )}
 
             {!isRequestAccess && !isForgotPassword && (
-              <p className="text-xs leading-relaxed text-slate-400">
-                By signing in, you agree to the{' '}
+              <p className="text-xs leading-relaxed text-slate-400 text-center">
+                If you would like, please{' '}
                 <button
                   type="button"
                   onClick={() => setShowDisclaimer(true)}
-                  className="font-medium text-blue-400 underline underline-offset-2 hover:text-blue-300"
+                  className="font-medium text-slate-300 underline underline-offset-2 hover:text-slate-200"
                 >
-                  Terms of Service
+                  click here to read the Terms of Service
                 </button>
-                .
+                . By signing in, you automatically agree to these terms.
               </p>
             )}
 

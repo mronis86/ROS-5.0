@@ -79,21 +79,34 @@ export async function adminFetchWithCredentials(
   init?: RequestInit
 ): Promise<Response> {
   const base = getApiBaseUrl();
+  const headers = adminKeyHeaders(key, init);
+  const token = getApiAccessToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
   return fetch(buildAdminUrl(base, path), {
     ...init,
-    headers: adminKeyHeaders(key, init),
+    headers,
   });
 }
 
 export async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
   const key = getStoredAdminKey();
-  if (!key) {
+  const token = getApiAccessToken();
+  if (!key && !token) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  return adminFetchWithCredentials(key, path, init);
+  const base = getApiBaseUrl();
+  const headers = new Headers(init?.headers);
+  if (key) headers.set('X-Admin-Key', key);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(buildAdminUrl(base, path), {
+    ...init,
+    headers,
+  });
 }
 
 /** Gate for destructive Run-of-Show actions (e.g. clear change log). */

@@ -645,18 +645,56 @@ app.get('/api/admin/approved-domains', async (req, res) => {
     const msg = err.message || '';
     const missing = err.code === '42P01' || msg.includes('admin_approved_domains') && (msg.includes('does not exist') || msg.includes('doesn\'t exist'));
     if (missing) {
-      return res.json({ domains: [] });
+      return res.json({ domains: [], needsMigration: true });
     }
     console.error('[admin approved-domains GET] error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// Admin: create approved-domains table if missing (migration 024)
+app.post('/api/admin/approved-domains/sync-table', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public.admin_approved_domains (
+        id SERIAL PRIMARY KEY,
+        domain TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_admin_approved_domains_domain
+        ON public.admin_approved_domains (LOWER(domain))
+    `);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin approved-domains sync-table] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Admin: add a domain
+function normalizeApprovedDomain(raw) {
+  let domain = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (!domain) return '';
+  if (domain.includes('@')) {
+    const parts = domain.split('@').filter(Boolean);
+    domain = parts[parts.length - 1] || '';
+  }
+  domain = domain
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .split('?')[0]
+    .split('#')[0]
+    .trim();
+  return domain;
+}
+
 app.post('/api/admin/approved-domains', async (req, res) => {
   if (!requireAdminAccess(req, res)) return;
-  const { domain: raw } = req.body || {};
-  const domain = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  const domain = normalizeApprovedDomain((req.body || {}).domain);
   if (!domain || domain.includes(' ') || !domain.includes('.')) {
     return res.status(400).json({ error: 'Valid domain required (e.g. company.com)' });
   }

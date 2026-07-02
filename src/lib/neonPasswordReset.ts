@@ -1,13 +1,20 @@
-import { getNeonAuthClient, isNeonAuthEnabled } from './neonAuthClient';
+import { getNeonAuthBaseUrl, isNeonAuthEnabled } from './neonAuthClient';
 
-function formatAuthError(error: unknown): string {
-  if (!error) return 'Request failed.';
-  if (typeof error === 'string') return error;
-  if (typeof error === 'object') {
-    const e = error as { message?: string; code?: string; status?: number };
-    if (e.message) return e.message;
-    if (e.code) return e.code.replace(/_/g, ' ').toLowerCase();
+function formatAuthError(error: unknown, body?: { message?: string; code?: string }): string {
+  const code = body?.code || (typeof error === 'object' && error && 'code' in error ? String((error as { code?: string }).code) : '');
+  const message =
+    body?.message ||
+    (typeof error === 'object' && error && 'message' in error ? String((error as { message?: string }).message) : '') ||
+    (typeof error === 'string' ? error : '');
+
+  if (code === 'feature_not_supported' || /invalid redirecturl/i.test(message)) {
+    return 'Add this site URL in Neon Console → Auth → Configuration → Domains (e.g. http://localhost:3003 for local dev).';
   }
+  if (/reset password isn't enabled/i.test(message)) {
+    return 'Password reset email is not enabled in Neon Auth. Configure email in Neon Console → Auth.';
+  }
+  if (message) return message;
+  if (code) return code.replace(/_/g, ' ').toLowerCase();
   return 'Request failed.';
 }
 
@@ -16,14 +23,42 @@ export function getPasswordResetRedirectUrl(): string {
   return `${window.location.origin}/reset-password`;
 }
 
+async function neonAuthPost(path: string, body: Record<string, unknown>) {
+  const base = getNeonAuthBaseUrl();
+  if (!base) {
+    return { ok: false as const, status: 503, error: 'Neon Auth is not configured.' };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    return {
+      ok: false as const,
+      status: 0,
+      error: err instanceof Error ? err.message : 'Could not reach Neon Auth.',
+    };
+  }
+
+  const data = (await res.json().catch(() => ({}))) as { message?: string; code?: string; status?: boolean };
+  if (!res.ok) {
+    return {
+      ok: false as const,
+      status: res.status,
+      error: formatAuthError(null, data),
+    };
+  }
+
+  return { ok: true as const, status: res.status, data };
+}
+
 export async function requestPasswordReset(email: string): Promise<{ ok: boolean; error?: string }> {
   if (!isNeonAuthEnabled) {
     return { ok: false, error: 'Password reset requires Neon Auth.' };
-  }
-
-  const client = getNeonAuthClient();
-  if (!client) {
-    return { ok: false, error: 'Neon Auth is not configured.' };
   }
 
   const normalizedEmail = email.trim();
@@ -31,31 +66,16 @@ export async function requestPasswordReset(email: string): Promise<{ ok: boolean
     return { ok: false, error: 'Email is required.' };
   }
 
-  try {
-    const requestReset =
-      typeof client.forgetPassword === 'function'
-        ? client.forgetPassword.bind(client)
-        : typeof client.requestPasswordReset === 'function'
-          ? client.requestPasswordReset.bind(client)
-          : null;
+  const result = await neonAuthPost('/request-password-reset', {
+    email: normalizedEmail,
+    redirectTo: getPasswordResetRedirectUrl(),
+  });
 
-    if (!requestReset) {
-      return { ok: false, error: 'Password reset is not available in this Neon Auth build.' };
-    }
-
-    const result = await requestReset({
-      email: normalizedEmail,
-      redirectTo: getPasswordResetRedirectUrl(),
-    });
-
-    if (result?.error) {
-      return { ok: false, error: formatAuthError(result.error) };
-    }
-
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: formatAuthError(err) };
+  if (!result.ok) {
+    return { ok: false, error: result.error };
   }
+
+  return { ok: true };
 }
 
 export async function resetPasswordWithToken(
@@ -66,23 +86,14 @@ export async function resetPasswordWithToken(
     return { ok: false, error: 'Password reset requires Neon Auth.' };
   }
 
-  const client = getNeonAuthClient();
-  if (!client || typeof client.resetPassword !== 'function') {
-    return { ok: false, error: 'Password reset is not available in this Neon Auth build.' };
+  const result = await neonAuthPost('/reset-password', {
+    newPassword,
+    token,
+  });
+
+  if (!result.ok) {
+    return { ok: false, error: result.error };
   }
 
-  try {
-    const result = await client.resetPassword({
-      newPassword,
-      token,
-    });
-
-    if (result?.error) {
-      return { ok: false, error: formatAuthError(result.error) };
-    }
-
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: formatAuthError(err) };
-  }
+  return { ok: true };
 }

@@ -7,6 +7,20 @@ interface AuthContextType {
   accessStatus: import('../services/auth-service').AccessStatus;
   signIn: (email: string, password: string, fullName?: string) => Promise<{ error: any }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: any }>;
+  requestAccess: (email: string, fullName: string) => Promise<{
+    error: any;
+    status?: import('../services/auth-service').AccessStatus;
+    message?: string;
+    portalUrl?: string;
+  }>;
+  applyPortalSession: (session: {
+    token: string;
+    email: string;
+    full_name: string;
+    neon_user_id: string;
+    status: import('../services/auth-service').AccessStatus;
+    is_admin?: boolean;
+  }) => void;
   signOut: () => Promise<void>;
   refreshAccessStatus: () => Promise<import('../services/auth-service').AccessStatus>;
   updateProfile: (updates: { full_name?: string; role?: string }) => Promise<{ error: any }>;
@@ -42,6 +56,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const timer = window.setTimeout(sync, 800);
     return () => window.clearTimeout(timer);
   }, []);
+
+  const requestAccess = async (email: string, fullName: string) => {
+    return authService.requestAccess(email, fullName);
+  };
 
   const signUp = async (email: string, password: string, fullName: string) => {
     const result = await authService.signUp(email, password, fullName);
@@ -87,11 +105,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const applyPortalSession = (session: {
+    token: string;
+    email: string;
+    full_name: string;
+    neon_user_id: string;
+    status: AccessStatus;
+    is_admin?: boolean;
+  }) => {
+    authService.applySessionFromPortal(session);
+    setUser(authService.getCurrentUser());
+    setAccessStatus(authService.getAccessStatus());
+  };
+
   const value = {
     user,
     loading,
     accessStatus,
     signUp,
+    requestAccess,
+    applyPortalSession,
     signIn,
     signOut,
     refreshAccessStatus,

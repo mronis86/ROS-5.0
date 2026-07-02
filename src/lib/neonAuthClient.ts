@@ -4,6 +4,11 @@ const neonAuthUrl = (import.meta.env.VITE_NEON_AUTH_URL as string | undefined)?.
 
 export const isNeonAuthEnabled = Boolean(neonAuthUrl);
 
+export function getNeonAuthBaseUrl(): string | null {
+  if (!neonAuthUrl) return null;
+  return neonAuthUrl.replace(/\/$/, '');
+}
+
 type NeonAuthClient = ReturnType<typeof createAuthClient>;
 
 let cachedClient: NeonAuthClient | null = null;

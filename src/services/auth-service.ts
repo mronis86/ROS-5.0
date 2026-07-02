@@ -433,6 +433,73 @@ class AuthService {
   }
 
   async signUp(email: string, password: string, fullName: string): Promise<{ error: any }> {
+    return this.requestAccess(email, fullName);
+  }
+
+  async requestAccess(
+    email: string,
+    fullName: string
+  ): Promise<{ error: any; status?: AccessStatus; message?: string; portalUrl?: string }> {
+    try {
+      const domainCheck = await this.checkDomain(email);
+      if (!domainCheck.allowed) {
+        return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+      }
+
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/auth/request-access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, full_name: fullName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          error: {
+            message: data.error || data.message || 'Failed to submit access request.',
+          },
+        };
+      }
+
+      return {
+        error: null,
+        status: (data.status as AccessStatus) || 'pending',
+        message: data.message,
+        portalUrl: data.portalUrl,
+      };
+    } catch (error: any) {
+      return { error: { message: error?.message || 'Failed to submit access request.' } };
+    }
+  }
+
+  applySessionFromPortal(session: {
+    token: string;
+    email: string;
+    full_name: string;
+    neon_user_id: string;
+    status: AccessStatus;
+    is_admin?: boolean;
+  }) {
+    setApiAccessToken(session.token);
+    const user: User = {
+      id: session.neon_user_id,
+      email: session.email,
+      full_name: session.full_name,
+      role: 'VIEWER',
+      is_admin: session.is_admin,
+      accessStatus: session.status,
+    };
+    this.authState = {
+      user,
+      isAuthenticated: true,
+      loading: false,
+      accessStatus: session.status,
+    };
+    this.persistUserSession(user, session.status);
+  }
+
+  /** @deprecated Use requestAccess — password is set via the access portal after approval. */
+  async signUpWithPassword(email: string, password: string, fullName: string): Promise<{ error: any }> {
     try {
       if (isNeonAuthEnabled) {
         const domainCheck = await this.checkDomain(email);

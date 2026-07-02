@@ -12,6 +12,10 @@ import {
 } from '../lib/branding';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
+import {
+  approvedDomainInputHint,
+  normalizeApprovedDomainInput,
+} from '../lib/approvedDomains';
 
 import {
   adminFetch,
@@ -157,6 +161,8 @@ export default function AdminPage() {
   const [approvedDomainsError, setApprovedDomainsError] = useState<string | null>(null);
   const [addDomainInput, setAddDomainInput] = useState('');
   const [addDomainLoading, setAddDomainLoading] = useState(false);
+  const [domainsNeedsMigration, setDomainsNeedsMigration] = useState(false);
+  const [domainsSyncingTable, setDomainsSyncingTable] = useState(false);
   const [scriptCopied, setScriptCopied] = useState(false);
   const [integrationTokens, setIntegrationTokens] = useState<
     Array<{
@@ -505,7 +511,8 @@ export default function AdminPage() {
         setApprovedDomains([]);
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as { domains?: string[] };
+      const data = (await res.json().catch(() => ({}))) as { domains?: string[]; needsMigration?: boolean };
+      setDomainsNeedsMigration(!!data.needsMigration);
       setApprovedDomains(Array.isArray(data.domains) ? data.domains : []);
     } catch (e) {
       setApprovedDomainsError(e instanceof Error ? e.message : 'Request failed');
@@ -516,8 +523,11 @@ export default function AdminPage() {
   }, []);
 
   const addApprovedDomain = useCallback(async () => {
-    const domain = addDomainInput.trim().toLowerCase();
-    if (!domain) return;
+    const domain = normalizeApprovedDomainInput(addDomainInput);
+    if (!domain) {
+      setApprovedDomainsError(approvedDomainInputHint());
+      return;
+    }
     setAddDomainLoading(true);
     setApprovedDomainsError(null);
     try {
@@ -527,7 +537,7 @@ export default function AdminPage() {
         body: JSON.stringify({ domain }),
       });
       if (res.status === 401) {
-        setApprovedDomainsError('Unauthorized');
+        setApprovedDomainsError('Unauthorized — lock and re-enter the admin key, or sign in as an admin user.');
         return;
       }
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; domains?: string[]; error?: string };
@@ -538,11 +548,33 @@ export default function AdminPage() {
       if (data.ok && Array.isArray(data.domains)) {
         setApprovedDomains(data.domains);
         setAddDomainInput('');
+        setDomainsNeedsMigration(false);
+      } else {
+        setApprovedDomainsError('Domain was not saved. Try again or use Sync table below.');
       }
     } catch (e) {
       setApprovedDomainsError(e instanceof Error ? e.message : 'Request failed');
     } finally {
       setAddDomainLoading(false);
+    }
+  }, [addDomainInput]);
+
+  const syncApprovedDomainsTable = useCallback(async () => {
+    setDomainsSyncingTable(true);
+    setApprovedDomainsError(null);
+    try {
+      const res = await adminFetch('/api/admin/approved-domains/sync-table', { method: 'POST' });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setApprovedDomainsError(data.error || `HTTP ${res.status}`);
+        return;
+      }
+      setDomainsNeedsMigration(false);
+      await fetchApprovedDomains();
+    } catch (e) {
+      setApprovedDomainsError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setDomainsSyncingTable(false);
     }
   }, [fetchApprovedDomains]);
 
@@ -1541,31 +1573,48 @@ export default function AdminPage() {
             </button>
           </div>
           <p className="text-slate-500 text-sm mb-4">
-            Only users with these email domains can sign in. Empty = allow all.
+            Only users with these email domains can sign in. Empty = allow all. {approvedDomainInputHint()}
           </p>
+          {domainsNeedsMigration && (
+            <div className="mb-4 px-4 py-3 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm flex flex-wrap items-center gap-3">
+              <span>The approved-domains table is missing on this database. Run migration 024 or sync it here.</span>
+              <button
+                type="button"
+                onClick={syncApprovedDomainsTable}
+                disabled={domainsSyncingTable}
+                className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+              >
+                {domainsSyncingTable ? 'Syncing…' : 'Sync table'}
+              </button>
+            </div>
+          )}
           {approvedDomainsError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               {approvedDomainsError}
             </div>
           )}
-          <div className="flex flex-wrap gap-2 mb-4">
+          <form
+            className="flex flex-wrap gap-2 mb-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void addApprovedDomain();
+            }}
+          >
             <input
               type="text"
               value={addDomainInput}
               onChange={(e) => setAddDomainInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addApprovedDomain())}
               placeholder="e.g. company.com"
               className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 font-mono text-sm w-48"
             />
             <button
-              type="button"
-              onClick={addApprovedDomain}
+              type="submit"
               disabled={addDomainLoading || !addDomainInput.trim()}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
             >
               {addDomainLoading ? 'Adding…' : 'Add domain'}
             </button>
-          </div>
+          </form>
           {approvedDomainsLoading && approvedDomains.length === 0 && !approvedDomainsError ? (
             <p className="text-slate-400 text-sm">Loading…</p>
           ) : approvedDomains.length === 0 ? (

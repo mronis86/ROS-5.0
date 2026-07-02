@@ -31,6 +31,7 @@ import QuickModePage from './pages/QuickModePage';
 import ComparisonPage from './pages/ComparisonPage';
 import DashboardPage from './pages/DashboardPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import AccessPortalPage from './pages/AccessPortalPage';
 
 function AppContent() {
   const location = useLocation();
@@ -48,14 +49,15 @@ function AppContent() {
   const isQuickMode = location.pathname === '/quick-mode';
   const isComparison = location.pathname === '/comparison';
   const isResetPassword = location.pathname === '/reset-password';
+  const isAccessPortal = location.pathname === '/access';
 
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && <AppHeader />}
       
-      {!isPinNotesPopout && !isComparison && !isResetPassword && (
+      {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && (
         <AuthGuard>
           <Routes>
             <Route path="/admin" element={null} />
@@ -83,6 +85,7 @@ function AppContent() {
         <Route path="/pin-notes-popout" element={<PinNotesPopoutPage />} />
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/access" element={<AccessPortalPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
         <Route path="/schedule-xml" element={<ScheduleXMLPage />} />
