@@ -47,9 +47,10 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     <>
       {canUseApp ? children : null}
       {showGate && (
-        <div className="fixed inset-0 z-[100] min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 pt-[var(--app-header-height)]">
+        <div className="fixed inset-0 z-[100] flex flex-col min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 pt-[var(--app-header-height)]">
           <AppHeader />
-          <div className="flex items-center justify-center h-[calc(100vh-80px)] px-4">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden">
+            <div className="flex min-h-full items-start sm:items-center justify-center px-4 py-6 sm:py-10">
             {loading ? (
               <div className="text-center">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4" />
@@ -85,16 +86,16 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
                 </div>
               </div>
             ) : (
-              <div className="w-full max-w-2xl mx-auto px-4">
-                <div className="mb-8 text-center">
+              <div className="w-full max-w-2xl mx-auto px-2 sm:px-4 min-w-0">
+                <div className="mb-4 sm:mb-8 text-center">
                   <div className="flex items-center justify-center gap-3 mb-4">
                     <AppLogo size="lg" />
                     <AppBrandTitle
-                      titleClassName="text-4xl font-bold text-white leading-tight"
+                      titleClassName="text-3xl sm:text-4xl font-bold text-white leading-tight"
                       showTagline={false}
                     />
                   </div>
-                  <p className="text-slate-300 text-lg whitespace-nowrap max-sm:whitespace-normal">
+                  <p className="text-slate-300 text-base sm:text-lg">
                     Please sign in to access the Run of Show application.
                   </p>
                 </div>
@@ -107,6 +108,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
                 />
               </div>
             )}
+            </div>
           </div>
         </div>
       )}

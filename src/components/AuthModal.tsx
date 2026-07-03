@@ -103,12 +103,23 @@ const AuthModal: React.FC<AuthModalProps> = ({
     <>
       <DisclaimerModal isOpen={showDisclaimer} onClose={() => setShowDisclaimer(false)} />
 
-      <div className="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md mx-auto border border-slate-700">
+      <div
+        className={`bg-slate-800 rounded-xl shadow-2xl w-full mx-auto border border-slate-700 ${
+          requestSent ? 'max-w-xl p-6 sm:p-8' : 'max-w-md p-8'
+        }`}
+      >
         {isForgotPassword ? (
           <div className="mb-6">
             <h2 className="text-xl font-semibold text-white">Forgot password</h2>
             <p className="text-slate-400 text-sm mt-2">
               Enter your email and we&apos;ll send a link to reset your password.
+            </p>
+          </div>
+        ) : requestSent ? (
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold text-white">Access request received</h2>
+            <p className="text-slate-400 text-sm mt-2">
+              Save your personal link below before you leave this page.
             </p>
           </div>
         ) : (
@@ -161,29 +172,29 @@ const AuthModal: React.FC<AuthModalProps> = ({
             </button>
           </div>
         ) : requestSent ? (
-          <div className="space-y-4">
-            <div className="bg-amber-900/30 border border-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm">
-              <strong className="text-amber-50">Important:</strong> Save your personal link before closing this page.
-              You need the same link after approval to set your password.
+          <div className="space-y-4 min-w-0">
+            <div className="bg-amber-900/30 border border-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm leading-relaxed">
+              <strong className="text-amber-50">Important:</strong> Copy or bookmark your link now. You need it after
+              approval to set your password.
             </div>
-            <div className="bg-green-900/40 border border-green-700 text-green-200 px-4 py-3 rounded-lg text-sm">
+            <div className="bg-green-900/40 border border-green-700 text-green-200 px-4 py-3 rounded-lg text-sm leading-relaxed">
               {requestMessage || (
                 <>
-                  We received your request for <span className="font-medium text-white">{email}</span>. Save your
-                  personal link below — you need it to check status and set your password after approval.
+                  We received your request for <span className="font-medium text-white">{email}</span>.
                 </>
               )}
             </div>
             {requestPortalUrl ? (
-              <div className="rounded-lg border border-slate-600 bg-slate-900/60 p-4 space-y-3">
+              <div className="rounded-lg border border-slate-600 bg-slate-900/60 p-4 space-y-3 min-w-0">
                 <p className="text-slate-300 text-sm font-medium">Your personal access link</p>
-                <p className="text-xs text-slate-400">
-                  Copy or bookmark this link now and keep it somewhere safe (notes app, password manager, etc.). This
-                  is your only way back to check approval status and finish account setup.
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Keep this somewhere safe — notes app, password manager, or email draft.
                 </p>
-                <code className="block text-xs text-slate-300 break-all bg-slate-950/60 p-2 rounded border border-slate-700">
-                  {requestPortalUrl}
-                </code>
+                <div className="max-h-36 overflow-y-auto overflow-x-auto rounded-lg border border-slate-700 bg-slate-950/60">
+                  <p className="text-xs text-slate-300 break-all font-mono p-3 leading-relaxed select-all">
+                    {requestPortalUrl}
+                  </p>
+                </div>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <a
                     href={requestPortalUrl}
@@ -191,7 +202,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
                     rel="noopener noreferrer"
                     className="flex-1 text-center px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
                   >
-                    Open my access page
+                    Open access page
                   </a>
                   <button
                     type="button"
@@ -203,8 +214,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
               </div>
             ) : (
-              <p className="text-amber-300 text-xs">
-                No portal link was returned. Ask an administrator to resend your link from the Admin page.
+              <p className="text-amber-300 text-sm leading-relaxed">
+                No portal link was returned. Ask an administrator to send your link from the Admin page.
               </p>
             )}
             <button
