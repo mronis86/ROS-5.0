@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
 import {
@@ -51,6 +51,13 @@ interface AccessRequestRow {
   neon_user_id?: string | null;
   password_set_at?: string | null;
   portal_url?: string | null;
+  event_access_count?: number;
+}
+
+interface EventAccessCalendarRow {
+  id: string;
+  name: string;
+  date: string;
 }
 
 const PUZZLE_ALL_COLORS = [
@@ -210,10 +217,18 @@ export default function AdminPage() {
   const [accessRequestsError, setAccessRequestsError] = useState<string | null>(null);
   const [accessStatusFilter, setAccessStatusFilter] = useState<'all' | AccessStatus>('all');
   const [accessSort, setAccessSort] = useState<{ key: AccessSortKey; dir: 'asc' | 'desc' }>({
-    key: 'requested_at',
-    dir: 'desc',
+    key: 'full_name',
+    dir: 'asc',
   });
+  const [accessUserSearch, setAccessUserSearch] = useState('');
   const [copiedPortalUserId, setCopiedPortalUserId] = useState<string | null>(null);
+  const [eventAccessUser, setEventAccessUser] = useState<AccessRequestRow | null>(null);
+  const [eventAccessLoading, setEventAccessLoading] = useState(false);
+  const [eventAccessSaving, setEventAccessSaving] = useState(false);
+  const [eventAccessError, setEventAccessError] = useState<string | null>(null);
+  const [eventAccessEvents, setEventAccessEvents] = useState<EventAccessCalendarRow[]>([]);
+  const [eventAccessSelected, setEventAccessSelected] = useState<Set<string>>(new Set());
+  const [eventAccessSearch, setEventAccessSearch] = useState('');
   const [accessEmailDraft, setAccessEmailDraft] = useState<{
     email: string;
     fullName: string;
@@ -754,6 +769,89 @@ export default function AdminPage() {
     [fetchAccessRequests]
   );
 
+  const closeEventAccessModal = useCallback(() => {
+    setEventAccessUser(null);
+    setEventAccessError(null);
+    setEventAccessEvents([]);
+    setEventAccessSelected(new Set());
+    setEventAccessSearch('');
+  }, []);
+
+  const openEventAccessModal = useCallback(async (row: AccessRequestRow) => {
+    setEventAccessUser(row);
+    setEventAccessLoading(true);
+    setEventAccessError(null);
+    setEventAccessSearch('');
+    try {
+      const res = await adminFetch(`/api/admin/access-requests/${row.id}/event-access`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setEventAccessError((data as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      const data = (await res.json()) as {
+        event_ids?: string[];
+        events?: EventAccessCalendarRow[];
+        needsMigration?: boolean;
+      };
+      if (data.needsMigration) {
+        setEventAccessError('Run migration 031 on Neon to enable per-user event access.');
+      }
+      const ids = Array.isArray(data.event_ids) ? data.event_ids : [];
+      setEventAccessEvents(Array.isArray(data.events) ? data.events : []);
+      setEventAccessSelected(new Set(ids));
+    } catch (e) {
+      setEventAccessError(e instanceof Error ? e.message : 'Failed to load event access');
+    } finally {
+      setEventAccessLoading(false);
+    }
+  }, []);
+
+  const toggleEventAccessSelection = useCallback((eventId: string) => {
+    setEventAccessSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  }, []);
+
+  const saveEventAccess = useCallback(async () => {
+    if (!eventAccessUser) return;
+    setEventAccessSaving(true);
+    setEventAccessError(null);
+    try {
+      const event_ids = [...eventAccessSelected];
+      const res = await adminFetch(`/api/admin/access-requests/${eventAccessUser.id}/event-access`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_ids }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setEventAccessError((data as { error?: string }).error || `HTTP ${res.status}`);
+        return;
+      }
+      closeEventAccessModal();
+      await fetchAccessRequests();
+    } catch (e) {
+      setEventAccessError(e instanceof Error ? e.message : 'Failed to save event access');
+    } finally {
+      setEventAccessSaving(false);
+    }
+  }, [closeEventAccessModal, eventAccessSelected, eventAccessUser, fetchAccessRequests]);
+
+  const filteredEventAccessEvents = useMemo(() => {
+    const q = eventAccessSearch.trim().toLowerCase();
+    if (!q) return eventAccessEvents;
+    return eventAccessEvents.filter(
+      (event) =>
+        event.name.toLowerCase().includes(q) ||
+        event.id.toLowerCase().includes(q) ||
+        event.date.includes(q)
+    );
+  }, [eventAccessEvents, eventAccessSearch]);
+
   const toggleAccessSort = (key: AccessSortKey) => {
     setAccessSort((prev) =>
       prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }
@@ -764,9 +862,18 @@ export default function AdminPage() {
     const rows = [...accessRequests];
     const { key, dir } = accessSort;
     const factor = dir === 'asc' ? 1 : -1;
+    const sortValue = (row: AccessRequestRow, sortKey: AccessSortKey) => {
+      if (sortKey === 'full_name') {
+        return (row.full_name || row.email || '').trim();
+      }
+      if (sortKey === 'reviewed_at') {
+        return row.reviewed_at || '';
+      }
+      return String(row[sortKey] || '');
+    };
     rows.sort((a, b) => {
-      const av = key === 'reviewed_at' ? a.reviewed_at || '' : String(a[key] || '');
-      const bv = key === 'reviewed_at' ? b.reviewed_at || '' : String(b[key] || '');
+      const av = sortValue(a, key);
+      const bv = sortValue(b, key);
       if (key === 'requested_at' || key === 'reviewed_at') {
         return (new Date(av).getTime() - new Date(bv).getTime()) * factor;
       }
@@ -774,6 +881,127 @@ export default function AdminPage() {
     });
     return rows;
   }, [accessRequests, accessSort]);
+
+  const filteredAccessRequests = useMemo(() => {
+    const q = accessUserSearch.trim().toLowerCase();
+    if (!q) return sortedAccessRequests;
+    return sortedAccessRequests.filter((row) => {
+      const name = (row.full_name || '').toLowerCase();
+      const email = row.email.toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [sortedAccessRequests, accessUserSearch]);
+
+  const accessSortActive = (key: AccessSortKey, dir: 'asc' | 'desc') =>
+    accessSort.key === key && accessSort.dir === dir;
+
+  const accessSortButtonClass = (active: boolean) =>
+    `px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+      active ? 'bg-blue-600 text-white' : 'bg-slate-700/80 text-slate-300 hover:bg-slate-600'
+    }`;
+
+  const accessActionBtn =
+    'flex w-full items-center justify-center h-5 px-1 text-[10px] leading-none font-medium rounded-[3px] whitespace-nowrap';
+  const accessActionsCol = 'w-[7rem] min-w-[7rem] max-w-[7rem]';
+  const accessTableBorder = 'border-r border-slate-700/80';
+  const accessActionsHeadClass = `px-1 py-1.5 text-center text-[11px] font-semibold text-slate-400 whitespace-nowrap sticky top-0 right-0 z-30 ${accessActionsCol} bg-slate-900 border-b-2 border-b-slate-600 border-l-2 border-l-slate-600 ${accessTableBorder}`;
+  const accessActionsCellClass = `px-1 py-1 align-top sticky right-0 z-10 ${accessActionsCol} bg-slate-800 border-b border-b-slate-700/80 border-l-2 border-l-slate-600 ${accessTableBorder}`;
+  const accessTableHeadClass = `text-left px-2 py-1.5 text-[11px] font-semibold whitespace-nowrap sticky top-0 z-20 bg-slate-900 text-slate-400 border-b-2 border-b-slate-600 ${accessTableBorder}`;
+  const accessTableRowClass = 'hover:bg-slate-900/40 group';
+  const accessTableCellClass = `px-2 py-1.5 align-middle text-xs border-b border-b-slate-700/80 ${accessTableBorder}`;
+
+  const renderAccessActions = (r: AccessRequestRow) => (
+    <div className="flex flex-col gap-px w-full">
+      {r.status !== 'approved' && (
+        <button
+          type="button"
+          onClick={() => approveAccessRequest(r.id, r.email, r.full_name || '', false)}
+          className={`${accessActionBtn} bg-emerald-700 hover:bg-emerald-600 text-white`}
+        >
+          Approve
+        </button>
+      )}
+      {r.status !== 'approved' && (
+        <button
+          type="button"
+          onClick={() => approveAccessRequest(r.id, r.email, r.full_name || '', true)}
+          className={`${accessActionBtn} bg-blue-700 hover:bg-blue-600 text-white`}
+        >
+          Approve admin
+        </button>
+      )}
+      {r.status !== 'pending' && (
+        <button
+          type="button"
+          onClick={() => {
+            if (confirm(`Set ${r.email} back to pending?`)) {
+              void updateAccessUser(r.id, r.email, { status: 'pending', reset_account: true, notify_user: false });
+            }
+          }}
+          className={`${accessActionBtn} bg-slate-600 hover:bg-slate-500 text-white`}
+        >
+          Pending
+        </button>
+      )}
+      {r.status !== 'rejected' && (
+        <button
+          type="button"
+          onClick={() => rejectAccessRequest(r.id, r.email)}
+          className={`${accessActionBtn} bg-red-900/80 hover:bg-red-800 text-red-100`}
+        >
+          Reject
+        </button>
+      )}
+      {r.status === 'approved' && (
+        <button
+          type="button"
+          onClick={() => void openEventAccessModal(r)}
+          className={`${accessActionBtn} gap-0.5 bg-violet-800 hover:bg-violet-700 text-white`}
+          title="Choose which events this user can access"
+        >
+          <Calendar className="w-2 h-2 shrink-0" />
+          Events
+        </button>
+      )}
+      {r.status === 'approved' && (
+        <button
+          type="button"
+          onClick={() => void updateAccessUser(r.id, r.email, { is_admin: !r.is_admin, notify_user: false })}
+          className={`${accessActionBtn} bg-indigo-800 hover:bg-indigo-700 text-white`}
+        >
+          {r.is_admin ? 'Revoke admin' : 'Make admin'}
+        </button>
+      )}
+      {r.portal_url && (
+        <button
+          type="button"
+          onClick={() => openApprovalEmailDraft(r)}
+          className={`${accessActionBtn} gap-0.5 bg-sky-800 hover:bg-sky-700 text-white`}
+          title="Open a draft email in your mail app"
+        >
+          <Mail className="w-2 h-2 shrink-0" />
+          Email
+        </button>
+      )}
+      {r.portal_url && (
+        <button
+          type="button"
+          onClick={() => void copyPortalLink(r.id, r.portal_url)}
+          className={`${accessActionBtn} bg-slate-600 hover:bg-slate-500 text-white`}
+          title="Copy portal link for this user"
+        >
+          {copiedPortalUserId === r.id ? 'Copied!' : 'Copy link'}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => deleteAccessUser(r.id, r.email)}
+        className={`${accessActionBtn} bg-slate-700 hover:bg-slate-600 text-slate-200`}
+      >
+        Delete
+      </button>
+    </div>
+  );
 
   const accessSortIndicator = (key: AccessSortKey) =>
     accessSort.key === key ? (accessSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
@@ -1626,160 +1854,164 @@ export default function AdminPage() {
             ))}
           </div>
 
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <input
+              type="search"
+              value={accessUserSearch}
+              onChange={(e) => setAccessUserSearch(e.target.value)}
+              placeholder="Search by name or email…"
+              className="flex-1 min-w-[14rem] px-3 py-2 bg-slate-900/60 border border-slate-600 rounded-lg text-sm text-white placeholder:text-slate-500"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-slate-500 text-xs uppercase tracking-wide">Sort</span>
+              <button
+                type="button"
+                onClick={() => setAccessSort({ key: 'full_name', dir: 'asc' })}
+                className={accessSortButtonClass(accessSortActive('full_name', 'asc'))}
+              >
+                Name A–Z
+              </button>
+              <button
+                type="button"
+                onClick={() => setAccessSort({ key: 'requested_at', dir: 'desc' })}
+                className={accessSortButtonClass(accessSortActive('requested_at', 'desc'))}
+              >
+                Newest
+              </button>
+              <button
+                type="button"
+                onClick={() => setAccessSort({ key: 'requested_at', dir: 'asc' })}
+                className={accessSortButtonClass(accessSortActive('requested_at', 'asc'))}
+              >
+                Oldest
+              </button>
+            </div>
+          </div>
+
           {accessRequestsError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               {accessRequestsError}
             </div>
           )}
 
-          {sortedAccessRequests.length === 0 ? (
+          {filteredAccessRequests.length === 0 ? (
             <p className="text-slate-400 text-sm">
-              {accessStatusFilter === 'all' ? 'No users found.' : `No ${accessStatusFilter} users.`}
+              {accessUserSearch.trim()
+                ? `No users match "${accessUserSearch.trim()}".`
+                : accessStatusFilter === 'all'
+                  ? 'No users found.'
+                  : `No ${accessStatusFilter} users.`}
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-slate-700/80">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-900/60 text-slate-400">
-                  <tr>
-                    <th className="text-left px-3 py-2 font-medium">
-                      <button type="button" onClick={() => toggleAccessSort('full_name')} className="hover:text-white">
-                        Name{accessSortIndicator('full_name')}
-                      </button>
-                    </th>
-                    <th className="text-left px-3 py-2 font-medium">
-                      <button type="button" onClick={() => toggleAccessSort('email')} className="hover:text-white">
-                        Email{accessSortIndicator('email')}
-                      </button>
-                    </th>
-                    <th className="text-left px-3 py-2 font-medium">
-                      <button type="button" onClick={() => toggleAccessSort('status')} className="hover:text-white">
-                        Status{accessSortIndicator('status')}
-                      </button>
-                    </th>
-                    <th className="text-left px-3 py-2 font-medium">Role</th>
-                    <th className="text-left px-3 py-2 font-medium">Account</th>
-                    <th className="text-left px-3 py-2 font-medium">
-                      <button type="button" onClick={() => toggleAccessSort('requested_at')} className="hover:text-white">
-                        Requested{accessSortIndicator('requested_at')}
-                      </button>
-                    </th>
-                    <th className="text-left px-3 py-2 font-medium">
-                      <button type="button" onClick={() => toggleAccessSort('reviewed_at')} className="hover:text-white">
-                        Reviewed{accessSortIndicator('reviewed_at')}
-                      </button>
-                    </th>
-                    <th className="text-right px-3 py-2 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/60">
-                  {sortedAccessRequests.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-900/30">
-                      <td className="px-3 py-3 text-white">{r.full_name || '—'}</td>
-                      <td className="px-3 py-3 text-slate-300">{r.email}</td>
-                      <td className="px-3 py-3">
-                        <span
-                          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                            r.status === 'approved'
-                              ? 'bg-emerald-900/50 text-emerald-200'
-                              : r.status === 'rejected'
-                                ? 'bg-red-900/50 text-red-200'
-                                : 'bg-amber-900/50 text-amber-200'
-                          }`}
+            <div className="rounded-lg border border-slate-600 overflow-hidden">
+              <div className="overflow-auto max-h-[min(32rem,calc(100vh-14rem))]">
+                <table className="min-w-full text-xs border-separate border-spacing-0">
+                  <thead>
+                    <tr>
+                      <th className={accessTableHeadClass}>
+                        <button
+                          type="button"
+                          onClick={() => toggleAccessSort('full_name')}
+                          className={`hover:text-white ${accessSort.key === 'full_name' ? 'text-white' : ''}`}
                         >
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3 text-slate-300">{r.is_admin ? 'Admin' : 'User'}</td>
-                      <td className="px-3 py-3 text-slate-400">{accountSetupLabel(r)}</td>
-                      <td className="px-3 py-3 text-slate-400 whitespace-nowrap">{formatAccessDate(r.requested_at)}</td>
-                      <td className="px-3 py-3 text-slate-400 whitespace-nowrap">{formatAccessDate(r.reviewed_at)}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap justify-end gap-1.5">
-                          {r.status !== 'approved' && (
-                            <button
-                              type="button"
-                              onClick={() => approveAccessRequest(r.id, r.email, r.full_name || '', false)}
-                              className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white text-xs rounded"
-                            >
-                              Approve
-                            </button>
-                          )}
-                          {r.status !== 'approved' && (
-                            <button
-                              type="button"
-                              onClick={() => approveAccessRequest(r.id, r.email, r.full_name || '', true)}
-                              className="px-2 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded"
-                            >
-                              Approve admin
-                            </button>
-                          )}
-                          {r.status !== 'pending' && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (confirm(`Set ${r.email} back to pending?`)) {
-                                  void updateAccessUser(r.id, r.email, { status: 'pending', reset_account: true, notify_user: false });
-                                }
-                              }}
-                              className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
-                            >
-                              Pending
-                            </button>
-                          )}
-                          {r.status !== 'rejected' && (
-                            <button
-                              type="button"
-                              onClick={() => rejectAccessRequest(r.id, r.email)}
-                              className="px-2 py-1 bg-red-900/80 hover:bg-red-800 text-red-100 text-xs rounded"
-                            >
-                              Reject
-                            </button>
-                          )}
-                          {r.status === 'approved' && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void updateAccessUser(r.id, r.email, { is_admin: !r.is_admin, notify_user: false })
-                              }
-                              className="px-2 py-1 bg-indigo-800 hover:bg-indigo-700 text-white text-xs rounded"
-                            >
-                              {r.is_admin ? 'Revoke admin' : 'Make admin'}
-                            </button>
-                          )}
-                          {r.portal_url && (
-                            <button
-                              type="button"
-                              onClick={() => openApprovalEmailDraft(r)}
-                              className="px-2 py-1 bg-sky-800 hover:bg-sky-700 text-white text-xs rounded inline-flex items-center gap-1"
-                              title="Open a draft email in your mail app"
-                            >
-                              <Mail className="w-3 h-3" />
-                              Email
-                            </button>
-                          )}
-                          {r.portal_url && (
-                            <button
-                              type="button"
-                              onClick={() => void copyPortalLink(r.id, r.portal_url)}
-                              className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
-                              title="Copy portal link for this user"
-                            >
-                              {copiedPortalUserId === r.id ? 'Copied!' : 'Copy link'}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => deleteAccessUser(r.id, r.email)}
-                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-600"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
+                          Name{accessSortIndicator('full_name')}
+                        </button>
+                      </th>
+                      <th className={accessTableHeadClass}>
+                        <button
+                          type="button"
+                          onClick={() => toggleAccessSort('email')}
+                          className={`hover:text-white ${accessSort.key === 'email' ? 'text-white' : ''}`}
+                        >
+                          Email{accessSortIndicator('email')}
+                        </button>
+                      </th>
+                      <th className={accessTableHeadClass}>
+                        <button
+                          type="button"
+                          onClick={() => toggleAccessSort('status')}
+                          className={`hover:text-white ${accessSort.key === 'status' ? 'text-white' : ''}`}
+                        >
+                          Status{accessSortIndicator('status')}
+                        </button>
+                      </th>
+                      <th className={accessTableHeadClass}>Role</th>
+                      <th className={accessTableHeadClass}>Events</th>
+                      <th className={accessTableHeadClass}>Account</th>
+                      <th className={accessTableHeadClass}>
+                        <button
+                          type="button"
+                          onClick={() => toggleAccessSort('requested_at')}
+                          className={`hover:text-white ${accessSort.key === 'requested_at' ? 'text-white' : ''}`}
+                        >
+                          Requested{accessSortIndicator('requested_at')}
+                        </button>
+                      </th>
+                      <th className={accessTableHeadClass}>
+                        <button
+                          type="button"
+                          onClick={() => toggleAccessSort('reviewed_at')}
+                          className={`hover:text-white ${accessSort.key === 'reviewed_at' ? 'text-white' : ''}`}
+                        >
+                          Reviewed{accessSortIndicator('reviewed_at')}
+                        </button>
+                      </th>
+                      <th className={accessActionsHeadClass}>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filteredAccessRequests.map((r) => (
+                      <tr key={r.id} className={accessTableRowClass}>
+                        <td className={`${accessTableCellClass} text-white`}>{r.full_name || '—'}</td>
+                        <td className={`${accessTableCellClass} text-slate-300`}>{r.email}</td>
+                        <td className={accessTableCellClass}>
+                          <span
+                            className={`inline-flex px-1.5 py-px rounded text-[10px] font-medium ${
+                              r.status === 'approved'
+                                ? 'bg-emerald-900/50 text-emerald-200'
+                                : r.status === 'rejected'
+                                  ? 'bg-red-900/50 text-red-200'
+                                  : 'bg-amber-900/50 text-amber-200'
+                            }`}
+                          >
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className={`${accessTableCellClass} text-slate-300`}>{r.is_admin ? 'Admin' : 'User'}</td>
+                        <td className={`${accessTableCellClass} text-slate-400`}>
+                          {r.status === 'approved' ? (
+                            r.is_admin ? (
+                              'All (admin)'
+                            ) : (r.event_access_count ?? 0) === 0 ? (
+                              'All events'
+                            ) : (
+                              `${r.event_access_count} selected`
+                            )
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className={`${accessTableCellClass} text-slate-400`}>{accountSetupLabel(r)}</td>
+                        <td className={`${accessTableCellClass} text-slate-400 whitespace-nowrap`}>
+                          {formatAccessDate(r.requested_at)}
+                        </td>
+                        <td className={`${accessTableCellClass} text-slate-400 whitespace-nowrap`}>
+                          {formatAccessDate(r.reviewed_at)}
+                        </td>
+                        <td className={`${accessActionsCellClass} group-hover:bg-slate-900`}>
+                          {renderAccessActions(r)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="px-3 py-2 text-xs text-slate-500 border-t border-slate-700/60 bg-slate-900/40">
+                {accessUserSearch.trim()
+                  ? `${filteredAccessRequests.length} of ${sortedAccessRequests.length} users`
+                  : `${filteredAccessRequests.length} user${filteredAccessRequests.length === 1 ? '' : 's'}`}
+                {' — scroll for more'}
+              </p>
             </div>
           )}
         </section>
@@ -2153,6 +2385,125 @@ export default function AdminPage() {
             </div>
           )}
         </section>
+
+        {eventAccessUser && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60">
+            <div
+              className="w-full max-w-2xl bg-slate-800 border border-slate-600 rounded-xl shadow-2xl max-h-[90vh] flex flex-col"
+              role="dialog"
+              aria-labelledby="event-access-title"
+            >
+              <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-700 shrink-0">
+                <div>
+                  <h3 id="event-access-title" className="text-lg font-semibold text-white">
+                    Event access
+                  </h3>
+                  <p className="text-slate-400 text-sm mt-1">
+                    {eventAccessUser.full_name || eventAccessUser.email}
+                    {eventAccessUser.is_admin && (
+                      <span className="text-slate-500"> — admins always see all events</span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeEventAccessModal}
+                  className="p-1 text-slate-400 hover:text-white"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
+                {eventAccessError && (
+                  <div className="px-3 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+                    {eventAccessError}
+                  </div>
+                )}
+                <p className="text-slate-400 text-sm">
+                  Leave nothing checked for access to <span className="text-white">all events</span>. Check specific
+                  events to restrict this user to only those.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="search"
+                    value={eventAccessSearch}
+                    onChange={(e) => setEventAccessSearch(e.target.value)}
+                    placeholder="Search events…"
+                    className="flex-1 min-w-[12rem] px-3 py-2 bg-slate-900/60 border border-slate-600 rounded-lg text-sm text-white placeholder:text-slate-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setEventAccessSelected(new Set(eventAccessEvents.map((e) => e.id)))}
+                    disabled={eventAccessLoading || eventAccessEvents.length === 0}
+                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs rounded-lg"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEventAccessSelected(new Set())}
+                    disabled={eventAccessLoading}
+                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs rounded-lg"
+                  >
+                    Clear (all events)
+                  </button>
+                </div>
+                {eventAccessLoading ? (
+                  <p className="text-slate-400 text-sm">Loading events…</p>
+                ) : filteredEventAccessEvents.length === 0 ? (
+                  <p className="text-slate-400 text-sm">No events match your search.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-700/60 border border-slate-700/80 rounded-lg max-h-80 overflow-y-auto">
+                    {filteredEventAccessEvents.map((event) => {
+                      const checked = eventAccessSelected.has(event.id);
+                      return (
+                        <li key={event.id}>
+                          <label className="flex items-start gap-3 px-3 py-2.5 hover:bg-slate-900/40 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleEventAccessSelection(event.id)}
+                              className="mt-1 rounded border-slate-500 bg-slate-900 text-violet-500 focus:ring-violet-500"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-white text-sm font-medium truncate">{event.name}</span>
+                              <span className="block text-slate-500 text-xs">
+                                {event.date || 'No date'} · <code className="text-slate-400">{event.id}</code>
+                              </span>
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <p className="text-xs text-slate-500">
+                  {eventAccessSelected.size === 0
+                    ? 'No restrictions — user can access every event.'
+                    : `${eventAccessSelected.size} event${eventAccessSelected.size === 1 ? '' : 's'} selected.`}
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-700 shrink-0">
+                <button
+                  type="button"
+                  onClick={closeEventAccessModal}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveEventAccess()}
+                  disabled={eventAccessSaving || eventAccessLoading}
+                  className="px-4 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+                >
+                  {eventAccessSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {accessEmailDraft && approvalEmailDraftContent && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60">

@@ -25,7 +25,7 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
-const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes } = require('./lib/api-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, filterCalendarEventsForAuth } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
@@ -1502,7 +1502,10 @@ app.get('/api/calendar-events', async (req, res) => {
     const result = await pool.query(
       'SELECT * FROM calendar_events ORDER BY date DESC'
     );
-    const rows = (result.rows || []).map(normalizeCalendarEvent);
+    const rows = filterCalendarEventsForAuth(
+      (result.rows || []).map(normalizeCalendarEvent),
+      req.auth
+    );
     res.json(rows);
   } catch (error) {
     console.error('Error fetching calendar events:', error);
@@ -1545,7 +1548,8 @@ app.get('/api/dashboard/summary', async (req, res) => {
       return id ? { id, row: map.get(id) } : { id: null, row: null };
     }
 
-    const events = (calendarResult.rows || []).map((row) => {
+    const events = filterCalendarEventsForAuth(
+      (calendarResult.rows || []).map((row) => {
       const normalized = normalizeCalendarEvent(row);
       const sd = normalized.schedule_data || {};
       const eventDate =
@@ -1584,7 +1588,9 @@ app.get('/api/dashboard/summary', async (req, res) => {
         contentReview: summarizeContentReviews(reviews, scheduleItems),
         rosUpdatedAt: rosRow?.updated_at || null,
       };
-    });
+    }),
+      req.auth
+    );
 
     res.json({ events, generatedAt: new Date().toISOString() });
   } catch (error) {
@@ -1596,6 +1602,9 @@ app.get('/api/dashboard/summary', async (req, res) => {
 app.get('/api/calendar-events/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!userCanAccessEvent(req.auth, id)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this event.' });
+    }
     const result = await pool.query(
       'SELECT * FROM calendar_events WHERE id = $1',
       [id]
@@ -1746,6 +1755,9 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
 app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this event.' });
+    }
     const result = await pool.query(
       'SELECT * FROM run_of_show_data WHERE event_id = $1',
       [eventId]
