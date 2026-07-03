@@ -288,7 +288,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
             )}
 
             {isRequestAccess && (
-              <p className="text-xs leading-relaxed text-slate-400">
+              <p className="text-xs leading-relaxed text-slate-400 text-center">
                 Submit your name and email to request access. You will receive a personal link —{' '}
                 <span className="text-slate-300">save it before you leave this page.</span>
               </p>
