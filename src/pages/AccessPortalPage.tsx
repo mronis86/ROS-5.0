@@ -107,7 +107,6 @@ const AccessPortalPage: React.FC = () => {
             <AppLogo size="lg" />
             <AppBrandTitle titleClassName="text-3xl font-bold text-white leading-tight" showTagline={false} />
           </div>
-          <h1 className="text-2xl font-bold text-white">Access portal</h1>
           <p className="text-slate-400 text-sm mt-2">Check your request status or finish setting up your account.</p>
         </div>
 
