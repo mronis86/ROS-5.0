@@ -723,7 +723,7 @@ export default function AdminPage() {
     async (id: string, email: string) => {
       if (
         !confirm(
-          `Permanently remove ${email} from Run of Show?\n\nThis deletes their access record and API sessions. Their Neon Auth login (if created) must be removed separately in Neon Console.`
+          `Permanently remove ${email} from Run of Show?\n\nThis deletes their access record, API sessions, and Neon Auth login (if one exists).`
         )
       ) {
         return;
