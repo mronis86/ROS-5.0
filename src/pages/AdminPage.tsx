@@ -736,6 +736,16 @@ export default function AdminPage() {
           setAccessRequestsError((data as { error?: string }).error || `HTTP ${res.status}`);
           return;
         }
+        const data = (await res.json().catch(() => ({}))) as {
+          neon_auth_removed?: boolean;
+          neon_auth_error?: string | null;
+          hint?: string;
+        };
+        if (data.neon_auth_removed === false && data.neon_auth_error) {
+          setAccessRequestsError(
+            `User removed from Run of Show, but Neon Auth login may still exist: ${data.neon_auth_error}`
+          );
+        }
         await fetchAccessRequests();
       } catch (e) {
         setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
