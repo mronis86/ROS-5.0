@@ -197,7 +197,10 @@ const AccessPortalPage: React.FC = () => {
                 Your access request for <span className="text-white">{portal?.email}</span> is pending review. An
                 administrator will approve your account soon.
               </p>
-              <p className="text-slate-500 text-xs">Bookmark this page or use the link in your email to check back later.</p>
+              <p className="text-amber-200/90 text-xs bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2">
+                Keep this page bookmarked or save this URL. You will need this same link after approval to set your
+                password.
+              </p>
               <button
                 type="button"
                 onClick={() => window.location.reload()}

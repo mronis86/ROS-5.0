@@ -162,6 +162,10 @@ const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         ) : requestSent ? (
           <div className="space-y-4">
+            <div className="bg-amber-900/30 border border-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm">
+              <strong className="text-amber-50">Important:</strong> Save your personal link before closing this page.
+              You need the same link after approval to set your password.
+            </div>
             <div className="bg-green-900/40 border border-green-700 text-green-200 px-4 py-3 rounded-lg text-sm">
               {requestMessage || (
                 <>
@@ -174,8 +178,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
               <div className="rounded-lg border border-slate-600 bg-slate-900/60 p-4 space-y-3">
                 <p className="text-slate-300 text-sm font-medium">Your personal access link</p>
                 <p className="text-xs text-slate-400">
-                  Bookmark this or copy it now. If email is not configured, this is how you return after an admin
-                  approves you.
+                  Copy or bookmark this link now and keep it somewhere safe (notes app, password manager, etc.). This
+                  is your only way back to check approval status and finish account setup.
                 </p>
                 <code className="block text-xs text-slate-300 break-all bg-slate-950/60 p-2 rounded border border-slate-700">
                   {requestPortalUrl}
@@ -269,8 +273,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
             {isRequestAccess && (
               <p className="text-xs leading-relaxed text-slate-400">
-                Submit your name and email to request access. You will get a personal link to save — use it to check
-                status and set your password after an admin approves you.
+                Submit your name and email to request access. You will receive a personal link —{' '}
+                <span className="text-slate-300">save it before you leave this page.</span>
               </p>
             )}
 
