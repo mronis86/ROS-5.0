@@ -12,6 +12,8 @@ interface AuthModalProps {
   onSuccess: () => void;
   /** When set, open directly on that tab (e.g. after pending screen). */
   initialMode?: AuthMode;
+  /** Fired when access request is submitted so parent can adjust layout (e.g. hide branding). */
+  onRequestSentChange?: (sent: boolean) => void;
 }
 
 const AuthModal: React.FC<AuthModalProps> = ({
@@ -19,6 +21,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onSuccess,
   initialMode = 'signin',
+  onRequestSentChange,
 }) => {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
@@ -47,6 +50,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
     setRequestMessage(null);
     setRequestPortalUrl(null);
     setRequestPortalCopied(false);
+    onRequestSentChange?.(false);
   };
 
   const copyRequestPortalUrl = async () => {
@@ -84,6 +88,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
         setError(result.error.message || 'An error occurred');
       } else if (isRequestAccess) {
         setRequestSent(true);
+        onRequestSentChange?.(true);
         setRequestMessage(result.message || 'Check your email for a link to view your access status.');
         setRequestPortalUrl(result.portalUrl || null);
       } else {
