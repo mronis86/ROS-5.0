@@ -26,6 +26,7 @@ const server = createServer(app);
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
 const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes } = require('./lib/api-auth');
+const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
@@ -386,6 +387,7 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
 }
 
 // Middleware
+app.set('trust proxy', 1);
 app.use(helmet());
 // In development allow any origin (so other computers on LAN can POST e.g. to /api/auth/check-domain)
 const ADMIN_CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Admin-Key', 'X-Admin-Pin'];
@@ -399,6 +401,7 @@ app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
 // API auth: resolves Bearer/query tokens; enforces REQUIRE_API_AUTH when legacy mode is off
+applyAuthRateLimits(app);
 app.use(createApiAuthMiddleware(pool, apiAuthConfig));
 registerAuthRoutes(app, pool, { requireAdminAuth });
 console.log(
