@@ -178,8 +178,15 @@ class ApiClient {
     return result;
   }
 
+  invalidateRunOfShowCache(eventId: string): void {
+    this.cache.delete(`runOfShowData_${eventId}`);
+  }
+
   // Run of Show Data
-  async getRunOfShowData(eventId: string) {
+  async getRunOfShowData(eventId: string, options?: { bypassCache?: boolean }) {
+    if (options?.bypassCache) {
+      this.invalidateRunOfShowCache(eventId);
+    }
     return this.request(`/api/run-of-show-data/${eventId}`, {}, `runOfShowData_${eventId}`, this.CACHE_TTL.runOfShowData);
   }
 
@@ -427,6 +434,13 @@ class ApiClient {
     this.cache.delete(`userEventNotes_${data.event_id}_${data.user_id}`);
     this.cache.delete(`userEventNoteOperators_${data.event_id}`);
     return result;
+  }
+
+  async clearLedOutput(eventId: string) {
+    return this.request<{ ok: boolean }>('/api/led-output/clear', {
+      method: 'POST',
+      body: JSON.stringify({ event_id: eventId }),
+    });
   }
 }
 

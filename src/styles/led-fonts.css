@@ -1,0 +1,133 @@
+/* LED hosted fonts — files live in public/fonts/ */
+
+/* Brown Pro */
+@font-face {
+  font-family: 'Brown Pro';
+  src: url('/fonts/BrownPro-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Brown Pro';
+  src: url('/fonts/BrownPro-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Calluna */
+@font-face {
+  font-family: 'Calluna';
+  src: url('/fonts/exljbris%20-%20Calluna-Light.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Calluna';
+  src: url('/fonts/exljbris%20-%20Calluna-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* GTA — each cut is its own family (weight is baked into the file) */
+@font-face {
+  font-family: 'GTA Regular';
+  src: url('/fonts/GTA-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GTA Light';
+  src: url('/fonts/GTA-Chamber-Light.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GTA Medium';
+  src: url('/fonts/GTA-Chamber-Medium.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GTA Bold';
+  src: url('/fonts/GTA-Chamber-Bold.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GTA Extra Black';
+  src: url('/fonts/GTA-Chamber-ExtraBlack.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GTA Condensed Bold';
+  src: url('/fonts/GTA-Chamber-CondensedBold.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GTA Mono';
+  src: url('/fonts/GTA-Chamber-Mono.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Tobias — add .woff2/.woff files to public/fonts/ */
+@font-face {
+  font-family: 'Tobias';
+  src:
+    url('/fonts/Tobias-Regular.woff2') format('woff2'),
+    url('/fonts/Tobias-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Tobias';
+  src:
+    url('/fonts/Tobias-Italic.woff2') format('woff2'),
+    url('/fonts/Tobias-Italic.woff') format('woff');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Tobias';
+  src:
+    url('/fonts/Tobias-Bold.woff2') format('woff2'),
+    url('/fonts/Tobias-Bold.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Tobias';
+  src:
+    url('/fonts/Tobias-BoldItalic.woff2') format('woff2'),
+    url('/fonts/Tobias-BoldItalic.woff') format('woff');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}

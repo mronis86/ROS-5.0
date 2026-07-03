@@ -585,7 +585,7 @@ const GraphicsLinksPage: React.FC = () => {
           </div>
         </div>
         {/* Brand Lower Third Color Updater */}
-        <div className="bg-gradient-to-r from-amber-600 to-amber-700 rounded-lg p-4 shadow-lg border border-amber-400">
+        <div className="bg-gradient-to-r from-amber-600 to-amber-700 rounded-lg p-4 shadow-lg border border-amber-400 mb-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 flex-1">
               <h3 className="text-lg font-bold text-white whitespace-nowrap">🎨 Brand Lower Third Color Updater:</h3>
@@ -597,6 +597,43 @@ const GraphicsLinksPage: React.FC = () => {
             >
               Open
             </button>
+          </div>
+        </div>
+        {/* LED Text Graphics */}
+        <div className="bg-gradient-to-r from-violet-600 to-violet-700 rounded-lg p-4 shadow-lg border border-violet-400">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex-1 min-w-[12rem]">
+              <h3 className="text-lg font-bold text-white">📺 LED Text Graphics</h3>
+              <p className="text-violet-100 text-sm mt-1">
+                WYSIWYG per-cue layouts with drag positioning (4K, scales to HD). Output follows loaded cue.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const id = eventId || event?.id;
+                  if (id) {
+                    window.open(`/led-layouts?eventId=${encodeURIComponent(id)}&eventName=${encodeURIComponent(event?.name || '')}`, '_blank');
+                  }
+                }}
+                className="bg-violet-500 hover:bg-violet-600 text-white px-4 py-2 rounded-lg transition-colors font-semibold text-sm"
+              >
+                Configure Layouts
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = eventId || event?.id;
+                  if (id) {
+                    window.open(`/led-output?eventId=${encodeURIComponent(id)}`, '_blank');
+                  }
+                }}
+                className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg transition-colors font-semibold text-sm border border-violet-300/40"
+              >
+                Open Output
+              </button>
+            </div>
           </div>
         </div>
       </div>

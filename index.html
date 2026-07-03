@@ -7,6 +7,12 @@
     <title>Run of Show Schedule</title>
   </head>
   <body>
+    <script>
+      if (window.location.pathname === '/led-output') {
+        document.documentElement.style.background = 'transparent';
+        document.body.style.background = 'transparent';
+      }
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/index.tsx"></script>
   </body>

@@ -47,3 +47,340 @@ input:focus, select:focus, textarea:focus {
   animation: fadeIn 0.3s ease-out;
 }
 
+@keyframes ledFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ledFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes ledFadeUpIn {
+  from { opacity: 0; transform: translateY(var(--led-slide-distance, 96px)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ledFadeUpOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(calc(-1 * var(--led-slide-distance, 96px))); }
+}
+
+@keyframes ledFadeDownIn {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--led-slide-distance, 96px))); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ledFadeDownOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(var(--led-slide-distance, 96px)); }
+}
+
+@keyframes ledFadeLeftIn {
+  from { opacity: 0; transform: translateX(calc(-1 * var(--led-slide-distance, 96px))); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ledFadeLeftOut {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(calc(-1 * var(--led-slide-distance, 96px))); }
+}
+
+@keyframes ledFadeRightIn {
+  from { opacity: 0; transform: translateX(var(--led-slide-distance, 96px)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ledFadeRightOut {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(var(--led-slide-distance, 96px)); }
+}
+
+@keyframes ledSlideUpIn {
+  from { opacity: 1; transform: translateY(var(--led-slide-distance, 96px)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ledSlideUpOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; transform: translateY(calc(-1 * var(--led-slide-distance, 96px))); }
+}
+
+@keyframes ledSlideDownIn {
+  from { opacity: 1; transform: translateY(calc(-1 * var(--led-slide-distance, 96px))); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ledSlideDownOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; transform: translateY(var(--led-slide-distance, 96px)); }
+}
+
+@keyframes ledSlideLeftIn {
+  from { opacity: 1; transform: translateX(calc(-1 * var(--led-slide-distance, 96px))); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ledSlideLeftOut {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 1; transform: translateX(calc(-1 * var(--led-slide-distance, 96px))); }
+}
+
+@keyframes ledSlideRightIn {
+  from { opacity: 1; transform: translateX(var(--led-slide-distance, 96px)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ledSlideRightOut {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 1; transform: translateX(var(--led-slide-distance, 96px)); }
+}
+
+.led-output-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.led-output-visible {
+  opacity: 1;
+}
+
+.led-output-enter-fade {
+  animation: ledFadeIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-fade {
+  animation: ledFadeOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-up {
+  animation: ledFadeUpIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-up {
+  animation: ledFadeUpOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-down {
+  animation: ledFadeDownIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-down {
+  animation: ledFadeDownOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-left {
+  animation: ledFadeLeftIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-left {
+  animation: ledFadeLeftOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-right {
+  animation: ledFadeRightIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-right {
+  animation: ledFadeRightOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-up-slide {
+  animation: ledSlideUpIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-up-slide {
+  animation: ledSlideUpOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-down-slide {
+  animation: ledSlideDownIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-down-slide {
+  animation: ledSlideDownOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-left-slide {
+  animation: ledSlideLeftIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-left-slide {
+  animation: ledSlideLeftOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-right-slide {
+  animation: ledSlideRightIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-right-slide {
+  animation: ledSlideRightOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-animator {
+  overflow: hidden;
+}
+
+@keyframes ledWipeLeftIn {
+  from { clip-path: inset(0 100% 0 0); opacity: 1; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeLeftOut {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(0 100% 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeRightIn {
+  from { clip-path: inset(0 0 0 100%); opacity: 1; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeRightOut {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(0 0 0 100%); opacity: 1; }
+}
+
+@keyframes ledWipeUpIn {
+  from { clip-path: inset(100% 0 0 0); opacity: 1; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeUpOut {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(100% 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeDownIn {
+  from { clip-path: inset(0 0 100% 0); opacity: 1; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeDownOut {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(0 0 100% 0); opacity: 1; }
+}
+
+@keyframes ledWipeLeftInFade {
+  from { clip-path: inset(0 100% 0 0); opacity: 0; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeLeftOutFade {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(0 100% 0 0); opacity: 0; }
+}
+
+@keyframes ledWipeRightInFade {
+  from { clip-path: inset(0 0 0 100%); opacity: 0; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeRightOutFade {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(0 0 0 100%); opacity: 0; }
+}
+
+@keyframes ledWipeUpInFade {
+  from { clip-path: inset(100% 0 0 0); opacity: 0; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeUpOutFade {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(100% 0 0 0); opacity: 0; }
+}
+
+@keyframes ledWipeDownInFade {
+  from { clip-path: inset(0 0 100% 0); opacity: 0; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes ledWipeDownOutFade {
+  from { clip-path: inset(0 0 0 0); opacity: 1; }
+  to { clip-path: inset(0 0 100% 0); opacity: 0; }
+}
+
+.led-output-enter-wipe-left {
+  animation: ledWipeLeftIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-left {
+  animation: ledWipeLeftOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-wipe-right {
+  animation: ledWipeRightIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-right {
+  animation: ledWipeRightOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-wipe-up {
+  animation: ledWipeUpIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-up {
+  animation: ledWipeUpOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-wipe-down {
+  animation: ledWipeDownIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-down {
+  animation: ledWipeDownOut var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-wipe-left-fade {
+  animation: ledWipeLeftInFade var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-left-fade {
+  animation: ledWipeLeftOutFade var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-wipe-right-fade {
+  animation: ledWipeRightInFade var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-right-fade {
+  animation: ledWipeRightOutFade var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-wipe-up-fade {
+  animation: ledWipeUpInFade var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-up-fade {
+  animation: ledWipeUpOutFade var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-enter-wipe-down-fade {
+  animation: ledWipeDownInFade var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
+}
+
+.led-output-exit-wipe-down-fade {
+  animation: ledWipeDownOutFade var(--led-anim-duration, 300ms) var(--led-anim-easing, ease-out) both;
+}
+
+/* LED WYSIWYG editor — disable global transitions so drag positioning is instant */
+.led-editor-root,
+.led-editor-root *,
+.led-editor-no-transition {
+  transition: none !important;
+}
+
+.led-editor-placed {
+  cursor: grab;
+  touch-action: none;
+  padding: 12px;
+  margin: -12px;
+}
+
+.led-editor-placed:active {
+  cursor: grabbing;
+}
+

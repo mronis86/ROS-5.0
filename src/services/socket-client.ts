@@ -13,6 +13,7 @@ interface SocketCallbacks {
   onSubCueTimerStopped?: (data: any) => void; // NEW!
   onActiveTimersUpdated?: (data: any) => void; // NEW!
   onResetAllStates?: (data: any) => void; // NEW! For reset events
+  onLedOutputClear?: (data: { eventId: string }) => void;
   onConnectionChange?: (connected: boolean) => void;
   onInitialSync?: () => Promise<void>; // NEW! For initial sync on connect
   onTimerMessageUpdated?: (data: any) => void; // NEW! For ClockPage messages
@@ -108,6 +109,9 @@ class SocketClient {
           break;
         case 'resetAllStates': // NEW!
           this.callbacks.onResetAllStates?.(message.data);
+          break;
+        case 'ledOutputClear':
+          this.callbacks.onLedOutputClear?.(message.data);
           break;
         case 'timerMessageUpdated': // NEW! For ClockPage messages
           console.log('📡 SocketClient: Received timerMessageUpdated event:', message.data);
@@ -210,6 +214,13 @@ class SocketClient {
     if (this.socket && this.eventId) {
       console.log('📡 Emitting reset all states event');
       this.socket.emit('resetAllStates', { eventId: this.eventId });
+    }
+  }
+
+  emitLedOutputClear() {
+    if (this.socket && this.eventId) {
+      console.log('📡 Emitting LED output clear event');
+      this.socket.emit('ledOutputClear', { eventId: this.eventId });
     }
   }
 

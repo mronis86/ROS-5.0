@@ -2354,6 +2354,20 @@ app.post('/api/run-of-show-data', async (req, res) => {
   }
 });
 
+app.post('/api/led-output/clear', async (req, res) => {
+  try {
+    const { event_id: eventId } = req.body || {};
+    if (!eventId) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
+    broadcastUpdate(eventId, 'ledOutputClear', { eventId });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error clearing LED output:', error);
+    res.status(500).json({ error: 'Failed to clear LED output' });
+  }
+});
+
 // Completed Cues endpoints
 app.get('/api/completed-cues/:eventId', async (req, res) => {
   try {
@@ -4359,6 +4373,16 @@ io.on('connection', (socket) => {
     });
     
     console.log(`📡 Reset all states and completed cues cleared broadcasted to event:${data.eventId}`);
+  });
+
+  socket.on('ledOutputClear', (data) => {
+    const { eventId } = data || {};
+    if (!eventId) return;
+    console.log(`📺 LED output clear requested for event: ${eventId}`);
+    io.to(`event:${eventId}`).emit('update', {
+      type: 'ledOutputClear',
+      data: { eventId },
+    });
   });
 
   // Content Review: one browser drives cue selection; others can follow (same event room).

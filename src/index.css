@@ -1,3 +1,5 @@
+@import './styles/led-fonts.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -63,6 +65,24 @@ input:focus, select:focus, textarea:focus {
 
 .clock-page .App > header {
   display: none !important;
+}
+
+/* LED output — transparent page chrome for OBS / media server keying */
+html:has(.led-output-page),
+body:has(.led-output-page),
+#root:has(.led-output-page),
+.led-output-page {
+  background: transparent !important;
+}
+
+.led-output-page .App {
+  background: transparent !important;
+  min-height: 100vh;
+}
+
+.led-output-surface {
+  background: transparent !important;
+  isolation: isolate;
 }
 
 /* Hide scrollbar but allow scrolling */

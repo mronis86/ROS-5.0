@@ -32,6 +32,8 @@ import ComparisonPage from './pages/ComparisonPage';
 import DashboardPage from './pages/DashboardPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccessPortalPage from './pages/AccessPortalPage';
+import LedLayoutsPage from './pages/LedLayoutsPage';
+import LedOutputPage from './pages/LedOutputPage';
 
 function AppContent() {
   const location = useLocation();
@@ -50,12 +52,13 @@ function AppContent() {
   const isComparison = location.pathname === '/comparison';
   const isResetPassword = location.pathname === '/reset-password';
   const isAccessPortal = location.pathname === '/access';
+  const isLedOutput = location.pathname === '/led-output';
 
   return (
     <ActiveViewersProvider>
-    <div className={`App ${isClock ? 'clock-page' : ''}`}>
+    <div className={`App ${isClock ? 'clock-page' : ''} ${isLedOutput ? 'led-output-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && <AppHeader />}
       
       {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isNetlifyXML && !isLocalXML && (
         <AuthGuard>
@@ -68,6 +71,7 @@ function AppContent() {
             <Route path="/run-of-show-mobile" element={<RunOfShowMobilePage />} />
             <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
             <Route path="/graphics-links" element={<GraphicsLinksPage />} />
+            <Route path="/led-layouts" element={<LedLayoutsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
@@ -86,6 +90,7 @@ function AppContent() {
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/access" element={<AccessPortalPage />} />
+        <Route path="/led-output" element={<LedOutputPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
         <Route path="/schedule-xml" element={<ScheduleXMLPage />} />

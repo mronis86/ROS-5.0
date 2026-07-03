@@ -515,11 +515,14 @@ export class DatabaseService {
     }
   }
 
-  static async getRunOfShowData(eventId: string): Promise<RunOfShowData | null> {
+  static async getRunOfShowData(
+    eventId: string,
+    options?: { bypassCache?: boolean }
+  ): Promise<RunOfShowData | null> {
     try {
       console.log('🔄 Loading run of show data from API for event:', eventId);
       
-      const data = await apiClient.getRunOfShowData(eventId);
+      const data = await apiClient.getRunOfShowData(eventId, options);
       
       console.log('✅ Run of show data loaded from API:', data ? 'Found' : 'Not found');
       if (data) {
@@ -1386,6 +1389,16 @@ export class DatabaseService {
       return true;
     } catch (error) {
       console.error('❌ Error clearing all active timers:', error);
+      return false;
+    }
+  }
+
+  static async clearLedOutput(eventId: string): Promise<boolean> {
+    try {
+      await apiClient.clearLedOutput(eventId);
+      return true;
+    } catch (error) {
+      console.warn('clearLedOutput API failed (local signal may still work):', error);
       return false;
     }
   }
