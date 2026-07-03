@@ -363,7 +363,7 @@ class AuthService {
       if (isNeonAuthEnabled) {
         const domainCheck = await this.checkDomain(email);
         if (!domainCheck.allowed) {
-          return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+          return { error: { message: domainCheck.message || 'We are having trouble authorizing your account request. Please contact an administrator.' } };
         }
 
         const exchange = await this.neonAuthApiRequest('/api/auth/neon-login', {
@@ -396,7 +396,7 @@ class AuthService {
 
       const domainCheck = await this.checkDomain(email);
       if (!domainCheck.allowed) {
-        return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+        return { error: { message: domainCheck.message || 'We are having trouble authorizing your account request. Please contact an administrator.' } };
       }
 
       const base = getApiBaseUrl();
@@ -443,7 +443,7 @@ class AuthService {
     try {
       const domainCheck = await this.checkDomain(email);
       if (!domainCheck.allowed) {
-        return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+        return { error: { message: domainCheck.message || 'We are having trouble authorizing your account request. Please contact an administrator.' } };
       }
 
       const base = getApiBaseUrl();
@@ -504,7 +504,7 @@ class AuthService {
       if (isNeonAuthEnabled) {
         const domainCheck = await this.checkDomain(email);
         if (!domainCheck.allowed) {
-          return { error: { message: domainCheck.message || 'Your email domain is not approved.' } };
+          return { error: { message: domainCheck.message || 'We are having trouble authorizing your account request. Please contact an administrator.' } };
         }
 
         const exchange = await this.neonAuthApiRequest('/api/auth/neon-register', {
