@@ -52,4 +52,7 @@ node scripts/zip-offline-show.js
 echo "========== Building Vite app =========="
 npm run build
 
+echo "========== Verifying dist has no source maps or dev paths =========="
+node scripts/verify-dist-privacy.js
+
 echo "========== Netlify build finished =========="

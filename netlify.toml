@@ -57,6 +57,19 @@
   force = true
 
 # SPA fallback - all other routes to index.html
+# Do not serve source maps if they ever appear in a build artifact (must be before /* catch-all)
+[[redirects]]
+  from = "/assets/*.map"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/*.map"
+  to = "/404.html"
+  status = 404
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

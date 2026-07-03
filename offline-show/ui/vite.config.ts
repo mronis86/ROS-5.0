@@ -5,9 +5,12 @@ import path from 'path';
 const uiRoot = path.resolve(__dirname);
 
 /** Offline UI only — no imports from repo src/pages or src/services */
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: uiRoot,
   plugins: [react()],
+  esbuild: {
+    jsxDev: mode === 'development',
+  },
   publicDir: false,
   css: {
     postcss: path.join(uiRoot, 'postcss.config.cjs'),
@@ -18,5 +21,6 @@ export default defineConfig({
   build: {
     outDir: path.resolve(uiRoot, 'dist'),
     emptyOutDir: true,
+    sourcemap: false,
   },
-});
+}));

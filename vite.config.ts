@@ -1,8 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  esbuild: {
+    // Prevent jsxDEV from embedding absolute file paths (fileName) in production bundles.
+    jsxDev: mode === 'development',
+  },
   server: {
     host: '0.0.0.0', // Listen on all network interfaces (allows access from other computers)
     port: 3003,
@@ -13,7 +17,10 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist'
-  }
-})
+    outDir: 'dist',
+    // Never publish source maps — they embed absolute dev machine paths (IT/security).
+    sourcemap: false,
+    minify: 'esbuild',
+  },
+}))
 
