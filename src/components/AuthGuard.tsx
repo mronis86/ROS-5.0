@@ -2,8 +2,6 @@ import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
 import AppHeader from './AppHeader';
-import AppLogo from './AppLogo';
-import AppBrandTitle from './AppBrandTitle';
 import { isNeonAuthEnabled } from '../lib/neonAuthClient';
 
 interface AuthGuardProps {
@@ -87,18 +85,6 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
               </div>
             ) : (
               <div className="w-full max-w-2xl mx-auto px-2 sm:px-4 min-w-0">
-                <div className="mb-4 sm:mb-8 text-center">
-                  <div className="flex items-center justify-center gap-3 mb-4">
-                    <AppLogo size="lg" />
-                    <AppBrandTitle
-                      titleClassName="text-3xl sm:text-4xl font-bold text-white leading-tight"
-                      showTagline={false}
-                    />
-                  </div>
-                  <p className="text-slate-300 text-base sm:text-lg">
-                    Please sign in to access the Run of Show application.
-                  </p>
-                </div>
                 <AuthModal
                   isOpen={showAuthModal}
                   onClose={() => {}}
