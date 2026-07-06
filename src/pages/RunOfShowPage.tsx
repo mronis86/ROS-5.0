@@ -9863,12 +9863,24 @@ const RunOfShowPage: React.FC = () => {
                           setShowMenuDropdown(false);
                           setShowOSCModal(true);
                         }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                        className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                          currentUserRole === 'OPERATOR'
+                            ? 'text-white hover:bg-slate-700'
+                            : 'text-slate-500 cursor-not-allowed'
+                        }`}
+                        title={
+                          currentUserRole === 'OPERATOR'
+                            ? 'OSC Control downloads and commands'
+                            : 'Operator role required'
+                        }
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                         </svg>
                         OSC Control
+                        {currentUserRole !== 'OPERATOR' && (
+                          <span className="ml-auto text-[10px] uppercase tracking-wide text-slate-500">Locked</span>
+                        )}
                       </button>
                       {/* Operator Actions - flyout submenu */}
                       <div className="relative">
@@ -13829,6 +13841,7 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showOSCModal}
         onClose={() => setShowOSCModal(false)}
         event={event}
+        isOperator={currentUserRole === 'OPERATOR'}
       />
 
       {/* Display Selection Modal */}

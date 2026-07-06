@@ -261,6 +261,23 @@ module.exports = function (self) {
 				await adjustTimerDuration(self, -300)
 			},
 		},
+		led_clear_output: {
+			name: 'LED Clear Output',
+			options: [],
+			callback: async () => {
+				const eventId = self.config?.eventId
+				if (!eventId) {
+					self.log('warn', 'LED Clear Output: Event ID is required')
+					return
+				}
+				try {
+					await self.apiPost('/api/led-output/clear', { event_id: eventId })
+					self.log('info', 'LED output cleared')
+				} catch (err) {
+					self.log('error', `LED Clear Output failed: ${err.message}`)
+				}
+			},
+		},
 		resume_sync: {
 			name: 'Resume sync',
 			options: [],

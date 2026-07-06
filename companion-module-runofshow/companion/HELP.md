@@ -26,6 +26,9 @@ Control your Run of Show schedule directly from Bitfocus Companion. No Electron 
 - **Timer +5 min** – Add 5 minutes to the active timer duration.
 - **Timer -5 min** – Subtract 5 minutes from the active timer duration.
 
+### LED Text Graphics
+- **LED Clear Output** – Clears the transparent LED output page for this event (same as **Clear Output** on the LED Layouts page). All connected `/led-output` browser sources hide their content.
+
 ## Variables
 
 - **Current Cue** – The cue label of the loaded item.

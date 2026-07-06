@@ -4,14 +4,18 @@ interface OSCModalSimplifiedProps {
   isOpen: boolean;
   onClose: () => void;
   event: any;
+  isOperator?: boolean;
 }
 
 const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({ 
   isOpen, 
   onClose, 
-  event
+  event,
+  isOperator = false,
 }) => {
   if (!isOpen) return null;
+
+  const locked = !isOperator;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -27,7 +31,19 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
           </button>
         </div>
 
-        {/* Content - scrollable so it stays inside modal */}
+        {locked ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12">
+            <div className="text-4xl mb-4" aria-hidden>
+              🔒
+            </div>
+            <h3 className="text-lg font-semibold text-white mb-2">Operator access required</h3>
+            <p className="text-slate-400 text-sm max-w-md leading-relaxed">
+              OSC Control downloads and tools are available when you join this event as an{' '}
+              <span className="text-white font-medium">Operator</span>. Return to the events list and
+              re-open the show with the Operator role to unlock this panel.
+            </p>
+          </div>
+        ) : (
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0 overflow-y-auto">
           
           {/* Left Column - Event Info & Download */}
@@ -85,20 +101,6 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
-              {/* Python OSC App (ros-osc-python-app) */}
-              <div className="text-center mb-4">
-                <a
-                  href="/ros-osc-python-app.zip"
-                  download="ros-osc-python-app.zip"
-                  className="block bg-green-600 hover:bg-green-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
-                >
-                  🐍 Python OSC App (GUI)
-                </a>
-                <div className="text-xs text-green-400 mt-2">
-                  GUI toggle • Railway or Local • WebSocket • ros-osc-python-app
-                </div>
-              </div>
-
               {/* Offline Show — LAN show laptop */}
               <div className="text-center mb-4">
                 <a
@@ -113,33 +115,45 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
-              {/* Electron: Portable (left) + Full/Desktop (right) side by side */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                <div className="text-center">
+              <details className="mt-1 rounded-lg border border-slate-600/80 bg-slate-800/40 group">
+                <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden px-3 py-2.5 text-sm text-slate-300 hover:text-white select-none flex items-center justify-between gap-2">
+                  <span>Legacy desktop apps (Python &amp; Electron)</span>
+                  <span className="text-slate-500 text-xs group-open:rotate-180 transition-transform" aria-hidden>
+                    ▼
+                  </span>
+                </summary>
+                <div className="px-3 pb-3 pt-1 space-y-3 border-t border-slate-600/80">
+                  <p className="text-xs text-slate-500 leading-snug">
+                    Older standalone tools. Most shows should use the Companion module above.
+                  </p>
                   <a
-                    href="/ROS-OSC-Control-portable.zip"
-                    download="ROS-OSC-Control-portable.zip"
-                    className="block bg-amber-600 hover:bg-amber-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                    href="/ros-osc-python-app.zip"
+                    download="ros-osc-python-app.zip"
+                    className="block bg-green-700/80 hover:bg-green-600 text-white text-xs py-2 px-4 rounded text-center transition-colors font-medium"
                   >
-                    ⚡ ROS-OSC-Control (Portable)
+                    🐍 Python OSC App (GUI)
                   </a>
-                  <div className="text-xs text-amber-400 mt-2">
-                    Single .exe • No install • ros-osc-control dist
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <a
+                      href="/ROS-OSC-Control-portable.zip"
+                      download="ROS-OSC-Control-portable.zip"
+                      className="block bg-amber-700/80 hover:bg-amber-600 text-white text-xs py-2 px-3 rounded text-center transition-colors font-medium"
+                    >
+                      ⚡ ROS-OSC Portable
+                    </a>
+                    <a
+                      href="/electron-osc-app.zip"
+                      download="electron-osc-app.zip"
+                      className="block bg-blue-700/80 hover:bg-blue-600 text-white text-xs py-2 px-3 rounded text-center transition-colors font-medium"
+                    >
+                      🖥️ Electron OSC
+                    </a>
                   </div>
+                  <p className="text-[10px] text-slate-500 leading-snug">
+                    Python: GUI toggle, Railway or local, WebSocket. Portable: single .exe, no install. Electron: event list, ROS, OSC log.
+                  </p>
                 </div>
-                <div className="text-center">
-                  <a
-                    href="/electron-osc-app.zip"
-                    download="electron-osc-app.zip"
-                    className="block bg-blue-600 hover:bg-blue-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
-                  >
-                    🖥️ Electron OSC App (Desktop)
-                  </a>
-                  <div className="text-xs text-blue-400 mt-2">
-                    Event list • Run of Show • OSC Log
-                  </div>
-                </div>
-              </div>
+              </details>
               
               <div className="text-xs text-slate-500 mt-2 text-center leading-tight">
                 <strong>Zips</strong> (updated by <code className="bg-slate-600 px-1 rounded">npm run prebuild</code>, <code className="bg-slate-600 px-1 rounded">node scripts/zip-offline-show.js</code>, companion/resolume full scripts, or Netlify build). Portable: <code className="bg-slate-600 px-1 rounded">create-ros-osc-control-zip.bat</code>.
@@ -193,6 +207,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
           </div>
 
         </div>
+        )}
       </div>
     </div>
   );

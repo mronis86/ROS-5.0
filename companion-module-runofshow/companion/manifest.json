@@ -3,7 +3,7 @@
   "name": "Run of Show",
   "shortname": "runofshow",
   "description": "Control Run of Show schedule and timers via Railway API",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "license": "MIT",
   "repository": "git+https://github.com/bitfocus/companion-module-runofshow.git",
   "bugs": "https://github.com/bitfocus/companion-module-runofshow/issues",
