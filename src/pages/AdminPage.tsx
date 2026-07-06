@@ -222,6 +222,7 @@ export default function AdminPage() {
     dir: 'asc',
   });
   const [accessUserSearch, setAccessUserSearch] = useState('');
+  const [dashboardNeedsMigration, setDashboardNeedsMigration] = useState(false);
   const [copiedPortalUserId, setCopiedPortalUserId] = useState<string | null>(null);
   const [eventAccessUser, setEventAccessUser] = useState<AccessRequestRow | null>(null);
   const [eventAccessLoading, setEventAccessLoading] = useState(false);
@@ -636,12 +637,18 @@ export default function AdminPage() {
         setAccessRequests([]);
         return;
       }
-      const data = (await res.json()) as { requests?: AccessRequestRow[]; needsMigration?: boolean };
+      const data = (await res.json()) as {
+        requests?: AccessRequestRow[];
+        needsMigration?: boolean;
+        dashboardNeedsMigration?: boolean;
+      };
       if (data.needsMigration) {
         setAccessRequestsError('Run migration 027 on Neon for access approval.');
         setAccessRequests([]);
+        setDashboardNeedsMigration(false);
         return;
       }
+      setDashboardNeedsMigration(data.dashboardNeedsMigration === true);
       setAccessRequests(Array.isArray(data.requests) ? data.requests : []);
     } catch (e) {
       setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
@@ -964,19 +971,24 @@ export default function AdminPage() {
           Events
         </button>
       )}
-      {r.status === 'approved' && (
+      {r.status === 'approved' && !r.is_admin && (
         <button
           type="button"
           onClick={() =>
             void updateAccessUser(r.id, r.email, {
-              dashboard_enabled: !r.dashboard_enabled,
+              dashboard_enabled: !(r.dashboard_enabled === true),
               notify_user: false,
             })
           }
-          className={`${accessActionBtn} ${r.dashboard_enabled || r.is_admin ? 'bg-cyan-800 hover:bg-cyan-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
-          title="Allow this user to open the Production Dashboard"
+          disabled={dashboardNeedsMigration}
+          className={`${accessActionBtn} ${r.dashboard_enabled === true ? 'bg-cyan-800 hover:bg-cyan-700' : 'bg-slate-700 hover:bg-slate-600'} text-white disabled:opacity-50`}
+          title={
+            dashboardNeedsMigration
+              ? 'Run migration 032 on Neon first'
+              : 'Allow this user to open the Production Dashboard'
+          }
         >
-          {r.dashboard_enabled || r.is_admin ? 'Dashboard on' : 'Dashboard off'}
+          {r.dashboard_enabled === true ? 'Dashboard on' : 'Dashboard off'}
         </button>
       )}
       {r.status === 'approved' && (
@@ -1910,6 +1922,13 @@ export default function AdminPage() {
             </div>
           )}
 
+          {dashboardNeedsMigration && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              Run migration <code className="font-mono text-amber-100">032_add_dashboard_enabled.sql</code> on
+              Neon, then redeploy Railway, to enable per-user Production Dashboard access.
+            </div>
+          )}
+
           {filteredAccessRequests.length === 0 ? (
             <p className="text-slate-400 text-sm">
               {accessUserSearch.trim()
@@ -1997,7 +2016,9 @@ export default function AdminPage() {
                         <td className={`${accessTableCellClass} text-slate-300`}>{r.is_admin ? 'Admin' : 'User'}</td>
                         <td className={`${accessTableCellClass} text-slate-400`}>
                           {r.status === 'approved' ? (
-                            r.is_admin || r.dashboard_enabled ? (
+                            r.is_admin ? (
+                              'Always (admin)'
+                            ) : r.dashboard_enabled === true ? (
                               <span className="text-cyan-300">On</span>
                             ) : (
                               'Off'
