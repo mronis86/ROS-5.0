@@ -1,6 +1,7 @@
 'use strict';
 
 const { getCloudMode } = require('./cloud-mode');
+const { getRailwayApiTokenStatus } = require('./railway-api-token');
 
 const RAILWAY_HEALTH_URL =
   process.env.OFFLINE_RAILWAY_HEALTH_URL || 'https://ros-50-production.up.railway.app/health';
@@ -184,6 +185,7 @@ async function probeConnectivity(db) {
     lanOnly: cloud.lanOnly,
     cloudConnected: cloud.cloudConnected,
     cloudModeUpdatedAt: cloud.updatedAt,
+    railwayApiToken: getRailwayApiTokenStatus(db),
     timestamp: new Date().toISOString(),
     cached: false,
     internet,

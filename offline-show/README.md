@@ -63,6 +63,7 @@ Skip: Admin, Content Review, Teleprompter, XML exports, OSC, etc.
 
 - Show laptop only: pull from Railway before show, push after
 - “Offline / Online” toggle in status bar
+- **Railway API token** (connectivity bar → **API** button): paste an Integration token from Admin (`read` + `control` scopes). Or set `OFFLINE_RAILWAY_API_TOKEN` in the server environment.
 
 ## Run (download zip from ROS OSC modal)
 

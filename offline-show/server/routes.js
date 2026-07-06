@@ -14,6 +14,13 @@ const {
 } = require('./db');
 const { probeConnectivity, clearConnectivityCache, probeRailwayReachable } = require('./connectivity');
 const { getCloudMode, setCloudMode, MODES } = require('./cloud-mode');
+const {
+  getRailwayApiToken,
+  getRailwayApiTokenStatus,
+  setRailwayApiToken,
+  clearRailwayApiToken,
+} = require('./railway-api-token');
+const { validateRailwayApiToken } = require('./railway-client');
 const cloud = require('./cloud-data');
 const { pushReconnectSnapshotToRailway } = require('./cloud-reconnect-push');
 const { installCloudProxy } = require('./cloud-proxy');
@@ -56,6 +63,38 @@ function registerRoutes(app, db, helpers) {
     res.json(getCloudMode(db));
   });
 
+  app.get('/api/railway-api-token', (_req, res) => {
+    res.json(getRailwayApiTokenStatus(db));
+  });
+
+  app.put('/api/railway-api-token', async (req, res) => {
+    const { token } = req.body || {};
+    const status = getRailwayApiTokenStatus(db);
+    if (status.locked) {
+      return res.status(400).json({
+        error: 'Token is set via OFFLINE_RAILWAY_API_TOKEN on the show server — update that env var instead.',
+      });
+    }
+    try {
+      const check = await validateRailwayApiToken(token);
+      if (!check.ok) {
+        return res.status(400).json({ error: check.error || 'Token validation failed' });
+      }
+      const saved = setRailwayApiToken(db, token);
+      res.json(saved);
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'Could not save token' });
+    }
+  });
+
+  app.delete('/api/railway-api-token', (_req, res) => {
+    try {
+      res.json(clearRailwayApiToken(db));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'Could not clear token' });
+    }
+  });
+
   app.patch('/api/cloud-mode', async (req, res) => {
     const { mode, updatedBy } = req.body || {};
     if (mode !== MODES.LAN_ONLY && mode !== MODES.CLOUD_CONNECTED) {
@@ -91,6 +130,11 @@ function registerRoutes(app, db, helpers) {
     const { updatedBy, ...snapshot } = req.body || {};
     try {
       await probeRailwayReachable();
+      if (!getRailwayApiToken(db)) {
+        return res.status(400).json({
+          error: 'Railway API token is not configured. Open API token settings in the connectivity bar and paste an Integration token (read + control).',
+        });
+      }
       const pushStats = await pushReconnectSnapshotToRailway(db, snapshot);
       const payload = setCloudMode(db, MODES.CLOUD_CONNECTED, { updatedBy });
       clearConnectivityCache();

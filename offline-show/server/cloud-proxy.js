@@ -12,6 +12,7 @@ const LOCAL_EXACT = new Set([
   '/api/sync-from-cloud',
   '/api/reconnect-push',
   '/api/lan-info',
+  '/api/railway-api-token',
 ]);
 
 const LOCAL_PREFIXES = ['/api/dev/'];

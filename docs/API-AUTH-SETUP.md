@@ -115,7 +115,7 @@ When `REQUIRE_API_AUTH` is enabled, paste token into Companion **API Token** fie
 
 **vMix / Netlify graphics URLs** are separate feeds and are not affected by Railway `REQUIRE_API_AUTH`.
 
-**Offline show** (LAN port 3004) is unaffected; cloud sync to Railway will need a signed-in web session or integration token when enforcement is on.
+**Offline show** (LAN port 3004) is unaffected for LAN-only mode. For **cloud sync**, paste an Integration API token in the offline app connectivity bar (**API** button), or set `OFFLINE_RAILWAY_API_TOKEN` on the show server. Token needs scopes `read` + `control` when `REQUIRE_API_AUTH` is enabled.
 
 ---
 

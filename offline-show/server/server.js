@@ -9,6 +9,8 @@ const { Server } = require('socket.io');
 const { initDb } = require('./db');
 const { registerRoutes } = require('./routes');
 const { getCloudMode } = require('./cloud-mode');
+const { configureRailwayClient } = require('./railway-client');
+const { getRailwayApiToken } = require('./railway-api-token');
 const { createRailwaySocketBridge } = require('./railway-socket-bridge');
 const { formatLanUrls, getLanIPv4Addresses } = require('./lan-addresses');
 
@@ -31,6 +33,9 @@ function loadVite() {
 
 async function start() {
   const db = initDb();
+  configureRailwayClient({
+    getToken: () => getRailwayApiToken(db),
+  });
   const app = express();
   const server = http.createServer(app);
 
