@@ -24,7 +24,14 @@ interface User {
   full_name: string;
   role: string;
   is_admin?: boolean;
+  dashboard_enabled?: boolean;
   accessStatus?: AccessStatus;
+}
+
+export function canAccessProductionDashboard(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin) return true;
+  return user.dashboard_enabled === true;
 }
 
 interface AuthState {
@@ -60,6 +67,46 @@ function formatNeonAuthError(message: string): string {
     return `Invalid origin (${origin}). Neon Auth only auto-trusts localhost. Open http://localhost:3003 or add "${origin}" in Neon Console → Auth → Configuration → Domains.`;
   }
   return 'Invalid origin. Enable Allow Localhost in Neon Console → Settings → Auth, and add your app URL under Auth → Configuration → Domains.';
+}
+
+function formatAuthApiError(
+  data: Record<string, unknown>,
+  fallback: string,
+  status?: number
+): string {
+  const err = typeof data.error === 'string' ? data.error.trim() : '';
+  const msg = typeof data.message === 'string' ? data.message.trim() : '';
+  const hint = typeof data.hint === 'string' ? data.hint.trim() : '';
+  const primary = err || msg;
+
+  const isCredentialFailure =
+    status === 401 ||
+    (status === 400 &&
+      /invalid email or password|incorrect password|invalid credentials/i.test(primary));
+
+  if (isCredentialFailure && primary) {
+    return primary;
+  }
+
+  const parts: string[] = [];
+  if (primary) parts.push(primary);
+  if (hint && hint.toLowerCase() !== primary.toLowerCase()) {
+    parts.push(hint);
+  }
+  const code = typeof data.code === 'string' ? data.code.trim() : '';
+  if (
+    code &&
+    code.toLowerCase() !== primary.toLowerCase() &&
+    !primary.toLowerCase().includes(code.toLowerCase())
+  ) {
+    parts.push(`(${code})`);
+  }
+  const dbHost = typeof data.databaseHost === 'string' ? data.databaseHost.trim() : '';
+  if (dbHost) parts.push(`DB: ${dbHost}`);
+  const neonHost = typeof data.neonAuthHost === 'string' ? data.neonAuthHost.trim() : '';
+  if (neonHost) parts.push(`API Neon Auth host: ${neonHost}`);
+
+  return parts.join(' — ') || fallback;
 }
 
 class AuthService {
@@ -100,6 +147,7 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     neon_user_id?: string;
+    dashboard_enabled?: boolean;
     error?: string;
   }> {
     const base = getApiBaseUrl();
@@ -115,10 +163,12 @@ class AuthService {
         ok: false,
         token: null,
         status: 'none',
-        error: [data.error, data.hint, data.databaseHost ? `DB: ${data.databaseHost}` : null, data.code ? `(${data.code})` : null]
-          .filter(Boolean)
-          .join(' — ') ||
-          'Could not sign in. Confirm Railway has NEON_AUTH_BASE_URL and migrations 027/028 applied.',
+        error:
+          formatAuthApiError(
+            data,
+            'Could not sign in. Confirm Railway has NEON_AUTH_BASE_URL and migrations 027/028 applied.',
+            res.status
+          ),
       };
     }
 
@@ -131,6 +181,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       neon_user_id: data.neon_user_id,
+      dashboard_enabled: data.dashboard_enabled,
     };
   }
 
@@ -145,6 +196,7 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     neon_user_id?: string;
+    dashboard_enabled?: boolean;
     error?: string;
   }> {
     const client = getNeonAuthClient();
@@ -193,14 +245,11 @@ class AuthService {
         ok: false,
         token: null,
         status: 'none',
-        error: [
-          data.error,
-          data.hint,
-          data.neonAuthHost ? `API Neon Auth host: ${data.neonAuthHost}` : null,
-        ]
-          .filter(Boolean)
-          .join(' — ') ||
+        error: formatAuthApiError(
+          data,
           'Could not connect your Neon sign-in to the API. Confirm Railway has NEON_AUTH_BASE_URL and migration 028 applied.',
+          res.status
+        ),
       };
     }
 
@@ -213,6 +262,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       neon_user_id: data.neon_user_id,
+      dashboard_enabled: data.dashboard_enabled,
     };
   }
 
@@ -227,6 +277,7 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     neon_user_id?: string;
+    dashboard_enabled?: boolean;
   }> {
     const base = getApiBaseUrl();
     const res = await fetch(`${base}/api/auth/access-status`, {
@@ -242,6 +293,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       neon_user_id: data.neon_user_id,
+      dashboard_enabled: data.dashboard_enabled,
     };
   }
 
@@ -278,6 +330,7 @@ class AuthService {
               full_name: access.full_name || storedUser?.full_name || '',
               role: 'VIEWER',
               is_admin: access.is_admin,
+              dashboard_enabled: access.dashboard_enabled,
               accessStatus: access.status,
             };
             this.authState = {
@@ -311,6 +364,7 @@ class AuthService {
             full_name: data.user.full_name,
             role: data.user.role || 'VIEWER',
             is_admin: data.user.is_admin,
+            dashboard_enabled: data.user.is_admin,
             accessStatus: 'approved',
           };
           this.authState = {
@@ -381,6 +435,7 @@ class AuthService {
           full_name: exchange.full_name || fullName || '',
           role: 'VIEWER',
           is_admin: exchange.is_admin,
+          dashboard_enabled: exchange.dashboard_enabled,
           accessStatus: exchange.status,
         };
 
@@ -417,6 +472,7 @@ class AuthService {
         full_name: data.user.full_name || fullName || '',
         role: data.user.role || 'VIEWER',
         is_admin: data.user.is_admin,
+        dashboard_enabled: data.user.is_admin,
         accessStatus: 'approved',
       };
       this.authState = {
@@ -479,6 +535,7 @@ class AuthService {
     neon_user_id: string;
     status: AccessStatus;
     is_admin?: boolean;
+    dashboard_enabled?: boolean;
   }) {
     setApiAccessToken(session.token);
     const user: User = {
@@ -487,6 +544,7 @@ class AuthService {
       full_name: session.full_name,
       role: 'VIEWER',
       is_admin: session.is_admin,
+      dashboard_enabled: session.dashboard_enabled ?? session.is_admin,
       accessStatus: session.status,
     };
     this.authState = {
@@ -522,6 +580,7 @@ class AuthService {
           full_name: exchange.full_name || fullName,
           role: 'VIEWER',
           is_admin: exchange.is_admin,
+          dashboard_enabled: exchange.dashboard_enabled,
           accessStatus: exchange.status,
         };
 
@@ -617,6 +676,7 @@ class AuthService {
         if (this.authState.user) {
           this.authState.user.accessStatus = exchange.status;
           this.authState.user.is_admin = exchange.is_admin;
+          this.authState.user.dashboard_enabled = exchange.dashboard_enabled;
           this.persistUserSession(this.authState.user, exchange.status);
         }
         return exchange.status;
@@ -628,6 +688,7 @@ class AuthService {
     if (this.authState.user) {
       this.authState.user.accessStatus = access.status;
       this.authState.user.is_admin = access.is_admin;
+      this.authState.user.dashboard_enabled = access.dashboard_enabled;
       this.persistUserSession(this.authState.user, access.status);
     }
     return access.status;

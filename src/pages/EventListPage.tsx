@@ -4,6 +4,7 @@ import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS,
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
+import { canAccessProductionDashboard } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import { useNarrowViewport } from '../hooks/useNarrowViewport';
@@ -675,13 +676,15 @@ const EventListPage: React.FC = () => {
         <p className="text-sm text-slate-400 mb-1">
           Manage your events and schedules
         </p>
-        <button
-          type="button"
-          onClick={() => navigate('/dashboard')}
-          className="mt-2 rounded-lg border border-cyan-600/60 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50"
-        >
-          Open Production Dashboard
-        </button>
+        {canAccessProductionDashboard(user) ? (
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard')}
+            className="mt-2 rounded-lg border border-cyan-600/60 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50"
+          >
+            Open Production Dashboard
+          </button>
+        ) : null}
       </div>
 
       {/* Main Content */}

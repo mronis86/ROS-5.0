@@ -52,6 +52,7 @@ interface AccessRequestRow {
   password_set_at?: string | null;
   portal_url?: string | null;
   event_access_count?: number;
+  dashboard_enabled?: boolean;
 }
 
 interface EventAccessCalendarRow {
@@ -712,7 +713,7 @@ export default function AdminPage() {
     async (
       id: string,
       email: string,
-      patch: { status?: AccessStatus; is_admin?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
+      patch: { status?: AccessStatus; is_admin?: boolean; dashboard_enabled?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
     ) => {
       setAccessRequestsError(null);
       try {
@@ -961,6 +962,21 @@ export default function AdminPage() {
         >
           <Calendar className="w-2 h-2 shrink-0" />
           Events
+        </button>
+      )}
+      {r.status === 'approved' && (
+        <button
+          type="button"
+          onClick={() =>
+            void updateAccessUser(r.id, r.email, {
+              dashboard_enabled: !r.dashboard_enabled,
+              notify_user: false,
+            })
+          }
+          className={`${accessActionBtn} ${r.dashboard_enabled || r.is_admin ? 'bg-cyan-800 hover:bg-cyan-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
+          title="Allow this user to open the Production Dashboard"
+        >
+          {r.dashboard_enabled || r.is_admin ? 'Dashboard on' : 'Dashboard off'}
         </button>
       )}
       {r.status === 'approved' && (
@@ -1936,6 +1952,7 @@ export default function AdminPage() {
                         </button>
                       </th>
                       <th className={accessTableHeadClass}>Role</th>
+                      <th className={accessTableHeadClass}>Dashboard</th>
                       <th className={accessTableHeadClass}>Events</th>
                       <th className={accessTableHeadClass}>Account</th>
                       <th className={accessTableHeadClass}>
@@ -1978,6 +1995,17 @@ export default function AdminPage() {
                           </span>
                         </td>
                         <td className={`${accessTableCellClass} text-slate-300`}>{r.is_admin ? 'Admin' : 'User'}</td>
+                        <td className={`${accessTableCellClass} text-slate-400`}>
+                          {r.status === 'approved' ? (
+                            r.is_admin || r.dashboard_enabled ? (
+                              <span className="text-cyan-300">On</span>
+                            ) : (
+                              'Off'
+                            )
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                         <td className={`${accessTableCellClass} text-slate-400`}>
                           {r.status === 'approved' ? (
                             r.is_admin ? (

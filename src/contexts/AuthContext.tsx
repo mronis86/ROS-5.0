@@ -20,6 +20,7 @@ interface AuthContextType {
     neon_user_id: string;
     status: import('../services/auth-service').AccessStatus;
     is_admin?: boolean;
+    dashboard_enabled?: boolean;
   }) => void;
   signOut: () => Promise<void>;
   refreshAccessStatus: () => Promise<import('../services/auth-service').AccessStatus>;

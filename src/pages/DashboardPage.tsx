@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardWeekCalendar from '../components/dashboard/DashboardWeekCalendar';
 import { DatabaseService } from '../services/database';
+import { canAccessProductionDashboard } from '../services/auth-service';
+import { useAuth } from '../contexts/AuthContext';
 import type { DashboardEventSummary, DashboardTab, DashboardTimeFilter } from '../types/dashboard';
 import {
   filterByTimeRange,
@@ -42,6 +44,7 @@ function StatCard({ label, value, hint }: { label: string; value: number | strin
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<DashboardTab>('calendar');
   const [timeFilter, setTimeFilter] = useState<DashboardTimeFilter>('upcoming');
   const [events, setEvents] = useState<DashboardEventSummary[]>([]);
@@ -49,6 +52,13 @@ const DashboardPage: React.FC = () => {
   const [error, setError] = useState('');
   const [weekStart, setWeekStart] = useState(() => startOfWeekSunday(new Date()));
   const [selectedEvent, setSelectedEvent] = useState<DashboardEventSummary | null>(null);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!canAccessProductionDashboard(user)) {
+      navigate('/', { replace: true });
+    }
+  }, [authLoading, user, navigate]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);

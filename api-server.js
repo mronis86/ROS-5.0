@@ -25,7 +25,7 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
-const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, filterCalendarEventsForAuth } = require('./lib/api-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, filterCalendarEventsForAuth } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
@@ -1515,6 +1515,9 @@ app.get('/api/calendar-events', async (req, res) => {
 
 app.get('/api/dashboard/summary', async (req, res) => {
   try {
+    if (!userCanAccessDashboard(req.auth)) {
+      return res.status(403).json({ error: 'Production dashboard is not enabled for your account.' });
+    }
     const [calendarResult, rosResult, reviewResult] = await Promise.all([
       pool.query('SELECT * FROM calendar_events ORDER BY date ASC'),
       pool.query('SELECT event_id, settings, schedule_items, updated_at FROM run_of_show_data'),
