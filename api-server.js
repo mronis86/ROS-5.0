@@ -5007,8 +5007,10 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🔐 Auth: Using direct database connection`);
   if (isAdminEmailNotifyConfigured()) {
     console.log(`📧 Admin emails: Resend configured (from ${(process.env.ADMIN_NOTIFY_FROM || '').trim()})`);
+    console.log('🔐 Login security emails: enabled at 5 failed attempts (warning) and 8 (lockout)');
   } else {
     console.warn('📧 Admin emails: disabled — set RESEND_API_KEY and ADMIN_NOTIFY_FROM on Railway');
+    console.warn('🔐 Login security emails: disabled until Resend is configured');
   }
   const { isOpsAlertsDisabled } = require('./lib/ops-alerts');
   if (!isOpsAlertsDisabled() && isAdminEmailNotifyConfigured()) {
