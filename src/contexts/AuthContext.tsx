@@ -5,7 +5,10 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   accessStatus: import('../services/auth-service').AccessStatus;
-  signIn: (email: string, password: string, fullName?: string) => Promise<{ error: any }>;
+  signIn: (email: string, password: string, fullName?: string) => Promise<{
+    error: any;
+    loginRateLimit?: import('../services/auth-service').LoginRateLimitInfo | null;
+  }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: any }>;
   requestAccess: (email: string, fullName: string) => Promise<{
     error: any;

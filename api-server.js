@@ -29,6 +29,7 @@ const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanA
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
+const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -391,17 +392,20 @@ app.set('trust proxy', 1);
 app.use(helmet());
 // In development allow any origin (so other computers on LAN can POST e.g. to /api/auth/check-domain)
 const ADMIN_CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Admin-Key', 'X-Admin-Pin'];
+const RATE_LIMIT_CORS_HEADERS = ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Retry-After'];
 const corsOptions = {
   origin: isProduction ? true : true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ADMIN_CORS_HEADERS,
+  exposedHeaders: RATE_LIMIT_CORS_HEADERS,
 };
 app.use(cors(corsOptions));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
 // API auth: resolves Bearer/query tokens; enforces REQUIRE_API_AUTH when legacy mode is off
-applyAuthRateLimits(app);
+applyAuthRateLimits(app, pool);
+installOpsAlerts(app, pool);
 app.use(createApiAuthMiddleware(pool, apiAuthConfig));
 registerAuthRoutes(app, pool, { requireAdminAuth });
 console.log(
@@ -4989,17 +4993,8 @@ app.delete('/api/script-comments/:commentId', async (req, res) => {
   }
 });
 
-// Error handler for multer / parse-agenda (return JSON instead of HTML)
-app.use((err, req, res, next) => {
-  const url = req.originalUrl || '';
-  if (url.startsWith('/api/parse-agenda')) {
-    const msg = err.code === 'LIMIT_FILE_SIZE'
-      ? 'File too large. Maximum size is 10MB.'
-      : (err.message || 'Upload failed.');
-    return res.status(400).json({ error: msg });
-  }
-  next(err);
-});
+// Error handler for multer / parse-agenda and unhandled API errors
+app.use(createOpsErrorHandler(pool));
 
 // Start server on all network interfaces (allows local network access)
 server.listen(PORT, '0.0.0.0', async () => {
@@ -5011,9 +5006,13 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🔌 Socket.IO endpoint: ws://localhost:${PORT}`);
   console.log(`🔐 Auth: Using direct database connection`);
   if (isAdminEmailNotifyConfigured()) {
-    console.log(`📧 Access emails: Resend configured (from ${(process.env.ADMIN_NOTIFY_FROM || '').trim()})`);
+    console.log(`📧 Admin emails: Resend configured (from ${(process.env.ADMIN_NOTIFY_FROM || '').trim()})`);
   } else {
-    console.warn('📧 Access emails: disabled — set RESEND_API_KEY and ADMIN_NOTIFY_FROM on Railway');
+    console.warn('📧 Admin emails: disabled — set RESEND_API_KEY and ADMIN_NOTIFY_FROM on Railway');
+  }
+  const { isOpsAlertsDisabled } = require('./lib/ops-alerts');
+  if (!isOpsAlertsDisabled() && isAdminEmailNotifyConfigured()) {
+    console.log('🚨 Ops alerts: API errors and security events will email admins');
   }
   console.log(`💡 Tip: Use 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find your IP address`);
   if (process.env.NEON_DATABASE_URL) {

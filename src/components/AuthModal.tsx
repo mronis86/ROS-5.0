@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import DisclaimerModal from './DisclaimerModal';
+import LoginAttemptWarningModal from './LoginAttemptWarningModal';
 import { isNeonAuthEnabled } from '../lib/neonAuthClient';
 import { requestPasswordReset } from '../lib/neonPasswordReset';
+import type { LoginRateLimitInfo } from '../lib/loginRateLimit';
 
 type AuthMode = 'signin' | 'request' | 'forgot';
 
@@ -35,6 +37,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
   const [requestPortalUrl, setRequestPortalUrl] = useState<string | null>(null);
   const [requestPortalCopied, setRequestPortalCopied] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [loginWarningInfo, setLoginWarningInfo] = useState<LoginRateLimitInfo | null>(null);
+  const [showLoginWarning, setShowLoginWarning] = useState(false);
 
   const { signIn, requestAccess } = useAuth();
 
@@ -50,6 +54,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
     setRequestMessage(null);
     setRequestPortalUrl(null);
     setRequestPortalCopied(false);
+    setLoginWarningInfo(null);
+    setShowLoginWarning(false);
     onRequestSentChange?.(false);
   };
 
@@ -86,6 +92,11 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
       if (result.error) {
         setError(result.error.message || 'An error occurred');
+        const rateLimit = result.loginRateLimit;
+        if (rateLimit && (rateLimit.showWarning || rateLimit.isLockedOut)) {
+          setLoginWarningInfo(rateLimit);
+          setShowLoginWarning(true);
+        }
       } else if (isRequestAccess) {
         setRequestSent(true);
         onRequestSentChange?.(true);
@@ -107,6 +118,11 @@ const AuthModal: React.FC<AuthModalProps> = ({
   return (
     <>
       <DisclaimerModal isOpen={showDisclaimer} onClose={() => setShowDisclaimer(false)} />
+      <LoginAttemptWarningModal
+        isOpen={showLoginWarning}
+        info={loginWarningInfo}
+        onClose={() => setShowLoginWarning(false)}
+      />
 
       <div
         className={`bg-slate-800 rounded-xl shadow-2xl w-full mx-auto border border-slate-700 ${

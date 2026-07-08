@@ -5,6 +5,11 @@
 import { getApiBaseUrl } from './api-client';
 import { getApiAccessToken, setApiAccessToken } from '../lib/sessionAuth';
 import {
+  clearLocalFailedLogin,
+  resolveLoginRateLimit,
+  type LoginRateLimitInfo,
+} from '../lib/loginRateLimit';
+import {
   collectNeonAuthCredentials,
   fetchNeonAccessToken,
   getNeonAuthClient,
@@ -17,6 +22,7 @@ const RAILWAY_URL = 'https://ros-50-production.up.railway.app';
 const DOMAIN_CHECK_TIMEOUT_MS = 5000;
 
 export type AccessStatus = 'none' | 'pending' | 'approved' | 'rejected';
+export type { LoginRateLimitInfo } from '../lib/loginRateLimit';
 
 interface User {
   id: string;
@@ -149,6 +155,7 @@ class AuthService {
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
+    loginRateLimit?: LoginRateLimitInfo | null;
   }> {
     const base = getApiBaseUrl();
     const res = await fetch(`${base}${path}`, {
@@ -157,12 +164,19 @@ class AuthService {
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
+    const loginRateLimit = resolveLoginRateLimit(
+      res,
+      data,
+      body.email,
+      res.status === 401 || res.status === 429
+    );
     if (!res.ok || !data.token) {
       setApiAccessToken(null);
       return {
         ok: false,
         token: null,
         status: 'none',
+        loginRateLimit,
         error:
           formatAuthApiError(
             data,
@@ -172,6 +186,7 @@ class AuthService {
       };
     }
 
+    clearLocalFailedLogin(body.email);
     setApiAccessToken(data.token);
     return {
       ok: true,
@@ -412,7 +427,10 @@ class AuthService {
     return checkRes.json().catch(() => ({ allowed: false, message: 'Unable to verify domain.' }));
   }
 
-  async signIn(email: string, password: string, fullName?: string): Promise<{ error: any }> {
+  async signIn(email: string, password: string, fullName?: string): Promise<{
+    error: any;
+    loginRateLimit?: LoginRateLimitInfo | null;
+  }> {
     try {
       if (isNeonAuthEnabled) {
         const domainCheck = await this.checkDomain(email);
@@ -426,7 +444,10 @@ class AuthService {
           full_name: fullName || email.split('@')[0] || 'User',
         });
         if (!exchange.ok || !exchange.token) {
-          return { error: { message: exchange.error || 'Sign in failed.' } };
+          return {
+            error: { message: exchange.error || 'Sign in failed.' },
+            loginRateLimit: exchange.loginRateLimit,
+          };
         }
 
         const user: User = {
@@ -461,10 +482,20 @@ class AuthService {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json().catch(() => ({}));
+      const loginRateLimit = resolveLoginRateLimit(
+        res,
+        data,
+        email,
+        res.status === 401 || res.status === 429
+      );
       if (!res.ok) {
-        return { error: { message: data.error || 'Invalid email or password.' } };
+        return {
+          error: { message: data.error || 'Invalid email or password.' },
+          loginRateLimit,
+        };
       }
 
+      clearLocalFailedLogin(email);
       setApiAccessToken(data.token);
       const user: User = {
         id: data.user.id,

@@ -66,7 +66,9 @@ Use Resend’s test sender while developing; switch to your verified domain for 
 
 1. Add `RESEND_API_KEY` and `ADMIN_NOTIFY_FROM` to `.env`
 2. Ensure at least one approved admin exists in the database
-3. Dry run: `node scripts/test-admin-notify-email.js`
+3. Dry run all admin emails: `node scripts/test-admin-notify-email.js`
+   - Login security only: `node scripts/test-admin-notify-email.js --login`
+   - API/security ops alerts: `node scripts/test-admin-notify-email.js --ops`
 4. Full flow: uncomment `VITE_API_BASE_URL=http://localhost:3001` in `.env`, run `npm run api` and `npm run dev`, sign up as a new user
 
 When satisfied, add the same two vars to Railway and redeploy. You do not need a Netlify URL for email to work.
