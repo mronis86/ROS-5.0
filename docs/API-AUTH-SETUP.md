@@ -62,6 +62,55 @@ ADMIN_NOTIFY_FROM="Run of Show <onboarding@resend.dev>"
 
 Use Resend’s test sender while developing; switch to your verified domain for production. Sign-up is not blocked if email fails. The first bootstrap admin is auto-approved and does not trigger this email.
 
+### Production: verified domain (email all admins)
+
+`onboarding@resend.dev` only delivers to **your Resend account email**. To notify every approved admin, verify a domain in Resend and point Railway at it.
+
+**1. Resend → Domains → Add domain**
+
+Add the domain you want to send from (e.g. `sinor.com` or `mail.sinor.com`). Resend shows DNS records to add at your DNS host:
+
+| Type | Purpose |
+|------|---------|
+| **TXT** | Domain verification |
+| **MX** | Bounce/complaint handling (if Resend asks for it) |
+| **TXT (SPF)** | Sender policy |
+| **CNAME (DKIM)** | Signing (often 2–3 records) |
+
+Wait until Resend shows the domain as **Verified** (can take a few minutes to 48 hours depending on DNS).
+
+**2. Railway → your API service → Variables**
+
+Update (or add):
+
+| Variable | Example value |
+|----------|----------------|
+| `RESEND_API_KEY` | `re_...` (same key as now) |
+| `ADMIN_NOTIFY_FROM` | `Run of Show <noreply@yourdomain.com>` |
+
+Rules:
+
+- The address **must** use your **verified** domain (`noreply@`, `alerts@`, etc.).
+- Display name is optional: `Run of Show <noreply@yourdomain.com>`.
+- In Railway’s UI, paste the value **without** extra quotes unless your platform requires them.
+
+**3. Redeploy Railway**
+
+After saving variables, trigger a redeploy (or wait for auto-deploy). On startup, logs should show:
+
+```text
+📧 Admin emails: Resend configured (from Run of Show <noreply@yourdomain.com>)
+```
+
+**4. Verify locally (optional) then production**
+
+```bash
+node scripts/check-admin-email-setup.js
+node scripts/test-admin-notify-email.js --login
+```
+
+Check all admin inboxes and the Resend dashboard → **Emails** for delivery status.
+
 **Test locally (before Netlify):**
 
 1. Add `RESEND_API_KEY` and `ADMIN_NOTIFY_FROM` to `.env`

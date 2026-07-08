@@ -4,7 +4,7 @@ import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS,
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
-import { canAccessProductionDashboard } from '../services/auth-service';
+import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import { useNarrowViewport } from '../hooks/useNarrowViewport';
@@ -676,14 +676,36 @@ const EventListPage: React.FC = () => {
         <p className="text-sm text-slate-400 mb-1">
           Manage your events and schedules
         </p>
-        {canAccessProductionDashboard(user) ? (
-          <button
-            type="button"
-            onClick={() => navigate('/dashboard')}
-            className="mt-2 rounded-lg border border-cyan-600/60 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50"
-          >
-            Open Production Dashboard
-          </button>
+        {canAccessAdmin(user) || canAccessAccessManager(user) || canAccessProductionDashboard(user) ? (
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+            {canAccessAdmin(user) ? (
+              <button
+                type="button"
+                onClick={() => navigate('/admin')}
+                className="rounded-lg border border-amber-600/60 bg-amber-950/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-900/50"
+              >
+                Open Admin
+              </button>
+            ) : null}
+            {canAccessAccessManager(user) && !canAccessAdmin(user) ? (
+              <button
+                type="button"
+                onClick={() => navigate('/access-manager')}
+                className="rounded-lg border border-amber-600/60 bg-amber-950/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-900/50"
+              >
+                Manage Access
+              </button>
+            ) : null}
+            {canAccessProductionDashboard(user) ? (
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="rounded-lg border border-cyan-600/60 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50"
+              >
+                Open Production Dashboard
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

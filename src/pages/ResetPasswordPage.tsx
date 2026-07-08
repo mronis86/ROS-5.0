@@ -4,6 +4,11 @@ import AppBrandTitle from '../components/AppBrandTitle';
 import AppLogo from '../components/AppLogo';
 import { isNeonAuthEnabled } from '../lib/neonAuthClient';
 import { resetPasswordWithToken } from '../lib/neonPasswordReset';
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_REQUIREMENTS_TEXT,
+  passwordPolicyError,
+} from '../lib/passwordPolicy';
 
 const ResetPasswordPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -24,12 +29,13 @@ const ResetPasswordPage: React.FC = () => {
       setError('This reset link is missing a token. Request a new link from the sign-in page.');
       return;
     }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
+      return;
+    }
+    const policyError = passwordPolicyError(password);
+    if (policyError) {
+      setError(policyError);
       return;
     }
 
@@ -58,6 +64,7 @@ const ResetPasswordPage: React.FC = () => {
           </div>
           <h1 className="text-2xl font-bold text-white">Reset password</h1>
           <p className="text-slate-400 text-sm mt-2">Choose a new password for your account.</p>
+          <p className="text-slate-500 text-xs mt-2 max-w-sm mx-auto">{PASSWORD_REQUIREMENTS_TEXT}</p>
         </div>
 
         <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-slate-700">
@@ -99,9 +106,9 @@ const ResetPasswordPage: React.FC = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                  placeholder="At least 8 characters"
+                  placeholder="Create a strong password"
                   required
-                  minLength={8}
+                  minLength={PASSWORD_MIN_LENGTH}
                   autoComplete="new-password"
                 />
               </div>
@@ -115,7 +122,7 @@ const ResetPasswordPage: React.FC = () => {
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
                   placeholder="Repeat new password"
                   required
-                  minLength={8}
+                  minLength={PASSWORD_MIN_LENGTH}
                   autoComplete="new-password"
                 />
               </div>

@@ -30,6 +30,7 @@ import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import QuickModePage from './pages/QuickModePage';
 import ComparisonPage from './pages/ComparisonPage';
 import DashboardPage from './pages/DashboardPage';
+import AccessManagerPage from './pages/AccessManagerPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccessPortalPage from './pages/AccessPortalPage';
 import LedLayoutsPage from './pages/LedLayoutsPage';
@@ -66,6 +67,7 @@ function AppContent() {
             <Route path="/admin" element={null} />
             <Route path="/" element={<EventListPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/access-manager" element={<AccessManagerPage />} />
             <Route path="/quick-mode" element={<QuickModePage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />
             <Route path="/run-of-show-mobile" element={<RunOfShowMobilePage />} />

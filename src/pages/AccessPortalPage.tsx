@@ -8,7 +8,11 @@ import {
   fetchAccessPortalStatus,
   type AccessPortalStatus,
 } from '../lib/accessPortal';
-import { setApiAccessToken } from '../lib/sessionAuth';
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_REQUIREMENTS_TEXT,
+  passwordPolicyError,
+} from '../lib/passwordPolicy';
 import { useAuth } from '../contexts/AuthContext';
 
 const AccessPortalPage: React.FC = () => {
@@ -60,12 +64,13 @@ const AccessPortalPage: React.FC = () => {
     e.preventDefault();
     setSubmitError(null);
 
-    if (password.length < 8) {
-      setSubmitError('Password must be at least 8 characters.');
-      return;
-    }
     if (password !== confirmPassword) {
       setSubmitError('Passwords do not match.');
+      return;
+    }
+    const policyError = passwordPolicyError(password);
+    if (policyError) {
+      setSubmitError(policyError);
       return;
     }
 
@@ -139,6 +144,7 @@ const AccessPortalPage: React.FC = () => {
                   Your access has been approved{portal?.is_admin ? ' as an administrator' : ''}. Choose a password to
                   finish setting up your account.
                 </p>
+                <p className="text-slate-500 text-xs mt-2">{PASSWORD_REQUIREMENTS_TEXT}</p>
                 {portal?.email && (
                   <p className="text-slate-500 text-xs mt-2">
                     Account: <span className="text-slate-300">{portal.email}</span>
@@ -154,9 +160,9 @@ const AccessPortalPage: React.FC = () => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                    placeholder="At least 8 characters"
+                    placeholder="Create a strong password"
                     required
-                    minLength={8}
+                    minLength={PASSWORD_MIN_LENGTH}
                     autoComplete="new-password"
                   />
                 </div>
@@ -169,7 +175,7 @@ const AccessPortalPage: React.FC = () => {
                     className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
                     placeholder="Re-enter your password"
                     required
-                    minLength={8}
+                    minLength={PASSWORD_MIN_LENGTH}
                     autoComplete="new-password"
                   />
                 </div>

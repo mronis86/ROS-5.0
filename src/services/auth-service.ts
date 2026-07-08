@@ -30,6 +30,7 @@ interface User {
   full_name: string;
   role: string;
   is_admin?: boolean;
+  is_event_manager?: boolean;
   dashboard_enabled?: boolean;
   accessStatus?: AccessStatus;
 }
@@ -38,6 +39,16 @@ export function canAccessProductionDashboard(user: User | null | undefined): boo
   if (!user) return false;
   if (user.is_admin) return true;
   return user.dashboard_enabled === true;
+}
+
+export function canAccessAdmin(user: User | null | undefined): boolean {
+  return user?.is_admin === true;
+}
+
+export function canAccessAccessManager(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin) return true;
+  return user.is_event_manager === true;
 }
 
 interface AuthState {
@@ -152,6 +163,7 @@ class AuthService {
     email?: string;
     full_name?: string;
     is_admin?: boolean;
+    is_event_manager?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -195,6 +207,7 @@ class AuthService {
       email: data.email,
       full_name: data.full_name,
       is_admin: data.is_admin,
+      is_event_manager: data.is_event_manager,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -210,6 +223,7 @@ class AuthService {
     email?: string;
     full_name?: string;
     is_admin?: boolean;
+    is_event_manager?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -276,6 +290,7 @@ class AuthService {
       email: data.email,
       full_name: data.full_name,
       is_admin: data.is_admin,
+      is_event_manager: data.is_event_manager,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -291,6 +306,7 @@ class AuthService {
     email?: string;
     full_name?: string;
     is_admin?: boolean;
+    is_event_manager?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
   }> {
@@ -307,6 +323,7 @@ class AuthService {
       email: data.email,
       full_name: data.full_name,
       is_admin: data.is_admin,
+      is_event_manager: data.is_event_manager,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -345,6 +362,7 @@ class AuthService {
               full_name: access.full_name || storedUser?.full_name || '',
               role: 'VIEWER',
               is_admin: access.is_admin,
+              is_event_manager: access.is_event_manager,
               dashboard_enabled: access.dashboard_enabled,
               accessStatus: access.status,
             };
@@ -456,6 +474,7 @@ class AuthService {
           full_name: exchange.full_name || fullName || '',
           role: 'VIEWER',
           is_admin: exchange.is_admin,
+          is_event_manager: exchange.is_event_manager,
           dashboard_enabled: exchange.dashboard_enabled,
           accessStatus: exchange.status,
         };
@@ -566,6 +585,7 @@ class AuthService {
     neon_user_id: string;
     status: AccessStatus;
     is_admin?: boolean;
+    is_event_manager?: boolean;
     dashboard_enabled?: boolean;
   }) {
     setApiAccessToken(session.token);
@@ -575,6 +595,7 @@ class AuthService {
       full_name: session.full_name,
       role: 'VIEWER',
       is_admin: session.is_admin,
+      is_event_manager: session.is_event_manager,
       dashboard_enabled: session.dashboard_enabled ?? session.is_admin,
       accessStatus: session.status,
     };
@@ -707,6 +728,7 @@ class AuthService {
         if (this.authState.user) {
           this.authState.user.accessStatus = exchange.status;
           this.authState.user.is_admin = exchange.is_admin;
+          this.authState.user.is_event_manager = exchange.is_event_manager;
           this.authState.user.dashboard_enabled = exchange.dashboard_enabled;
           this.persistUserSession(this.authState.user, exchange.status);
         }
@@ -719,6 +741,7 @@ class AuthService {
     if (this.authState.user) {
       this.authState.user.accessStatus = access.status;
       this.authState.user.is_admin = access.is_admin;
+      this.authState.user.is_event_manager = access.is_event_manager;
       this.authState.user.dashboard_enabled = access.dashboard_enabled;
       this.persistUserSession(this.authState.user, access.status);
     }
