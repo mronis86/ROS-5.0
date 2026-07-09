@@ -76,7 +76,8 @@ function AppContent() {
     isResetPassword ||
     isAccessPortal ||
     isLedOutput ||
-    isClock;
+    isClock ||
+    isAdmin;
 
   return (
     <ActiveViewersProvider>
@@ -84,11 +85,10 @@ function AppContent() {
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && <AppHeader />}
       
-      {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isNetlifyXML && !isLocalXML && (
+      {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isNetlifyXML && !isLocalXML && !isAdmin && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
-            <Route path="/admin" element={null} />
             <Route path="/" element={<EventListPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/access-manager" element={<AccessManagerPage />} />
