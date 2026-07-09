@@ -219,6 +219,7 @@ export default function AdminPage() {
   const [newTokenScopes, setNewTokenScopes] = useState('read,control');
   const [creatingToken, setCreatingToken] = useState(false);
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
+  const [createdTokenCopied, setCreatedTokenCopied] = useState(false);
   const [accessRequests, setAccessRequests] = useState<AccessRequestRow[]>([]);
   const [accessRequestsLoading, setAccessRequestsLoading] = useState(false);
   const [accessRequestsError, setAccessRequestsError] = useState<string | null>(null);
@@ -1219,6 +1220,7 @@ export default function AdminPage() {
     setCreatingToken(true);
     setIntegrationTokensError(null);
     setCreatedTokenValue(null);
+    setCreatedTokenCopied(false);
     try {
       const scopes = newTokenScopes
         .split(',')
@@ -1248,6 +1250,17 @@ export default function AdminPage() {
       setCreatingToken(false);
     }
   }, [newTokenName, newTokenEventId, newTokenScopes, fetchIntegrationTokens]);
+
+  const copyCreatedIntegrationToken = useCallback(async () => {
+    if (!createdTokenValue) return;
+    try {
+      await navigator.clipboard.writeText(createdTokenValue);
+      setCreatedTokenCopied(true);
+      window.setTimeout(() => setCreatedTokenCopied(false), 2000);
+    } catch {
+      setIntegrationTokensError('Could not copy to clipboard — select the token and copy manually.');
+    }
+  }, [createdTokenValue]);
 
   const revokeIntegrationToken = useCallback(
     async (id: string, name: string) => {
@@ -2217,7 +2230,26 @@ export default function AdminPage() {
           )}
           {createdTokenValue && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50 text-emerald-100 text-sm">
-              <p className="font-medium mb-1">Copy this token now — it will not be shown again:</p>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <p className="font-medium">Copy this token now — it will not be shown again:</p>
+                <button
+                  type="button"
+                  onClick={() => void copyCreatedIntegrationToken()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
+                >
+                  {createdTokenCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy token
+                    </>
+                  )}
+                </button>
+              </div>
               <code className="block break-all text-xs bg-slate-900/60 p-2 rounded">{createdTokenValue}</code>
             </div>
           )}
