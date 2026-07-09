@@ -11,8 +11,17 @@
       body {
         margin: 0;
         min-height: 100%;
-        background-color: #0f172a;
         color: #e2e8f0;
+      }
+      html {
+        background-color: #0f172a;
+      }
+      body {
+        background-color: #0f172a;
+      }
+      html.led-output-broadcast,
+      html.led-output-broadcast body {
+        background-color: transparent;
       }
       #root {
         min-height: 100%;
@@ -20,20 +29,17 @@
     </style>
     <script>
       (function () {
-        var isLedOutput = window.location.pathname === '/led-output';
-        var bg = isLedOutput ? 'transparent' : '#0f172a';
-        document.documentElement.style.backgroundColor = bg;
+        if (window.location.pathname === '/led-output') {
+          document.documentElement.classList.add('led-output-broadcast');
+          document.documentElement.style.backgroundColor = 'transparent';
+          document.body.style.backgroundColor = 'transparent';
+          var root = document.getElementById('root');
+          if (root) root.style.backgroundColor = 'transparent';
+        }
       })();
     </script>
   </head>
   <body>
-    <script>
-      if (window.location.pathname === '/led-output') {
-        document.body.style.background = 'transparent';
-      } else {
-        document.body.style.background = '#0f172a';
-      }
-    </script>
     <div id="root"></div>
     <script type="module" src="/src/index.tsx"></script>
   </body>

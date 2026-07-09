@@ -18,8 +18,8 @@ const LedOutputBackgroundSettings: React.FC<LedOutputBackgroundSettingsProps> = 
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
       <h3 className="font-semibold mb-1 text-sm">Output background</h3>
       <p className="text-xs text-slate-500 mb-3">
-        Event-wide setting for the LED output page (OBS / media server). Use transparent for
-        keying, or a solid color behind the graphic.
+        Event-wide setting for the LED output page (OBS / media server). Transparent uses true
+        alpha for keying; solid color fills the output frame.
       </p>
       <div className="space-y-3">
         <label className="block text-sm">

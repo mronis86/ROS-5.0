@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import { buildLedOutputPageUrl } from '../lib/ledOutputBackground';
 
 interface ScheduleItem {
   id: number;
@@ -625,7 +626,7 @@ const GraphicsLinksPage: React.FC = () => {
                 onClick={() => {
                   const id = eventId || event?.id;
                   if (id) {
-                    window.open(`/led-output?eventId=${encodeURIComponent(id)}`, '_blank');
+                    window.open(buildLedOutputPageUrl(id), '_blank');
                   }
                 }}
                 className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg transition-colors font-semibold text-sm border border-violet-300/40"

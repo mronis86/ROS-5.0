@@ -33,3 +33,58 @@ export function parseLedOutputBackgroundFromSettings(
 export function resolveLedCanvasBackground(background: LedOutputBackground): string {
   return background.mode === 'color' ? background.color : 'transparent';
 }
+
+/** Slate checkerboard — preview only; canvas pixels stay transparent for keying. */
+export const LED_TRANSPARENCY_GRID_BASE = '#0f172a';
+export const LED_TRANSPARENCY_GRID_TILE = '#1e293b';
+
+export function ledTransparencyGridBackgroundStyle(): Record<string, string> {
+  const tile = LED_TRANSPARENCY_GRID_TILE;
+  return {
+    backgroundColor: LED_TRANSPARENCY_GRID_BASE,
+    backgroundImage: `linear-gradient(45deg, ${tile} 25%, transparent 25%, transparent 75%, ${tile} 75%, ${tile}), linear-gradient(45deg, ${tile} 25%, transparent 25%, transparent 75%, ${tile} 75%, ${tile})`,
+    backgroundSize: '16px 16px',
+    backgroundPosition: '0 0, 8px 8px',
+  };
+}
+
+export function isLedOutputBroadcastKey(searchParams: URLSearchParams): boolean {
+  return searchParams.get('key') === '1' || searchParams.get('broadcast') === '1';
+}
+
+/** LED output URL — always keyed for OBS / Spout (transparent or event color). */
+export function buildLedOutputPageUrl(eventId: string): string {
+  const id = String(eventId || '').trim();
+  if (!id) return '/led-output';
+  return `/led-output?eventId=${encodeURIComponent(id)}&key=1`;
+}
+
+const LED_OUTPUT_CHROME_SELECTORS = ['html', 'body', '#root', '.App'] as const;
+
+/** Force page chrome transparent (or solid event color) — overrides global slate-900 on #root. */
+export function applyLedOutputPageChrome(background: LedOutputBackground): () => void {
+  const chromeBg = background.mode === 'color' ? background.color : 'transparent';
+
+  document.documentElement.classList.add('led-output-broadcast');
+  document.body.classList.add('led-output-broadcast');
+
+  const touched: HTMLElement[] = [];
+  for (const selector of LED_OUTPUT_CHROME_SELECTORS) {
+    const el = document.querySelector(selector);
+    if (!(el instanceof HTMLElement)) continue;
+    touched.push(el);
+    el.classList.add('led-output-chrome');
+    el.style.setProperty('background-color', chromeBg, 'important');
+    el.style.setProperty('background-image', 'none', 'important');
+  }
+
+  return () => {
+    document.documentElement.classList.remove('led-output-broadcast');
+    document.body.classList.remove('led-output-broadcast');
+    for (const el of touched) {
+      el.classList.remove('led-output-chrome');
+      el.style.removeProperty('background-color');
+      el.style.removeProperty('background-image');
+    }
+  };
+}

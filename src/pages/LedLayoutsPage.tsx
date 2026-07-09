@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import LedWysiwygEditor from '../components/led/LedWysiwygEditor';
 import LedFontRoleSettings from '../components/led/LedFontRoleSettings';
@@ -13,6 +13,7 @@ import {
   parseLedClockFromSettings,
 } from '../lib/ledClock';
 import {
+  buildLedOutputPageUrl,
   parseLedOutputBackgroundFromSettings,
   resolveLedCanvasBackground,
 } from '../lib/ledOutputBackground';
@@ -33,6 +34,11 @@ import {
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { dispatchLedOutputClear } from '../lib/ledOutputClear';
+import {
+  ledEventSettingsFromRosSettings,
+  persistLedEventSettings,
+  writeLedEventSettingsToLocal,
+} from '../lib/ledEventSettings';
 import { Event } from '../types/Event';
 import type { LedElementKey, LedLayoutConfig, LedTextStyles } from '../types/ledText';
 import {
@@ -100,6 +106,10 @@ const LedLayoutsPage: React.FC = () => {
     custom_columns: unknown[];
     settings: Record<string, unknown>;
   } | null>(null);
+  const settingsSaveReadyRef = useRef(false);
+  const settingsSaveSkipOnceRef = useRef(true);
+  const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRef = useRef(schedule);
 
   const applyScheduleFromItems = useCallback((items: ScheduleItem[], replaceLayouts = false) => {
     setSchedule(items);
@@ -134,6 +144,7 @@ const LedLayoutsPage: React.FC = () => {
       });
       setOutputClock(parseLedClockFromSettings(data.settings));
       setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
+      writeLedEventSettingsToLocal(id, ledEventSettingsFromRosSettings(data.settings));
       const items = parseScheduleItems(data.schedule_items);
       if (items.length) return items;
     }
@@ -151,6 +162,7 @@ const LedLayoutsPage: React.FC = () => {
     }
 
     setIsLoading(true);
+    settingsSaveSkipOnceRef.current = true;
     try {
       const items = await fetchLatestSchedule();
       applyScheduleFromItems(items, true);
@@ -160,8 +172,80 @@ const LedLayoutsPage: React.FC = () => {
       console.error('LedLayoutsPage: load failed', error);
     } finally {
       setIsLoading(false);
+      settingsSaveReadyRef.current = true;
     }
   }, [event?.id, eventId, fetchLatestSchedule, applyScheduleFromItems]);
+
+  useEffect(() => {
+    scheduleRef.current = schedule;
+  }, [schedule]);
+
+  useEffect(() => {
+    if (!settingsSaveReadyRef.current || isLoading) return;
+    const id = event?.id || eventId;
+    if (!id) return;
+    writeLedEventSettingsToLocal(id, {
+      ledOutputBackground: outputBackground,
+      ledClock: outputClock,
+    });
+  }, [outputBackground, outputClock, isLoading, event?.id, eventId]);
+
+  useEffect(() => {
+    if (!settingsSaveReadyRef.current || isLoading) return;
+    if (settingsSaveSkipOnceRef.current) {
+      settingsSaveSkipOnceRef.current = false;
+      return;
+    }
+
+    const id = event?.id || eventId;
+    if (!id) return;
+
+    if (settingsSaveTimerRef.current) {
+      clearTimeout(settingsSaveTimerRef.current);
+    }
+
+    settingsSaveTimerRef.current = setTimeout(() => {
+      void persistLedEventSettings(
+        id,
+        { ledOutputBackground: outputBackground, ledClock: outputClock },
+        {
+          eventName: event?.name,
+          eventDate: runOfShowMeta?.event_date,
+          priorSettings: runOfShowMeta?.settings,
+          scheduleItems: scheduleRef.current,
+          customColumns: runOfShowMeta?.custom_columns,
+        }
+      ).then((ok) => {
+        if (ok) {
+          setRunOfShowMeta((prev) => ({
+            event_date: prev?.event_date || '',
+            custom_columns: prev?.custom_columns || [],
+            settings: {
+              ...(prev?.settings || {}),
+              ledClock: outputClock,
+              ledOutputBackground: outputBackground,
+            },
+          }));
+        }
+      });
+    }, 450);
+
+    return () => {
+      if (settingsSaveTimerRef.current) {
+        clearTimeout(settingsSaveTimerRef.current);
+      }
+    };
+  }, [
+    outputBackground,
+    outputClock,
+    isLoading,
+    event?.id,
+    event?.name,
+    eventId,
+    runOfShowMeta?.event_date,
+    runOfShowMeta?.settings,
+    runOfShowMeta?.custom_columns,
+  ]);
 
   const refreshScheduleText = useCallback(
     async (manual = false) => {
@@ -209,6 +293,7 @@ const LedLayoutsPage: React.FC = () => {
         if (data?.settings) {
           setOutputClock(parseLedClockFromSettings(data.settings));
           setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
+          writeLedEventSettingsToLocal(id, ledEventSettingsFromRosSettings(data.settings));
         }
         const items = parseScheduleItems(data?.schedule_items);
         if (!items.length) return;
@@ -320,7 +405,7 @@ const LedLayoutsPage: React.FC = () => {
     }
   };
 
-  const outputUrl = `/led-output?eventId=${encodeURIComponent(event?.id || eventId || '')}`;
+  const outputUrl = buildLedOutputPageUrl(event?.id || eventId || '');
 
   const handleClearOutput = async () => {
     const id = event?.id || eventId;
@@ -381,6 +466,11 @@ const LedLayoutsPage: React.FC = () => {
         custom_columns: prev?.custom_columns || existing?.custom_columns || [],
         settings: baseSettings,
       }));
+
+      writeLedEventSettingsToLocal(id, {
+        ledOutputBackground: outputBackground,
+        ledClock: outputClock,
+      });
 
       setSchedule(updatedSchedule);
       setLayouts((prev) => {

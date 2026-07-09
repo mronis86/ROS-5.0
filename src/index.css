@@ -4,9 +4,9 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body,
-#root {
+html:not(.led-output-broadcast),
+html:not(.led-output-broadcast) body,
+html:not(.led-output-broadcast) #root {
   min-height: 100%;
   background-color: #0f172a; /* slate-900 — avoids white flash before route paint */
   color-scheme: dark;
@@ -73,20 +73,16 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* LED output — transparent page chrome for OBS / media server keying */
-html:has(.led-output-page),
-body:has(.led-output-page),
-#root:has(.led-output-page),
-.led-output-page {
+html.led-output-broadcast,
+html.led-output-broadcast body,
+html.led-output-broadcast #root,
+.App.led-output-page {
   background: transparent !important;
-}
-
-.led-output-page .App {
-  background: transparent !important;
-  min-height: 100vh;
+  background-color: transparent !important;
+  background-image: none !important;
 }
 
 .led-output-surface {
-  background: transparent !important;
   isolation: isolate;
 }
 

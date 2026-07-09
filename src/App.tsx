@@ -62,6 +62,15 @@ function AppContent() {
   const isAccessPortal = location.pathname === '/access';
   const isLedOutput = location.pathname === '/led-output';
 
+  // Broadcast page: no App chrome, AuthGuard shell, or slate wrappers.
+  if (isLedOutput) {
+    return (
+      <Routes>
+        <Route path="/led-output" element={<LedOutputPage />} />
+      </Routes>
+    );
+  }
+
   const hideReportFab =
     isFullScreenTimer ||
     isPinNotesPopout ||
@@ -81,7 +90,7 @@ function AppContent() {
 
   return (
     <ActiveViewersProvider>
-    <div className={`App min-h-screen bg-slate-900 text-slate-200 ${isClock ? 'clock-page' : ''} ${isLedOutput ? 'led-output-page' : ''}`}>
+    <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && <AppHeader />}
       
@@ -117,7 +126,6 @@ function AppContent() {
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/access" element={<AccessPortalPage />} />
-        <Route path="/led-output" element={<LedOutputPage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
         <Route path="/schedule-xml" element={<ScheduleXMLPage />} />

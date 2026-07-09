@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import LedCanvas from '../components/led/LedCanvas';
 import LedFreeformRenderer from '../components/led/LedFreeformRenderer';
@@ -9,6 +9,7 @@ import {
   DEFAULT_LED_OUTPUT_ANIMATION,
 } from '../lib/ledOutputAnimation';
 import {
+  applyLedOutputPageChrome,
   parseLedOutputBackgroundFromSettings,
   resolveLedCanvasBackground,
 } from '../lib/ledOutputBackground';
@@ -33,6 +34,12 @@ import {
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { dispatchLedOutputClear, subscribeLedOutputClear } from '../lib/ledOutputClear';
+import {
+  hydrateLedEventSettingsFromLocal,
+  ledEventSettingsFromRosSettings,
+  subscribeLedEventSettings,
+  writeLedEventSettingsToLocal,
+} from '../lib/ledEventSettings';
 
 const LedOutputPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -99,11 +106,12 @@ const LedOutputPage: React.FC = () => {
     (data: { schedule_items?: unknown; settings?: Record<string, unknown> } | null) => {
       if (!data) return;
 
-      if (data.settings) {
+      if (data.settings && eventId) {
         const nextClock = parseLedClockFromSettings(data.settings);
         outputClockRef.current = nextClock;
         setOutputClock(nextClock);
         setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
+        writeLedEventSettingsToLocal(eventId, ledEventSettingsFromRosSettings(data.settings));
       }
 
       const apiItems = parseScheduleItems(data.schedule_items);
@@ -117,29 +125,53 @@ const LedOutputPage: React.FC = () => {
         setSchedule(merged);
       }
     },
-    [readLocalSchedule]
+    [eventId, readLocalSchedule]
   );
+
+  useEffect(() => {
+    if (!eventId) return;
+    return subscribeLedEventSettings(eventId, (settings) => {
+      if (settings.ledOutputBackground) {
+        setOutputBackground(settings.ledOutputBackground);
+      }
+      if (settings.ledClock) {
+        outputClockRef.current = settings.ledClock;
+        setOutputClock(settings.ledClock);
+      }
+    });
+  }, [eventId]);
 
   const loadSchedule = useCallback(async () => {
     if (!eventId) return;
+
+    const localSettings = hydrateLedEventSettingsFromLocal(eventId);
+    if (localSettings?.ledOutputBackground) {
+      setOutputBackground(localSettings.ledOutputBackground);
+    }
+    if (localSettings?.ledClock) {
+      outputClockRef.current = localSettings.ledClock;
+      setOutputClock(localSettings.ledClock);
+    }
+
     try {
       const localItems = readLocalSchedule();
       const data = await DatabaseService.getRunOfShowData(eventId, { bypassCache: true });
-      const apiItems = parseScheduleItems(data?.schedule_items);
-      const merged = mergeLedScheduleItems(apiItems, localItems);
-      const items = merged.length ? merged : localItems;
-      if (!items.length) return;
 
-      pendingScheduleRef.current = items;
-      setSchedule(items);
       if (data?.settings) {
         setOutputClock(parseLedClockFromSettings(data.settings));
         setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
+        writeLedEventSettingsToLocal(eventId, ledEventSettingsFromRosSettings(data.settings));
       }
+
+      const apiItems = parseScheduleItems(data?.schedule_items);
+      const merged = mergeLedScheduleItems(apiItems, localItems);
+      const items = merged.length ? merged : localItems;
+
+      pendingScheduleRef.current = items;
+      setSchedule(items);
     } catch (error) {
       console.error('LedOutputPage: failed to load schedule', error);
       const localItems = readLocalSchedule();
-      if (!localItems.length) return;
       pendingScheduleRef.current = localItems;
       setSchedule(localItems);
     }
@@ -181,6 +213,9 @@ const LedOutputPage: React.FC = () => {
   const showClock = shouldShowLedClock(outputClock, showGraphic);
   const canvasBackground = resolveLedCanvasBackground(outputBackground);
 
+  // Override global slate-900 on html / body / #root / .App (see index.css).
+  useLayoutEffect(() => applyLedOutputPageChrome(outputBackground), [outputBackground]);
+
   if (!eventId) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-transparent text-white/50 text-sm">
@@ -190,7 +225,13 @@ const LedOutputPage: React.FC = () => {
   }
 
   return (
-    <div className="led-output-surface fixed inset-0 z-0">
+    <div
+      className="led-output-surface fixed inset-0 z-0"
+      style={{
+        backgroundColor: canvasBackground,
+        backgroundImage: 'none',
+      }}
+    >
       <LedCanvas backgroundColor={canvasBackground}>
         {showGraphic && snapshot ? (
           <div

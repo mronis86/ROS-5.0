@@ -47,6 +47,8 @@ export const LedCanvas: React.FC<LedCanvasProps> = ({
     };
   }, [fitParent]);
 
+  const isTransparent = backgroundColor === 'transparent';
+
   const inner = (
     <div
       style={{
@@ -79,7 +81,7 @@ export const LedCanvas: React.FC<LedCanvasProps> = ({
   return (
     <div
       className={`fixed inset-0 overflow-hidden flex items-center justify-center ${className}`}
-      style={{ backgroundColor: 'transparent' }}
+      style={{ backgroundColor: isTransparent ? 'transparent' : backgroundColor }}
     >
       {inner}
     </div>
