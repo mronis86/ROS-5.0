@@ -17,8 +17,9 @@ class OutputManager {
     this.frameSubscriptionActive = false;
     this.pixelBuffer = null;
     this.targetFps = 60;
-    this._pendingImage = null;
-    this._processing = false;
+    this._pendingNativeImage = null;
+    this._lastFrame = null;
+    this._publishLoop = null;
   }
 
   buildLedUrl(config) {
@@ -62,6 +63,7 @@ class OutputManager {
     this.onStatus?.({
       running: this.running,
       fps: this.fps,
+      targetFps: this.targetFps,
       frames: this.frameCount,
       captureAttempts: this.captureAttempts,
       spout: this.spout.statusMessage,
@@ -83,6 +85,13 @@ class OutputManager {
     }
   }
 
+  _stopPublishLoop() {
+    if (this._publishLoop) {
+      clearInterval(this._publishLoop);
+      this._publishLoop = null;
+    }
+  }
+
   _tickFps() {
     const now = Date.now();
     if (now - this.lastFpsTick >= 1000) {
@@ -93,43 +102,48 @@ class OutputManager {
     }
   }
 
-  _processFrame(image) {
-    if (!this.running || !image || !this.spout.ready) return;
-
-    // Always keep only the newest compositor frame — never queue stale frames.
-    this._pendingImage = image;
-    if (this._processing) return;
-    this._drainLatestFrame();
+  _onCompositorFrame(image) {
+    if (!this.running || !image) return;
+    // Compositor may paint faster than target FPS — keep only the newest frame.
+    this._pendingNativeImage = image;
   }
 
-  _drainLatestFrame() {
-    if (!this.running || !this._pendingImage) {
-      this._processing = false;
-      return;
-    }
+  _publishTick() {
+    if (!this.running || !this.spout.ready) return;
 
-    this._processing = true;
-    const image = this._pendingImage;
-    this._pendingImage = null;
+    if (this._pendingNativeImage) {
+      const image = this._pendingNativeImage;
+      this._pendingNativeImage = null;
+      this.captureAttempts += 1;
 
-    this.captureAttempts += 1;
-    const frame = extractPaintBitmap(image, this.pixelBuffer);
-    if (frame) {
-      this.pixelBuffer = frame.buffer;
-      const ok = this.spout.sendBitmap(frame.data, frame.width, frame.height);
-      if (ok) {
-        this.frameCount += 1;
-        this._tickFps();
+      const frame = extractPaintBitmap(image, this.pixelBuffer);
+      if (frame) {
+        this.pixelBuffer = frame.buffer;
+        this._lastFrame = {
+          width: frame.width,
+          height: frame.height,
+          data: frame.data,
+        };
       }
-    } else if (this.captureAttempts <= 3) {
-      console.warn('[capture] could not read bitmap from frame');
     }
 
-    if (this._pendingImage) {
-      setImmediate(() => this._drainLatestFrame());
-    } else {
-      this._processing = false;
+    if (!this._lastFrame) return;
+
+    const ok = this.spout.sendBitmap(
+      this._lastFrame.data,
+      this._lastFrame.width,
+      this._lastFrame.height
+    );
+    if (ok) {
+      this.frameCount += 1;
+      this._tickFps();
     }
+  }
+
+  _startPublishLoop(fps) {
+    this._stopPublishLoop();
+    const intervalMs = Math.max(1, Math.floor(1000 / fps));
+    this._publishLoop = setInterval(() => this._publishTick(), intervalMs);
   }
 
   _startFrameSubscription() {
@@ -140,7 +154,7 @@ class OutputManager {
     this.frameSubscriptionActive = true;
 
     wc.beginFrameSubscription(false, (image) => {
-      this._processFrame(image);
+      this._onCompositorFrame(image);
     });
   }
 
@@ -153,9 +167,10 @@ class OutputManager {
       this.fps = 0;
       this.lastFpsTick = Date.now();
       this.pixelBuffer = null;
-      this._pendingImage = null;
-      this._processing = false;
+      this._pendingNativeImage = null;
+      this._lastFrame = null;
       this._stopFrameSubscription();
+      this._stopPublishLoop();
 
       const width = Math.max(640, Number(config.width) || 1920);
       const height = Math.max(360, Number(config.height) || 1080);
@@ -173,8 +188,7 @@ class OutputManager {
         };
       }
 
-      // Init Spout in-process (no 8MB stdin pipe — major latency win vs worker).
-      const spoutOk = this.spout.init(config.spoutName);
+      const spoutOk = await this.spout.init(config.spoutName);
       if (!spoutOk) {
         return { ok: false, message: this.spout.statusMessage || 'Spout init failed' };
       }
@@ -228,7 +242,8 @@ class OutputManager {
       });
 
       this._startFrameSubscription();
-      console.log('[capture] in-process Spout + compositor frames (low latency)');
+      this._startPublishLoop(fps);
+      console.log(`[capture] Spout publish loop @ ${fps} fps (compositor-fed, frame hold)`);
 
       this._emitStatus({ message: 'LED output running', url: ledUrl });
       return { ok: true, url: ledUrl };
@@ -240,8 +255,9 @@ class OutputManager {
 
   async stop() {
     this.running = false;
-    this._pendingImage = null;
-    this._processing = false;
+    this._pendingNativeImage = null;
+    this._lastFrame = null;
+    this._stopPublishLoop();
     this._stopFrameSubscription();
     if (this.window && !this.window.isDestroyed()) {
       this.window.destroy();

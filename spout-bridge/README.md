@@ -59,7 +59,9 @@ spout-bridge/
 
 ## Resolution notes
 
-Default output size is **1920×1080 @ 60fps**. The offscreen window renders the LED page at that size. For 4K Spout, set width/height to 3840/2160 (heavier on GPU/CPU).
+Default output size is **1920×1080 @ 60fps**. The capture window requests that frame rate from Chromium (`setFrameRate`), and Spout publishes on a **fixed timer** at your configured FPS. When the LED page is static, the last frame is **held and re-sent** so receivers get a steady stream.
+
+The status line shows `Publish: ~60 fps (target 60)` — actual rate should match target within a few fps.
 
 The hosted LED canvas is designed at 3840×2160 internally; scaling matches a browser window at the chosen capture size.
 

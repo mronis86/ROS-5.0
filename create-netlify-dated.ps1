@@ -49,6 +49,7 @@ try {
     node scripts/zip-companion-module-full.js
     node scripts/zip-companion-module-resolume-full.js
     node scripts/zip-offline-show.js
+    node scripts/zip-spout-bridge.js
 } finally {
     Pop-Location
 }
@@ -96,6 +97,7 @@ Copy-DeployZip 'ROS-OSC-Control-portable.zip'
 Copy-DeployZip 'companion-module-runofshow-full.zip'
 Copy-DeployZip 'companion-module-runofshow-resolume-full.zip'
 Copy-DeployZip 'offline-show.zip'
+Copy-DeployZip 'ros-led-spout.zip'
 
 $BuildInfo = @"
 build_date=$(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
@@ -114,6 +116,7 @@ $RedirectsContent = @"
 /ROS-OSC-Control-portable.zip                   /ROS-OSC-Control-portable.zip                   200
 /electron-osc-app.zip                           /electron-osc-app.zip                           200
 /offline-show.zip                               /offline-show.zip                               200
+/ros-led-spout.zip                              /ros-led-spout.zip                              200
 
 /*    /index.html   200
 "@
@@ -165,6 +168,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/offline-show.zip"
   to = "/offline-show.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ros-led-spout.zip"
+  to = "/ros-led-spout.zip"
   status = 200
   force = true
 

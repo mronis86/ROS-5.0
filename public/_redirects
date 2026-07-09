@@ -3,6 +3,7 @@
 /ros-osc-python-app.zip         /ros-osc-python-app.zip         200
 /ROS-OSC-Control-portable.zip   /ROS-OSC-Control-portable.zip   200
 /electron-osc-app.zip           /electron-osc-app.zip           200
+/ros-led-spout.zip              /ros-led-spout.zip              200
 
 # SPA: all other routes to index.html
 /*    /index.html   200

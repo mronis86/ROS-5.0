@@ -502,7 +502,7 @@ const LedLayoutsPage: React.FC = () => {
               ) : null}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => refreshScheduleText(true)}
@@ -534,6 +534,14 @@ const LedLayoutsPage: React.FC = () => {
             >
               {isSaving ? 'Saving…' : 'Save Layouts'}
             </button>
+            <div className="hidden sm:block w-px h-8 bg-slate-600 mx-2" aria-hidden />
+            <a
+              href="/ros-led-spout.zip"
+              download="ros-led-spout.zip"
+              className="px-4 py-2 bg-violet-600 hover:bg-violet-500 rounded-lg text-sm font-medium sm:ml-1"
+            >
+              Download Spout
+            </a>
           </div>
         </div>
       </div>

@@ -128,17 +128,20 @@ window.rosLedSpout.onOutputStatus((status) => {
     setLine(statusSpoutDll, `Spout: ${status.spout}`, kind);
   }
   if (status.running && status.fps != null) {
+    const target = status.targetFps ?? 60;
     const sendNote =
       status.spoutSendsFailed > 0 || status.spoutSendsOk > 0
         ? ` (${status.spoutSendsOk ?? 0} ok / ${status.spoutSendsFailed} failed)`
         : status.captureAttempts != null && status.captureAttempts === 0
-          ? ' (no captures yet)'
+          ? ' (waiting for first frame)'
           : '';
     const warn =
-      status.spoutSendsFailed > 0 || (status.fps === 0 && status.captureAttempts > 0);
+      status.spoutSendsFailed > 0 ||
+      (status.fps > 0 && status.fps < target - 3) ||
+      (status.fps === 0 && status.captureAttempts > 0);
     setLine(
       statusFps,
-      `Publish rate: ~${status.fps} fps${sendNote}`,
+      `Publish: ~${status.fps} fps (target ${target})${sendNote}`,
       warn ? 'warn' : 'ok'
     );
   }

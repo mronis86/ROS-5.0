@@ -44,10 +44,11 @@
   "scripts": {
     "start": "vite --port 3003",
     "dev": "vite --port 3003",
-    "prebuild": "node scripts/zip-companion-module.js && node scripts/zip-python-app.js && node scripts/zip-offline-show.js",
+    "prebuild": "node scripts/zip-companion-module.js && node scripts/zip-python-app.js && node scripts/zip-offline-show.js && node scripts/zip-spout-bridge.js",
     "zip:offline-show": "node scripts/zip-offline-show.js",
     "zip:companion-full": "node scripts/zip-companion-module-full.js",
     "zip:companion-resolume": "node scripts/zip-companion-module-resolume-full.js",
+    "zip:spout-bridge": "node scripts/zip-spout-bridge.js",
     "zip:master-backup": "node scripts/zip-master-backup.js --branch master",
     "build": "vite build && node scripts/verify-dist-privacy.js",
     "preview": "vite preview",

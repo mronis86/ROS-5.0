@@ -48,6 +48,9 @@ node scripts/zip-companion-module-resolume-full.js
 echo "========== Building Offline Show zip =========="
 node scripts/zip-offline-show.js
 
+echo "========== Building ROS LED Spout bridge zip =========="
+node scripts/zip-spout-bridge.js
+
 # Step 5: Vite build.
 echo "========== Building Vite app =========="
 npm run build

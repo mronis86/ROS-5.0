@@ -53,11 +53,16 @@ export const DEFAULT_SESSION_TITLE: LedSessionTitleConfig = {
   maxWidth: 92,
 };
 
-export function createSpeakerPlacement(slot: number, x = 4, y = 72): LedSpeakerPlacement {
+export function createSpeakerPlacement(
+  slot: number,
+  x = 4,
+  y = 72,
+  enabled = false
+): LedSpeakerPlacement {
   return {
     id: `sp-${slot}`,
     slot,
-    enabled: true,
+    enabled,
     x,
     y,
     scale: 1,
@@ -73,7 +78,7 @@ export const DEFAULT_LED_LAYOUT: LedLayoutConfig = {
   gridSize: 80,
   gridOpacity: 0.35,
   sessionTitle: { ...DEFAULT_SESSION_TITLE },
-  speakers: [createSpeakerPlacement(1, 4, 72)],
+  speakers: [],
   styles: {},
 };
 
@@ -130,18 +135,18 @@ function migrateLegacyTemplate(
           : [1];
 
   if (template === 'single-speaker' || template === 'session-plus-speaker') {
-    base.speakers = [createSpeakerPlacement(slots[0] ?? 1, 4, 72)];
+    base.speakers = [createSpeakerPlacement(slots[0] ?? 1, 4, 72, true)];
   } else if (template === 'dual-speaker') {
     base.speakers = [
-      createSpeakerPlacement(slots[0] ?? 1, 4, 72),
-      createSpeakerPlacement(slots[1] ?? 2, 52, 72),
+      createSpeakerPlacement(slots[0] ?? 1, 4, 72, true),
+      createSpeakerPlacement(slots[1] ?? 2, 52, 72, true),
     ];
   } else if (template === 'panel-4') {
     base.speakers = [
-      createSpeakerPlacement(slots[0] ?? 1, 4, 58),
-      createSpeakerPlacement(slots[1] ?? 2, 52, 58),
-      createSpeakerPlacement(slots[2] ?? 3, 4, 78),
-      createSpeakerPlacement(slots[3] ?? 4, 52, 78),
+      createSpeakerPlacement(slots[0] ?? 1, 4, 58, true),
+      createSpeakerPlacement(slots[1] ?? 2, 52, 58, true),
+      createSpeakerPlacement(slots[2] ?? 3, 4, 78, true),
+      createSpeakerPlacement(slots[3] ?? 4, 52, 78, true),
     ];
   }
 
@@ -186,7 +191,7 @@ export function normalizeLedLayout(raw: Partial<LedLayoutConfig>): LedLayoutConf
           .map((s) => ({
             id: typeof s.id === 'string' ? s.id : `sp-${s.slot}`,
             slot: s.slot,
-            enabled: s.enabled !== false,
+            enabled: s.enabled === true,
             ...normalizeTransform(s, { ...DEFAULT_TRANSFORM, y: 72, maxWidth: 44 }),
           }))
       : [...DEFAULT_LED_LAYOUT.speakers],
@@ -418,7 +423,7 @@ export function toggleSpeakerSlot(layout: LedLayoutConfig, slot: number, on: boo
     const y = 72 + layout.speakers.filter((s) => s.enabled).length * 8;
     return {
       ...layout,
-      speakers: [...layout.speakers, createSpeakerPlacement(slot, 4 + (slot - 1) * 6, Math.min(y, 85))],
+      speakers: [...layout.speakers, createSpeakerPlacement(slot, 4 + (slot - 1) * 6, Math.min(y, 85), true)],
     };
   }
   return {
