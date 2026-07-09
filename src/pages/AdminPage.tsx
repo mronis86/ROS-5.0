@@ -205,6 +205,7 @@ export default function AdminPage() {
       id: string;
       name: string;
       token_prefix: string;
+      token: string | null;
       scopes: string[];
       event_id: string | null;
       expires_at: string | null;
@@ -214,12 +215,13 @@ export default function AdminPage() {
   >([]);
   const [integrationTokensLoading, setIntegrationTokensLoading] = useState(false);
   const [integrationTokensError, setIntegrationTokensError] = useState<string | null>(null);
+  const [integrationTokenVaultReady, setIntegrationTokenVaultReady] = useState(true);
+  const [needsTokenVaultMigration, setNeedsTokenVaultMigration] = useState(false);
   const [newTokenName, setNewTokenName] = useState('');
   const [newTokenEventId, setNewTokenEventId] = useState('');
   const [newTokenScopes, setNewTokenScopes] = useState('read,control');
   const [creatingToken, setCreatingToken] = useState(false);
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
-  const [createdTokenId, setCreatedTokenId] = useState<string | null>(null);
   const [createdTokenCopied, setCreatedTokenCopied] = useState(false);
   const [copiedTokenListId, setCopiedTokenListId] = useState<string | null>(null);
   const createdTokenBannerRef = useRef<HTMLDivElement | null>(null);
@@ -1202,12 +1204,19 @@ export default function AdminPage() {
         setIntegrationTokens([]);
         return;
       }
-      const data = (await res.json()) as { tokens?: typeof integrationTokens; needsMigration?: boolean };
+      const data = (await res.json()) as {
+        tokens?: typeof integrationTokens;
+        needsMigration?: boolean;
+        needsTokenVaultMigration?: boolean;
+        vaultEnabled?: boolean;
+      };
       if (data.needsMigration) {
         setIntegrationTokensError('Run migration 026 on Neon to enable API tokens.');
         setIntegrationTokens([]);
         return;
       }
+      setNeedsTokenVaultMigration(!!data.needsTokenVaultMigration);
+      setIntegrationTokenVaultReady(data.vaultEnabled !== false && !data.needsTokenVaultMigration);
       setIntegrationTokens(Array.isArray(data.tokens) ? data.tokens : []);
     } catch (e) {
       setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
@@ -1229,7 +1238,6 @@ export default function AdminPage() {
     setCreatingToken(true);
     setIntegrationTokensError(null);
     setCreatedTokenValue(null);
-    setCreatedTokenId(null);
     setCreatedTokenCopied(false);
     try {
       const scopes = newTokenScopes
@@ -1251,7 +1259,6 @@ export default function AdminPage() {
         return;
       }
       setCreatedTokenValue((data as { token?: string }).token || null);
-      setCreatedTokenId((data as { record?: { id?: string } }).record?.id || null);
       setNewTokenName('');
       setNewTokenEventId('');
       await fetchIntegrationTokens();
@@ -1273,13 +1280,13 @@ export default function AdminPage() {
     }
   }, [createdTokenValue]);
 
-  const copyIntegrationTokenPrefix = useCallback(async (id: string, prefix: string) => {
+  const copyIntegrationToken = useCallback(async (id: string, token: string) => {
     try {
-      await navigator.clipboard.writeText(prefix);
+      await navigator.clipboard.writeText(token);
       setCopiedTokenListId(id);
       window.setTimeout(() => setCopiedTokenListId(null), 2000);
     } catch {
-      setIntegrationTokensError('Could not copy prefix to clipboard.');
+      setIntegrationTokensError('Could not copy token to clipboard.');
     }
   }, []);
 
@@ -2239,11 +2246,22 @@ export default function AdminPage() {
             </button>
           </div>
           <p className="text-slate-500 text-sm mb-4">
-            Scoped tokens for Bitfocus Companion, vMix, and other integrations. Use scopes{' '}
-            <code className="text-slate-400">read,control</code> for Companion on one event. When{' '}
-            <code className="text-slate-400">REQUIRE_API_AUTH</code> is enabled on Railway, integrations must send{' '}
-            <code className="text-slate-400">Authorization: Bearer &lt;token&gt;</code>.
+            Scoped tokens for Bitfocus Companion, Spout, and other integrations. Use scopes{' '}
+            <code className="text-slate-400">read,control</code> for Companion on one event. Full tokens can be
+            copied again from this list when setting up a new machine (admin only, encrypted at rest).
           </p>
+          {needsTokenVaultMigration && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              Run migration <code className="text-amber-100">035_add_integration_token_ciphertext.sql</code> on Neon,
+              then redeploy Railway, to store retrievable tokens. Existing tokens must be recreated.
+            </div>
+          )}
+          {!integrationTokenVaultReady && !needsTokenVaultMigration && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              Set <code className="text-amber-100">INTEGRATION_TOKEN_VAULT_KEY</code> on Railway (or ensure{' '}
+              <code className="text-amber-100">ADMIN_KEY</code> is set) so new tokens can be copied again later.
+            </div>
+          )}
           {integrationTokensError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               {integrationTokensError}
@@ -2286,7 +2304,7 @@ export default function AdminPage() {
               className="mb-4 px-4 py-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50 text-emerald-100 text-sm"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <p className="font-medium">Token created — copy it now (shown only once):</p>
+                <p className="font-medium">Token created — copy for Companion / Spout / integrations:</p>
                 <button
                   type="button"
                   onClick={() => void copyCreatedIntegrationToken()}
@@ -2324,14 +2342,14 @@ export default function AdminPage() {
                     <span className="text-red-400 text-xs">revoked</span>
                   ) : (
                     <div className="ml-auto flex flex-wrap items-center gap-2">
-                      {createdTokenId === t.id && createdTokenValue ? (
+                      {t.token ? (
                         <button
                           type="button"
-                          onClick={() => void copyCreatedIntegrationToken()}
+                          onClick={() => void copyIntegrationToken(t.id, t.token!)}
                           className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200"
-                          title="Copy full API token (only available right after creation)"
+                          title="Copy full API token"
                         >
-                          {createdTokenCopied ? (
+                          {copiedTokenListId === t.id ? (
                             <>
                               <Check className="w-3 h-3" />
                               Copied
@@ -2344,24 +2362,12 @@ export default function AdminPage() {
                           )}
                         </button>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => void copyIntegrationTokenPrefix(t.id, t.token_prefix)}
-                          className="inline-flex items-center gap-1 text-xs text-slate-300 hover:text-white"
-                          title="Copy token prefix for identification (full secret is not stored)"
+                        <span
+                          className="text-xs text-slate-500"
+                          title="Recreate this token after migration 035 to enable copy"
                         >
-                          {copiedTokenListId === t.id ? (
-                            <>
-                              <Check className="w-3 h-3" />
-                              Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3" />
-                              Copy prefix
-                            </>
-                          )}
-                        </button>
+                          No stored secret
+                        </span>
                       )}
                       <button
                         type="button"
