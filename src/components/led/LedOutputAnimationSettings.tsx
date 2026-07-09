@@ -29,9 +29,9 @@ const LedOutputAnimationSettings: React.FC<LedOutputAnimationSettingsProps> = ({
 
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-      <h3 className="font-semibold mb-1 text-sm">Output animation</h3>
+      <h3 className="font-semibold mb-1 text-sm">Cue animation</h3>
       <p className="text-xs text-slate-500 mb-3">
-        Clears between cues. Use delays to sync with your media server.
+        In/out transition for this cue only. New cues default to fade until you change and save.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block text-sm sm:col-span-2">

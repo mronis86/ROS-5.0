@@ -37,3 +37,15 @@ export type LedOutputPhase =
   | 'visible'
   | 'hold-out'
   | 'exit';
+
+export type LedOutputBackgroundMode = 'transparent' | 'color';
+
+export interface LedOutputBackground {
+  mode: LedOutputBackgroundMode;
+  color: string;
+}
+
+export const DEFAULT_LED_OUTPUT_BACKGROUND: LedOutputBackground = {
+  mode: 'transparent',
+  color: '#000000',
+};

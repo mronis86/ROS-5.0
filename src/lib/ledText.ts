@@ -8,9 +8,11 @@ import type {
   LedTextStyles,
   LedTitleSource,
 } from '../types/ledText';
+import type { LedOutputAnimation } from '../types/ledOutput';
 import { UHD_HEIGHT, UHD_WIDTH } from '../types/ledText';
 
 import { normalizeFontStyle, normalizeFontWeight } from './ledFonts';
+import { parseLedOutputAnimation, DEFAULT_LED_OUTPUT_ANIMATION } from './ledOutputAnimation';
 
 export const DEFAULT_LED_STYLES: LedTextStyles = {
   primaryColor: '#ffffff',
@@ -189,6 +191,9 @@ export function normalizeLedLayout(raw: Partial<LedLayoutConfig>): LedLayoutConf
           }))
       : [...DEFAULT_LED_LAYOUT.speakers],
     styles: raw.styles && typeof raw.styles === 'object' ? raw.styles : {},
+    ...(raw.outputAnimation != null
+      ? { outputAnimation: parseLedOutputAnimation(raw.outputAnimation) }
+      : {}),
   };
 }
 
@@ -342,6 +347,18 @@ export function mergeLedScheduleItems(
 export function layoutHasVisibleContent(layout: LedLayoutConfig): boolean {
   if (layout.sessionTitle.enabled) return true;
   return layout.speakers.some((s) => s.enabled);
+}
+
+export function getCueOutputAnimation(layout: LedLayoutConfig): LedOutputAnimation {
+  return layout.outputAnimation ?? DEFAULT_LED_OUTPUT_ANIMATION;
+}
+
+/** @deprecated Use getCueOutputAnimation */
+export function resolveCueOutputAnimation(
+  layout: LedLayoutConfig,
+  _eventDefault?: LedOutputAnimation
+): LedOutputAnimation {
+  return getCueOutputAnimation(layout);
 }
 
 export function snapPercent(value: number, gridSizePx: number, canvasSize: number): number {

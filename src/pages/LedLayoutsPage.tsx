@@ -3,15 +3,19 @@ import { useLocation } from 'react-router-dom';
 import LedWysiwygEditor from '../components/led/LedWysiwygEditor';
 import LedFontRoleSettings from '../components/led/LedFontRoleSettings';
 import LedOutputAnimationSettings from '../components/led/LedOutputAnimationSettings';
+import LedOutputBackgroundSettings from '../components/led/LedOutputBackgroundSettings';
 import LedClockSettings from '../components/led/LedClockSettings';
 import {
   DEFAULT_LED_OUTPUT_ANIMATION,
-  parseLedOutputFromSettings,
 } from '../lib/ledOutputAnimation';
 import {
   DEFAULT_LED_OUTPUT_CLOCK,
   parseLedClockFromSettings,
 } from '../lib/ledClock';
+import {
+  parseLedOutputBackgroundFromSettings,
+  resolveLedCanvasBackground,
+} from '../lib/ledOutputBackground';
 import {
   DEFAULT_LED_LAYOUT,
   getLayoutSummary,
@@ -31,7 +35,10 @@ import { socketClient } from '../services/socket-client';
 import { dispatchLedOutputClear } from '../lib/ledOutputClear';
 import { Event } from '../types/Event';
 import type { LedElementKey, LedLayoutConfig, LedTextStyles } from '../types/ledText';
-import type { LedOutputAnimation } from '../types/ledOutput';
+import {
+  DEFAULT_LED_OUTPUT_BACKGROUND,
+  type LedOutputBackground,
+} from '../types/ledOutput';
 import type { LedOutputClock } from '../types/ledClock';
 
 interface ScheduleItem {
@@ -41,9 +48,25 @@ interface ScheduleItem {
   customFields?: Record<string, unknown>;
 }
 
-function formatCueLabel(item: ScheduleItem): string {
+function readCueField(item: ScheduleItem): string | number | undefined {
   const cue = item.customFields?.cue;
-  return typeof cue === 'string' && cue.trim() ? cue.trim() : `ID ${item.id}`;
+  if (cue == null) return undefined;
+  if (typeof cue === 'string' || typeof cue === 'number') return cue;
+  return String(cue);
+}
+
+/** Match run-of-show cue labels (e.g. "5" → "CUE 5"). */
+function formatCueDisplay(cue: string | number | undefined): string {
+  if (cue == null || String(cue).trim() === '') return '';
+  const cueStr = String(cue).trim();
+  if (cueStr.includes('CUE ')) return cueStr;
+  if (/^CUE\d+$/i.test(cueStr)) return cueStr.replace(/^CUE(\d+)$/i, 'CUE $1');
+  return `CUE ${cueStr}`;
+}
+
+function getRowNumber(schedule: ScheduleItem[], itemId: number): number {
+  const index = schedule.findIndex((item) => item.id === itemId);
+  return index >= 0 ? index + 1 : 0;
 }
 
 const LedLayoutsPage: React.FC = () => {
@@ -68,10 +91,10 @@ const LedLayoutsPage: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastTextRefresh, setLastTextRefresh] = useState<Date | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [outputAnimation, setOutputAnimation] = useState<LedOutputAnimation>(
-    DEFAULT_LED_OUTPUT_ANIMATION
-  );
   const [outputClock, setOutputClock] = useState<LedOutputClock>(DEFAULT_LED_OUTPUT_CLOCK);
+  const [outputBackground, setOutputBackground] = useState<LedOutputBackground>(
+    DEFAULT_LED_OUTPUT_BACKGROUND
+  );
   const [runOfShowMeta, setRunOfShowMeta] = useState<{
     event_date: string;
     custom_columns: unknown[];
@@ -109,8 +132,8 @@ const LedLayoutsPage: React.FC = () => {
         custom_columns: data.custom_columns || [],
         settings: data.settings || {},
       });
-      setOutputAnimation(parseLedOutputFromSettings(data.settings));
       setOutputClock(parseLedClockFromSettings(data.settings));
+      setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
       const items = parseScheduleItems(data.schedule_items);
       if (items.length) return items;
     }
@@ -184,8 +207,8 @@ const LedLayoutsPage: React.FC = () => {
         settings?: Record<string, unknown>;
       }) => {
         if (data?.settings) {
-          setOutputAnimation(parseLedOutputFromSettings(data.settings));
           setOutputClock(parseLedClockFromSettings(data.settings));
+          setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
         }
         const items = parseScheduleItems(data?.schedule_items);
         if (!items.length) return;
@@ -211,6 +234,15 @@ const LedLayoutsPage: React.FC = () => {
     () => schedule.find((s) => s.id === selectedId) ?? null,
     [schedule, selectedId]
   );
+
+  const selectedRowNumber = useMemo(
+    () => (selectedItem ? getRowNumber(schedule, selectedItem.id) : 0),
+    [schedule, selectedItem]
+  );
+
+  const selectedCueDisplay = selectedItem
+    ? formatCueDisplay(readCueField(selectedItem))
+    : '';
 
   const selectedLayout =
     selectedId != null ? layouts[selectedId] ?? DEFAULT_LED_LAYOUT : DEFAULT_LED_LAYOUT;
@@ -310,21 +342,30 @@ const LedLayoutsPage: React.FC = () => {
     setSaveMessage(null);
 
     try {
-      const updatedSchedule = schedule.map((item) => ({
-        ...item,
-        customFields: ledLayoutToCustomFields(
-          item.customFields,
-          layouts[item.id] ?? DEFAULT_LED_LAYOUT
-        ),
-      }));
+      const updatedSchedule = schedule.map((item) => {
+        const layout = layouts[item.id] ?? DEFAULT_LED_LAYOUT;
+        const normalized = normalizeLedLayout({
+          ...layout,
+          outputAnimation: layout.outputAnimation ?? DEFAULT_LED_OUTPUT_ANIMATION,
+        });
+        return {
+          ...item,
+          customFields: ledLayoutToCustomFields(item.customFields, normalized),
+        };
+      });
 
       localStorage.setItem(`runOfShowSchedule_${id}`, JSON.stringify(updatedSchedule));
 
       const existing = await DatabaseService.getRunOfShowData(id);
+      const priorSettings = existing?.settings || runOfShowMeta?.settings || {};
+      const { ledOutput: _legacyLedOutput, ...restSettings } = priorSettings as Record<
+        string,
+        unknown
+      >;
       const baseSettings = {
-        ...(existing?.settings || runOfShowMeta?.settings || {}),
-        ledOutput: outputAnimation,
+        ...restSettings,
         ledClock: outputClock,
+        ledOutputBackground: outputBackground,
       };
       await DatabaseService.saveRunOfShowData({
         event_id: id,
@@ -342,6 +383,13 @@ const LedLayoutsPage: React.FC = () => {
       }));
 
       setSchedule(updatedSchedule);
+      setLayouts((prev) => {
+        const next = { ...prev };
+        updatedSchedule.forEach((item) => {
+          next[item.id] = getLedLayoutFromItem(item);
+        });
+        return next;
+      });
       setSaveMessage('Layouts saved.');
     } catch (error) {
       console.error('LedLayoutsPage: save failed', error);
@@ -414,10 +462,17 @@ const LedLayoutsPage: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             <div className="lg:col-span-3 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-              <div className="px-4 py-3 border-b border-slate-700 font-semibold text-sm">Cues</div>
+              <div className="px-4 py-3 border-b border-slate-700">
+                <div className="font-semibold text-sm">Cues</div>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  CUE # from run of show · row shown for reference
+                </p>
+              </div>
               <div className="max-h-[calc(100vh-12rem)] overflow-y-auto divide-y divide-slate-700">
-                {schedule.map((item) => {
+                {schedule.map((item, index) => {
                   const layout = layouts[item.id] ?? DEFAULT_LED_LAYOUT;
+                  const rowNumber = index + 1;
+                  const cueDisplay = formatCueDisplay(readCueField(item));
                   return (
                     <button
                       key={item.id}
@@ -430,9 +485,24 @@ const LedLayoutsPage: React.FC = () => {
                         item.id === selectedId ? 'bg-blue-900/40 border-l-4 border-blue-400' : ''
                       }`}
                     >
-                      <div className="font-mono text-xs text-blue-300">{formatCueLabel(item)}</div>
-                      <div className="text-sm font-medium truncate">{item.segmentName || 'Untitled'}</div>
-                      <div className="text-xs text-slate-400 mt-0.5">{getLayoutSummary(layout)}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <span
+                          className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-bold tracking-wide ${
+                            cueDisplay
+                              ? 'border-cyan-500/50 bg-cyan-950/70 text-cyan-200'
+                              : 'border-slate-600 bg-slate-800 text-slate-500'
+                          }`}
+                        >
+                          {cueDisplay || 'No cue #'}
+                        </span>
+                        <span className="shrink-0 pt-0.5 font-mono text-[10px] text-slate-600">
+                          Row {rowNumber}
+                        </span>
+                      </div>
+                      <div className="text-sm font-medium truncate mt-1.5">
+                        {item.segmentName || 'Untitled'}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">{getLayoutSummary(layout)}</div>
                     </button>
                   );
                 })}
@@ -443,9 +513,26 @@ const LedLayoutsPage: React.FC = () => {
               <>
                 <div className="lg:col-span-4 space-y-4 max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
                   <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-                    <h2 className="font-semibold mb-3 text-sm">
-                      {formatCueLabel(selectedItem)} — {selectedItem.segmentName || 'Untitled'}
-                    </h2>
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 mb-1">
+                      <span
+                        className={`text-base font-bold ${
+                          selectedCueDisplay ? 'text-cyan-300' : 'text-slate-500'
+                        }`}
+                      >
+                        {selectedCueDisplay || 'No cue #'}
+                      </span>
+                      {selectedItem.segmentName ? (
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span className="text-sm font-medium text-white truncate">
+                            {selectedItem.segmentName}
+                          </span>
+                        </>
+                      ) : null}
+                    </div>
+                    <p className="text-[11px] font-mono text-slate-500 mb-3">
+                      Row {selectedRowNumber} in schedule
+                    </p>
 
                     <label className="flex items-center gap-2 text-sm mb-3 cursor-pointer">
                       <input
@@ -765,9 +852,14 @@ const LedLayoutsPage: React.FC = () => {
                     </div>
                   ) : null}
 
+                  <LedOutputBackgroundSettings
+                    value={outputBackground}
+                    onChange={setOutputBackground}
+                  />
+
                   <LedOutputAnimationSettings
-                    value={outputAnimation}
-                    onChange={setOutputAnimation}
+                    value={selectedLayout.outputAnimation ?? DEFAULT_LED_OUTPUT_ANIMATION}
+                    onChange={(next) => patchSelectedLayout({ outputAnimation: next })}
                     preview={animationPreview}
                   />
 
@@ -877,7 +969,16 @@ const LedLayoutsPage: React.FC = () => {
 
                 <div className="lg:col-span-5 lg:sticky lg:top-[calc(var(--app-header-height)+1rem)]">
                   <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-                    <h3 className="font-semibold mb-2 text-sm">Layout editor</h3>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+                      <h3 className="font-semibold text-sm">Layout editor</h3>
+                      {selectedCueDisplay ? (
+                        <span className="text-xs font-bold text-cyan-400">{selectedCueDisplay}</span>
+                      ) : (
+                        <span className="text-[11px] font-mono text-slate-600">
+                          Row {selectedRowNumber}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-400 mb-3">
                       Click an element to select it, then drag to position. Use sliders for fine control.
                     </p>
@@ -888,6 +989,7 @@ const LedLayoutsPage: React.FC = () => {
                       title={title}
                       selectedKey={selectedKey}
                       onSelectKey={setSelectedKey}
+                      canvasBackgroundColor={resolveLedCanvasBackground(outputBackground)}
                     />
                   </div>
                 </div>

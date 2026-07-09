@@ -22,6 +22,8 @@ interface LedWysiwygEditorProps {
   title: string;
   selectedKey: LedElementKey | null;
   onSelectKey: (key: LedElementKey | null) => void;
+  /** Preview output page background (transparent or solid). */
+  canvasBackgroundColor?: string;
 }
 
 type DragState = {
@@ -39,6 +41,7 @@ export const LedWysiwygEditor: React.FC<LedWysiwygEditorProps> = ({
   title,
   selectedKey,
   onSelectKey,
+  canvasBackgroundColor = 'transparent',
 }) => {
   const outerRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -159,8 +162,18 @@ export const LedWysiwygEditor: React.FC<LedWysiwygEditorProps> = ({
   return (
     <div
       ref={outerRef}
-      className="led-editor-root relative w-full overflow-hidden rounded-lg border border-slate-500 bg-[#0f172a]"
-      style={{ aspectRatio: '16 / 9' }}
+      className="led-editor-root relative w-full overflow-hidden rounded-lg border border-slate-500"
+      style={{
+        aspectRatio: '16 / 9',
+        backgroundColor:
+          canvasBackgroundColor === 'transparent' ? '#0f172a' : canvasBackgroundColor,
+        backgroundImage:
+          canvasBackgroundColor === 'transparent'
+            ? 'linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%, #1e293b), linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%, #1e293b)'
+            : undefined,
+        backgroundSize: canvasBackgroundColor === 'transparent' ? '16px 16px' : undefined,
+        backgroundPosition: canvasBackgroundColor === 'transparent' ? '0 0, 8px 8px' : undefined,
+      }}
     >
       <LedGridOverlay
         gridSize={layout.gridSize}
@@ -176,6 +189,7 @@ export const LedWysiwygEditor: React.FC<LedWysiwygEditorProps> = ({
           height: UHD_HEIGHT,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
+          backgroundColor: canvasBackgroundColor,
         }}
       >
         <LedFreeformRenderer

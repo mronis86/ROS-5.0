@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import LedCanvas from '../components/led/LedCanvas';
 import LedFreeformRenderer from '../components/led/LedFreeformRenderer';
@@ -6,9 +6,12 @@ import { useActiveCueFollow } from '../hooks/useActiveCueFollow';
 import { useLedOutputDisplay } from '../hooks/useLedOutputDisplay';
 import {
   getLedOutputAnimatorStyle,
-  parseLedOutputFromSettings,
   DEFAULT_LED_OUTPUT_ANIMATION,
 } from '../lib/ledOutputAnimation';
+import {
+  parseLedOutputBackgroundFromSettings,
+  resolveLedCanvasBackground,
+} from '../lib/ledOutputBackground';
 import {
   DEFAULT_LED_OUTPUT_CLOCK,
   parseLedClockFromSettings,
@@ -17,8 +20,12 @@ import {
 import type { LedOutputClock } from '../types/ledClock';
 import LedClockOverlay from '../components/led/LedClockOverlay';
 import { useLedOutputTimer } from '../hooks/useLedOutputTimer';
-import type { LedOutputAnimation } from '../types/ledOutput';
+import type { LedOutputBackground } from '../types/ledOutput';
+import { DEFAULT_LED_OUTPUT_BACKGROUND } from '../types/ledOutput';
 import {
+  findScheduleItemById,
+  getCueOutputAnimation,
+  getLedLayoutFromItem,
   mergeLedScheduleItems,
   parseScheduleItems,
   type LedScheduleItem,
@@ -31,16 +38,15 @@ const LedOutputPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const eventId = searchParams.get('eventId');
   const [schedule, setSchedule] = useState<LedScheduleItem[]>([]);
-  const [outputAnimation, setOutputAnimation] = useState<LedOutputAnimation>(
-    DEFAULT_LED_OUTPUT_ANIMATION
-  );
   const [outputClock, setOutputClock] = useState<LedOutputClock>(DEFAULT_LED_OUTPUT_CLOCK);
+  const [outputBackground, setOutputBackground] = useState<LedOutputBackground>(
+    DEFAULT_LED_OUTPUT_BACKGROUND
+  );
   const [manualClearNonce, setManualClearNonce] = useState(0);
 
   const scheduleRef = useRef(schedule);
   const pendingScheduleRef = useRef<LedScheduleItem[] | null>(null);
   const isCueActiveRef = useRef(false);
-  const outputAnimationRef = useRef(outputAnimation);
   const outputClockRef = useRef(outputClock);
 
   const { activeItemId, isCueActive, hasHydrated } = useActiveCueFollow(eventId);
@@ -55,10 +61,6 @@ const LedOutputPage: React.FC = () => {
   }, [isCueActive]);
 
   useEffect(() => {
-    outputAnimationRef.current = outputAnimation;
-  }, [outputAnimation]);
-
-  useEffect(() => {
     outputClockRef.current = outputClock;
   }, [outputClock]);
 
@@ -71,11 +73,18 @@ const LedOutputPage: React.FC = () => {
     setManualClearNonce((n) => n + 1);
   }, []);
 
+  const resolvedAnimation = useMemo(() => {
+    if (activeItemId == null) return DEFAULT_LED_OUTPUT_ANIMATION;
+    const item = findScheduleItemById(schedule, activeItemId);
+    if (!item) return DEFAULT_LED_OUTPUT_ANIMATION;
+    return getCueOutputAnimation(getLedLayoutFromItem(item));
+  }, [activeItemId, schedule]);
+
   const { snapshot, phase, handleAnimationEnd } = useLedOutputDisplay({
     isCueActive,
     activeItemId,
     getScheduleItems,
-    animation: outputAnimation,
+    animation: resolvedAnimation,
     manualClearNonce,
     suppressBootCue: hasHydrated,
   });
@@ -91,14 +100,10 @@ const LedOutputPage: React.FC = () => {
       if (!data) return;
 
       if (data.settings) {
-        const nextAnimation = parseLedOutputFromSettings(data.settings);
-        outputAnimationRef.current = nextAnimation;
-        if (!isCueActiveRef.current) {
-          setOutputAnimation(nextAnimation);
-        }
         const nextClock = parseLedClockFromSettings(data.settings);
         outputClockRef.current = nextClock;
         setOutputClock(nextClock);
+        setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
       }
 
       const apiItems = parseScheduleItems(data.schedule_items);
@@ -128,8 +133,8 @@ const LedOutputPage: React.FC = () => {
       pendingScheduleRef.current = items;
       setSchedule(items);
       if (data?.settings) {
-        setOutputAnimation(parseLedOutputFromSettings(data.settings));
         setOutputClock(parseLedClockFromSettings(data.settings));
+        setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
       }
     } catch (error) {
       console.error('LedOutputPage: failed to load schedule', error);
@@ -171,9 +176,10 @@ const LedOutputPage: React.FC = () => {
     setSchedule(pendingScheduleRef.current);
   }, [isCueActive]);
 
-  const animator = getLedOutputAnimatorStyle(phase, outputAnimation);
+  const animator = getLedOutputAnimatorStyle(phase, resolvedAnimation);
   const showGraphic = snapshot != null && animator.visible;
   const showClock = shouldShowLedClock(outputClock, showGraphic);
+  const canvasBackground = resolveLedCanvasBackground(outputBackground);
 
   if (!eventId) {
     return (
@@ -185,7 +191,7 @@ const LedOutputPage: React.FC = () => {
 
   return (
     <div className="led-output-surface fixed inset-0 z-0">
-      <LedCanvas>
+      <LedCanvas backgroundColor={canvasBackground}>
         {showGraphic && snapshot ? (
           <div
             className={`w-full h-full led-editor-no-transition ${animator.className}`}

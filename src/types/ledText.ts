@@ -1,3 +1,5 @@
+import type { LedOutputAnimation } from './ledOutput';
+
 export type LedTitleSource = 'segment' | 'custom';
 export type LedTextAlign = 'left' | 'center' | 'right';
 export type LedFontStyle = 'normal' | 'italic';
@@ -59,6 +61,8 @@ export interface LedLayoutConfig {
   sessionTitle: LedSessionTitleConfig;
   speakers: LedSpeakerPlacement[];
   styles: Partial<LedTextStyles>;
+  /** Per-cue output animation. Defaults to fade when unset. */
+  outputAnimation?: LedOutputAnimation;
 }
 
 export const UHD_WIDTH = 3840;
