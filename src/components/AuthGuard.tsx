@@ -46,7 +46,9 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
 
   return (
     <>
-      {canUseApp ? children : null}
+      {canUseApp ? (
+        <div className="min-h-screen bg-slate-900">{children}</div>
+      ) : null}
       {showGate && (
         <div className="fixed inset-0 z-[100] flex flex-col min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 pt-[var(--app-header-height)]">
           <AppHeader />

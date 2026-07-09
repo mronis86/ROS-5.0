@@ -128,6 +128,8 @@ function formatAuthApiError(
 
 class AuthService {
   private static instance: AuthService;
+  private authReadyPromise: Promise<void>;
+  private resolveAuthReady!: () => void;
   private authState: AuthState = {
     user: null,
     isAuthenticated: false,
@@ -143,7 +145,16 @@ class AuthService {
   }
 
   constructor() {
-    void this.loadFromStorage();
+    this.authReadyPromise = new Promise((resolve) => {
+      this.resolveAuthReady = resolve;
+    });
+    void this.loadFromStorage().finally(() => {
+      this.resolveAuthReady();
+    });
+  }
+
+  whenAuthReady(): Promise<void> {
+    return this.authReadyPromise;
   }
 
   private persistUserSession(user: User, accessStatus: AccessStatus) {

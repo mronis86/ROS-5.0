@@ -74,12 +74,13 @@ function AppContent() {
 
   return (
     <ActiveViewersProvider>
-    <div className={`App ${isClock ? 'clock-page' : ''} ${isLedOutput ? 'led-output-page' : ''}`}>
+    <div className={`App min-h-screen bg-slate-900 text-slate-200 ${isClock ? 'clock-page' : ''} ${isLedOutput ? 'led-output-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && <AppHeader />}
       
       {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isNetlifyXML && !isLocalXML && (
         <AuthGuard>
+          <div className="min-h-screen bg-slate-900">
           <Routes>
             <Route path="/admin" element={null} />
             <Route path="/" element={<EventListPage />} />
@@ -98,6 +99,7 @@ function AppContent() {
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
           </Routes>
+          </div>
         </AuthGuard>
       )}
 

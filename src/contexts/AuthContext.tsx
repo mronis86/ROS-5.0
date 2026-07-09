@@ -58,8 +58,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setLoading(authState.loading);
     };
     sync();
-    const timer = window.setTimeout(sync, 800);
-    return () => window.clearTimeout(timer);
+    void authService.whenAuthReady().then(sync);
   }, []);
 
   const requestAccess = async (email: string, fullName: string) => {

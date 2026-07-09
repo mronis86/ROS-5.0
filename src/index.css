@@ -4,6 +4,14 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body,
+#root {
+  min-height: 100%;
+  background-color: #0f172a; /* slate-900 — avoids white flash before route paint */
+  color-scheme: dark;
+}
+
 /* Noto Color Emoji (Google) – consistent emoji style for location icons */
 @font-face {
   font-family: 'Noto Color Emoji';
@@ -43,10 +51,7 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
-/* Smooth transitions */
-* {
-  transition: all 0.2s ease;
-}
+/* Page transitions belong on specific interactive elements (Tailwind transition-*), not globally. */
 
 /* Custom animations */
 @keyframes fadeIn {

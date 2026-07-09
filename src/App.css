@@ -32,10 +32,7 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
-/* Smooth transitions */
-* {
-  transition: all 0.2s ease;
-}
+/* Page transitions belong on specific interactive elements (Tailwind transition-*), not globally. */
 
 /* Custom animations */
 @keyframes fadeIn {

@@ -4,13 +4,34 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
     <title>Run of Show Schedule</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background-color: #0f172a;
+        color: #e2e8f0;
+      }
+      #root {
+        min-height: 100%;
+      }
+    </style>
+    <script>
+      (function () {
+        var isLedOutput = window.location.pathname === '/led-output';
+        var bg = isLedOutput ? 'transparent' : '#0f172a';
+        document.documentElement.style.backgroundColor = bg;
+      })();
+    </script>
   </head>
   <body>
     <script>
       if (window.location.pathname === '/led-output') {
-        document.documentElement.style.background = 'transparent';
         document.body.style.background = 'transparent';
+      } else {
+        document.body.style.background = '#0f172a';
       }
     </script>
     <div id="root"></div>

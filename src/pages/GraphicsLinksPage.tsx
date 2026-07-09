@@ -168,7 +168,6 @@ const GraphicsLinksPage: React.FC = () => {
       } else if (!socketClient.isConnected()) {
         console.log('👁️ Graphics Links: Tab visible - reconnecting WebSocket');
         socketClient.connect(event.id, callbacks);
-        callbacks.onInitialSync?.();
       }
     };
 
