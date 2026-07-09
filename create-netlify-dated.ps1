@@ -210,6 +210,50 @@ if ($uploadAssets.Count -lt 2) {
 }
 Write-Host ("Verified upload assets: {0} files" -f $uploadAssets.Count)
 
+$indexHtmlPath = Join-Path $UploadDir 'index.html'
+$indexHtml = Get-Content -Path $indexHtmlPath -Raw
+$assetRefs = [regex]::Matches($indexHtml, '/assets/([^"''\s>]+)')
+foreach ($match in $assetRefs) {
+    $assetName = $match.Groups[1].Value
+    $assetPath = Join-Path (Join-Path $UploadDir 'assets') $assetName
+    if (-not (Test-Path $assetPath)) {
+        Write-Error "index.html references /assets/$assetName but that file is missing from the upload folder."
+        exit 1
+    }
+}
+$assetNames = @($assetRefs | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+if ($assetNames.Count -gt 0) {
+    Write-Host ("Verified index.html asset references: {0}" -f ($assetNames -join ', '))
+}
+
+$sampleAsset = if ($assetNames.Count -gt 0) { $assetNames[0] } else { '(see assets folder)' }
+
+$DeployReadme = @"
+Run of Show — Netlify manual deploy ($DateStr)
+
+IMPORTANT — avoid blank page / MIME type errors:
+If the browser says CSS or JS has MIME type text/html, Netlify is serving index.html
+instead of your built assets. That means the deploy is incomplete.
+
+Upload ONE of these (entire contents, not just index.html):
+  1) This folder: netlify-$DateStr-V2
+  2) Zip at repo root: netlify-$DateStr-V2-deploy.zip
+
+After deploy, confirm these URLs return real files (not HTML):
+  /assets/$sampleAsset
+  (open DevTools Network tab — type should be javascript or css)
+
+Do not mix files from different build dates (hashed asset names must match index.html).
+"@
+[System.IO.File]::WriteAllText((Join-Path $UploadDir 'DEPLOY.txt'), $DeployReadme, $utf8NoBom)
+
+$DeployZip = Join-Path $ProjectRoot "netlify-$DateStr-V2-deploy.zip"
+if (Test-Path $DeployZip) { Remove-Item $DeployZip -Force }
+Write-Host "========== Creating deploy zip: $DeployZip =========="
+Compress-Archive -Path (Join-Path $UploadDir '*') -DestinationPath $DeployZip -Force
+Write-Host "Created deploy zip for single-file Netlify upload"
+
 Write-Host "========== Done =========="
 Write-Host "Upload folder: $UploadDir"
-Write-Host "Contains: site + OSC zips + build-info.txt + _redirects + netlify.toml"
+Write-Host "Or upload zip: $DeployZip"
+Write-Host "Contains: site + OSC zips + build-info.txt + _redirects + netlify.toml + DEPLOY.txt"
