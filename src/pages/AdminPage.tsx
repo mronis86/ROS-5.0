@@ -205,7 +205,6 @@ export default function AdminPage() {
       id: string;
       name: string;
       token_prefix: string;
-      token: string | null;
       scopes: string[];
       event_id: string | null;
       expires_at: string | null;
@@ -215,15 +214,12 @@ export default function AdminPage() {
   >([]);
   const [integrationTokensLoading, setIntegrationTokensLoading] = useState(false);
   const [integrationTokensError, setIntegrationTokensError] = useState<string | null>(null);
-  const [integrationTokenVaultReady, setIntegrationTokenVaultReady] = useState(true);
-  const [needsTokenVaultMigration, setNeedsTokenVaultMigration] = useState(false);
   const [newTokenName, setNewTokenName] = useState('');
   const [newTokenEventId, setNewTokenEventId] = useState('');
   const [newTokenScopes, setNewTokenScopes] = useState('read,control');
   const [creatingToken, setCreatingToken] = useState(false);
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
   const [createdTokenCopied, setCreatedTokenCopied] = useState(false);
-  const [copiedTokenListId, setCopiedTokenListId] = useState<string | null>(null);
   const createdTokenBannerRef = useRef<HTMLDivElement | null>(null);
   const [accessRequests, setAccessRequests] = useState<AccessRequestRow[]>([]);
   const [accessRequestsLoading, setAccessRequestsLoading] = useState(false);
@@ -1207,16 +1203,12 @@ export default function AdminPage() {
       const data = (await res.json()) as {
         tokens?: typeof integrationTokens;
         needsMigration?: boolean;
-        needsTokenVaultMigration?: boolean;
-        vaultEnabled?: boolean;
       };
       if (data.needsMigration) {
         setIntegrationTokensError('Run migration 026 on Neon to enable API tokens.');
         setIntegrationTokens([]);
         return;
       }
-      setNeedsTokenVaultMigration(!!data.needsTokenVaultMigration);
-      setIntegrationTokenVaultReady(data.vaultEnabled !== false && !data.needsTokenVaultMigration);
       setIntegrationTokens(Array.isArray(data.tokens) ? data.tokens : []);
     } catch (e) {
       setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
@@ -1280,22 +1272,58 @@ export default function AdminPage() {
     }
   }, [createdTokenValue]);
 
-  const copyIntegrationToken = useCallback(async (id: string, token: string) => {
-    try {
-      await navigator.clipboard.writeText(token);
-      setCopiedTokenListId(id);
-      window.setTimeout(() => setCopiedTokenListId(null), 2000);
-    } catch {
-      setIntegrationTokensError('Could not copy token to clipboard.');
-    }
-  }, []);
-
   const revokeIntegrationToken = useCallback(
     async (id: string, name: string) => {
       if (!confirm(`Revoke integration token "${name}"? Companion/vMix using it will stop working.`)) return;
       setIntegrationTokensError(null);
       try {
         const res = await adminFetch(`/api/admin/integration-tokens/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setIntegrationTokensError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchIntegrationTokens();
+      } catch (e) {
+        setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
+      }
+    },
+    [fetchIntegrationTokens]
+  );
+
+  const regenerateIntegrationToken = useCallback(
+    async (id: string, name: string) => {
+      if (
+        !confirm(
+          `Regenerate "${name}"? A new secret will be created with the same name and scopes. Update any apps using the old token.`
+        )
+      ) {
+        return;
+      }
+      setIntegrationTokensError(null);
+      setCreatedTokenCopied(false);
+      try {
+        const res = await adminFetch(`/api/admin/integration-tokens/${id}/regenerate`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setIntegrationTokensError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        setCreatedTokenValue((data as { token?: string }).token || null);
+        await fetchIntegrationTokens();
+      } catch (e) {
+        setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
+      }
+    },
+    [fetchIntegrationTokens]
+  );
+
+  const deleteIntegrationToken = useCallback(
+    async (id: string, name: string) => {
+      if (!confirm(`Permanently delete revoked token "${name}"? This cannot be undone.`)) return;
+      setIntegrationTokensError(null);
+      try {
+        const res = await adminFetch(`/api/admin/integration-tokens/${id}/permanent`, { method: 'DELETE' });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           setIntegrationTokensError((data as { error?: string }).error || `HTTP ${res.status}`);
@@ -2247,21 +2275,9 @@ export default function AdminPage() {
           </div>
           <p className="text-slate-500 text-sm mb-4">
             Scoped tokens for Bitfocus Companion, Spout, and other integrations. Use scopes{' '}
-            <code className="text-slate-400">read,control</code> for Companion on one event. Full tokens can be
-            copied again from this list when setting up a new machine (admin only, encrypted at rest).
+            <code className="text-slate-400">read,control</code> for Companion on one event. The full secret is shown
+            once when you create or regenerate a token — copy it then. Use Regenerate if you lose it.
           </p>
-          {needsTokenVaultMigration && (
-            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
-              Run migration <code className="text-amber-100">035_add_integration_token_ciphertext.sql</code> on Neon,
-              then redeploy Railway, to store retrievable tokens. Existing tokens must be recreated.
-            </div>
-          )}
-          {!integrationTokenVaultReady && !needsTokenVaultMigration && (
-            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
-              Set <code className="text-amber-100">INTEGRATION_TOKEN_VAULT_KEY</code> on Railway (or ensure{' '}
-              <code className="text-amber-100">ADMIN_KEY</code> is set) so new tokens can be copied again later.
-            </div>
-          )}
           {integrationTokensError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               {integrationTokensError}
@@ -2304,7 +2320,7 @@ export default function AdminPage() {
               className="mb-4 px-4 py-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50 text-emerald-100 text-sm"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <p className="font-medium">Token created — copy for Companion / Spout / integrations:</p>
+                <p className="font-medium">Copy this token now — it will not be shown again:</p>
                 <button
                   type="button"
                   onClick={() => void copyCreatedIntegrationToken()}
@@ -2339,36 +2355,32 @@ export default function AdminPage() {
                   <span className="text-slate-500">{(t.scopes || []).join(', ')}</span>
                   {t.event_id && <span className="text-slate-500 font-mono text-xs">{t.event_id}</span>}
                   {t.revoked_at ? (
-                    <span className="text-red-400 text-xs">revoked</span>
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      <span className="text-red-400 text-xs">revoked</span>
+                      <button
+                        type="button"
+                        onClick={() => regenerateIntegrationToken(t.id, t.name)}
+                        className="text-xs text-sky-300 hover:text-sky-200"
+                      >
+                        Regenerate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteIntegrationToken(t.id, t.name)}
+                        className="text-xs text-red-300 hover:text-red-200"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   ) : (
                     <div className="ml-auto flex flex-wrap items-center gap-2">
-                      {t.token ? (
-                        <button
-                          type="button"
-                          onClick={() => void copyIntegrationToken(t.id, t.token!)}
-                          className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200"
-                          title="Copy full API token"
-                        >
-                          {copiedTokenListId === t.id ? (
-                            <>
-                              <Check className="w-3 h-3" />
-                              Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3" />
-                              Copy token
-                            </>
-                          )}
-                        </button>
-                      ) : (
-                        <span
-                          className="text-xs text-slate-500"
-                          title="Recreate this token after migration 035 to enable copy"
-                        >
-                          No stored secret
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => regenerateIntegrationToken(t.id, t.name)}
+                        className="text-xs text-sky-300 hover:text-sky-200"
+                      >
+                        Regenerate
+                      </button>
                       <button
                         type="button"
                         onClick={() => revokeIntegrationToken(t.id, t.name)}

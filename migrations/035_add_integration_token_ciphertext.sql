@@ -1,3 +1,4 @@
+-- Superseded by 036_drop_integration_token_ciphertext.sql (hash-only tokens; do not run on new installs).
 -- Store AES-encrypted integration token for admin re-copy (Companion, Spout, etc.).
 -- Auth still uses token_hash only. Run on Neon after deploying API vault code.
 
