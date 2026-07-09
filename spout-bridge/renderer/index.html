@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>ROS LED Spout</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>ROS LED Spout</h1>
+        <p class="subtitle">Connect to LED output and publish to Spout (Windows)</p>
+      </header>
+
+      <form id="config-form" class="panel">
+        <label>
+          <span>Hosted app URL</span>
+          <input id="appBaseUrl" type="url" placeholder="http://localhost:3003" required />
+        </label>
+        <label>
+          <span>API base URL (Railway)</span>
+          <input id="apiBaseUrl" type="url" placeholder="https://ros-50-production.up.railway.app" required />
+        </label>
+        <label>
+          <span>Integration API token</span>
+          <input id="apiToken" type="password" placeholder="ros_itok_…" autocomplete="off" required />
+          <small>Admin → Integration API tokens · scope <code>read</code> · event-scoped recommended</small>
+        </label>
+        <label>
+          <span>Event ID</span>
+          <input id="eventId" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required />
+        </label>
+
+        <div class="row">
+          <label>
+            <span>Spout sender name</span>
+            <input id="spoutName" type="text" placeholder="ROS LED" />
+          </label>
+        </div>
+
+        <div class="row three">
+          <label>
+            <span>Width</span>
+            <input id="width" type="number" min="640" max="3840" step="1" />
+          </label>
+          <label>
+            <span>Height</span>
+            <input id="height" type="number" min="360" max="2160" step="1" />
+          </label>
+          <label>
+            <span>FPS</span>
+            <input id="fps" type="number" min="15" max="60" step="1" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="validate-btn" class="btn secondary">Test connection</button>
+          <button type="submit" id="start-btn" class="btn primary">Start Spout</button>
+          <button type="button" id="stop-btn" class="btn danger" disabled>Stop</button>
+        </div>
+      </form>
+
+      <section class="panel status-panel">
+        <h2>Status</h2>
+        <div id="status-api" class="status-line muted">API: not tested</div>
+        <div id="status-spout-dll" class="status-line muted">Spout DLL: checking…</div>
+        <div id="status-output" class="status-line muted">Output: stopped</div>
+        <div id="status-fps" class="status-line muted"></div>
+        <div id="status-url" class="status-line url muted"></div>
+      </section>
+
+      <footer>
+        <p>
+          API auth uses <strong>Option A</strong>: Bearer token injected on Railway <code>/api/*</code> requests.
+          Socket cue follow uses the event room automatically from the LED page.
+        </p>
+      </footer>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
