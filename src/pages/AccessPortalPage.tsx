@@ -14,6 +14,7 @@ import {
   passwordPolicyError,
 } from '../lib/passwordPolicy';
 import { useAuth } from '../contexts/AuthContext';
+import ReportIssueButton from '../components/ReportIssueButton';
 
 const AccessPortalPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -82,7 +83,6 @@ const AccessPortalPage: React.FC = () => {
         return;
       }
 
-      setApiAccessToken(result.token);
       applyPortalSession({
         token: result.token,
         email: result.email || portal?.email || '',
@@ -90,9 +90,12 @@ const AccessPortalPage: React.FC = () => {
         neon_user_id: result.neon_user_id || '',
         status: result.status || 'approved',
         is_admin: result.is_admin,
+        is_event_manager: result.is_event_manager,
+        dashboard_enabled: result.dashboard_enabled,
       });
       navigate('/', { replace: true });
-    } catch {
+    } catch (err) {
+      console.error('[AccessPortal] account setup failed after API success:', err);
       setSubmitError('An unexpected error occurred.');
     } finally {
       setSubmitting(false);
@@ -257,6 +260,9 @@ const AccessPortalPage: React.FC = () => {
               </Link>
             </div>
           )}
+          <div className="mt-6 pt-4 border-t border-slate-700 text-center">
+            <ReportIssueButton userEmail={portal?.email} userName={portal?.full_name} />
+          </div>
         </div>
       </div>
     </div>

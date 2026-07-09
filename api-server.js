@@ -30,6 +30,7 @@ const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
+const { registerUserReportRoutes } = require('./lib/user-report');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -408,6 +409,7 @@ applyAuthRateLimits(app, pool);
 installOpsAlerts(app, pool);
 app.use(createApiAuthMiddleware(pool, apiAuthConfig));
 registerAuthRoutes(app, pool, { requireAdminAuth });
+registerUserReportRoutes(app, pool);
 console.log(
   `[api-auth] require=${apiAuthConfig.requireLevel} legacyPublic=${apiAuthConfig.allowLegacy} sessionTtlHours=${apiAuthConfig.sessionTtlHours}`
 );

@@ -6,6 +6,7 @@ import { ActiveViewersProvider } from './contexts/ActiveViewersContext';
 import { AppHeaderCollapseProvider } from './contexts/AppHeaderCollapseContext';
 import AuthGuard from './components/AuthGuard';
 import AppHeader from './components/AppHeader';
+import ReportIssueFab from './components/ReportIssueFab';
 import EventListPage from './pages/EventListPage';
 import RunOfShowPage from './pages/RunOfShowPage';
 import RunOfShowMobilePage from './pages/RunOfShowMobilePage';
@@ -55,6 +56,22 @@ function AppContent() {
   const isAccessPortal = location.pathname === '/access';
   const isLedOutput = location.pathname === '/led-output';
 
+  const hideReportFab =
+    isFullScreenTimer ||
+    isPinNotesPopout ||
+    isGreenRoom ||
+    isPhotoView ||
+    isScriptsFollow ||
+    isTeleprompter ||
+    isGoogleSheets ||
+    isLocalXML ||
+    isNetlifyXML ||
+    isComparison ||
+    isResetPassword ||
+    isAccessPortal ||
+    isLedOutput ||
+    isClock;
+
   return (
     <ActiveViewersProvider>
     <div className={`App ${isClock ? 'clock-page' : ''} ${isLedOutput ? 'led-output-page' : ''}`}>
@@ -103,6 +120,7 @@ function AppContent() {
         {/* Suppress "No routes matched" for paths handled by AuthGuard routes above */}
         <Route path="*" element={null} />
       </Routes>
+      {!hideReportFab ? <ReportIssueFab /> : null}
     </div>
     </ActiveViewersProvider>
   );

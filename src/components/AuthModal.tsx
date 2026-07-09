@@ -4,6 +4,7 @@ import DisclaimerModal from './DisclaimerModal';
 import LoginAttemptWarningModal from './LoginAttemptWarningModal';
 import { isNeonAuthEnabled } from '../lib/neonAuthClient';
 import { requestPasswordReset } from '../lib/neonPasswordReset';
+import ReportIssueButton from './ReportIssueButton';
 import type { LoginRateLimitInfo } from '../lib/loginRateLimit';
 
 type AuthMode = 'signin' | 'request' | 'forgot';
@@ -361,6 +362,10 @@ const AuthModal: React.FC<AuthModalProps> = ({
                 <span className="font-mono">.env</span>) and redeploy.
               </p>
             )}
+
+            <p className="text-center pt-1">
+              <ReportIssueButton userEmail={email || undefined} userName={fullName || undefined} />
+            </p>
           </form>
         )}
       </div>

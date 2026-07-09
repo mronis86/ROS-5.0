@@ -9,6 +9,7 @@ import {
   PASSWORD_REQUIREMENTS_TEXT,
   passwordPolicyError,
 } from '../lib/passwordPolicy';
+import ReportIssueButton from '../components/ReportIssueButton';
 
 const ResetPasswordPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -142,6 +143,9 @@ const ResetPasswordPage: React.FC = () => {
               </button>
             </form>
           )}
+          <div className="mt-6 pt-4 border-t border-slate-700 text-center">
+            <ReportIssueButton />
+          </div>
         </div>
       </div>
     </div>

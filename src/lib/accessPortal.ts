@@ -20,6 +20,8 @@ export interface CompleteAccountSetupResult {
   neon_user_id?: string;
   status?: AccessStatus;
   is_admin?: boolean;
+  is_event_manager?: boolean;
+  dashboard_enabled?: boolean;
   error?: string;
 }
 
@@ -62,5 +64,7 @@ export async function completeAccountSetup(
     neon_user_id: data.neon_user_id,
     status: data.status,
     is_admin: data.is_admin,
+    is_event_manager: data.is_event_manager,
+    dashboard_enabled: data.dashboard_enabled,
   };
 }

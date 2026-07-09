@@ -23,6 +23,7 @@ interface AuthContextType {
     neon_user_id: string;
     status: import('../services/auth-service').AccessStatus;
     is_admin?: boolean;
+    is_event_manager?: boolean;
     dashboard_enabled?: boolean;
   }) => void;
   signOut: () => Promise<void>;
@@ -116,6 +117,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     neon_user_id: string;
     status: AccessStatus;
     is_admin?: boolean;
+    is_event_manager?: boolean;
+    dashboard_enabled?: boolean;
   }) => {
     authService.applySessionFromPortal(session);
     setUser(authService.getCurrentUser());
