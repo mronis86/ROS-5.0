@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
@@ -7,6 +7,7 @@ import { AppHeaderCollapseProvider } from './contexts/AppHeaderCollapseContext';
 import AuthGuard from './components/AuthGuard';
 import AppHeader from './components/AppHeader';
 import ReportIssueFab from './components/ReportIssueFab';
+import { hydrateLogoVariantFromServer } from './lib/appSettings';
 import EventListPage from './pages/EventListPage';
 import RunOfShowPage from './pages/RunOfShowPage';
 import RunOfShowMobilePage from './pages/RunOfShowMobilePage';
@@ -39,6 +40,11 @@ import LedOutputPage from './pages/LedOutputPage';
 
 function AppContent() {
   const location = useLocation();
+
+  useEffect(() => {
+    void hydrateLogoVariantFromServer();
+  }, []);
+
   const isFullScreenTimer = location.pathname === '/fullscreen-timer';
   const isPinNotesPopout = location.pathname === '/pin-notes-popout';
   const isClock = location.pathname === '/clock';

@@ -7,9 +7,14 @@ import {
   getLogoVariant,
   getLogoVariantId,
   LOGO_VARIANTS,
-  setLogoVariantId,
+  applyLogoVariantId,
   type LogoVariantId,
 } from '../lib/branding';
+import {
+  fetchAdminAppSettings,
+  saveAdminLogoVariant,
+  syncAdminAppSettingsTable,
+} from '../lib/appSettings';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import {
@@ -240,10 +245,59 @@ export default function AdminPage() {
   } | null>(null);
   const [accessEmailCopied, setAccessEmailCopied] = useState(false);
   const [logoVariantId, setLogoVariantIdState] = useState<LogoVariantId>(() => getLogoVariantId());
+  const [logoSettingsLoading, setLogoSettingsLoading] = useState(false);
+  const [logoSettingsSaving, setLogoSettingsSaving] = useState(false);
+  const [logoSettingsError, setLogoSettingsError] = useState<string | null>(null);
+  const [logoSettingsNeedsMigration, setLogoSettingsNeedsMigration] = useState(false);
+  const [logoSettingsSyncingTable, setLogoSettingsSyncingTable] = useState(false);
+  const [logoSettingsUpdatedAt, setLogoSettingsUpdatedAt] = useState<string | null>(null);
 
-  const handleLogoVariantChange = (id: LogoVariantId) => {
-    setLogoVariantId(id);
-    setLogoVariantIdState(id);
+  const fetchLogoSettings = useCallback(async () => {
+    setLogoSettingsLoading(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await fetchAdminAppSettings();
+      setLogoSettingsNeedsMigration(settings.needsMigration === true);
+      setLogoSettingsUpdatedAt(settings.updatedAt);
+      applyLogoVariantId(settings.logoVariantId);
+      setLogoVariantIdState(settings.logoVariantId);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to load logo settings');
+    } finally {
+      setLogoSettingsLoading(false);
+    }
+  }, []);
+
+  const handleLogoVariantChange = async (id: LogoVariantId) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminLogoVariant(id);
+      setLogoVariantIdState(settings.logoVariantId);
+      setLogoSettingsUpdatedAt(settings.updatedAt);
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save logo setting');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handleSyncLogoSettingsTable = async () => {
+    setLogoSettingsSyncingTable(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await syncAdminAppSettingsTable();
+      setLogoSettingsNeedsMigration(false);
+      setLogoSettingsUpdatedAt(settings.updatedAt);
+      applyLogoVariantId(settings.logoVariantId);
+      setLogoVariantIdState(settings.logoVariantId);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to create app_settings table');
+    } finally {
+      setLogoSettingsSyncingTable(false);
+    }
   };
 
   useEffect(() => {
@@ -380,6 +434,11 @@ export default function AdminPage() {
     if (!unlocked) return;
     fetchBackupConfig();
   }, [unlocked, fetchBackupConfig]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    void fetchLogoSettings();
+  }, [unlocked, fetchLogoSettings]);
 
   const saveBackupConfig = useCallback(async () => {
     setBackupConfigSaving(true);
@@ -1600,7 +1659,7 @@ export default function AdminPage() {
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-white">Header logo</h2>
-                <p className="text-slate-400 text-sm">Preview branding without a code deploy. Saved in this browser only.</p>
+                <p className="text-slate-400 text-sm">Global branding for all users. Saved in Neon app_settings.</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-2">
@@ -1608,7 +1667,36 @@ export default function AdminPage() {
               <AppLogo size="md" />
               <AppBrandTitle titleClassName="text-lg font-bold text-white leading-tight" />
             </div>
+            <button
+              type="button"
+              onClick={() => void fetchLogoSettings()}
+              disabled={logoSettingsLoading || logoSettingsSaving}
+              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm rounded-md transition-colors"
+            >
+              {logoSettingsLoading ? 'Loading…' : 'Refresh'}
+            </button>
           </div>
+          {logoSettingsNeedsMigration && (
+            <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-sm text-amber-100">
+              <p className="font-medium">Migration required</p>
+              <p className="mt-1 text-amber-200/90">
+                Run migration <span className="font-mono">034_create_app_settings.sql</span> on Neon, or create the table from here.
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleSyncLogoSettingsTable()}
+                disabled={logoSettingsSyncingTable}
+                className="mt-3 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm rounded-md transition-colors"
+              >
+                {logoSettingsSyncingTable ? 'Creating table…' : 'Create app_settings table'}
+              </button>
+            </div>
+          )}
+          {logoSettingsError && (
+            <div className="mb-4 rounded-lg border border-red-500/40 bg-red-950/20 px-4 py-3 text-sm text-red-200">
+              {logoSettingsError}
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             {LOGO_VARIANTS.map((variant) => {
               const selected = logoVariantId === variant.id;
@@ -1616,8 +1704,9 @@ export default function AdminPage() {
                 <button
                   key={variant.id}
                   type="button"
-                  onClick={() => handleLogoVariantChange(variant.id)}
-                  className={`rounded-xl border p-4 text-left transition-colors ${
+                  onClick={() => void handleLogoVariantChange(variant.id)}
+                  disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                  className={`rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
                     selected
                       ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
                       : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
@@ -1659,8 +1748,12 @@ export default function AdminPage() {
             })}
           </div>
           <p className="mt-4 text-xs text-slate-500">
-            Active: <span className="text-slate-300">{getLogoVariant(logoVariantId).appTitle}</span>
-            {' '}({getLogoVariant(logoVariantId).label}). Switch anytime — saved in this browser only.
+            Active for everyone: <span className="text-slate-300">{getLogoVariant(logoVariantId).appTitle}</span>
+            {' '}({getLogoVariant(logoVariantId).label}).
+            {logoSettingsSaving ? ' Saving…' : null}
+            {logoSettingsUpdatedAt ? (
+              <span className="ml-2">Last updated {new Date(logoSettingsUpdatedAt).toLocaleString()}.</span>
+            ) : null}
           </p>
         </section>
 

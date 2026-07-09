@@ -33,14 +33,21 @@ export const LOGO_VARIANTS: LogoVariant[] = [
 export const LOGO_VARIANT_STORAGE_KEY = 'ros.logoVariant';
 export const LOGO_VARIANT_CHANGE_EVENT = 'ros:branding-change';
 
-export function getLogoVariantId(): LogoVariantId {
+let cachedLogoVariantId: LogoVariantId | null = null;
+
+function readLogoVariantFromStorage(): LogoVariantId | null {
   try {
     const raw = localStorage.getItem(LOGO_VARIANT_STORAGE_KEY);
     if (raw === 'default' || raw === 'sinor') return raw;
   } catch {
     // ignore private mode / quota
   }
-  return 'default';
+  return null;
+}
+
+export function getLogoVariantId(): LogoVariantId {
+  if (cachedLogoVariantId) return cachedLogoVariantId;
+  return readLogoVariantFromStorage() ?? 'default';
 }
 
 export function getLogoVariant(id: LogoVariantId = getLogoVariantId()): LogoVariant {
@@ -51,11 +58,17 @@ export function getAppTitle(id: LogoVariantId = getLogoVariantId()): string {
   return getLogoVariant(id).appTitle;
 }
 
-export function setLogoVariantId(id: LogoVariantId): void {
+export function applyLogoVariantId(id: LogoVariantId): void {
+  cachedLogoVariantId = id;
   try {
     localStorage.setItem(LOGO_VARIANT_STORAGE_KEY, id);
   } catch {
     // ignore
   }
   window.dispatchEvent(new CustomEvent(LOGO_VARIANT_CHANGE_EVENT, { detail: { id } }));
+}
+
+/** @deprecated Prefer applyLogoVariantId — kept for local-only callers */
+export function setLogoVariantId(id: LogoVariantId): void {
+  applyLogoVariantId(id);
 }
