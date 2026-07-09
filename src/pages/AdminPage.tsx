@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
@@ -219,7 +219,10 @@ export default function AdminPage() {
   const [newTokenScopes, setNewTokenScopes] = useState('read,control');
   const [creatingToken, setCreatingToken] = useState(false);
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
+  const [createdTokenId, setCreatedTokenId] = useState<string | null>(null);
   const [createdTokenCopied, setCreatedTokenCopied] = useState(false);
+  const [copiedTokenListId, setCopiedTokenListId] = useState<string | null>(null);
+  const createdTokenBannerRef = useRef<HTMLDivElement | null>(null);
   const [accessRequests, setAccessRequests] = useState<AccessRequestRow[]>([]);
   const [accessRequestsLoading, setAccessRequestsLoading] = useState(false);
   const [accessRequestsError, setAccessRequestsError] = useState<string | null>(null);
@@ -1214,12 +1217,19 @@ export default function AdminPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (createdTokenValue && createdTokenBannerRef.current) {
+      createdTokenBannerRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [createdTokenValue]);
+
   const createIntegrationToken = useCallback(async () => {
     const name = newTokenName.trim();
     if (!name) return;
     setCreatingToken(true);
     setIntegrationTokensError(null);
     setCreatedTokenValue(null);
+    setCreatedTokenId(null);
     setCreatedTokenCopied(false);
     try {
       const scopes = newTokenScopes
@@ -1241,6 +1251,7 @@ export default function AdminPage() {
         return;
       }
       setCreatedTokenValue((data as { token?: string }).token || null);
+      setCreatedTokenId((data as { record?: { id?: string } }).record?.id || null);
       setNewTokenName('');
       setNewTokenEventId('');
       await fetchIntegrationTokens();
@@ -1261,6 +1272,16 @@ export default function AdminPage() {
       setIntegrationTokensError('Could not copy to clipboard — select the token and copy manually.');
     }
   }, [createdTokenValue]);
+
+  const copyIntegrationTokenPrefix = useCallback(async (id: string, prefix: string) => {
+    try {
+      await navigator.clipboard.writeText(prefix);
+      setCopiedTokenListId(id);
+      window.setTimeout(() => setCopiedTokenListId(null), 2000);
+    } catch {
+      setIntegrationTokensError('Could not copy prefix to clipboard.');
+    }
+  }, []);
 
   const revokeIntegrationToken = useCallback(
     async (id: string, name: string) => {
@@ -2228,31 +2249,6 @@ export default function AdminPage() {
               {integrationTokensError}
             </div>
           )}
-          {createdTokenValue && (
-            <div className="mb-4 px-4 py-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50 text-emerald-100 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <p className="font-medium">Copy this token now — it will not be shown again:</p>
-                <button
-                  type="button"
-                  onClick={() => void copyCreatedIntegrationToken()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
-                >
-                  {createdTokenCopied ? (
-                    <>
-                      <Check className="w-3.5 h-3.5" />
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      Copy token
-                    </>
-                  )}
-                </button>
-              </div>
-              <code className="block break-all text-xs bg-slate-900/60 p-2 rounded">{createdTokenValue}</code>
-            </div>
-          )}
           <div className="grid gap-3 sm:grid-cols-2 mb-4">
             <input
               type="text"
@@ -2284,6 +2280,36 @@ export default function AdminPage() {
           >
             {creatingToken ? 'Creating…' : 'Create token'}
           </button>
+          {createdTokenValue ? (
+            <div
+              ref={createdTokenBannerRef}
+              className="mb-4 px-4 py-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50 text-emerald-100 text-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <p className="font-medium">Token created — copy it now (shown only once):</p>
+                <button
+                  type="button"
+                  onClick={() => void copyCreatedIntegrationToken()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
+                >
+                  {createdTokenCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy token
+                    </>
+                  )}
+                </button>
+              </div>
+              <code className="block break-all text-xs bg-slate-900/60 p-2 rounded select-all">
+                {createdTokenValue}
+              </code>
+            </div>
+          ) : null}
           {integrationTokens.length === 0 ? (
             <p className="text-slate-400 text-sm">No integration tokens yet.</p>
           ) : (
@@ -2297,13 +2323,54 @@ export default function AdminPage() {
                   {t.revoked_at ? (
                     <span className="text-red-400 text-xs">revoked</span>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => revokeIntegrationToken(t.id, t.name)}
-                      className="ml-auto text-xs text-amber-300 hover:text-amber-200"
-                    >
-                      Revoke
-                    </button>
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      {createdTokenId === t.id && createdTokenValue ? (
+                        <button
+                          type="button"
+                          onClick={() => void copyCreatedIntegrationToken()}
+                          className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200"
+                          title="Copy full API token (only available right after creation)"
+                        >
+                          {createdTokenCopied ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              Copy token
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void copyIntegrationTokenPrefix(t.id, t.token_prefix)}
+                          className="inline-flex items-center gap-1 text-xs text-slate-300 hover:text-white"
+                          title="Copy token prefix for identification (full secret is not stored)"
+                        >
+                          {copiedTokenListId === t.id ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              Copy prefix
+                            </>
+                          )}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => revokeIntegrationToken(t.id, t.name)}
+                        className="text-xs text-amber-300 hover:text-amber-200"
+                      >
+                        Revoke
+                      </button>
+                    </div>
                   )}
                 </li>
               ))}
