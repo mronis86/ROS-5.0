@@ -320,6 +320,36 @@ function buildCustomColumnsXml(eventId, scheduleItems, customColumns) {
   return xmlHeader + xmlContent;
 }
 
+function escapeCsvField(str) {
+  return `"${String(str || '').replace(/"/g, '""')}"`;
+}
+
+function buildScheduleCsv(scheduleItems) {
+  let csv =
+    'Row,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA\n';
+  (scheduleItems || []).forEach((item, index) => {
+    csv += `${index + 1},${escapeCsvField(item.customFields?.cue || '')},${escapeCsvField(item.programType || '')},${escapeCsvField(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsvField(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'}\n`;
+  });
+  return csv;
+}
+
+function buildCustomColumnsCsv(scheduleItems, customColumns) {
+  const columnKeys = Object.keys(customColumns || {});
+  if (columnKeys.length === 0) {
+    return 'Row\n';
+  }
+  let csv = 'Row,' + columnKeys.map((key) => `"${key}"`).join(',') + '\n';
+  (scheduleItems || []).forEach((item, index) => {
+    const customFields = item.customFields || {};
+    csv += `${index + 1}`;
+    columnKeys.forEach((key) => {
+      csv += `,${escapeCsvField(customFields[key] || '')}`;
+    });
+    csv += '\n';
+  });
+  return csv;
+}
+
 async function setUpstashCache(key, value, expirySeconds = 3600) {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) {
     console.log('⚠️ Upstash not configured, skipping cache update');
@@ -412,33 +442,17 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
     
     // Schedule XML & CSV
     const scheduleXml = buildScheduleXml(eventId, scheduleItems);
-    
-    let scheduleCsv = 'Row,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA\n';
-    scheduleItems.forEach((item, index) => {
-      const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
-      scheduleCsv += `${index + 1},${escapeCsv(item.customFields?.cue || '')},${escapeCsv(item.programType || '')},${escapeCsv(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsv(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'}\n`;
-    });
+    const scheduleCsv = buildScheduleCsv(scheduleItems);
     
     await setUpstashCache(`schedule-xml-${eventId}`, scheduleXml, 3600);
     await setUpstashCache(`schedule-csv-${eventId}`, scheduleCsv, 3600);
     
     // Custom Columns XML & CSV
     const customColumns = runOfShowData.custom_columns || {};
-    const columnKeys = Object.keys(customColumns);
     const customColumnsXml = buildCustomColumnsXml(eventId, scheduleItems, customColumns);
     
-    if (customColumnsXml && columnKeys.length > 0) {
-      let customColumnsCsv = 'Row,' + columnKeys.map(key => `"${key}"`).join(',') + '\n';
-      scheduleItems.forEach((item, index) => {
-        const customFields = item.customFields || {};
-        const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
-        customColumnsCsv += `${index + 1}`;
-        columnKeys.forEach(key => {
-          customColumnsCsv += `,${escapeCsv(customFields[key] || '')}`;
-        });
-        customColumnsCsv += '\n';
-      });
-      
+    if (customColumnsXml) {
+      const customColumnsCsv = buildCustomColumnsCsv(scheduleItems, customColumns);
       await setUpstashCache(`custom-columns-xml-${eventId}`, customColumnsXml, 3600);
       await setUpstashCache(`custom-columns-csv-${eventId}`, customColumnsCsv, 3600);
     }
@@ -2302,6 +2316,146 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
     res.send(csv);
   } catch (error) {
     console.error('Error in lower-thirds.csv:', error);
+    res.set('Content-Type', 'text/csv');
+    res.status(500).send('Error,Internal server error');
+  }
+});
+
+// Live Schedule XML (Neon) — also refreshes Upstash cache
+app.get('/api/schedule.xml', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    if (!eventId) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    const scheduleItems = result.rows[0]?.schedule_items || [];
+    const fullXML = buildScheduleXml(eventId, scheduleItems);
+    await setUpstashCache(`schedule-xml-${eventId}`, fullXML, 3600);
+
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+    res.send(fullXML);
+  } catch (error) {
+    console.error('Error in schedule.xml:', error);
+    res.set('Content-Type', 'application/xml');
+    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Internal server error</error>');
+  }
+});
+
+app.get('/api/schedule.csv', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send('Error,Event ID is required');
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    const scheduleItems = result.rows[0]?.schedule_items || [];
+    const csv = buildScheduleCsv(scheduleItems);
+    await setUpstashCache(`schedule-csv-${eventId}`, csv, 3600);
+
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+    res.send(csv);
+  } catch (error) {
+    console.error('Error in schedule.csv:', error);
+    res.set('Content-Type', 'text/csv');
+    res.status(500).send('Error,Internal server error');
+  }
+});
+
+// Live Custom Columns XML/CSV (Neon) — also refreshes Upstash cache
+app.get('/api/custom-columns.xml', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    if (!eventId) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    const row = result.rows[0];
+    const scheduleItems = row?.schedule_items || [];
+    const customColumns = row?.custom_columns || {};
+    const fullXML =
+      buildCustomColumnsXml(eventId, scheduleItems, customColumns) ||
+      `<?xml version="1.0" encoding="UTF-8"?>
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${escapeXmlText(eventId)}</event_id>
+  <custom_columns>
+  </custom_columns>
+</data>`;
+
+    if (Object.keys(customColumns).length > 0) {
+      await setUpstashCache(`custom-columns-xml-${eventId}`, fullXML, 3600);
+    }
+
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+    res.send(fullXML);
+  } catch (error) {
+    console.error('Error in custom-columns.xml:', error);
+    res.set('Content-Type', 'application/xml');
+    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><error>Internal server error</error>');
+  }
+});
+
+app.get('/api/custom-columns.csv', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send('Error,Event ID is required');
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    const row = result.rows[0];
+    const scheduleItems = row?.schedule_items || [];
+    const customColumns = row?.custom_columns || {};
+    const csv = buildCustomColumnsCsv(scheduleItems, customColumns);
+
+    if (Object.keys(customColumns).length > 0) {
+      await setUpstashCache(`custom-columns-csv-${eventId}`, csv, 3600);
+    }
+
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+    res.send(csv);
+  } catch (error) {
+    console.error('Error in custom-columns.csv:', error);
     res.set('Content-Type', 'text/csv');
     res.status(500).send('Error,Internal server error');
   }
