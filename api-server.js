@@ -155,6 +155,171 @@ function getUpstashCacheUrl(key) {
   return new URL(`/get/${encodeURIComponent(String(key))}`, UPSTASH_URL).toString();
 }
 
+/** Escape text for use outside CDATA. */
+function escapeXmlText(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** Sanitize text for inside a CDATA section (only ]]> is unsafe). */
+function forCdata(value) {
+  return String(value ?? '').replace(/]]>/g, ']]]]><![CDATA[>');
+}
+
+function buildLowerThirdsXml(eventId, scheduleItems) {
+  const lowerThirdsData = [];
+  (scheduleItems || []).forEach((item) => {
+    const speakers = [];
+    if (item.speakersText) {
+      try {
+        const speakersArray =
+          typeof item.speakersText === 'string' ? JSON.parse(item.speakersText) : item.speakersText;
+        if (Array.isArray(speakersArray)) {
+          speakersArray.forEach((speaker) => {
+            speakers.push({
+              title: speaker.fullName || speaker.name || '',
+              subtitle: [speaker.title, speaker.org].filter(Boolean).join('\n'),
+              photo: speaker.photoLink || '',
+              slot: speaker.slot || 1,
+            });
+          });
+        }
+      } catch (e) {
+        console.error('Error parsing speakers:', e);
+      }
+    }
+    lowerThirdsData.push({
+      id: String(item.id),
+      cue: item.customFields?.cue || '',
+      program: item.programType || '',
+      segmentName: item.segmentName || '',
+      speakers,
+    });
+  });
+
+  const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+  const xmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${escapeXmlText(eventId)}</event_id>
+  <lower_thirds>
+    ${lowerThirdsData
+      .map((item) => {
+        const speakers = new Array(21).fill('');
+        if (item.speakers && item.speakers.length > 0) {
+          item.speakers.forEach((speaker) => {
+            const slot = speaker.slot || 1;
+            if (slot >= 1 && slot <= 7) {
+              const baseIdx = (slot - 1) * 3;
+              speakers[baseIdx] = speaker.title || '';
+              speakers[baseIdx + 1] = speaker.subtitle || '';
+              speakers[baseIdx + 2] = speaker.photo || '';
+            }
+          });
+        }
+        return `
+    <item>
+      <id>${escapeXmlText(item.id)}</id>
+      <cue><![CDATA[${forCdata(item.cue)}]]></cue>
+      <program><![CDATA[${forCdata(item.program)}]]></program>
+      <segment_name><![CDATA[${forCdata(item.segmentName)}]]></segment_name>
+      <speaker_1_name><![CDATA[${forCdata(speakers[0])}]]></speaker_1_name>
+      <speaker_1_title_org><![CDATA[${forCdata(speakers[1])}]]></speaker_1_title_org>
+      <speaker_1_photo><![CDATA[${forCdata(speakers[2])}]]></speaker_1_photo>
+      <speaker_2_name><![CDATA[${forCdata(speakers[3])}]]></speaker_2_name>
+      <speaker_2_title_org><![CDATA[${forCdata(speakers[4])}]]></speaker_2_title_org>
+      <speaker_2_photo><![CDATA[${forCdata(speakers[5])}]]></speaker_2_photo>
+      <speaker_3_name><![CDATA[${forCdata(speakers[6])}]]></speaker_3_name>
+      <speaker_3_title_org><![CDATA[${forCdata(speakers[7])}]]></speaker_3_title_org>
+      <speaker_3_photo><![CDATA[${forCdata(speakers[8])}]]></speaker_3_photo>
+      <speaker_4_name><![CDATA[${forCdata(speakers[9])}]]></speaker_4_name>
+      <speaker_4_title_org><![CDATA[${forCdata(speakers[10])}]]></speaker_4_title_org>
+      <speaker_4_photo><![CDATA[${forCdata(speakers[11])}]]></speaker_4_photo>
+      <speaker_5_name><![CDATA[${forCdata(speakers[12])}]]></speaker_5_name>
+      <speaker_5_title_org><![CDATA[${forCdata(speakers[13])}]]></speaker_5_title_org>
+      <speaker_5_photo><![CDATA[${forCdata(speakers[14])}]]></speaker_5_photo>
+      <speaker_6_name><![CDATA[${forCdata(speakers[15])}]]></speaker_6_name>
+      <speaker_6_title_org><![CDATA[${forCdata(speakers[16])}]]></speaker_6_title_org>
+      <speaker_6_photo><![CDATA[${forCdata(speakers[17])}]]></speaker_6_photo>
+      <speaker_7_name><![CDATA[${forCdata(speakers[18])}]]></speaker_7_name>
+      <speaker_7_title_org><![CDATA[${forCdata(speakers[19])}]]></speaker_7_title_org>
+      <speaker_7_photo><![CDATA[${forCdata(speakers[20])}]]></speaker_7_photo>
+    </item>`;
+      })
+      .join('')}
+  </lower_thirds>
+</data>`;
+
+  return xmlHeader + xmlContent;
+}
+
+function buildScheduleXml(eventId, scheduleItems) {
+  const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+  const xmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${escapeXmlText(eventId)}</event_id>
+  <schedule>
+    ${(scheduleItems || [])
+      .map(
+        (item, index) => `
+    <item>
+      <row>${index + 1}</row>
+      <cue><![CDATA[${forCdata(item.customFields?.cue || '')}]]></cue>
+      <program><![CDATA[${forCdata(item.programType || '')}]]></program>
+      <segment_name><![CDATA[${forCdata(item.segmentName || '')}]]></segment_name>
+      <duration_hours>${Number(item.durationHours) || 0}</duration_hours>
+      <duration_minutes>${Number(item.durationMinutes) || 0}</duration_minutes>
+      <duration_seconds>${Number(item.durationSeconds) || 0}</duration_seconds>
+      <notes><![CDATA[${forCdata(item.notes || '')}]]></notes>
+      <has_ppt>${item.hasPPT ? 'true' : 'false'}</has_ppt>
+      <has_qa>${item.hasQA ? 'true' : 'false'}</has_qa>
+    </item>`
+      )
+      .join('')}
+  </schedule>
+</data>`;
+  return xmlHeader + xmlContent;
+}
+
+function buildCustomColumnsXml(eventId, scheduleItems, customColumns) {
+  const columnKeys = Object.keys(customColumns || {});
+  if (columnKeys.length === 0) return null;
+  const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+  // Column keys become element names — keep them XML-safe
+  const safeKeys = columnKeys.map((key) => ({
+    key,
+    tag: String(key).replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^([^A-Za-z_])/, '_$1'),
+  }));
+  const xmlContent = `
+<data>
+  <timestamp>${new Date().toISOString()}</timestamp>
+  <event_id>${escapeXmlText(eventId)}</event_id>
+  <custom_columns>
+    ${(scheduleItems || [])
+      .map((item, index) => {
+        const customFields = item.customFields || {};
+        return `
+    <item>
+      <row>${index + 1}</row>
+      ${safeKeys
+        .map(
+          ({ key, tag }) =>
+            `<${tag}><![CDATA[${forCdata(customFields[key] || '')}]]></${tag}>`
+        )
+        .join('\n      ')}
+    </item>`;
+      })
+      .join('')}
+  </custom_columns>
+</data>`;
+  return xmlHeader + xmlContent;
+}
+
 async function setUpstashCache(key, value, expirySeconds = 3600) {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) {
     console.log('⚠️ Upstash not configured, skipping cache update');
@@ -199,71 +364,9 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
   
   try {
     const scheduleItems = runOfShowData.schedule_items || [];
-    
-    // Generate Lower Thirds XML
-    const lowerThirdsData = [];
-    scheduleItems.forEach((item) => {
-      const speakers = [];
-      if (item.speakersText) {
-        try {
-          const speakersArray = typeof item.speakersText === 'string' 
-            ? JSON.parse(item.speakersText) 
-            : item.speakersText;
-          if (Array.isArray(speakersArray)) {
-            speakersArray.forEach((speaker) => {
-              speakers.push({
-                title: speaker.fullName || speaker.name || '',
-                subtitle: [speaker.title, speaker.org].filter(Boolean).join('\n'),
-                photo: speaker.photoLink || '',
-                slot: speaker.slot || 1
-              });
-            });
-          }
-        } catch (e) {
-          console.error('Error parsing speakers:', e);
-        }
-      }
-      lowerThirdsData.push({
-        id: String(item.id),
-        cue: item.customFields?.cue || '',
-        program: item.programType || '',
-        segmentName: item.segmentName || '',
-        speakers
-      });
-    });
-    
-    const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
-    const xmlContent = `
-<data>
-  <timestamp>${new Date().toISOString()}</timestamp>
-  <event_id>${eventId}</event_id>
-  <lower_thirds>
-    ${lowerThirdsData.map(item => {
-      const speakers = new Array(21).fill('');
-      if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker) => {
-          const slot = speaker.slot || 1;
-          if (slot >= 1 && slot <= 7) {
-            const baseIdx = (slot - 1) * 3;
-            speakers[baseIdx] = speaker.title || '';
-            speakers[baseIdx + 1] = speaker.subtitle || '';
-            speakers[baseIdx + 2] = speaker.photo || '';
-          }
-        });
-      }
-      return `
-    <item>
-      <id>${item.id}</id>
-      <cue>${item.cue}</cue>
-      <program>${item.program}</program>
-      <segment>${item.segmentName}</segment>
-      ${speakers.map((speaker, idx) => `<speaker${Math.floor(idx/3) + 1}_${['name', 'title', 'photo'][idx % 3]}>${speaker}</speaker${Math.floor(idx/3) + 1}_${['name', 'title', 'photo'][idx % 3]}>`).join('\n      ')}
-    </item>`;
-    }).join('')}
-  </lower_thirds>
-</data>`;
-    
-    const fullXML = xmlHeader + xmlContent;
+
+    // Lower Thirds XML — same builder as live /api/lower-thirds.xml (CDATA-safe)
+    const fullXML = buildLowerThirdsXml(eventId, scheduleItems);
     
     // Generate CSV
     let csv = 'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
@@ -307,31 +410,8 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
     await setUpstashCache(`lower-thirds-xml-${eventId}`, fullXML, 3600);
     await setUpstashCache(`lower-thirds-csv-${eventId}`, csv, 3600);
     
-    // ========================================
-    // Generate Schedule XML & CSV
-    // ========================================
-    const scheduleXmlContent = `
-<data>
-  <timestamp>${new Date().toISOString()}</timestamp>
-  <event_id>${eventId}</event_id>
-  <schedule>
-    ${scheduleItems.map((item, index) => `
-    <item>
-      <row>${index + 1}</row>
-      <cue>${item.customFields?.cue || ''}</cue>
-      <program>${item.programType || ''}</program>
-      <segment>${item.segmentName || ''}</segment>
-      <duration_hours>${item.durationHours || 0}</duration_hours>
-      <duration_minutes>${item.durationMinutes || 0}</duration_minutes>
-      <duration_seconds>${item.durationSeconds || 0}</duration_seconds>
-      <notes>${item.notes || ''}</notes>
-      <has_ppt>${item.hasPPT ? 'true' : 'false'}</has_ppt>
-      <has_qa>${item.hasQA ? 'true' : 'false'}</has_qa>
-    </item>`).join('')}
-  </schedule>
-</data>`;
-    
-    const scheduleXml = xmlHeader + scheduleXmlContent;
+    // Schedule XML & CSV
+    const scheduleXml = buildScheduleXml(eventId, scheduleItems);
     
     let scheduleCsv = 'Row,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA\n';
     scheduleItems.forEach((item, index) => {
@@ -342,32 +422,12 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
     await setUpstashCache(`schedule-xml-${eventId}`, scheduleXml, 3600);
     await setUpstashCache(`schedule-csv-${eventId}`, scheduleCsv, 3600);
     
-    // ========================================
-    // Generate Custom Columns XML & CSV
-    // ========================================
+    // Custom Columns XML & CSV
     const customColumns = runOfShowData.custom_columns || {};
     const columnKeys = Object.keys(customColumns);
+    const customColumnsXml = buildCustomColumnsXml(eventId, scheduleItems, customColumns);
     
-    if (columnKeys.length > 0) {
-      const customColumnsXmlContent = `
-<data>
-  <timestamp>${new Date().toISOString()}</timestamp>
-  <event_id>${eventId}</event_id>
-  <custom_columns>
-    ${scheduleItems.map((item, index) => {
-      const customFields = item.customFields || {};
-      return `
-    <item>
-      <row>${index + 1}</row>
-      ${columnKeys.map(key => `<${key}>${customFields[key] || ''}</${key}>`).join('\n      ')}
-    </item>`;
-    }).join('')}
-  </custom_columns>
-</data>`;
-      
-      const customColumnsXml = xmlHeader + customColumnsXmlContent;
-      
-      // CSV header with all custom column names
+    if (customColumnsXml && columnKeys.length > 0) {
       let customColumnsCsv = 'Row,' + columnKeys.map(key => `"${key}"`).join(',') + '\n';
       scheduleItems.forEach((item, index) => {
         const customFields = item.customFields || {};
@@ -1880,109 +1940,10 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
     );
 
     const runOfShowData = result.rows[0];
-
-    if (!runOfShowData || !runOfShowData.schedule_items) {
-      const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
-      const xmlContent = `
-<data>
-  <timestamp>${new Date().toISOString()}</timestamp>
-  <event_id>${eventId}</event_id>
-  <lower_thirds>
-  </lower_thirds>
-</data>`;
-      res.set('Content-Type', 'application/xml');
-      return res.send(xmlHeader + xmlContent);
-    }
-
-    const scheduleItems = runOfShowData.schedule_items;
-    const lowerThirdsData = [];
-
-    scheduleItems.forEach((item) => {
-      const speakers = [];
-      
-      if (item.speakersText) {
-        try {
-          const speakersArray = typeof item.speakersText === 'string' 
-            ? JSON.parse(item.speakersText) 
-            : item.speakersText;
-          
-          if (Array.isArray(speakersArray)) {
-            speakersArray.forEach((speaker) => {
-              speakers.push({
-                title: speaker.fullName || speaker.name || '',
-                subtitle: [speaker.title, speaker.org].filter(Boolean).join('\n'),
-                photo: speaker.photoLink || '',
-                slot: speaker.slot || 1
-              });
-            });
-          }
-        } catch (e) {
-          console.error('Error parsing speakers:', e);
-        }
-      }
-
-      lowerThirdsData.push({
-        id: String(item.id),
-        cue: item.customFields?.cue || '',
-        program: item.programType || '',
-        segmentName: item.segmentName || '',
-        speakers
-      });
-    });
-
-    const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
-    const xmlContent = `
-<data>
-  <timestamp>${new Date().toISOString()}</timestamp>
-  <event_id>${eventId}</event_id>
-  <lower_thirds>
-    ${lowerThirdsData.map(item => {
-      const speakers = new Array(21).fill('');
-      if (item.speakers && item.speakers.length > 0) {
-        item.speakers.forEach((speaker) => {
-          const slot = speaker.slot || 1;
-          if (slot >= 1 && slot <= 7) {
-            const baseIdx = (slot - 1) * 3;
-            speakers[baseIdx] = speaker.title || '';
-            speakers[baseIdx + 1] = speaker.subtitle || '';
-            speakers[baseIdx + 2] = speaker.photo || '';
-          }
-        });
-      }
-      return `
-    <item>
-      <id>${item.id}</id>
-      <cue><![CDATA[${item.cue || ''}]]></cue>
-      <program><![CDATA[${item.program || ''}]]></program>
-      <segment_name><![CDATA[${item.segmentName || ''}]]></segment_name>
-      <speaker_1_name><![CDATA[${speakers[0]}]]></speaker_1_name>
-      <speaker_1_title_org><![CDATA[${speakers[1]}]]></speaker_1_title_org>
-      <speaker_1_photo><![CDATA[${speakers[2]}]]></speaker_1_photo>
-      <speaker_2_name><![CDATA[${speakers[3]}]]></speaker_2_name>
-      <speaker_2_title_org><![CDATA[${speakers[4]}]]></speaker_2_title_org>
-      <speaker_2_photo><![CDATA[${speakers[5]}]]></speaker_2_photo>
-      <speaker_3_name><![CDATA[${speakers[6]}]]></speaker_3_name>
-      <speaker_3_title_org><![CDATA[${speakers[7]}]]></speaker_3_title_org>
-      <speaker_3_photo><![CDATA[${speakers[8]}]]></speaker_3_photo>
-      <speaker_4_name><![CDATA[${speakers[9]}]]></speaker_4_name>
-      <speaker_4_title_org><![CDATA[${speakers[10]}]]></speaker_4_title_org>
-      <speaker_4_photo><![CDATA[${speakers[11]}]]></speaker_4_photo>
-      <speaker_5_name><![CDATA[${speakers[12]}]]></speaker_5_name>
-      <speaker_5_title_org><![CDATA[${speakers[13]}]]></speaker_5_title_org>
-      <speaker_5_photo><![CDATA[${speakers[14]}]]></speaker_5_photo>
-      <speaker_6_name><![CDATA[${speakers[15]}]]></speaker_6_name>
-      <speaker_6_title_org><![CDATA[${speakers[16]}]]></speaker_6_title_org>
-      <speaker_6_photo><![CDATA[${speakers[17]}]]></speaker_6_photo>
-      <speaker_7_name><![CDATA[${speakers[18]}]]></speaker_7_name>
-      <speaker_7_title_org><![CDATA[${speakers[19]}]]></speaker_7_title_org>
-      <speaker_7_photo><![CDATA[${speakers[20]}]]></speaker_7_photo>
-    </item>`;
-    }).join('')}
-  </lower_thirds>
-</data>`;
+    const scheduleItems = runOfShowData?.schedule_items || [];
+    const fullXML = buildLowerThirdsXml(eventId, scheduleItems);
 
     // Cache to Upstash for fast access by Singular.Live, vMix, etc.
-    const fullXML = xmlHeader + xmlContent;
     await setUpstashCache(`lower-thirds-xml-${eventId}`, fullXML, 3600);
     
     res.set({
