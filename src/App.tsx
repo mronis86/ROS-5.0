@@ -37,6 +37,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccessPortalPage from './pages/AccessPortalPage';
 import LedLayoutsPage from './pages/LedLayoutsPage';
 import LedOutputPage from './pages/LedOutputPage';
+import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
 
 function AppContent() {
   const location = useLocation();
@@ -61,12 +62,17 @@ function AppContent() {
   const isResetPassword = location.pathname === '/reset-password';
   const isAccessPortal = location.pathname === '/access';
   const isLedOutput = location.pathname === '/led-output';
+  const isUltritouchHealth =
+    location.pathname === '/ultritouch-health' ||
+    location.pathname === '/ultritouch-health-monitor';
 
-  // Broadcast page: no App chrome, AuthGuard shell, or slate wrappers.
-  if (isLedOutput) {
+  // Broadcast / panel embed pages: no App chrome, AuthGuard shell, or slate wrappers.
+  if (isLedOutput || isUltritouchHealth) {
     return (
       <Routes>
         <Route path="/led-output" element={<LedOutputPage />} />
+        <Route path="/ultritouch-health" element={<UltritouchHealthMonitorPage />} />
+        <Route path="/ultritouch-health-monitor" element={<UltritouchHealthMonitorPage />} />
       </Routes>
     );
   }
@@ -85,6 +91,7 @@ function AppContent() {
     isResetPassword ||
     isAccessPortal ||
     isLedOutput ||
+    isUltritouchHealth ||
     isClock ||
     isAdmin;
 
@@ -92,7 +99,7 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && !isUltritouchHealth && <AppHeader />}
       
       {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isNetlifyXML && !isLocalXML && !isAdmin && (
         <AuthGuard>

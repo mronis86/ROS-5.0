@@ -59,6 +59,45 @@ function registerRoutes(app, db, helpers) {
     }
   });
 
+  app.get('/api/monitor/snapshot', (req, res) => {
+    try {
+      const timerRows = db
+        .prepare(
+          `SELECT at.event_id, at.item_id, at.cue_is, at.started_at, ce.name AS event_name
+           FROM active_timers at
+           LEFT JOIN calendar_events ce ON ce.id = at.event_id
+           WHERE at.timer_state = 'running' OR (at.is_active = 1 AND at.is_running = 1)
+           ORDER BY at.updated_at DESC
+           LIMIT 20`
+        )
+        .all();
+      const runningTimers = timerRows.map((row) => ({
+        eventId: String(row.event_id),
+        eventName: row.event_name || `Event ${row.event_id}`,
+        cueIs: row.cue_is || `CUE ${row.item_id}`,
+        startedAt: row.started_at || null,
+      }));
+      const cloud = getCloudMode(db);
+      res.json({
+        timestamp: nowIso(),
+        ops: {
+          activeEventCount: runningTimers.length > 0 ? new Set(runningTimers.map((t) => t.eventId)).size : 0,
+          totalViewers: null,
+          socketConnections: null,
+          events: [],
+          runningTimers,
+          cloudMode: cloud.mode,
+          lanOnly: cloud.lanOnly,
+        },
+      });
+    } catch (e) {
+      res.status(500).json({
+        error: e instanceof Error ? e.message : 'Monitor snapshot failed',
+        timestamp: nowIso(),
+      });
+    }
+  });
+
   app.get('/api/cloud-mode', (_req, res) => {
     res.json(getCloudMode(db));
   });

@@ -7,6 +7,7 @@ import EventListPage from './pages/EventListPage';
 import RunOfShowPage from './pages/RunOfShowPage';
 import QuickModePage from './pages/QuickModePage';
 import OfflineTimerPage from './pages/OfflineTimerPage';
+import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
 
 const App: React.FC = () => (
   <BrowserRouter>
@@ -15,6 +16,8 @@ const App: React.FC = () => (
         <Routes>
           {/* Full-screen timer display — no header or connectivity bar */}
           <Route path="/timer" element={<OfflineTimerPage />} />
+          <Route path="/ultritouch-health" element={<UltritouchHealthMonitorPage />} />
+          <Route path="/ultritouch-health-monitor" element={<UltritouchHealthMonitorPage />} />
           <Route element={<OfflineAppShell />}>
             <Route path="/" element={<EventListPage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />

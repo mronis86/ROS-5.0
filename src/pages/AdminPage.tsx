@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
+import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
 import {
   getLogoVariant,
@@ -99,6 +100,10 @@ interface ServiceStatus {
   nodeVersion?: string;
   uptimeSeconds?: number;
   env?: string;
+  latencyMs?: number;
+  error?: string | null;
+  description?: string;
+  indicator?: 'none' | 'minor' | 'major' | 'critical' | 'unknown';
 }
 
 interface HealthData {
@@ -112,19 +117,79 @@ interface HealthData {
     neon?: ServiceStatus;
     railway?: ServiceStatus;
     upstash?: ServiceStatus;
+    netlify?: ServiceStatus;
+    resend?: ServiceStatus;
   };
 }
 
 const SERVICE_CONFIG = [
-  { key: 'neon' as const, icon: Database, label: 'Neon', desc: 'Database', statusKey: 'connected' as const, iconColor: 'teal' as const },
-  { key: 'railway' as const, icon: Server, label: 'Railway', desc: 'API', statusKey: 'connected' as const, iconColor: 'violet' as const },
-  { key: 'upstash' as const, icon: Zap, label: 'Upstash', desc: 'Redis / KV', statusKey: 'configured' as const, iconColor: 'amber' as const },
+  { key: 'neon' as const, icon: Database, label: 'Neon', desc: 'Database', iconColor: 'teal' as const },
+  { key: 'railway' as const, icon: Server, label: 'Railway', desc: 'API', iconColor: 'violet' as const },
+  { key: 'upstash' as const, icon: Zap, label: 'Upstash', desc: 'Redis / KV', iconColor: 'amber' as const },
+  { key: 'netlify' as const, icon: Cloud, label: 'Netlify', desc: 'CDN / hosting', iconColor: 'sky' as const },
+  { key: 'resend' as const, icon: Mail, label: 'Resend', desc: 'Email', iconColor: 'rose' as const },
 ];
 
-function iconColorClasses(ok: boolean, color: 'teal' | 'violet' | 'amber'): string {
-  if (!ok) return 'bg-slate-700/80 text-slate-400';
-  return color === 'teal' ? 'bg-teal-500/20 text-teal-400' : color === 'violet' ? 'bg-violet-500/20 text-violet-400' : 'bg-amber-500/20 text-amber-400';
+type ServiceLevel = 'ok' | 'warning' | 'disconnected';
+
+function iconColorClasses(level: ServiceLevel, color: 'teal' | 'violet' | 'amber' | 'sky' | 'rose'): string {
+  if (level === 'disconnected') return 'bg-slate-700/80 text-slate-400';
+  if (level === 'warning') return 'bg-amber-500/20 text-amber-400';
+  if (color === 'teal') return 'bg-teal-500/20 text-teal-400';
+  if (color === 'violet') return 'bg-violet-500/20 text-violet-400';
+  if (color === 'amber') return 'bg-amber-500/20 text-amber-400';
+  if (color === 'sky') return 'bg-sky-500/20 text-sky-400';
+  return 'bg-rose-500/20 text-rose-400';
 }
+
+function serviceLevel(key: (typeof SERVICE_CONFIG)[number]['key'], svc?: ServiceStatus): ServiceLevel {
+  if (!svc) return 'disconnected';
+  if (key === 'netlify' || key === 'resend') {
+    if (svc.indicator === 'none' || (svc.connected && !svc.indicator)) return 'ok';
+    if (svc.indicator === 'minor') return 'warning';
+    return 'disconnected';
+  }
+  if (key === 'upstash') {
+    if (svc.configured === false) return 'warning';
+    const connected = typeof svc.connected === 'boolean' ? !!svc.connected : !!svc.configured;
+    if (!connected) return 'disconnected';
+    if (svc.latencyMs != null && svc.latencyMs >= 400) return 'warning';
+    return 'ok';
+  }
+  return svc.connected ? 'ok' : 'disconnected';
+}
+
+function serviceStatusLabel(level: ServiceLevel, svc?: ServiceStatus): string {
+  if (level === 'ok') {
+    if (svc?.latencyMs != null) return `System Operational · ${svc.latencyMs} ms`;
+    return 'System Operational';
+  }
+  if (level === 'warning') return 'Warning';
+  return 'Disconnected';
+}
+
+function statusPillClasses(level: ServiceLevel): string {
+  if (level === 'ok') return 'bg-emerald-500/20 text-emerald-400';
+  if (level === 'warning') return 'bg-amber-500/20 text-amber-400';
+  return 'bg-slate-700/80 text-slate-400';
+}
+
+function statusDotClasses(level: ServiceLevel): string {
+  if (level === 'ok') return 'bg-emerald-400 animate-pulse';
+  if (level === 'warning') return 'bg-amber-400 animate-pulse';
+  return 'bg-slate-500';
+}
+
+const ADMIN_NAV: { id: string; label: string }[] = [
+  { id: 'services', label: 'Services' },
+  { id: 'timers', label: 'Timers' },
+  { id: 'presence', label: 'Events' },
+  { id: 'access', label: 'Access' },
+  { id: 'tokens', label: 'Tokens' },
+  { id: 'domains', label: 'Domains' },
+  { id: 'backup', label: 'Backup' },
+  { id: 'branding', label: 'Branding' },
+];
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -162,6 +227,7 @@ interface RunningTimerRow {
 export default function AdminPage() {
   const { user, loading: authLoading, accessStatus } = useAuth();
   const [unlocked, setUnlocked] = useState(false);
+  const [activeNavId, setActiveNavId] = useState<string>('services');
   const [password, setPassword] = useState('');
   const [pendingAdminKey, setPendingAdminKey] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -315,17 +381,40 @@ export default function AdminPage() {
     setHealthLoading(true);
     try {
       const base = getApiBaseUrl();
-      const res = await fetch(`${base}/health`);
+      const [res, netlify, resend] = await Promise.all([
+        fetch(`${base}/health`),
+        fetchNetlifyStatus(),
+        fetchResendStatus(),
+      ]);
       const data = await res.json().catch(() => ({}));
+      const statuspageServices = {
+        netlify: {
+          connected: netlify.ok,
+          label: 'Netlify',
+          description: netlify.description,
+          indicator: netlify.indicator,
+          error: netlify.error || null,
+        },
+        resend: {
+          connected: resend.ok,
+          label: 'Resend',
+          description: resend.description,
+          indicator: resend.indicator,
+          error: resend.error || null,
+        },
+      };
       if (!res.ok) {
         setHealth({
           status: 'unhealthy',
           error: data.error || `HTTP ${res.status}`,
           timestamp: (data as any).timestamp,
-          services: data.services ?? {
-            neon: { connected: false, label: 'Neon' },
-            railway: { connected: true, label: 'Railway' },
-            upstash: { configured: !!(data as any).upstashConfigured, label: 'Upstash' },
+          services: {
+            ...(data.services ?? {
+              neon: { connected: false, label: 'Neon' },
+              railway: { connected: true, label: 'Railway' },
+              upstash: { configured: !!(data as any).upstashConfigured, label: 'Upstash' },
+            }),
+            ...statuspageServices,
           },
         });
         return;
@@ -337,7 +426,13 @@ export default function AdminPage() {
           upstash: { configured: !!data.upstashConfigured, label: 'Upstash' },
         };
       }
-      setHealth(data);
+      setHealth({
+        ...data,
+        services: {
+          ...data.services,
+          ...statuspageServices,
+        },
+      });
     } catch (e) {
       setHealth({
         status: 'unhealthy',
@@ -346,6 +441,8 @@ export default function AdminPage() {
           neon: { connected: false, label: 'Neon' },
           railway: { connected: false, label: 'Railway' },
           upstash: { configured: false, label: 'Upstash' },
+          netlify: { connected: false, label: 'Netlify' },
+          resend: { connected: false, label: 'Resend' },
         },
       });
     } finally {
@@ -393,6 +490,29 @@ export default function AdminPage() {
     const interval = setInterval(fetchHealth, 30_000);
     return () => clearInterval(interval);
   }, [unlocked, fetchHealth]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    const sectionIds = ADMIN_NAV.map((item) => item.id);
+    const elements = sectionIds
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => !!el);
+    if (elements.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        if (visible[0]?.target?.id) {
+          setActiveNavId(visible[0].target.id);
+        }
+      },
+      { rootMargin: '-20% 0px -55% 0px', threshold: [0.1, 0.25, 0.5] }
+    );
+    elements.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [unlocked]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -1708,125 +1828,41 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800">
-      <header className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-white">Admin</h1>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 scroll-smooth">
+      <header className="sticky top-0 z-40 bg-slate-800/95 backdrop-blur border-b border-slate-700 px-4 sm:px-6 py-2.5 flex items-center gap-3">
+        <h1 className="text-lg font-bold text-white shrink-0">Admin</h1>
+        <nav
+          className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          aria-label="Jump to section"
+        >
+          {ADMIN_NAV.map((item) => {
+            const active = activeNavId === item.id;
+            return (
+              <a
+                key={item.id}
+                href={`#${item.id}`}
+                className={`shrink-0 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  active
+                    ? 'bg-slate-600 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-700/80'
+                }`}
+              >
+                {item.label}
+              </a>
+            );
+          })}
+        </nav>
         <button
           type="button"
           onClick={handleLock}
-          className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-md transition-colors"
+          className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-md transition-colors shrink-0"
         >
           Lock
         </button>
       </header>
       <main className="p-6 max-w-4xl mx-auto space-y-6">
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-            <div className="flex items-center gap-2">
-              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-violet-500/20 text-violet-400">
-                <Image className="w-4 h-4" strokeWidth={2} />
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold text-white">Header logo</h2>
-                <p className="text-slate-400 text-sm">Global branding for all users. Saved in Neon app_settings.</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-2">
-              <span className="text-slate-400 text-xs uppercase tracking-wide">Preview</span>
-              <AppLogo size="md" />
-              <AppBrandTitle titleClassName="text-lg font-bold text-white leading-tight" />
-            </div>
-            <button
-              type="button"
-              onClick={() => void fetchLogoSettings()}
-              disabled={logoSettingsLoading || logoSettingsSaving}
-              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm rounded-md transition-colors"
-            >
-              {logoSettingsLoading ? 'Loading…' : 'Refresh'}
-            </button>
-          </div>
-          {logoSettingsNeedsMigration && (
-            <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-sm text-amber-100">
-              <p className="font-medium">Migration required</p>
-              <p className="mt-1 text-amber-200/90">
-                Run migration <span className="font-mono">034_create_app_settings.sql</span> on Neon, or create the table from here.
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleSyncLogoSettingsTable()}
-                disabled={logoSettingsSyncingTable}
-                className="mt-3 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm rounded-md transition-colors"
-              >
-                {logoSettingsSyncingTable ? 'Creating table…' : 'Create app_settings table'}
-              </button>
-            </div>
-          )}
-          {logoSettingsError && (
-            <div className="mb-4 rounded-lg border border-red-500/40 bg-red-950/20 px-4 py-3 text-sm text-red-200">
-              {logoSettingsError}
-            </div>
-          )}
-          <div className="grid gap-3 sm:grid-cols-2">
-            {LOGO_VARIANTS.map((variant) => {
-              const selected = logoVariantId === variant.id;
-              return (
-                <button
-                  key={variant.id}
-                  type="button"
-                  onClick={() => void handleLogoVariantChange(variant.id)}
-                  disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
-                  className={`rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
-                    selected
-                      ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
-                      : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-white">{variant.label}</p>
-                      <p className="mt-1 text-sm text-slate-400">{variant.description}</p>
-                      {variant.type === 'image' && variant.src ? (
-                        <p className="mt-2 font-mono text-xs text-slate-500 break-all">{variant.src}</p>
-                      ) : null}
-                    </div>
-                    <span
-                      className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border ${
-                        selected ? 'border-blue-400 bg-blue-500' : 'border-slate-500'
-                      }`}
-                      aria-hidden
-                    />
-                  </div>
-                  <div className="mt-4 flex min-h-[48px] items-center rounded-lg bg-slate-800 px-3 py-2">
-                    {variant.type === 'image' && variant.src ? (
-                      <img
-                        src={variant.src}
-                        alt=""
-                        className="h-8 w-auto max-w-full object-contain object-left"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
-                        R
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-4 text-xs text-slate-500">
-            Active for everyone: <span className="text-slate-300">{getLogoVariant(logoVariantId).appTitle}</span>
-            {' '}({getLogoVariant(logoVariantId).label}).
-            {logoSettingsSaving ? ' Saving…' : null}
-            {logoSettingsUpdatedAt ? (
-              <span className="ml-2">Last updated {new Date(logoSettingsUpdatedAt).toLocaleString()}.</span>
-            ) : null}
-          </p>
-        </section>
 
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+        <section id="services" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
             <h2 className="text-lg font-semibold text-white">Services</h2>
             <div className="flex items-center gap-3">
@@ -1865,17 +1901,15 @@ export default function AdminPage() {
                 </div>
               )}
               <ul className="divide-y divide-slate-700/80">
-                {SERVICE_CONFIG.map(({ key, icon: Icon, label, desc, statusKey, iconColor }) => {
-                  const svc = health.services[key];
-                  const ok = svc ? (statusKey === 'connected' ? svc.connected : svc.configured) : false;
+                {SERVICE_CONFIG.map(({ key, icon: Icon, label, desc, iconColor }) => {
+                  const svc = health.services?.[key];
+                  const level = serviceLevel(key, svc);
                   const apiBase = key === 'railway' ? getApiBaseUrl() : '';
-                  const statusLabel = statusKey === 'connected'
-                    ? (ok ? 'Connected' : 'Disconnected')
-                    : (ok ? 'Configured' : 'Not configured');
+                  const statusLabel = serviceStatusLabel(level, svc);
                   return (
                     <li key={key} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                       <div className="flex items-start gap-3 min-w-0">
-                        <div className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center ${iconColorClasses(ok, iconColor)}`}>
+                        <div className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center ${iconColorClasses(level, iconColor)}`}>
                           <Icon className="w-4 h-4" strokeWidth={2} />
                         </div>
                         <div className="min-w-0">
@@ -1897,10 +1931,25 @@ export default function AdminPage() {
                               {svc?.env && <span> · {svc.env}</span>}
                             </p>
                           )}
+                          {key === 'upstash' && (svc?.latencyMs != null || svc?.error || svc?.configured === false) && (
+                            <p className="text-slate-400 text-xs mt-1 truncate">
+                              {svc.configured === false
+                                ? 'Env vars not set'
+                                : svc.latencyMs != null
+                                  ? `Ping ${svc.latencyMs} ms`
+                                  : null}
+                              {svc.error ? <span>{svc.latencyMs != null ? ' · ' : ''}{svc.error}</span> : null}
+                            </p>
+                          )}
+                          {(key === 'netlify' || key === 'resend') && svc?.description && (
+                            <p className="text-slate-400 text-xs mt-1 truncate" title={svc.description}>
+                              {svc.description}
+                            </p>
+                          )}
                         </div>
                       </div>
-                      <span className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${ok ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700/80 text-slate-400'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                      <span className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${statusPillClasses(level)}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${statusDotClasses(level)}`} />
                         {statusLabel}
                       </span>
                     </li>
@@ -1913,7 +1962,7 @@ export default function AdminPage() {
           )}
         </section>
 
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+        <section id="timers" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <Timer className="w-5 h-5 text-slate-400" />
@@ -1969,7 +2018,7 @@ export default function AdminPage() {
           )}
         </section>
 
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+        <section id="presence" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <Users className="w-5 h-5 text-slate-400" />
@@ -2036,7 +2085,7 @@ export default function AdminPage() {
           )}
         </section>
 
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+        <section id="access" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <Users className="w-5 h-5 text-slate-400" />
@@ -2258,7 +2307,7 @@ export default function AdminPage() {
           )}
         </section>
 
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+        <section id="tokens" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <Key className="w-5 h-5 text-slate-400" />
@@ -2396,7 +2445,7 @@ export default function AdminPage() {
           )}
         </section>
 
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+        <section id="domains" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <Mail className="w-5 h-5 text-slate-400" />
@@ -2477,7 +2526,7 @@ export default function AdminPage() {
           )}
         </section>
 
-        <section className="bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+        <section id="backup" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <FolderOpen className="w-5 h-5 text-slate-400" />
@@ -2674,6 +2723,112 @@ export default function AdminPage() {
               )}
             </div>
           )}
+        </section>
+
+        <section id="branding" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-violet-500/20 text-violet-400">
+                <Image className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Header logo</h2>
+                <p className="text-slate-400 text-sm">Global branding for all users. Saved in Neon app_settings.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-2">
+              <span className="text-slate-400 text-xs uppercase tracking-wide">Preview</span>
+              <AppLogo size="md" />
+              <AppBrandTitle titleClassName="text-lg font-bold text-white leading-tight" />
+            </div>
+            <button
+              type="button"
+              onClick={() => void fetchLogoSettings()}
+              disabled={logoSettingsLoading || logoSettingsSaving}
+              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm rounded-md transition-colors"
+            >
+              {logoSettingsLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          {logoSettingsNeedsMigration && (
+            <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-sm text-amber-100">
+              <p className="font-medium">Migration required</p>
+              <p className="mt-1 text-amber-200/90">
+                Run migration <span className="font-mono">034_create_app_settings.sql</span> on Neon, or create the table from here.
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleSyncLogoSettingsTable()}
+                disabled={logoSettingsSyncingTable}
+                className="mt-3 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm rounded-md transition-colors"
+              >
+                {logoSettingsSyncingTable ? 'Creating table…' : 'Create app_settings table'}
+              </button>
+            </div>
+          )}
+          {logoSettingsError && (
+            <div className="mb-4 rounded-lg border border-red-500/40 bg-red-950/20 px-4 py-3 text-sm text-red-200">
+              {logoSettingsError}
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {LOGO_VARIANTS.map((variant) => {
+              const selected = logoVariantId === variant.id;
+              return (
+                <button
+                  key={variant.id}
+                  type="button"
+                  onClick={() => void handleLogoVariantChange(variant.id)}
+                  disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                  className={`rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
+                    selected
+                      ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                      : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-white">{variant.label}</p>
+                      <p className="mt-1 text-sm text-slate-400">{variant.description}</p>
+                      {variant.type === 'image' && variant.src ? (
+                        <p className="mt-2 font-mono text-xs text-slate-500 break-all">{variant.src}</p>
+                      ) : null}
+                    </div>
+                    <span
+                      className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border ${
+                        selected ? 'border-blue-400 bg-blue-500' : 'border-slate-500'
+                      }`}
+                      aria-hidden
+                    />
+                  </div>
+                  <div className="mt-4 flex min-h-[48px] items-center rounded-lg bg-slate-800 px-3 py-2">
+                    {variant.type === 'image' && variant.src ? (
+                      <img
+                        src={variant.src}
+                        alt=""
+                        className="h-8 w-auto max-w-full object-contain object-left"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
+                        R
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-4 text-xs text-slate-500">
+            Active for everyone: <span className="text-slate-300">{getLogoVariant(logoVariantId).appTitle}</span>
+            {' '}({getLogoVariant(logoVariantId).label}).
+            {logoSettingsSaving ? ' Saving…' : null}
+            {logoSettingsUpdatedAt ? (
+              <span className="ml-2">Last updated {new Date(logoSettingsUpdatedAt).toLocaleString()}.</span>
+            ) : null}
+          </p>
         </section>
 
         {eventAccessUser && (

@@ -434,41 +434,91 @@ const agendaUpload = multer({
 });
 
 // Health check endpoint - lightweight version to reduce Neon queries
+async function probeUpstashHealth() {
+  const configured = !!(UPSTASH_URL && UPSTASH_TOKEN);
+  if (!configured) {
+    return {
+      configured: false,
+      connected: false,
+      label: 'Upstash',
+      error: 'Not configured',
+    };
+  }
+  const started = Date.now();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const response = await fetch(new URL('/ping', UPSTASH_URL).toString(), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const latencyMs = Date.now() - started;
+    const data = await response.json().catch(() => ({}));
+    const connected =
+      response.ok && String(data.result || '').toUpperCase() === 'PONG';
+    return {
+      configured: true,
+      connected,
+      label: 'Upstash',
+      latencyMs,
+      error: connected ? null : data.error || `HTTP ${response.status}`,
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      connected: false,
+      label: 'Upstash',
+      latencyMs: Date.now() - started,
+      error: error.name === 'AbortError' ? 'Timeout' : error.message || 'Unreachable',
+    };
+  }
+}
+
 app.get('/health', async (req, res) => {
-  const upstashConfigured = !!(UPSTASH_URL && UPSTASH_TOKEN);
   const timestamp = new Date().toISOString();
   const railwayMeta = {
     nodeVersion: process.version,
     uptimeSeconds: Math.floor(process.uptime()),
     env: process.env.NODE_ENV || 'development'
   };
-  try {
-    const result = await pool.query('SELECT 1 AS health, current_database() AS name');
-    const neonConnected = result.rows[0].health === 1;
-    const dbName = result.rows[0].name || null;
+  const [neonResult, upstash] = await Promise.all([
+    pool.query('SELECT 1 AS health, current_database() AS name').then(
+      (result) => ({
+        ok: true,
+        connected: result.rows[0].health === 1,
+        dbName: result.rows[0].name || null,
+      }),
+      (error) => ({ ok: false, connected: false, dbName: null, error: error.message })
+    ),
+    probeUpstashHealth(),
+  ]);
+  const upstashConfigured = !!upstash.configured;
+  if (neonResult.ok) {
     res.json({
       status: 'healthy',
       timestamp,
-      dbConnected: neonConnected,
+      dbConnected: neonResult.connected,
       database: 'connected',
       upstashConfigured,
       services: {
-        neon: { connected: neonConnected, label: 'Neon', dbName },
+        neon: { connected: neonResult.connected, label: 'Neon', dbName: neonResult.dbName },
         railway: { connected: true, label: 'Railway', ...railwayMeta },
-        upstash: { configured: upstashConfigured, label: 'Upstash' }
+        upstash,
       }
     });
-  } catch (error) {
+  } else {
     res.status(500).json({
       status: 'unhealthy',
-      error: error.message,
+      error: neonResult.error,
       timestamp,
       dbConnected: false,
       upstashConfigured,
       services: {
         neon: { connected: false, label: 'Neon', dbName: null },
         railway: { connected: true, label: 'Railway', ...railwayMeta },
-        upstash: { configured: upstashConfigured, label: 'Upstash' }
+        upstash,
       }
     });
   }
@@ -4998,6 +5048,66 @@ app.delete('/api/script-comments/:commentId', async (req, res) => {
 });
 
 // Error handler for multer / parse-agenda and unhandled API errors
+app.get('/api/monitor/snapshot', async (req, res) => {
+  try {
+    const timestamp = new Date().toISOString();
+    const eventIds = Array.from(presenceByEvent.keys());
+    let events = [];
+    let totalViewers = 0;
+
+    if (eventIds.length > 0) {
+      const r = await pool.query(
+        'SELECT id, name FROM calendar_events WHERE id::text = ANY($1)',
+        [eventIds.map(String)]
+      );
+      const idToName = new Map(r.rows.map((row) => [String(row.id), row.name || 'Unknown']));
+      events = eventIds
+        .map((origId) => {
+          const eid = String(origId);
+          const m = presenceByEvent.get(origId);
+          const viewerCount = m ? m.size : 0;
+          totalViewers += viewerCount;
+          return {
+            eventId: eid,
+            eventName: idToName.get(eid) || `Event ${eid}`,
+            viewerCount,
+          };
+        })
+        .filter((e) => e.viewerCount > 0)
+        .sort((a, b) => b.viewerCount - a.viewerCount);
+    }
+
+    const timersR = await pool.query(
+      `SELECT at.event_id, at.item_id, at.cue_is, at.started_at, ce.name AS event_name
+       FROM active_timers at
+       LEFT JOIN calendar_events ce ON ce.id::text = at.event_id::text
+       WHERE at.timer_state = 'running' OR (at.is_active = true AND at.is_running = true)
+       ORDER BY at.updated_at DESC
+       LIMIT 20`
+    );
+    const runningTimers = (timersR.rows || []).map((row) => ({
+      eventId: String(row.event_id),
+      eventName: row.event_name || `Event ${row.event_id}`,
+      cueIs: row.cue_is || `CUE ${row.item_id}`,
+      startedAt: row.started_at,
+    }));
+
+    res.json({
+      timestamp,
+      ops: {
+        activeEventCount: events.length,
+        totalViewers,
+        socketConnections: io.engine?.clientsCount ?? null,
+        events,
+        runningTimers,
+      },
+    });
+  } catch (err) {
+    console.error('[monitor snapshot] error:', err);
+    res.status(500).json({ error: err.message, timestamp: new Date().toISOString() });
+  }
+});
+
 app.use(createOpsErrorHandler(pool));
 
 // Start server on all network interfaces (allows local network access)
