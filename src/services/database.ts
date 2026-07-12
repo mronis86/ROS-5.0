@@ -28,6 +28,8 @@ export interface RunOfShowData {
   last_modified_by?: string;
   last_modified_by_name?: string;
   last_modified_by_role?: string;
+  /** Optimistic concurrency token; bumps on every successful save. */
+  version?: number;
 }
 
 export interface TimerMessage {
@@ -304,7 +306,7 @@ export class DatabaseService {
 
   // Run of Show Data Methods
   static async saveRunOfShowData(
-    data: Omit<RunOfShowData, 'id' | 'created_at' | 'updated_at' | 'last_change_at' | 'last_modified_by' | 'last_modified_by_name' | 'last_modified_by_role'>,
+    data: Omit<RunOfShowData, 'id' | 'created_at' | 'updated_at' | 'last_change_at' | 'last_modified_by' | 'last_modified_by_name' | 'last_modified_by_role'> & { version?: number | null },
     userInfo?: { userId: string; userName: string; userRole: string }
   ): Promise<RunOfShowData | null> {
     try {
@@ -313,6 +315,7 @@ export class DatabaseService {
         scheduleItemsCount: data.schedule_items?.length || 0,
         customColumnsCount: data.custom_columns?.length || 0,
         settingsKeys: Object.keys(data.settings || {}),
+        version: data.version,
         userInfo: userInfo ? `${userInfo.userName} (${userInfo.userRole})` : 'No user info'
       });
 
@@ -326,7 +329,11 @@ export class DatabaseService {
 
       const result = await apiClient.saveRunOfShowData(dataWithUser);
       return result;
-    } catch (error) {
+    } catch (error: any) {
+      // Don't mask version conflicts with a localStorage fallback
+      if (error?.status === 409) {
+        throw error;
+      }
       console.error('❌ Error saving run of show data:', error);
       console.error('❌ Error details:', error.message, error.details, error.hint);
       // Fallback to localStorage with user info if available

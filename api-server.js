@@ -2472,18 +2472,25 @@ app.post('/api/run-of-show-data', async (req, res) => {
       settings: incomingSettings,
       last_modified_by,
       last_modified_by_name,
-      last_modified_by_role
+      last_modified_by_role,
+      version: expectedVersion,
     } = req.body;
+
+    if (!event_id) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
 
     // Preserve show_mode and track_was_durations from DB when not in payload
     // (schedule saves don't include them, which was overwriting In-Show state)
     let settingsToSave = incomingSettings || {};
     const existing = await pool.query(
-      'SELECT settings FROM run_of_show_data WHERE event_id = $1',
+      'SELECT * FROM run_of_show_data WHERE event_id = $1',
       [event_id]
     );
-    if (existing.rows.length > 0) {
-      const current = existing.rows[0].settings || {};
+
+    let currentRow = existing.rows[0] || null;
+    if (currentRow) {
+      const current = currentRow.settings || {};
       if (incomingSettings?.show_mode === undefined && (current.show_mode === 'in-show' || current.show_mode === 'rehearsal')) {
         settingsToSave = { ...settingsToSave, show_mode: current.show_mode };
       }
@@ -2495,36 +2502,136 @@ app.post('/api/run-of-show-data', async (req, res) => {
       }
     }
 
-    const result = await pool.query(
-      `INSERT INTO run_of_show_data 
-       (event_id, event_name, event_date, schedule_items, custom_columns, settings,
-        last_modified_by, last_modified_by_name, last_modified_by_role, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-       ON CONFLICT (event_id) 
-       DO UPDATE SET 
-         event_name = EXCLUDED.event_name,
-         event_date = EXCLUDED.event_date,
-         schedule_items = EXCLUDED.schedule_items,
-         custom_columns = EXCLUDED.custom_columns,
-         settings = EXCLUDED.settings,
-         last_modified_by = EXCLUDED.last_modified_by,
-         last_modified_by_name = EXCLUDED.last_modified_by_name,
-         last_modified_by_role = EXCLUDED.last_modified_by_role,
-         last_change_at = NOW(),
-         updated_at = NOW()
-       RETURNING *`,
-      [
-        event_id,
-        event_name,
-        event_date,
-        JSON.stringify(schedule_items),
-        JSON.stringify(custom_columns),
-        JSON.stringify(settingsToSave),
-        last_modified_by,
-        last_modified_by_name,
-        last_modified_by_role
-      ]
-    );
+    // Optimistic concurrency: if client sent a version, it must match the DB
+    const dbVersion = currentRow ? Number(currentRow.version ?? 1) : null;
+    if (
+      currentRow &&
+      expectedVersion != null &&
+      expectedVersion !== '' &&
+      !Number.isNaN(Number(expectedVersion)) &&
+      Number(expectedVersion) !== dbVersion
+    ) {
+      console.warn(
+        `⚠️ Version conflict for event ${event_id}: client=${expectedVersion} db=${dbVersion}`
+      );
+      return res.status(409).json({
+        error: 'version_conflict',
+        message: 'Schedule was updated by someone else. Reload and try again.',
+        current: currentRow,
+      });
+    }
+
+    // Preserve rows locked by someone other than this saver (server-side safety net)
+    let scheduleToSave = Array.isArray(schedule_items) ? schedule_items : [];
+    if (currentRow) {
+      let existingItems = currentRow.schedule_items;
+      if (typeof existingItems === 'string') {
+        try {
+          existingItems = JSON.parse(existingItems);
+        } catch {
+          existingItems = [];
+        }
+      }
+      if (!Array.isArray(existingItems)) existingItems = [];
+
+      const locks = typeof locksByEvent !== 'undefined' ? locksByEvent.get(String(event_id)) : null;
+      if (locks && locks.size > 0) {
+        const byId = new Map(existingItems.map((item) => [Number(item.id), item]));
+        const saverId = last_modified_by ? String(last_modified_by) : '';
+        let preserved = 0;
+        scheduleToSave = scheduleToSave.map((item) => {
+          const lock = locks.get(String(item.id));
+          if (lock && saverId && lock.userId !== saverId) {
+            const kept = byId.get(Number(item.id));
+            if (kept) {
+              preserved += 1;
+              return kept;
+            }
+          }
+          return item;
+        });
+        // Don't drop locked rows the saver omitted
+        const incomingIds = new Set(scheduleToSave.map((item) => Number(item.id)));
+        for (const [rowId, lock] of locks.entries()) {
+          if (saverId && lock.userId !== saverId && !incomingIds.has(Number(rowId))) {
+            const kept = byId.get(Number(rowId));
+            if (kept) {
+              scheduleToSave.push(kept);
+              preserved += 1;
+            }
+          }
+        }
+        console.log(`🔒 Save merge: preserved ${preserved} locked row(s) for event ${event_id} (activeLocks=${locks.size})`);
+      } else {
+        console.log(`🔒 Save merge: no active row locks for event ${event_id}`);
+      }
+    }
+
+    let result;
+    if (!currentRow) {
+      result = await pool.query(
+        `INSERT INTO run_of_show_data 
+         (event_id, event_name, event_date, schedule_items, custom_columns, settings,
+          last_modified_by, last_modified_by_name, last_modified_by_role, version, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, NOW(), NOW())
+         RETURNING *`,
+        [
+          event_id,
+          event_name,
+          event_date,
+          JSON.stringify(scheduleToSave),
+          JSON.stringify(custom_columns),
+          JSON.stringify(settingsToSave),
+          last_modified_by,
+          last_modified_by_name,
+          last_modified_by_role,
+        ]
+      );
+    } else {
+      // Atomic OCC bump: only succeeds if version is still what we checked
+      const versionGuard = expectedVersion != null && expectedVersion !== '' && !Number.isNaN(Number(expectedVersion))
+        ? Number(expectedVersion)
+        : dbVersion;
+
+      result = await pool.query(
+        `UPDATE run_of_show_data SET
+           event_name = $1,
+           event_date = $2,
+           schedule_items = $3,
+           custom_columns = $4,
+           settings = $5,
+           last_modified_by = $6,
+           last_modified_by_name = $7,
+           last_modified_by_role = $8,
+           last_change_at = NOW(),
+           updated_at = NOW(),
+           version = COALESCE(version, 1) + 1
+         WHERE event_id = $9 AND COALESCE(version, 1) = $10
+         RETURNING *`,
+        [
+          event_name,
+          event_date,
+          JSON.stringify(scheduleToSave),
+          JSON.stringify(custom_columns),
+          JSON.stringify(settingsToSave),
+          last_modified_by,
+          last_modified_by_name,
+          last_modified_by_role,
+          event_id,
+          versionGuard,
+        ]
+      );
+
+      if (result.rows.length === 0) {
+        const latest = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [event_id]);
+        console.warn(`⚠️ Version conflict (atomic) for event ${event_id}`);
+        return res.status(409).json({
+          error: 'version_conflict',
+          message: 'Schedule was updated by someone else. Reload and try again.',
+          current: latest.rows[0] || null,
+        });
+      }
+    }
     
     const savedData = result.rows[0];
     
@@ -5394,6 +5501,14 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ user_event_notes table synced');
     } catch (err) {
       console.warn('⚠️ user_event_notes sync skipped:', err.message || err);
+    }
+    try {
+      await pool.query(
+        'ALTER TABLE run_of_show_data ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1'
+      );
+      console.log('✅ run_of_show_data.version column ready');
+    } catch (err) {
+      console.warn('⚠️ run_of_show_data.version migration skipped:', err.message || err);
     }
   }
 });
