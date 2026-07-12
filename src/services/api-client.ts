@@ -13,16 +13,28 @@ function isLocalhostApiUrl(url: string): boolean {
   }
 }
 
-/** Dev defaults to Railway unless VITE_API_BASE_URL is explicitly localhost (local api-server). */
+/** Use VITE_API_BASE_URL when set; otherwise Railway. */
 const getApiBaseUrl = () => {
   const envUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-  if (envUrl && (!import.meta.env.DEV || isLocalhostApiUrl(envUrl))) {
-    return envUrl.replace(/\/$/, '');
+  if (envUrl) {
+    // In production builds, only allow explicitly configured URLs (including localhost for rare local prod tests).
+    // In dev, honor whatever is in .env / .env.local (localhost or LAN IP for local api-server).
+    if (import.meta.env.DEV || isLocalhostApiUrl(envUrl) || envUrl.startsWith('https://')) {
+      return envUrl.replace(/\/$/, '');
+    }
   }
   return RAILWAY_API_URL;
 };
 
 const API_BASE_URL = getApiBaseUrl();
+
+if (import.meta.env.DEV) {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  console.log(
+    `🌐 API base URL: ${API_BASE_URL}`,
+    raw ? `(from VITE_API_BASE_URL=${raw})` : `(VITE_API_BASE_URL unset → Railway)`
+  );
+}
 
 // Smart caching system
 interface CacheEntry<T> {

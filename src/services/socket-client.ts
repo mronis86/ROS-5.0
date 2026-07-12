@@ -24,6 +24,9 @@ interface SocketCallbacks {
   onShowModeUpdate?: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => void; // Global show mode and track-was-durations
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
   onForceDisconnect?: () => void; // Admin forced disconnect – show message and do not reconnect
+  onRowLocked?: (data: { eventId: string; rowId: number; userId: string; userName: string }) => void;
+  onRowUnlocked?: (data: { eventId: string; rowId: number }) => void;
+  onRowLocksSnapshot?: (data: { eventId: string; locks: { rowId: number; userId: string; userName: string }[] }) => void;
 }
 
 class SocketClient {
@@ -60,8 +63,10 @@ class SocketClient {
 
     this.disconnectedByAdmin = false;
 
+    console.log(`🔌 Socket.IO connecting to ${apiBaseUrl} for event ${eventId}`);
+
     this.socket.on('connect', () => {
-      console.log(`✅ Socket.IO connected for event: ${eventId}`);
+      console.log(`✅ Socket.IO connected to ${apiBaseUrl} for event: ${eventId}`);
       this.reconnectAttempts = 0;
       // Join the event room FIRST so we're in the room before presenceJoin broadcast
       this.socket?.emit('joinEvent', eventId);
@@ -139,6 +144,15 @@ class SocketClient {
         case 'presenceUpdated':
           console.log('📡 SocketClient: presenceUpdated', message.data?.length ?? 0, 'viewers');
           this.callbacks.onPresenceUpdated?.(message.data || []);
+          break;
+        case 'rowLocked':
+          this.callbacks.onRowLocked?.(message.data);
+          break;
+        case 'rowUnlocked':
+          this.callbacks.onRowUnlocked?.(message.data);
+          break;
+        case 'rowLocksSnapshot':
+          this.callbacks.onRowLocksSnapshot?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);
@@ -260,6 +274,46 @@ class SocketClient {
         userRole: user.userRole || 'VIEWER',
       };
       this.socket.emit('presenceJoin', payload);
+    }
+  }
+
+  /** Claim (or refresh) a schedule row edit lock for collaborative editing. */
+  emitRowEditStart(rowId: number, userId: string, userName: string) {
+    if (this.socket && this.eventId && rowId != null && userId) {
+      console.log(`🔒 emitRowEditStart row=${rowId} user=${userName} → ${this.eventId}`);
+      this.socket.emit('rowEditStart', {
+        eventId: this.eventId,
+        rowId,
+        userId,
+        userName: userName || '',
+      });
+    } else {
+      console.warn('🔒 emitRowEditStart skipped (socket not ready)', {
+        hasSocket: !!this.socket,
+        connected: this.socket?.connected,
+        eventId: this.eventId,
+        rowId,
+        userId,
+      });
+    }
+  }
+
+  /** Release a schedule row edit lock. */
+  emitRowEditEnd(rowId: number, userId: string) {
+    if (this.socket && this.eventId && rowId != null) {
+      console.log(`🔒 emitRowEditEnd row=${rowId}`);
+      this.socket.emit('rowEditEnd', {
+        eventId: this.eventId,
+        rowId,
+        userId,
+      });
+    }
+  }
+
+  /** Request current row locks for this event (after reconnect). */
+  emitRowLocksRequest() {
+    if (this.socket && this.eventId) {
+      this.socket.emit('rowLocksRequest', { eventId: this.eventId });
     }
   }
 
