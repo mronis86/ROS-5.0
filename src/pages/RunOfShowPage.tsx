@@ -1301,10 +1301,80 @@ const RunOfShowPage: React.FC = () => {
   const finishEditingSessionRef = useRef<() => void>(() => {});
   const startCountdownTimerRef = useRef<() => void>(() => {});
   const blurFocusedScheduleCellRef = useRef<(rowId?: number | null) => void>(() => {});
+  /** Last schedule + document version accepted from server (for safe saves / OCC). */
+  const lastSyncedScheduleRef = useRef<any[]>([]);
+  const scheduleVersionRef = useRef<number | null>(null);
+  const isUserEditingRef = useRef(false);
+  const scheduleRef = useRef(schedule);
+  const customColumnsRef = useRef(customColumns);
+  const eventNameRef = useRef(eventName);
+  const masterStartTimeRef = useRef(masterStartTime);
+  const dayStartTimesRef = useRef(dayStartTimes);
+  const indentedCuesRef = useRef(indentedCues);
+  const trackWasDurationsRef = useRef(trackWasDurations);
+  const originalDurationsRef = useRef(originalDurations);
+  const eventTimezoneRef = useRef(eventTimezone);
+  const flushSaveToAPIRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     rowLocksRef.current = rowLocks;
   }, [rowLocks]);
+
+  useEffect(() => {
+    isUserEditingRef.current = isUserEditing;
+  }, [isUserEditing]);
+
+  useEffect(() => { scheduleRef.current = schedule; }, [schedule]);
+  useEffect(() => { customColumnsRef.current = customColumns; }, [customColumns]);
+  useEffect(() => { eventNameRef.current = eventName; }, [eventName]);
+  useEffect(() => { masterStartTimeRef.current = masterStartTime; }, [masterStartTime]);
+  useEffect(() => { dayStartTimesRef.current = dayStartTimes; }, [dayStartTimes]);
+  useEffect(() => { indentedCuesRef.current = indentedCues; }, [indentedCues]);
+  useEffect(() => { trackWasDurationsRef.current = trackWasDurations; }, [trackWasDurations]);
+  useEffect(() => { originalDurationsRef.current = originalDurations; }, [originalDurations]);
+  useEffect(() => { eventTimezoneRef.current = eventTimezone; }, [eventTimezone]);
+
+  const rememberSyncedSchedule = useCallback((data: any) => {
+    if (!data) return;
+    let items = data.schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = null;
+      }
+    }
+    if (Array.isArray(items)) {
+      lastSyncedScheduleRef.current = items;
+    }
+    if (data.version != null && !Number.isNaN(Number(data.version))) {
+      scheduleVersionRef.current = Number(data.version);
+    }
+  }, []);
+
+  /** Keep locally-edited / self-locked rows when applying a remote schedule snapshot. */
+  const mergeSchedulePreservingLocalEdits = useCallback((remoteItems: any[], localItems: any[]) => {
+    const protectIds = new Set<number>();
+    if (localEditingRowIdRef.current != null) {
+      protectIds.add(Number(localEditingRowIdRef.current));
+    }
+    const myId = user?.id ? String(user.id) : '';
+    if (myId) {
+      for (const [rowId, lock] of Object.entries(rowLocksRef.current || {})) {
+        if (lock?.userId === myId) protectIds.add(Number(rowId));
+      }
+    }
+    if (protectIds.size === 0) return remoteItems;
+    const localById = new Map((localItems || []).map((item: any) => [Number(item.id), item]));
+    console.log('🔒 Sync merge: preserving local rows', Array.from(protectIds));
+    return remoteItems.map((remote: any) => {
+      const id = Number(remote.id);
+      if (protectIds.has(id) && localById.has(id)) {
+        return localById.get(id);
+      }
+      return remote;
+    });
+  }, [user?.id]);
   
   // Countdown timer for sync check
   const [countdown, setCountdown] = useState(20);
@@ -5386,84 +5456,134 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [showParticipantsModal, editingParticipantsItem, schedule, modalForm.speakers]);
 
+  // Immediate save (also used to flush before tab hide). Debounced wrapper below.
+  const performSaveToAPI = React.useCallback(async () => {
+    if (!event?.id) return;
+
+    try {
+      const scheduleNow = scheduleRef.current;
+      const indentedNow = indentedCuesRef.current;
+      let scheduleWithDurationSeconds = scheduleNow.map(item => ({
+        ...item,
+        duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+        isIndented: indentedNow[item.id] ? true : false
+      }));
+
+      // Skip overwriting rows currently locked by someone else — keep last synced copy
+      const myId = user?.id ? String(user.id) : '';
+      const locks = rowLocksRef.current;
+      let preservedLockCount = 0;
+      if (myId && locks && Object.keys(locks).length > 0) {
+        const syncedById = new Map(
+          (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+        );
+        scheduleWithDurationSeconds = scheduleWithDurationSeconds.map((item) => {
+          const lock = locks[item.id] || locks[Number(item.id)];
+          if (lock && lock.userId && lock.userId !== myId) {
+            const synced = syncedById.get(Number(item.id));
+            if (synced) {
+              preservedLockCount += 1;
+              return {
+                ...synced,
+                duration_seconds:
+                  (synced.durationHours || 0) * 3600 +
+                  (synced.durationMinutes || 0) * 60 +
+                  (synced.durationSeconds || 0),
+                isIndented: indentedNow[synced.id]
+                  ? true
+                  : Boolean(synced.isIndented),
+              };
+            }
+          }
+          return item;
+        });
+      }
+      if (preservedLockCount > 0) {
+        console.log(`🔒 Save: preserved ${preservedLockCount} row(s) locked by others`);
+      }
+
+      const originals = originalDurationsRef.current || {};
+      const dataToSave = {
+        event_id: event.id,
+        event_name: event.name,
+        event_date: event.date,
+        schedule_items: scheduleWithDurationSeconds,
+        custom_columns: customColumnsRef.current,
+        settings: {
+          eventName: eventNameRef.current,
+          masterStartTime: masterStartTimeRef.current,
+          dayStartTimes: dayStartTimesRef.current,
+          numberOfDays: event?.numberOfDays,
+          timezone: eventTimezoneRef.current,
+          lastSaved: new Date().toISOString(),
+          show_mode: showModeRef.current,
+          track_was_durations: trackWasDurationsRef.current,
+          ...(Object.keys(originals).length > 0 && { original_durations: originals })
+        },
+        version: scheduleVersionRef.current,
+      };
+
+      console.log('🔄 Saving schedule', {
+        eventId: event.id,
+        items: scheduleWithDurationSeconds.length,
+        version: scheduleVersionRef.current,
+        preservedLockCount,
+      });
+
+      const result = await DatabaseService.saveRunOfShowData(dataToSave, {
+        userId: user?.id || 'unknown',
+        userName: user?.full_name || user?.email || 'Unknown User',
+        userRole: currentUserRole || 'VIEWER'
+      });
+
+      if (result) {
+        rememberSyncedSchedule(result);
+        console.log('✅ Schedule saved', result?.version != null ? `(version ${result.version})` : '');
+      }
+    } catch (error: any) {
+      if (error?.status === 409 && error?.data?.current) {
+        const current = error.data.current;
+        console.warn('⚠️ Save rejected (stale version) — merging server state', {
+          clientVersion: scheduleVersionRef.current,
+          serverVersion: current.version,
+        });
+        let items = current.schedule_items;
+        if (typeof items === 'string') {
+          try {
+            items = JSON.parse(items);
+          } catch {
+            items = null;
+          }
+        }
+        if (Array.isArray(items)) {
+          lastSyncedScheduleRef.current = items;
+          // Adopt server version so the next save can succeed, but keep rows we're editing
+          if (current.version != null) {
+            scheduleVersionRef.current = Number(current.version);
+          }
+          const merged = mergeSchedulePreservingLocalEdits(items, scheduleRef.current);
+          setSchedule(merged);
+          if (Array.isArray(current.custom_columns) && !isUserEditingRef.current) {
+            setCustomColumns(current.custom_columns);
+          }
+          if (current.updated_at) setLastChangeAt(current.updated_at);
+        } else if (!isUserEditingRef.current) {
+          rememberSyncedSchedule(current);
+        }
+        return;
+      }
+      console.error('❌ Error auto-saving to API:', error);
+    }
+  }, [event?.id, event?.name, event?.date, event?.numberOfDays, user, currentUserRole, rememberSyncedSchedule, mergeSchedulePreservingLocalEdits]);
+
+  flushSaveToAPIRef.current = performSaveToAPI;
+
   // API functions with debouncing
   const saveToAPI = React.useCallback(
-    debounce(async () => {
-      if (!event?.id) return;
-      
-      try {
-        // Convert duration fields to duration_seconds for database storage
-        // Also set isIndented property based on indentedCues state
-        const scheduleWithDurationSeconds = schedule.map(item => ({
-          ...item,
-          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
-          isIndented: indentedCues[item.id] ? true : false
-        }));
-
-        // Debug logging for duration conversion
-        if (schedule.length > 0) {
-          console.log('🔄 RunOfShow: Converting duration fields to duration_seconds:', {
-            firstItem: {
-              durationHours: schedule[0].durationHours,
-              durationMinutes: schedule[0].durationMinutes,
-              durationSeconds: schedule[0].durationSeconds,
-              calculatedDurationSeconds: scheduleWithDurationSeconds[0].duration_seconds
-            }
-          });
-        }
-
-        const dataToSave = {
-          event_id: event.id,
-          event_name: event.name,
-          event_date: event.date,
-          schedule_items: scheduleWithDurationSeconds,
-          custom_columns: customColumns,
-          settings: {
-            eventName,
-            masterStartTime,
-            dayStartTimes,
-            numberOfDays: event?.numberOfDays,
-            timezone: eventTimezone,
-            lastSaved: new Date().toISOString(),
-            show_mode: showMode,
-            track_was_durations: trackWasDurations,
-            ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
-          }
-        };
-        
-        
-        // Reduce logging frequency
-        if (Math.random() < 0.05) { // Only log 5% of the time
-          console.log('🔄 Auto-saving to API:', {
-            eventId: event.id,
-            scheduleItemsCount: schedule.length,
-            customColumnsCount: customColumns.length,
-            eventName,
-            masterStartTime,
-            sampleScheduleItem: schedule[0] ? {
-              id: schedule[0].id,
-              segmentName: schedule[0].segmentName,
-              speakersText: schedule[0].speakersText ? 'Has speakers data' : 'No speakers data',
-              speakers: schedule[0].speakers ? 'Has speakers data' : 'No speakers data'
-            } : 'No schedule items'
-          });
-        }
-        
-        const result = await DatabaseService.saveRunOfShowData(dataToSave, {
-          userId: user?.id || 'unknown',
-          userName: user?.full_name || user?.email || 'Unknown User',
-          userRole: currentUserRole || 'VIEWER'
-        });
-        
-        // Auto-save logging reduced - only log occasionally
-        if (Math.random() < 0.1) { // Only log 10% of the time
-          console.log('✅ Auto-saved to API successfully');
-        }
-      } catch (error) {
-        console.error('❌ Error auto-saving to API:', error);
-      }
-    }, 2000), // Debounce for 2 seconds
-    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, indentedCues, showMode, trackWasDurations, originalDurations]
+    debounce(() => {
+      void performSaveToAPI();
+    }, 2000),
+    [performSaveToAPI]
   );
 
   // Debounce utility function
@@ -5512,6 +5632,7 @@ const RunOfShowPage: React.FC = () => {
         const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
+        rememberSyncedSchedule(data);
         
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
@@ -5657,7 +5778,7 @@ const RunOfShowPage: React.FC = () => {
         console.log('❌ No schedule found in localStorage after error for event:', event.id);
       }
     }
-  }, [event?.id]);
+  }, [event?.id, rememberSyncedSchedule]);
 
   // Dynamic loading function that preserves timers and state
   const loadChangesDynamically = useCallback(async () => {
@@ -5679,6 +5800,7 @@ const RunOfShowPage: React.FC = () => {
         const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
+        rememberSyncedSchedule(data);
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
@@ -5693,7 +5815,7 @@ const RunOfShowPage: React.FC = () => {
     } catch (error) {
       console.error('❌ Error loading changes dynamically:', error);
     }
-  }, [event?.id]);
+  }, [event?.id, rememberSyncedSchedule]);
 
   // Load data from API when component mounts
   useEffect(() => {
@@ -5726,13 +5848,9 @@ const RunOfShowPage: React.FC = () => {
         
         // Skip if this update was made by the current user (prevent save loops)
         if (data && data.last_modified_by === user?.id) {
-          console.log('⏭️ Skipping WebSocket update - change made by current user');
-          return;
-        }
-        
-        // Skip if user is actively editing (prevent conflicts)
-        if (isUserEditing) {
-          console.log('⏭️ Skipping WebSocket update - user is actively editing');
+          console.log('⏭️ Skipping WebSocket schedule apply - change made by current user');
+          // Still adopt version so we don't drift
+          rememberSyncedSchedule(data);
           return;
         }
         
@@ -5750,13 +5868,10 @@ const RunOfShowPage: React.FC = () => {
             }
           }
           if (scheduleItems && Array.isArray(scheduleItems)) {
-            console.log('🔍 Raw schedule data from API:', scheduleItems.map((item: any) => ({
-              id: item.id,
-              cue: item.customFields?.cue,
-              isIndented: item.isIndented
-            })));
-            setSchedule(scheduleItems);
-            console.log('✅ Real-time: Schedule items updated');
+            const merged = mergeSchedulePreservingLocalEdits(scheduleItems, scheduleRef.current);
+            setSchedule(merged);
+            rememberSyncedSchedule(data);
+            console.log('✅ Real-time: Schedule items updated (merge-safe)');
           }
         
           // Update custom columns
@@ -6281,12 +6396,16 @@ const RunOfShowPage: React.FC = () => {
     // sseClient.connect(event.id, callbacks); // DISABLED: SSE causes excessive API calls
     socketClient.connect(event.id, callbacks);
 
-    // Handle tab visibility changes - resync when user returns to tab
+    // Handle tab visibility changes - flush save before disconnect so edits aren't lost
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Tab hidden - disconnect WebSocket to allow server to sleep
-        console.log('👁️ Tab hidden - disconnecting WebSocket to save costs');
-        socketClient.disconnect(event.id);
+        console.log('👁️ Tab hidden - flushing save, then disconnecting WebSocket');
+        const flush = flushSaveToAPIRef.current;
+        Promise.resolve(flush ? flush() : undefined)
+          .catch((err) => console.warn('Flush save on tab hide failed:', err))
+          .finally(() => {
+            socketClient.disconnect(event.id);
+          });
       } else if (!socketClient.isConnected()) {
         // Tab visible - reconnect and resync
         console.log('👁️ Tab visible - reconnecting WebSocket');

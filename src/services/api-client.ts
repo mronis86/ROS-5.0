@@ -119,7 +119,18 @@ class ApiClient {
       const response = await fetch(url, defaultOptions);
       
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let body: any = null;
+        try {
+          body = await response.json();
+        } catch {
+          /* ignore */
+        }
+        const err: any = new Error(
+          body?.message || body?.error || `HTTP error! status: ${response.status}`
+        );
+        err.status = response.status;
+        err.data = body;
+        throw err;
       }
       
       const data = await response.json();
@@ -212,6 +223,8 @@ class ApiClient {
     last_modified_by?: string;
     last_modified_by_name?: string;
     last_modified_by_role?: string;
+    /** Document version last seen by the client (optimistic concurrency). */
+    version?: number | null;
   }) {
     const result = await this.request('/api/run-of-show-data', {
       method: 'POST',
