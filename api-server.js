@@ -4508,11 +4508,88 @@ const presenceByEvent = new Map(); // eventId -> Map(socketId -> { userId, userN
 const contentReviewLastSelection = new Map(); // eventId -> { itemId, fromUserId, fromUserName }
 const socketToEvent = new Map();   // socketId -> eventId (for cleanup on disconnect)
 
+/** Per-row edit locks: eventId -> Map(rowId -> { userId, userName, socketId, timestamp }) */
+const locksByEvent = new Map();
+const ROW_LOCK_TTL_MS = 30000;
+
 function broadcastPresence(eventId) {
   const m = presenceByEvent.get(eventId);
   const list = m ? Array.from(m.values()).map((v) => ({ userId: v.userId, userName: v.userName, userEmail: v.userEmail || '', userRole: v.userRole })) : [];
   io.to(`event:${eventId}`).emit('update', { type: 'presenceUpdated', data: list });
 }
+
+function getEventLocks(eventId) {
+  const key = String(eventId);
+  if (!locksByEvent.has(key)) locksByEvent.set(key, new Map());
+  return locksByEvent.get(key);
+}
+
+function locksSnapshot(eventId) {
+  const locks = locksByEvent.get(String(eventId));
+  if (!locks || locks.size === 0) return [];
+  return Array.from(locks.entries()).map(([rowId, lock]) => ({
+    rowId: Number(rowId),
+    userId: lock.userId,
+    userName: lock.userName || '',
+  }));
+}
+
+function broadcastRowLocked(eventId, rowId, lock) {
+  io.to(`event:${eventId}`).emit('update', {
+    type: 'rowLocked',
+    data: { eventId: String(eventId), rowId: Number(rowId), userId: lock.userId, userName: lock.userName || '' },
+  });
+}
+
+function broadcastRowUnlocked(eventId, rowId) {
+  io.to(`event:${eventId}`).emit('update', {
+    type: 'rowUnlocked',
+    data: { eventId: String(eventId), rowId: Number(rowId) },
+  });
+}
+
+function releaseRowLock(eventId, rowId) {
+  const locks = locksByEvent.get(String(eventId));
+  if (!locks) return false;
+  const key = String(rowId);
+  if (!locks.has(key)) return false;
+  locks.delete(key);
+  if (locks.size === 0) locksByEvent.delete(String(eventId));
+  broadcastRowUnlocked(eventId, rowId);
+  return true;
+}
+
+function releaseSocketRowLocks(socketId) {
+  for (const [eventId, locks] of locksByEvent.entries()) {
+    const toRelease = [];
+    for (const [rowId, lock] of locks.entries()) {
+      if (lock.socketId === socketId) toRelease.push(rowId);
+    }
+    for (const rowId of toRelease) {
+      locks.delete(rowId);
+      broadcastRowUnlocked(eventId, rowId);
+      console.log(`🔒 Row lock released (disconnect): event=${eventId} row=${rowId}`);
+    }
+    if (locks.size === 0) locksByEvent.delete(eventId);
+  }
+}
+
+// Expire idle row locks so they never stick after a crash / lost connection
+setInterval(() => {
+  const now = Date.now();
+  for (const [eventId, locks] of locksByEvent.entries()) {
+    const expired = [];
+    for (const [rowId, lock] of locks.entries()) {
+      if (now - (lock.timestamp || 0) > ROW_LOCK_TTL_MS) expired.push(rowId);
+    }
+    for (const rowId of expired) {
+      locks.delete(rowId);
+      broadcastRowUnlocked(eventId, rowId);
+      console.log(`🔒 Row lock expired (idle): event=${eventId} row=${rowId}`);
+    }
+    if (locks.size === 0) locksByEvent.delete(eventId);
+  }
+}, 5000);
 
 io.on('connection', (socket) => {
   console.log(`🔌 Socket.IO client connected: ${socket.id}`);
@@ -4526,6 +4603,11 @@ io.on('connection', (socket) => {
     console.log(`🔌 Socket.IO client ${socket.id} joined event:${eventId}`);
     // Send server time again when joining event
     socket.emit('serverTime', { serverTime: new Date().toISOString() });
+    // Catch up late joiners / reconnects with current row locks
+    const snapshot = locksSnapshot(eventId);
+    if (snapshot.length > 0) {
+      socket.emit('update', { type: 'rowLocksSnapshot', data: { eventId: String(eventId), locks: snapshot } });
+    }
   });
   
   // Leave event room
@@ -4543,6 +4625,65 @@ io.on('connection', (socket) => {
     socketToEvent.set(socket.id, eventId);
     console.log(`👁️ Presence: ${userName || userId} joined event:${eventId}`);
     broadcastPresence(eventId);
+  });
+
+  // Per-row edit lock: claim (or refresh) a schedule row while editing
+  socket.on('rowEditStart', (data) => {
+    const { eventId, rowId, userId, userName } = data || {};
+    if (!eventId || rowId == null || Number.isNaN(Number(rowId)) || !userId) return;
+    const nid = Number(rowId);
+    const locks = getEventLocks(eventId);
+    const key = String(nid);
+    const existing = locks.get(key);
+    if (existing && existing.userId !== String(userId)) {
+      // Already locked by someone else — re-send current lock so requester stays in sync
+      socket.emit('update', {
+        type: 'rowLocked',
+        data: { eventId: String(eventId), rowId: nid, userId: existing.userId, userName: existing.userName || '' },
+      });
+      return;
+    }
+    // Same owner refreshing (heartbeat / re-focus): bump TTL only, don't re-broadcast
+    if (existing && existing.userId === String(userId)) {
+      existing.timestamp = Date.now();
+      existing.socketId = socket.id;
+      if (userName) existing.userName = String(userName);
+      locks.set(key, existing);
+      return;
+    }
+    const lock = {
+      userId: String(userId),
+      userName: userName ? String(userName) : '',
+      socketId: socket.id,
+      timestamp: Date.now(),
+    };
+    locks.set(key, lock);
+    socketToEvent.set(socket.id, String(eventId));
+    broadcastRowLocked(eventId, nid, lock);
+    console.log(`🔒 Row lock start: event=${eventId} row=${nid} by ${lock.userName || lock.userId}`);
+  });
+
+  socket.on('rowEditEnd', (data) => {
+    const { eventId, rowId, userId } = data || {};
+    if (!eventId || rowId == null || Number.isNaN(Number(rowId))) return;
+    const nid = Number(rowId);
+    const locks = locksByEvent.get(String(eventId));
+    if (!locks) return;
+    const existing = locks.get(String(nid));
+    if (!existing) return;
+    // Only the lock owner (or same socket) can release
+    if (userId && existing.userId !== String(userId) && existing.socketId !== socket.id) return;
+    releaseRowLock(eventId, nid);
+    console.log(`🔒 Row lock end: event=${eventId} row=${nid}`);
+  });
+
+  socket.on('rowLocksRequest', (data) => {
+    const { eventId } = data || {};
+    if (!eventId) return;
+    socket.emit('update', {
+      type: 'rowLocksSnapshot',
+      data: { eventId: String(eventId), locks: locksSnapshot(eventId) },
+    });
   });
   
   // Handle reset all states event
@@ -4732,6 +4873,7 @@ io.on('connection', (socket) => {
 
   // Handle disconnection
   socket.on('disconnect', () => {
+    releaseSocketRowLocks(socket.id);
     const eventId = socketToEvent.get(socket.id);
     if (eventId) {
       const m = presenceByEvent.get(eventId);

@@ -1290,6 +1290,21 @@ const RunOfShowPage: React.FC = () => {
   // Track if user is actively editing
   const [isUserEditing, setIsUserEditing] = useState(false);
   const [editingTimeout, setEditingTimeout] = useState<NodeJS.Timeout | null>(null);
+
+  /** Per-row edit locks from other (and self) editors: rowId → { userId, userName } */
+  const [rowLocks, setRowLocks] = useState<Record<number, { userId: string; userName: string }>>({});
+  const rowLocksRef = useRef(rowLocks);
+  const localEditingRowIdRef = useRef<number | null>(null);
+  const rowLockHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const modalLockRowIdRef = useRef<number | null>(null);
+  const releaseRowEditLockRef = useRef<(rowId: number) => void>(() => {});
+  const finishEditingSessionRef = useRef<() => void>(() => {});
+  const startCountdownTimerRef = useRef<() => void>(() => {});
+  const blurFocusedScheduleCellRef = useRef<(rowId?: number | null) => void>(() => {});
+
+  useEffect(() => {
+    rowLocksRef.current = rowLocks;
+  }, [rowLocks]);
   
   // Countdown timer for sync check
   const [countdown, setCountdown] = useState(20);
@@ -1318,14 +1333,170 @@ const RunOfShowPage: React.FC = () => {
     
     // Set new timeout to resume syncing after 5 seconds of inactivity
     const timeout = setTimeout(() => {
-      console.log('⏸️ User stopped editing - resuming sync');
-      setIsUserEditing(false);
-      // Restart countdown when user stops editing
-      startCountdownTimer();
+      console.log('⏸️ User stopped editing - unlocking row, blurring, then resuming sync countdown');
+      finishEditingSessionRef.current();
     }, 5000);
     
     setEditingTimeout(timeout);
   };
+
+  const stopRowLockHeartbeat = useCallback(() => {
+    if (rowLockHeartbeatRef.current) {
+      clearInterval(rowLockHeartbeatRef.current);
+      rowLockHeartbeatRef.current = null;
+    }
+  }, []);
+
+  const startRowLockHeartbeat = useCallback((rowId: number) => {
+    stopRowLockHeartbeat();
+    rowLockHeartbeatRef.current = setInterval(() => {
+      if (!user?.id || localEditingRowIdRef.current !== rowId) return;
+      const { userName } = getPresenceUserFields(user);
+      socketClient.emitRowEditStart(rowId, user.id, userName);
+    }, 10000);
+  }, [stopRowLockHeartbeat, user]);
+
+  const claimRowEditLock = useCallback((rowId: number) => {
+    if (!user?.id || !event?.id) return;
+    if (currentUserRoleRef.current === 'VIEWER') return;
+    const existing = rowLocksRef.current[rowId];
+    if (existing && existing.userId !== user.id) return;
+
+    const previous = localEditingRowIdRef.current;
+    if (previous != null && previous !== rowId) {
+      socketClient.emitRowEditEnd(previous, user.id);
+      setRowLocks((prev) => {
+        if (!prev[previous] || prev[previous].userId !== user.id) return prev;
+        const next = { ...prev };
+        delete next[previous];
+        return next;
+      });
+    }
+
+    localEditingRowIdRef.current = rowId;
+    const { userName } = getPresenceUserFields(user);
+    socketClient.emitRowEditStart(rowId, user.id, userName);
+    setRowLocks((prev) => ({
+      ...prev,
+      [rowId]: { userId: user.id, userName },
+    }));
+    startRowLockHeartbeat(rowId);
+  }, [user, event?.id, startRowLockHeartbeat]);
+
+  const releaseRowEditLock = useCallback((rowId: number) => {
+    if (!user?.id) return;
+    if (modalLockRowIdRef.current === rowId) return; // modal still holding this row
+    if (localEditingRowIdRef.current === rowId) {
+      localEditingRowIdRef.current = null;
+      stopRowLockHeartbeat();
+    }
+    socketClient.emitRowEditEnd(rowId, user.id);
+    setRowLocks((prev) => {
+      if (!prev[rowId] || prev[rowId].userId !== user.id) return prev;
+      const next = { ...prev };
+      delete next[rowId];
+      return next;
+    });
+  }, [user?.id, stopRowLockHeartbeat]);
+
+  releaseRowEditLockRef.current = releaseRowEditLock;
+
+  /** Blur whatever schedule cell currently has focus (so sync can apply cleanly). */
+  const blurFocusedScheduleCell = useCallback((rowId?: number | null) => {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || typeof active.blur !== 'function') return;
+    if (rowId != null) {
+      const rowEl = document.querySelector(`[data-item-id="${rowId}"]`);
+      if (rowEl?.contains(active)) active.blur();
+      return;
+    }
+    if (active.closest?.('[data-item-id]')) active.blur();
+  }, []);
+
+  blurFocusedScheduleCellRef.current = blurFocusedScheduleCell;
+
+  /**
+   * End of an edit session (idle timeout / modal settle):
+   * 1) unlock so other browsers clear the badge
+   * 2) blur so focus does not block the upcoming sync
+   * 3) resume the normal sync countdown
+   */
+  const finishEditingSession = useCallback(() => {
+    const rowId = localEditingRowIdRef.current;
+    if (rowId != null && modalLockRowIdRef.current !== rowId) {
+      releaseRowEditLock(rowId);
+      blurFocusedScheduleCell(rowId);
+    } else {
+      blurFocusedScheduleCell(rowId ?? null);
+    }
+    setIsUserEditing(false);
+    startCountdownTimerRef.current();
+  }, [releaseRowEditLock, blurFocusedScheduleCell]);
+
+  finishEditingSessionRef.current = finishEditingSession;
+
+  const handleRowFocus = useCallback((rowId: number) => {
+    claimRowEditLock(rowId);
+  }, [claimRowEditLock]);
+
+  const handleRowBlur = useCallback((rowId: number) => {
+    // Delay so focus can move between cells in the same row without unlocking
+    setTimeout(() => {
+      if (modalLockRowIdRef.current === rowId) return;
+      if (localEditingRowIdRef.current !== rowId) return;
+      const active = document.activeElement as HTMLElement | null;
+      const rowEl = document.querySelector(`[data-item-id="${rowId}"]`);
+      if (rowEl && active && rowEl.contains(active)) return;
+      releaseRowEditLock(rowId);
+    }, 150);
+  }, [releaseRowEditLock]);
+
+  // Keep row lock while notes/assets/speakers/participants modals are open for that row
+  useEffect(() => {
+    let activeModalRow: number | null = null;
+    if (showNotesModal && editingNotesItem != null && editingNotesItem > 0) {
+      activeModalRow = editingNotesItem;
+    } else if (showAssetsModal && editingAssetsItem != null && editingAssetsItem > 0) {
+      activeModalRow = editingAssetsItem;
+    } else if (showSpeakersModal && editingSpeakersItem != null && editingSpeakersItem > 0) {
+      activeModalRow = editingSpeakersItem;
+    } else if (showParticipantsModal && editingParticipantsItem != null && editingParticipantsItem > 0) {
+      activeModalRow = editingParticipantsItem;
+    }
+
+    if (activeModalRow != null) {
+      modalLockRowIdRef.current = activeModalRow;
+      claimRowEditLock(activeModalRow);
+      return;
+    }
+
+    if (modalLockRowIdRef.current != null) {
+      const rowId = modalLockRowIdRef.current;
+      modalLockRowIdRef.current = null;
+      releaseRowEditLock(rowId);
+    }
+  }, [
+    showNotesModal,
+    editingNotesItem,
+    showAssetsModal,
+    editingAssetsItem,
+    showSpeakersModal,
+    editingSpeakersItem,
+    showParticipantsModal,
+    editingParticipantsItem,
+    claimRowEditLock,
+    releaseRowEditLock,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      stopRowLockHeartbeat();
+      const rowId = localEditingRowIdRef.current;
+      if (rowId != null && user?.id) {
+        socketClient.emitRowEditEnd(rowId, user.id);
+      }
+    };
+  }, [stopRowLockHeartbeat, user?.id]);
 
   // Function to handle modal editing state (stays paused until modal closes)
   const handleModalEditing = useCallback(() => {
@@ -1348,32 +1519,47 @@ const RunOfShowPage: React.FC = () => {
     
     setCountdown(20);
     setIsSyncing(false);
+
+    // Use a local counter so sync/unlock/blur side effects are NOT inside setState
+    // (React may skip or double-invoke state updaters).
+    let remaining = 20;
     
     const interval = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          // Trigger WebSocket sync when countdown reaches zero
-          console.log('🔄 Countdown sync: Triggering WebSocket sync request');
-          setIsSyncing(true);
-          
-          // Request fresh data via WebSocket
-          if (socketClient && event?.id) {
-            socketClient.emitSyncRequest();
-            console.log('📡 Countdown sync: Emitted sync request via WebSocket');
-          }
-          
-          setTimeout(() => {
-            setIsSyncing(false);
-            setCountdown(20); // Restart countdown
-          }, 3000);
-          return 0;
-        }
-        return prev - 1;
-      });
+      remaining -= 1;
+      if (remaining > 0) {
+        setCountdown(remaining);
+        return;
+      }
+
+      clearInterval(interval);
+      countdownIntervalRef.current = null;
+      setCountdown(0);
+      setIsSyncing(true);
+
+      console.log('🔄 Countdown sync: unlocking/blurring if needed, then sync request');
+
+      // Safety net: clear leftover focus/lock before applying remote sync
+      const rowId = localEditingRowIdRef.current;
+      if (rowId != null && modalLockRowIdRef.current !== rowId) {
+        releaseRowEditLockRef.current(rowId);
+      }
+      blurFocusedScheduleCellRef.current(rowId ?? null);
+
+      if (socketClient && event?.id) {
+        socketClient.emitSyncRequest();
+        console.log('📡 Countdown sync: Emitted sync request via WebSocket');
+      }
+
+      setTimeout(() => {
+        setIsSyncing(false);
+        startCountdownTimerRef.current(); // Restart countdown at 20s
+      }, 3000);
     }, 1000);
     
     countdownIntervalRef.current = interval;
   }, [socketClient, event?.id]);
+
+  startCountdownTimerRef.current = startCountdownTimer;
 
   const stopCountdownTimer = useCallback(() => {
     if (countdownIntervalRef.current) {
@@ -1386,18 +1572,16 @@ const RunOfShowPage: React.FC = () => {
 
   // Function to resume editing when modal closes
   const handleModalClosed = useCallback(() => {
-    console.log('✏️ Modal closed - resuming sync in 5 seconds');
+    console.log('✏️ Modal closed - unlocking/blurring and resuming sync in 5 seconds');
     
     // Set timeout to resume syncing after 5 seconds
     const timeout = setTimeout(() => {
-      console.log('⏸️ User stopped editing - resuming sync');
-      setIsUserEditing(false);
-      // Restart countdown when user stops editing (resets to 20s)
-      startCountdownTimer();
+      console.log('⏸️ User stopped editing - unlocking row, blurring, then resuming sync countdown');
+      finishEditingSessionRef.current();
     }, 5000);
     
     setEditingTimeout(timeout);
-  }, [startCountdownTimer]);
+  }, []);
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
@@ -5901,11 +6085,19 @@ const RunOfShowPage: React.FC = () => {
               userEmail,
               userRole: role,
             });
+            socketClient.emitRowLocksRequest();
+            // Re-claim local editing row after reconnect
+            if (localEditingRowIdRef.current != null && role !== 'VIEWER') {
+              socketClient.emitRowEditStart(localEditingRowIdRef.current, user.id, userName);
+              startRowLockHeartbeat(localEditingRowIdRef.current);
+            }
           } else {
             console.log(`👁️ Presence: skipped (no user or event: user=${!!user}, eventId=${event?.id})`);
           }
         } else {
           setViewers([]);
+          setRowLocks({});
+          stopRowLockHeartbeat();
         }
       },
       onPresenceUpdated: (list) => {
@@ -5917,6 +6109,44 @@ const RunOfShowPage: React.FC = () => {
         }));
         console.log(`👁️ Presence: received presenceUpdated, viewers=${normalized.length}`, normalized);
         setViewers(normalized);
+      },
+      onRowLocked: (data) => {
+        if (!data || String(data.eventId) !== String(event.id)) return;
+        const rowId = Number(data.rowId);
+        if (Number.isNaN(rowId)) return;
+        setRowLocks((prev) => ({
+          ...prev,
+          [rowId]: { userId: String(data.userId), userName: String(data.userName || 'Someone') },
+        }));
+      },
+      onRowUnlocked: (data) => {
+        if (!data || String(data.eventId) !== String(event.id)) return;
+        const rowId = Number(data.rowId);
+        if (Number.isNaN(rowId)) return;
+        setRowLocks((prev) => {
+          if (!prev[rowId]) return prev;
+          const next = { ...prev };
+          delete next[rowId];
+          return next;
+        });
+      },
+      onRowLocksSnapshot: (data) => {
+        if (!data || String(data.eventId) !== String(event.id)) return;
+        const next: Record<number, { userId: string; userName: string }> = {};
+        for (const lock of data.locks || []) {
+          const rowId = Number(lock.rowId);
+          if (Number.isNaN(rowId)) continue;
+          next[rowId] = { userId: String(lock.userId), userName: String(lock.userName || 'Someone') };
+        }
+        // Preserve our optimistic local lock if we still hold it
+        if (localEditingRowIdRef.current != null && user?.id) {
+          const mine = localEditingRowIdRef.current;
+          if (!next[mine] || next[mine].userId === user.id) {
+            const { userName } = getPresenceUserFields(user);
+            next[mine] = { userId: user.id, userName };
+          }
+        }
+        setRowLocks(next);
       },
       onForceDisconnect: () => {
         setShowDisconnectedByAdminModal(true);
@@ -11720,18 +11950,24 @@ const RunOfShowPage: React.FC = () => {
                      <div 
                        key={item.id}
                        data-item-id={item.id}
-                       className={`border-b-2 border-slate-600 flex ${getRowContainerClass(item.id, index)}`}
+                       className={`border-b-2 border-slate-600 flex relative ${getRowContainerClass(item.id, index)} ${rowLocks[item.id] && user?.id && rowLocks[item.id].userId !== user.id ? 'bg-amber-950/40 ring-2 ring-inset ring-amber-400' : ''}`}
                        style={getRowContainerStyle(item, {
                          textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
                          textDecorationThickness: item.programType === 'KILLED' ? '4px' : 'auto',
                          textDecorationColor: item.programType === 'KILLED' ? '#DC2626' : 'auto',
                          color: item.programType === 'KILLED' ? '#9CA3AF' : 'inherit',
                        })}
+                       onFocusCapture={() => handleRowFocus(item.id)}
+                       onBlurCapture={() => handleRowBlur(item.id)}
                      >
                       <ScheduleRow
                         asFragment
                         className=""
                         isRowDimmed={isItemDimmed(item.id)}
+                        rowLock={rowLocks[item.id] || null}
+                        currentUserId={user?.id}
+                        onRowEditStart={claimRowEditLock}
+                        onRowEditEnd={releaseRowEditLock}
                         item={item}
                         index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}
