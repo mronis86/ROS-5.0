@@ -592,14 +592,69 @@ export function tileDetailLines(
   return lines;
 }
 
-export async function fetchMonitorFeed(mode: HealthMonitorMode): Promise<MonitorFeedSnapshot | null> {
+export async function fetchMonitorFeed(
+  mode: HealthMonitorMode,
+  accessToken?: string | null
+): Promise<MonitorFeedSnapshot> {
   const base = mode === 'offline' ? '' : getApiBaseUrl();
   const url = `${base}/api/monitor/snapshot`;
-  try {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) return null;
-    return (await res.json()) as MonitorFeedSnapshot;
-  } catch {
-    return null;
+  const headers: Record<string, string> = {};
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
   }
+  try {
+    const res = await fetch(url, { cache: 'no-store', headers });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      const detail = body.message || body.error || res.statusText || `HTTP ${res.status}`;
+      throw new Error(`Ops feed ${res.status}: ${detail}`);
+    }
+    return (await res.json()) as MonitorFeedSnapshot;
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    throw new Error('Ops feed request failed');
+  }
+}
+
+/** Ultritouch Log-tab ops login — issues ros_nsess without touching main-app auth storage. */
+export async function loginForMonitorOps(
+  email: string,
+  password: string
+): Promise<{ token: string; email: string; fullName: string }> {
+  const base = getApiBaseUrl();
+  const trimmedEmail = email.trim().toLowerCase();
+  const res = await fetch(`${base}/api/auth/neon-login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: trimmedEmail,
+      password,
+      full_name: trimmedEmail.split('@')[0] || 'User',
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    token?: string;
+    status?: string;
+    email?: string;
+    full_name?: string;
+    error?: string;
+    message?: string;
+  };
+  if (!res.ok || !data.token) {
+    throw new Error(data.message || data.error || `Sign in failed (HTTP ${res.status})`);
+  }
+  if (data.status && data.status !== 'approved') {
+    throw new Error(
+      data.status === 'pending'
+        ? 'Account is awaiting approval.'
+        : data.status === 'rejected'
+          ? 'Account access was rejected.'
+          : `Account status: ${data.status}`
+    );
+  }
+  return {
+    token: data.token,
+    email: data.email || trimmedEmail,
+    fullName: data.full_name || trimmedEmail.split('@')[0] || 'User',
+  };
 }

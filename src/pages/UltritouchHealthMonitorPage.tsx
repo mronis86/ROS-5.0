@@ -10,6 +10,7 @@ import {
   filterLogEntries,
   formatUptime,
   healthScorePercent,
+  loginForMonitorOps,
   modeLabel,
   parseHealthMonitorMode,
   parsePollIntervalMs,
@@ -28,6 +29,10 @@ import type {
   OverallHealthState,
 } from '../types/ultritouchHealthMonitor';
 import { ULTRITOUCH_4_PANEL_HEIGHT, ULTRITOUCH_4_PANEL_WIDTH } from '../types/ultritouchHealthMonitor';
+import UltritouchOpsLogin from '../components/UltritouchOpsLogin';
+
+const OPS_TOKEN_KEY = 'ros_ultritouch_ops_token';
+const OPS_EMAIL_KEY = 'ros_ultritouch_ops_email';
 
 const TILE_GLYPHS: Record<string, string> = {
   neon: 'DB',
@@ -163,6 +168,9 @@ const LOG_LEVEL_STYLES: Record<HealthLogEntry['level'], string> = {
   error: 'border-rose-900/50 text-rose-300',
 };
 
+/** Log-tab ops feed live window (independent of health sync). */
+const OPS_BURST_MS = 60_000;
+
 function formatLogTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -198,13 +206,16 @@ function TabButton({
 function ActivityMonitor({
   mode,
   colorClass,
+  paused = false,
 }: {
   mode: 'ok' | 'alert' | 'fail' | 'skip';
   colorClass: string;
+  paused?: boolean;
 }) {
-  const heights = [38, 62, 48, 78, 55, 70, 44];
-  const anim =
-    mode === 'ok'
+  const heights = paused ? [28, 28, 28, 28, 28, 28, 28] : [38, 62, 48, 78, 55, 70, 44];
+  const anim = paused
+    ? ''
+    : mode === 'ok'
       ? 'ut-activity-bar'
       : mode === 'alert'
         ? 'ut-activity-bar-alert'
@@ -217,11 +228,13 @@ function ActivityMonitor({
       {heights.map((h, i) => (
         <div
           key={i}
-          className={`flex-1 rounded-sm ${colorClass} ${anim}`}
+          className={`flex-1 rounded-sm ${paused ? 'bg-slate-600' : colorClass} ${anim}`}
           style={{
             height: `${h}%`,
-            animationDelay: `${i * 0.12}s`,
+            animationDelay: paused ? undefined : `${i * 0.12}s`,
+            animationPlayState: paused ? 'paused' : undefined,
             minWidth: 4,
+            opacity: paused ? 0.45 : undefined,
           }}
         />
       ))}
@@ -235,14 +248,24 @@ function ScorePanel({
   uptime,
   pollProgress,
   pollMs,
+  syncEnabled,
 }: {
   percent: number;
   state: OverallHealthState;
   uptime?: number;
   pollProgress: number;
   pollMs: number;
+  syncEnabled: boolean;
 }) {
-  const meta = OVERALL_META[state];
+  const meta = syncEnabled
+    ? OVERALL_META[state]
+    : {
+        label: 'Paused',
+        pill: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
+        dot: 'bg-slate-400',
+        score: 'text-slate-400',
+        rail: 'bg-slate-500',
+      };
   const secondsLeft = Math.max(0, Math.ceil(((1 - pollProgress) * pollMs) / 1000));
 
   return (
@@ -254,26 +277,41 @@ function ScorePanel({
 
       {/* Next poll — primary live indicator */}
       <div className="px-3 pt-3 pb-2 border-b border-slate-800/80">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Next poll</div>
-        <div className="flex items-end gap-1 mt-1">
-          <span className="text-5xl font-black tabular-nums text-sky-300 leading-none tracking-tighter">
-            {secondsLeft}
-          </span>
-          <span className="text-lg font-bold text-sky-400/80 pb-1">s</span>
+        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">
+          {syncEnabled ? 'Next poll' : 'Sync'}
         </div>
+        {syncEnabled ? (
+          <div className="flex items-end gap-1 mt-1">
+            <span className="text-5xl font-black tabular-nums text-sky-300 leading-none tracking-tighter">
+              {secondsLeft}
+            </span>
+            <span className="text-lg font-bold text-sky-400/80 pb-1">s</span>
+          </div>
+        ) : (
+          <div className="mt-1 text-3xl font-black uppercase tracking-tight text-slate-300 leading-none">
+            Paused
+          </div>
+        )}
         <div className="mt-2.5 h-2.5 rounded-full bg-slate-800 overflow-hidden">
           <div
-            className="h-full rounded-full bg-sky-400 transition-[width] duration-200 ease-linear"
-            style={{ width: `${Math.max(3, pollProgress * 100)}%` }}
+            className={`h-full rounded-full transition-[width] duration-200 ease-linear ${
+              syncEnabled ? 'bg-sky-400' : 'bg-slate-500'
+            }`}
+            style={{ width: syncEnabled ? `${Math.max(3, pollProgress * 100)}%` : '100%' }}
           />
         </div>
+        {!syncEnabled ? (
+          <div className="mt-1.5 text-[10px] text-slate-500">No auto-poll · no egress</div>
+        ) : null}
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center px-3 py-3 gap-1.5">
         <div className={`text-5xl font-black tabular-nums leading-none tracking-tighter ${meta.score}`}>
-          {percent}
+          {syncEnabled ? percent : '—'}
         </div>
-        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-semibold">score</div>
+        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-semibold">
+          {syncEnabled ? 'score' : 'frozen'}
+        </div>
         <div className={`mt-1 inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase ${meta.pill}`}>
           <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
           {meta.label}
@@ -295,16 +333,24 @@ function ServiceCard({
   selected,
   onSelect,
   index,
+  paused = false,
 }: {
   tile: HealthMonitorTile;
   selected: boolean;
   onSelect: () => void;
   index: number;
+  paused?: boolean;
 }) {
   const glyph = TILE_GLYPHS[tile.id] ?? '•';
   const styles = ACCENT_STYLES[tile.accent];
   const level = tile.level ?? (tile.skipped ? 'alert' : tile.ok ? 'ok' : 'fail');
-  const statusLabel = level === 'ok' ? 'OK' : level === 'alert' ? 'ALERT' : 'FAIL';
+  const statusLabel = paused
+    ? 'HOLD'
+    : level === 'ok'
+      ? 'OK'
+      : level === 'alert'
+        ? 'ALERT'
+        : 'FAIL';
   const prevLevelRef = useRef<string | null>(null);
   const [flashClass, setFlashClass] = useState('');
   const activityMode = level === 'ok' ? 'ok' : level === 'alert' ? 'alert' : 'fail';
@@ -312,6 +358,7 @@ function ServiceCard({
     level === 'ok' ? styles.rail : level === 'alert' ? 'bg-amber-400' : 'bg-rose-500';
 
   useEffect(() => {
+    if (paused) return;
     const prev = prevLevelRef.current;
     prevLevelRef.current = level;
     if (prev === null) return;
@@ -321,26 +368,36 @@ function ServiceCard({
     setFlashClass(`${flash} ut-status-hit`);
     const id = window.setTimeout(() => setFlashClass(''), 700);
     return () => window.clearTimeout(id);
-  }, [level]);
+  }, [level, paused]);
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`ut-card-enter relative flex rounded-2xl border overflow-hidden h-full w-full text-left touch-manipulation transition-colors duration-150 active:scale-[0.99] ${flashClass} ${
+      className={`ut-card-enter relative flex rounded-2xl border overflow-hidden h-full w-full text-left touch-manipulation transition-colors duration-150 active:scale-[0.99] ${
+        paused ? '' : flashClass
+      } ${
         selected
           ? 'border-sky-400/70 ring-2 ring-sky-400/25'
-          : level === 'ok'
-            ? 'border-slate-600/55 bg-slate-900/85'
-            : level === 'alert'
-              ? 'border-amber-500/45 bg-amber-950/20'
-              : 'border-rose-500/40 bg-rose-950/25'
+          : paused
+            ? 'border-slate-700/70 bg-slate-950/80 opacity-80'
+            : level === 'ok'
+              ? 'border-slate-600/55 bg-slate-900/85'
+              : level === 'alert'
+                ? 'border-amber-500/45 bg-amber-950/20'
+                : 'border-rose-500/40 bg-rose-950/25'
       }`}
       style={{ animationDelay: `${index * 55}ms` }}
     >
       <div
         className={`w-1.5 shrink-0 self-stretch ${
-          level === 'ok' ? styles.rail : level === 'alert' ? 'bg-amber-400' : 'bg-rose-500'
+          paused
+            ? 'bg-slate-600'
+            : level === 'ok'
+              ? styles.rail
+              : level === 'alert'
+                ? 'bg-amber-400'
+                : 'bg-rose-500'
         }`}
       />
       <div className="flex flex-col flex-1 min-w-0 px-3 py-3 gap-1.5">
@@ -348,7 +405,7 @@ function ServiceCard({
           <div className="min-w-0 flex-1">
             <div
               className={`text-[10px] font-black tracking-[0.14em] uppercase ${
-                level === 'fail' ? 'text-slate-500' : styles.text
+                paused || level === 'fail' ? 'text-slate-500' : styles.text
               }`}
             >
               {glyph}
@@ -362,11 +419,13 @@ function ServiceCard({
           </div>
           <div
             className={`shrink-0 text-lg font-black leading-none tracking-tight pt-0.5 ${
-              level === 'ok'
-                ? 'text-emerald-300'
-                : level === 'alert'
-                  ? 'text-amber-300'
-                  : 'text-rose-300'
+              paused
+                ? 'text-slate-500'
+                : level === 'ok'
+                  ? 'text-emerald-300'
+                  : level === 'alert'
+                    ? 'text-amber-300'
+                    : 'text-rose-300'
             }`}
           >
             {statusLabel}
@@ -375,18 +434,24 @@ function ServiceCard({
 
         <div
           className={`text-[12px] font-mono leading-snug line-clamp-2 ${
-            level === 'ok' ? 'text-slate-100' : level === 'alert' ? 'text-amber-100' : 'text-rose-100'
+            paused
+              ? 'text-slate-500'
+              : level === 'ok'
+                ? 'text-slate-100'
+                : level === 'alert'
+                  ? 'text-amber-100'
+                  : 'text-rose-100'
           }`}
           title={tile.detail}
         >
-          {tile.detail || '—'}
+          {paused ? 'Sync paused — last snapshot' : tile.detail || '—'}
         </div>
 
         <div className="mt-auto pt-1">
           <div className="text-[8px] uppercase tracking-[0.14em] text-slate-500 mb-1 font-semibold">
-            Activity
+            {paused ? 'Idle' : 'Activity'}
           </div>
-          <ActivityMonitor mode={activityMode} colorClass={activityColor} />
+          <ActivityMonitor mode={activityMode} colorClass={activityColor} paused={paused} />
         </div>
       </div>
     </button>
@@ -408,19 +473,35 @@ const UltritouchHealthMonitorPage: React.FC = () => {
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [logFilter, setLogFilter] = useState<HealthLogFilter>('all');
   const [pollProgress, setPollProgress] = useState(0);
+  /** When false, health auto-poll stops (dashboard only — separate from ops log burst). */
+  const [syncEnabled, setSyncEnabled] = useState(true);
+  /** Log-tab ops feed: timeboxed live poll (does not use health Pause/Resume). */
+  const [opsLive, setOpsLive] = useState(false);
+  const [opsBurstEndsAt, setOpsBurstEndsAt] = useState<number | null>(null);
+  const [opsSecondsLeft, setOpsSecondsLeft] = useState(0);
+  const [opsLoading, setOpsLoading] = useState(false);
+  const [opsError, setOpsError] = useState<string | null>(null);
+  const [lastOpsFetchAt, setLastOpsFetchAt] = useState<Date | null>(null);
+  const [opsToken, setOpsToken] = useState<string | null>(() => sessionStorage.getItem(OPS_TOKEN_KEY));
+  const [opsEmail, setOpsEmail] = useState<string | null>(() => sessionStorage.getItem(OPS_EMAIL_KEY));
+  const [showOpsLogin, setShowOpsLogin] = useState(false);
+  const [opsLoginBusy, setOpsLoginBusy] = useState(false);
+  const [opsLoginError, setOpsLoginError] = useState<string | null>(null);
 
   const prevTilesRef = useRef<HealthMonitorTile[] | null>(null);
   const prevOverallRef = useRef<OverallHealthState | null>(null);
   const firstLoadRef = useRef(true);
   const lastFetchMsRef = useRef<number>(Date.now());
+  const opsBurstEndingRef = useRef(false);
 
   const tiles = useMemo(() => (snapshot ? tilesFromSnapshot(snapshot) : []), [snapshot]);
   const overall = deriveOverallState(snapshot, error, loading);
   const score = healthScorePercent(overall, tiles);
   const uptime = railwayUptimeSeconds(snapshot);
   const host = shortApiHost(mode);
-  const refreshBtnClass =
-    overall === 'down'
+  const refreshBtnClass = !syncEnabled
+    ? 'border-slate-500/40 bg-slate-500/15 text-slate-200 hover:bg-slate-500/25'
+    : overall === 'down'
       ? 'border-rose-500/50 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30'
       : overall === 'degraded'
         ? 'border-amber-500/50 bg-amber-500/20 text-amber-100 hover:bg-amber-500/30'
@@ -459,19 +540,15 @@ const UltritouchHealthMonitorPage: React.FC = () => {
     []
   );
 
-  const refresh = useCallback(
+  const refreshHealth = useCallback(
     async (manual = false) => {
       if (manual) setLoading(true);
       try {
-        const [data, feed] = await Promise.all([
-          fetchHealthMonitorSnapshot(mode),
-          fetchMonitorFeed(mode),
-        ]);
+        const data = await fetchHealthMonitorSnapshot(mode);
         setSnapshot((prev) => {
           applyPollResult(data, null, manual, prev);
           return data;
         });
-        setMonitorFeed(feed);
         setError(null);
         setLastFetchAt(new Date());
         lastFetchMsRef.current = Date.now();
@@ -490,6 +567,51 @@ const UltritouchHealthMonitorPage: React.FC = () => {
     [mode, applyPollResult]
   );
 
+  const refreshOps = useCallback(
+    async (manual = false) => {
+      const token = opsToken || sessionStorage.getItem(OPS_TOKEN_KEY);
+      if (!token) {
+        setOpsError('Sign in required for ops log');
+        return;
+      }
+      if (manual) setOpsLoading(true);
+      try {
+        const feed = await fetchMonitorFeed(mode, token);
+        setMonitorFeed(feed);
+        setOpsError(null);
+        setLastOpsFetchAt(new Date());
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Ops feed failed';
+        setOpsError(msg);
+        if (msg.includes('401') || /unauthor/i.test(msg)) {
+          sessionStorage.removeItem(OPS_TOKEN_KEY);
+          sessionStorage.removeItem(OPS_EMAIL_KEY);
+          setOpsToken(null);
+          setOpsEmail(null);
+          setOpsLive(false);
+          setOpsBurstEndsAt(null);
+        }
+      } finally {
+        setOpsLoading(false);
+      }
+    },
+    [mode, opsToken]
+  );
+
+  const appendMonitorLog = useCallback((message: string, detail?: string) => {
+    setLogEntries((prev) =>
+      prependLogEntries(prev, [
+        {
+          id: `ops-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          at: new Date().toISOString(),
+          level: 'info',
+          message,
+          detail,
+        },
+      ])
+    );
+  }, []);
+
   useEffect(() => {
     firstLoadRef.current = true;
     prevTilesRef.current = null;
@@ -497,18 +619,147 @@ const UltritouchHealthMonitorPage: React.FC = () => {
     setLogEntries([]);
     setLoading(true);
     lastFetchMsRef.current = Date.now();
-    void refresh(false);
-    const id = window.setInterval(() => void refresh(false), pollMs);
-    return () => window.clearInterval(id);
+    void refreshHealth(false);
+    // Ops feed is auth-gated — only pull if this panel session already signed in.
+    if (sessionStorage.getItem(OPS_TOKEN_KEY)) {
+      void refreshOps(false);
+    }
   }, [mode, pollMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!syncEnabled) return;
+    const id = window.setInterval(() => void refreshHealth(false), pollMs);
+    return () => window.clearInterval(id);
+  }, [mode, pollMs, syncEnabled, refreshHealth]);
+
+  useEffect(() => {
+    if (!syncEnabled) return;
     const id = window.setInterval(() => {
       const elapsed = Date.now() - lastFetchMsRef.current;
       setPollProgress(Math.min(1, elapsed / pollMs));
     }, 200);
     return () => window.clearInterval(id);
-  }, [pollMs]);
+  }, [pollMs, syncEnabled]);
+
+  // Log-tab ops feed: live for a fixed window, then auto-stop (independent of health sync).
+  useEffect(() => {
+    if (!opsLive || !opsBurstEndsAt || !opsToken) return;
+    opsBurstEndingRef.current = false;
+    void refreshOps(false);
+    const pollId = window.setInterval(() => void refreshOps(false), pollMs);
+    const tickId = window.setInterval(() => {
+      const leftMs = opsBurstEndsAt - Date.now();
+      const left = Math.max(0, Math.ceil(leftMs / 1000));
+      setOpsSecondsLeft(left);
+      if (leftMs <= 0 && !opsBurstEndingRef.current) {
+        opsBurstEndingRef.current = true;
+        setOpsLive(false);
+        setOpsBurstEndsAt(null);
+        setOpsSecondsLeft(0);
+        appendMonitorLog('Ops live ended', '1‑minute burst finished — ops polling stopped');
+      }
+    }, 250);
+    return () => {
+      window.clearInterval(pollId);
+      window.clearInterval(tickId);
+    };
+  }, [opsLive, opsBurstEndsAt, pollMs, refreshOps, appendMonitorLog]);
+
+  const toggleSync = () => {
+    if (syncEnabled) {
+      setSyncEnabled(false);
+      setPollProgress(0);
+      setLogEntries((prev) =>
+        prependLogEntries(prev, [
+          {
+            id: `sync-pause-${Date.now()}`,
+            at: new Date().toISOString(),
+            level: 'info',
+            message: 'Health sync paused',
+            detail: 'Dashboard auto-poll stopped — ops log burst unchanged',
+          },
+        ])
+      );
+      return;
+    }
+    setSyncEnabled(true);
+    lastFetchMsRef.current = Date.now();
+    setPollProgress(0);
+    setLogEntries((prev) =>
+      prependLogEntries(prev, [
+        {
+          id: `sync-resume-${Date.now()}`,
+          at: new Date().toISOString(),
+          level: 'info',
+          message: 'Health sync resumed',
+          detail: 'Dashboard auto-poll active',
+        },
+      ])
+    );
+    void refreshHealth(true);
+  };
+
+  const startOpsBurst = () => {
+    if (!opsToken) {
+      setShowOpsLogin(true);
+      setOpsLoginError(null);
+      return;
+    }
+    setOpsLive(true);
+    setOpsBurstEndsAt(Date.now() + OPS_BURST_MS);
+    setOpsSecondsLeft(Math.ceil(OPS_BURST_MS / 1000));
+    appendMonitorLog('Ops live started', 'Polling /api/monitor/snapshot for 1 minute');
+  };
+
+  const stopOpsBurst = () => {
+    setOpsLive(false);
+    setOpsBurstEndsAt(null);
+    setOpsSecondsLeft(0);
+    appendMonitorLog('Ops live stopped', 'Manual stop — ops polling stopped');
+  };
+
+  const pullOpsOnce = () => {
+    if (!opsToken) {
+      setShowOpsLogin(true);
+      setOpsLoginError(null);
+      return;
+    }
+    appendMonitorLog('Ops pull once', 'Single /api/monitor/snapshot request');
+    void refreshOps(true);
+  };
+
+  const handleOpsLogin = async (email: string, password: string) => {
+    setOpsLoginBusy(true);
+    setOpsLoginError(null);
+    try {
+      const result = await loginForMonitorOps(email, password);
+      sessionStorage.setItem(OPS_TOKEN_KEY, result.token);
+      sessionStorage.setItem(OPS_EMAIL_KEY, result.email);
+      setOpsToken(result.token);
+      setOpsEmail(result.email);
+      setShowOpsLogin(false);
+      appendMonitorLog('Ops signed in', result.email);
+      await refreshOps(true);
+    } catch (e) {
+      setOpsLoginError(e instanceof Error ? e.message : 'Sign in failed');
+    } finally {
+      setOpsLoginBusy(false);
+    }
+  };
+
+  const signOutOps = () => {
+    setOpsLive(false);
+    setOpsBurstEndsAt(null);
+    setOpsSecondsLeft(0);
+    sessionStorage.removeItem(OPS_TOKEN_KEY);
+    sessionStorage.removeItem(OPS_EMAIL_KEY);
+    setOpsToken(null);
+    setOpsEmail(null);
+    setMonitorFeed(null);
+    setOpsError(null);
+    setLastOpsFetchAt(null);
+    appendMonitorLog('Ops signed out', 'Cleared ops session for this panel');
+  };
 
   const handleSelectTile = (tileId: string) => {
     setSelectedServiceId((prev) => (prev === tileId ? null : tileId));
@@ -516,7 +767,7 @@ const UltritouchHealthMonitorPage: React.FC = () => {
 
   return (
     <div
-      className="overflow-hidden bg-[#070b14] text-slate-100 select-none"
+      className="relative overflow-hidden bg-[#070b14] text-slate-100 select-none"
       style={{
         width: ULTRITOUCH_4_PANEL_WIDTH,
         height: ULTRITOUCH_4_PANEL_HEIGHT,
@@ -551,7 +802,24 @@ const UltritouchHealthMonitorPage: React.FC = () => {
             <TabButton active={activeTab === 'log'} label="Log" onClick={() => setActiveTab('log')} />
             <button
               type="button"
-              onClick={() => void refresh(true)}
+              onClick={toggleSync}
+              aria-pressed={syncEnabled}
+              title={
+                syncEnabled
+                  ? 'Pause Health — stop dashboard auto-polling'
+                  : 'Resume Health — start dashboard auto-polling again'
+              }
+              className={`rounded-lg border px-3.5 py-2 text-sm font-semibold touch-manipulation active:scale-95 transition-colors ${
+                syncEnabled
+                  ? 'border-amber-500/55 bg-amber-500/20 text-amber-100 hover:bg-amber-500/30'
+                  : 'border-yellow-500/60 bg-yellow-500/25 text-yellow-50 hover:bg-yellow-500/35'
+              }`}
+            >
+              {syncEnabled ? 'Pause Health' : 'Resume Health'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void refreshHealth(true)}
               disabled={loading}
               className={`rounded-lg border px-3.5 py-2 text-sm font-semibold touch-manipulation disabled:opacity-50 active:scale-95 transition-colors ${refreshBtnClass}`}
             >
@@ -573,6 +841,7 @@ const UltritouchHealthMonitorPage: React.FC = () => {
                       key={tile.id}
                       tile={tile}
                       index={index}
+                      paused={!syncEnabled}
                       selected={selectedServiceId === tile.id}
                       onSelect={() => handleSelectTile(tile.id)}
                     />
@@ -591,17 +860,94 @@ const UltritouchHealthMonitorPage: React.FC = () => {
               uptime={uptime}
               pollProgress={pollProgress}
               pollMs={pollMs}
+              syncEnabled={syncEnabled}
             />
           </main>
         ) : (
           <main className="flex-1 grid grid-cols-2 gap-3 px-4 py-3 min-h-0">
             <section className="flex flex-col rounded-2xl border border-slate-700/50 bg-slate-900/40 min-h-0 overflow-hidden">
-              <div className="px-3 py-2 border-b border-slate-800/80 flex items-center justify-between shrink-0">
-                <div className="text-xs font-semibold text-white">Show ops</div>
-                <div className="text-[10px] text-slate-500">from API</div>
+              <div className="px-3 py-2 border-b border-slate-800/80 flex items-center justify-between gap-2 shrink-0">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-white">Show ops</div>
+                  <div className="text-[10px] text-slate-500 truncate">
+                    {!opsToken
+                      ? 'Sign in required · endpoint stays private'
+                      : opsLive
+                        ? `Live · ${opsSecondsLeft}s left · ${opsEmail || host}`
+                        : lastOpsFetchAt
+                          ? `Signed in · last ${lastOpsFetchAt.toLocaleTimeString()}`
+                          : `Signed in as ${opsEmail || 'user'} · pull when ready`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {!opsToken ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpsLoginError(null);
+                        setShowOpsLogin(true);
+                      }}
+                      className="rounded-md border border-emerald-500/45 bg-emerald-500/20 px-2.5 py-1 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-500/30 touch-manipulation"
+                    >
+                      Sign in
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={pullOpsOnce}
+                        disabled={opsLoading || opsLive}
+                        title="One authenticated request to /api/monitor/snapshot"
+                        className="rounded-md border border-slate-600/70 bg-slate-800/70 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700/80 disabled:opacity-40 touch-manipulation"
+                      >
+                        {opsLoading && !opsLive ? '…' : 'Pull once'}
+                      </button>
+                      {opsLive ? (
+                        <button
+                          type="button"
+                          onClick={stopOpsBurst}
+                          className="rounded-md border border-amber-500/50 bg-amber-500/20 px-2.5 py-1 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 touch-manipulation tabular-nums"
+                        >
+                          Stop · {opsSecondsLeft}s
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={startOpsBurst}
+                          title="Poll ops API for 1 minute, then auto-stop"
+                          className="rounded-md border border-sky-500/45 bg-sky-500/15 px-2.5 py-1 text-[11px] font-semibold text-sky-100 hover:bg-sky-500/25 touch-manipulation"
+                        >
+                          Live 1 min
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={signOutOps}
+                        disabled={opsLive}
+                        className="rounded-md border border-slate-600/70 bg-slate-900/80 px-2.5 py-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800 disabled:opacity-40 touch-manipulation"
+                      >
+                        Sign out
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0 text-sm">
-                {monitorFeed ? (
+                {!opsToken ? (
+                  <div className="text-xs text-slate-400 leading-relaxed space-y-2">
+                    <p>
+                      Ops snapshot stays behind API auth. Use <span className="text-emerald-300 font-semibold">Sign in</span>{' '}
+                      with an approved account and the on-screen keyboard.
+                    </p>
+                    <p className="text-slate-500">Health dashboard does not need this login.</p>
+                  </div>
+                ) : null}
+                {opsToken && opsError ? (
+                  <div className="text-xs text-amber-200/90 leading-relaxed border border-amber-500/25 bg-amber-950/20 rounded-lg px-2.5 py-2">
+                    {opsError}
+                  </div>
+                ) : null}
+                {opsToken && monitorFeed ? (
                   <>
                     <div className="grid grid-cols-3 gap-2">
                       <div className="rounded-lg bg-slate-800/60 px-2 py-2 text-center">
@@ -664,12 +1010,13 @@ const UltritouchHealthMonitorPage: React.FC = () => {
                       </div>
                     ) : null}
                   </>
-                ) : (
+                ) : opsToken ? (
                   <div className="text-xs text-slate-500 leading-relaxed">
-                    Ops feed unavailable. Restart the API server to load{' '}
+                    Signed in. Use <span className="text-slate-300">Pull once</span> or{' '}
+                    <span className="text-slate-300">Live 1 min</span> to load{' '}
                     <span className="text-slate-400 font-mono">/api/monitor/snapshot</span>.
                   </div>
-                )}
+                ) : null}
               </div>
             </section>
 
@@ -738,14 +1085,37 @@ const UltritouchHealthMonitorPage: React.FC = () => {
 
         <footer className="flex items-center justify-between px-4 py-1.5 shrink-0 border-t border-slate-800/80 text-[10px] text-slate-500">
           <span>
-            {activeTab === 'dashboard' ? 'Tap a service card for details' : 'Ops API + health transition log'}
+            {activeTab === 'dashboard'
+              ? 'Tap a service card for details · Pause Health is health-only'
+              : opsToken
+                ? opsLive
+                  ? `Ops live ${opsSecondsLeft}s · signed in as ${opsEmail || 'user'}`
+                  : `Ops ready · ${opsEmail || 'signed in'} · Pull once or Live 1 min`
+                : 'Ops: Sign in with on-screen keyboard · endpoint stays private'}
           </span>
           <span className="tabular-nums">
-            {loading ? <span className="text-sky-400 animate-pulse mr-2">Refreshing</span> : null}
+            {loading || opsLoading ? (
+              <span className="text-sky-400 animate-pulse mr-2">
+                {opsLoading && !loading ? 'Ops…' : 'Refreshing'}
+              </span>
+            ) : null}
             {lastFetchAt ? lastFetchAt.toLocaleTimeString() : '—'}
           </span>
         </footer>
       </div>
+      {showOpsLogin ? (
+        <UltritouchOpsLogin
+          busy={opsLoginBusy}
+          error={opsLoginError}
+          onCancel={() => {
+            if (!opsLoginBusy) {
+              setShowOpsLogin(false);
+              setOpsLoginError(null);
+            }
+          }}
+          onSubmit={handleOpsLogin}
+        />
+      ) : null}
     </div>
   );
 };
