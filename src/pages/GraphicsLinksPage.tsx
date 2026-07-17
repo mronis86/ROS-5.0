@@ -208,130 +208,6 @@ const GraphicsLinksPage: React.FC = () => {
 
 
 
-  const generateLiveLowerThirdsURL = () => {
-    // Generate a URL that VMIX can poll for real-time updates
-    const baseUrl = window.location.origin;
-    const liveUrl = `${baseUrl}/lower-thirds-live.html?eventId=${eventId || event?.id}`;
-    
-    // Copy to clipboard
-    navigator.clipboard.writeText(liveUrl).then(() => {
-      alert(`Live JSON URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON/XML\n\nThis URL will automatically update every 10 seconds!`);
-    }).catch(() => {
-      // Fallback if clipboard fails
-      const textArea = document.createElement('textarea');
-      textArea.value = liveUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert(`Live JSON URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON/XML\n\nThis URL will automatically update every 10 seconds!`);
-    });
-  };
-
-
-  const generateLiveScheduleURL = () => {
-    const baseUrl = window.location.origin;
-    const liveUrl = `${baseUrl}/schedule-live.html?eventId=${eventId || event?.id}`;
-    
-    navigator.clipboard.writeText(liveUrl).then(() => {
-      alert(`Live Schedule URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON/XML\n\nThis URL will automatically update every 10 seconds!`);
-    }).catch(() => {
-      const textArea = document.createElement('textarea');
-      textArea.value = liveUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert(`Live Schedule URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON/XML\n\nThis URL will automatically update every 10 seconds!`);
-    });
-  };
-
-  const generateLiveCustomGraphicsURL = () => {
-    const baseUrl = window.location.origin;
-    const liveUrl = `${baseUrl}/custom-graphics-live.html?eventId=${eventId || event?.id}`;
-    
-    navigator.clipboard.writeText(liveUrl).then(() => {
-      alert(`Live Custom Graphics JSON URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON\n\nThis URL will automatically update every 10 seconds!`);
-    }).catch(() => {
-      const textArea = document.createElement('textarea');
-      textArea.value = liveUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert(`Live Custom Graphics JSON URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON\n\nThis URL will automatically update every 10 seconds!`);
-    });
-  };
-
-
-  const generateLiveCustomGraphicsCSVURL = () => {
-    const baseUrl = window.location.origin;
-    const liveUrl = `${baseUrl}/custom-graphics-live-csv.html?eventId=${eventId || event?.id}`;
-    
-    navigator.clipboard.writeText(liveUrl).then(() => {
-      alert(`Live Custom Graphics CSV URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → CSV\n\nThis URL will automatically update every 10 seconds!`);
-    }).catch(() => {
-      const textArea = document.createElement('textarea');
-      textArea.value = liveUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert(`Live Custom Graphics CSV URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → CSV\n\nThis URL will automatically update every 10 seconds!`);
-    });
-  };
-
-  const generateLiveLowerThirdsCSVURL = () => {
-    const baseUrl = window.location.origin;
-    const liveUrl = `${baseUrl}/lower-thirds-live-csv.html?eventId=${eventId || event?.id}`;
-    
-    navigator.clipboard.writeText(liveUrl).then(() => {
-      alert(`Live CSV URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → CSV\n\nThis URL will automatically update every 10 seconds!`);
-    }).catch(() => {
-      const textArea = document.createElement('textarea');
-      textArea.value = liveUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert(`Live CSV URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → CSV\n\nThis URL will automatically update every 10 seconds!`);
-    });
-  };
-
-  const generateLiveScheduleXMLURL = () => {
-    const baseUrl = window.location.origin;
-    const liveUrl = `${baseUrl}/schedule-live-xml.html?eventId=${eventId || event?.id}`;
-    
-    navigator.clipboard.writeText(liveUrl).then(() => {
-      alert(`Live Schedule XML URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON/XML\n\nThis URL will automatically update every 10 seconds!`);
-    }).catch(() => {
-      const textArea = document.createElement('textarea');
-      textArea.value = liveUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert(`Live Schedule XML URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → JSON/XML\n\nThis URL will automatically update every 10 seconds!`);
-    });
-  };
-
-  const generateLiveScheduleCSVURL = () => {
-    const baseUrl = window.location.origin;
-    const liveUrl = `${baseUrl}/schedule-live-csv.html?eventId=${eventId || event?.id}`;
-    
-    navigator.clipboard.writeText(liveUrl).then(() => {
-      alert(`Live Schedule CSV URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → CSV\n\nThis URL will automatically update every 10 seconds!`);
-    }).catch(() => {
-      const textArea = document.createElement('textarea');
-      textArea.value = liveUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert(`Live Schedule CSV URL copied to clipboard:\n${liveUrl}\n\nUse this URL in VMIX Data Sources → CSV\n\nThis URL will automatically update every 10 seconds!`);
-    });
-  };
-
   const downloadCSV = (content: string, filename: string) => {
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -847,12 +723,12 @@ const GraphicsLinksPage: React.FC = () => {
             </ul>
             <div className="mt-4 p-3 bg-green-900 rounded-lg">
               <p className="text-green-200 text-sm">
-                <strong>✨ Live Updates:</strong> Use the "Live" URLs for real-time data that automatically updates every 10 seconds in VMIX
+                <strong>✨ Live Updates:</strong> Use the Railway XML/CSV Feed Page buttons above — copy the feed URLs from those pages into VMIX. Feeds refresh from the API/cache.
               </p>
             </div>
             <div className="mt-4 p-3 bg-blue-900 rounded-lg">
               <p className="text-blue-200 text-sm">
-                <strong>VMIX Setup:</strong> Copy the Live URLs and add them in VMIX Data Sources → JSON/XML/CSV. No need to save files manually!
+                <strong>VMIX Setup:</strong> Open a Railway feed page, copy the XML or CSV URL, and add it in VMIX Data Sources → JSON/XML/CSV.
               </p>
             </div>
             <div className="mt-2 p-3 bg-yellow-900 rounded-lg">
