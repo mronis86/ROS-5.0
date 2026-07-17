@@ -42,6 +42,7 @@ const SOCKET_CORS_ORIGINS_DEFAULT = [
   'http://localhost:3003',
   'http://localhost:3000',
   'https://ros1615.netlify.app',
+  'https://sensational-torte-78a11a.netlify.app',
 ];
 const socketCorsOrigins = [
   ...SOCKET_CORS_ORIGINS_DEFAULT,
