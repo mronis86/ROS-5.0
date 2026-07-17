@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
@@ -182,6 +182,7 @@ function statusDotClasses(level: ServiceLevel): string {
 
 const ADMIN_NAV: { id: string; label: string }[] = [
   { id: 'services', label: 'Services' },
+  { id: 'platform', label: 'Platform' },
   { id: 'timers', label: 'Timers' },
   { id: 'presence', label: 'Events' },
   { id: 'access', label: 'Access' },
@@ -190,6 +191,66 @@ const ADMIN_NAV: { id: string; label: string }[] = [
   { id: 'backup', label: 'Backup' },
   { id: 'branding', label: 'Branding' },
 ];
+
+type PlatformCheckLevel = 'ok' | 'warning' | 'critical' | 'unknown';
+
+interface PlatformMaintenanceCheck {
+  id: string;
+  title: string;
+  level: PlatformCheckLevel;
+  label: string;
+  detail: string;
+  value?: string | null;
+  meta?: {
+    major?: number;
+    eol?: string | null;
+    daysRemaining?: number | null;
+    latestInCycle?: string | null;
+    lts?: boolean;
+    eolDataSource?: string;
+  };
+}
+
+interface PlatformMaintenanceReport {
+  checkedAt: string;
+  summary: {
+    level: PlatformCheckLevel;
+    critical: number;
+    warning: number;
+    ok: number;
+  };
+  runtime?: {
+    nodeVersion?: string;
+    env?: string;
+    uptimeSeconds?: number;
+  };
+  pins?: {
+    enginesNode?: string | null;
+    nvmrc?: string | null;
+    netlifyNode?: string | null;
+  };
+  eolSource?: string;
+  eolError?: string | null;
+  checks: PlatformMaintenanceCheck[];
+  links?: {
+    nodeEol?: string;
+    nodeReleases?: string;
+  };
+}
+
+function platformLevelPill(level: PlatformCheckLevel): string {
+  if (level === 'ok') return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+  if (level === 'warning') return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+  if (level === 'critical') return 'bg-red-500/15 text-red-300 border-red-500/30';
+  return 'bg-slate-500/15 text-slate-300 border-slate-500/30';
+}
+
+function platformLevelDot(level: PlatformCheckLevel): string {
+  if (level === 'ok') return 'bg-emerald-400';
+  if (level === 'warning') return 'bg-amber-400';
+  if (level === 'critical') return 'bg-red-400';
+  return 'bg-slate-400';
+}
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -319,6 +380,34 @@ export default function AdminPage() {
   const [logoSettingsNeedsMigration, setLogoSettingsNeedsMigration] = useState(false);
   const [logoSettingsSyncingTable, setLogoSettingsSyncingTable] = useState(false);
   const [logoSettingsUpdatedAt, setLogoSettingsUpdatedAt] = useState<string | null>(null);
+  const [platformReport, setPlatformReport] = useState<PlatformMaintenanceReport | null>(null);
+  const [platformLoading, setPlatformLoading] = useState(false);
+  const [platformError, setPlatformError] = useState<string | null>(null);
+
+  const fetchPlatformMaintenance = useCallback(async () => {
+    setPlatformLoading(true);
+    setPlatformError(null);
+    try {
+      const res = await adminFetch('/api/admin/platform-maintenance');
+      if (res.status === 401) {
+        setPlatformError('Unauthorized');
+        setPlatformReport(null);
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as PlatformMaintenanceReport & { error?: string };
+      if (!res.ok) {
+        setPlatformError(data.error || `HTTP ${res.status}`);
+        setPlatformReport(null);
+        return;
+      }
+      setPlatformReport(data);
+    } catch (e) {
+      setPlatformError(e instanceof Error ? e.message : 'Request failed');
+      setPlatformReport(null);
+    } finally {
+      setPlatformLoading(false);
+    }
+  }, []);
 
   const fetchLogoSettings = useCallback(async () => {
     setLogoSettingsLoading(true);
@@ -1487,7 +1576,8 @@ export default function AdminPage() {
     fetchApprovedDomains();
     fetchIntegrationTokens();
     fetchAccessRequests();
-  }, [unlocked, fetchApprovedDomains, fetchIntegrationTokens, fetchAccessRequests]);
+    fetchPlatformMaintenance();
+  }, [unlocked, fetchApprovedDomains, fetchIntegrationTokens, fetchAccessRequests, fetchPlatformMaintenance]);
 
   const disconnectUser = useCallback(async (eventId: string, userId: string) => {
     if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
@@ -1959,6 +2049,130 @@ export default function AdminPage() {
             </>
           ) : (
             <p className="text-slate-400 text-sm">No status yet. Click Refresh.</p>
+          )}
+        </section>
+
+        <section id="platform" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-slate-400" />
+                Platform maintenance
+              </h2>
+              <p className="text-slate-500 text-sm mt-1">
+                Node.js end-of-life and version pin checks for the API and build config.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {platformReport?.checkedAt && (
+                <span className="text-slate-500 text-xs tabular-nums">
+                  Updated {new Date(platformReport.checkedAt).toLocaleTimeString()}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={fetchPlatformMaintenance}
+                disabled={platformLoading}
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+              >
+                {platformLoading ? 'Checking…' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+
+          {platformError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-red-900/30 border border-red-800/50 text-red-300 text-sm">
+              {platformError}
+            </div>
+          )}
+
+          {platformLoading && !platformReport ? (
+            <div className="animate-pulse space-y-3">
+              <div className="h-10 bg-slate-700/80 rounded-lg" />
+              <div className="h-16 bg-slate-700/60 rounded-lg" />
+              <div className="h-16 bg-slate-700/60 rounded-lg" />
+            </div>
+          ) : platformReport ? (
+            <>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${platformLevelPill(platformReport.summary.level)}`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${platformLevelDot(platformReport.summary.level)}`} />
+                  Overall: {platformReport.summary.level}
+                </span>
+                <span className="text-slate-500 text-xs">
+                  {platformReport.summary.critical} critical · {platformReport.summary.warning} warning ·{' '}
+                  {platformReport.summary.ok} ok
+                </span>
+                {platformReport.eolSource && (
+                  <span className="text-slate-500 text-xs">
+                    · EOL data: {platformReport.eolSource}
+                    {platformReport.eolError ? ` (${platformReport.eolError})` : ''}
+                  </span>
+                )}
+              </div>
+
+              <ul className="divide-y divide-slate-700/80">
+                {platformReport.checks.map((check) => (
+                  <li key={check.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="font-semibold text-white">{check.title}</span>
+                        {check.value != null && check.value !== '' && (
+                          <span className="text-slate-400 text-xs font-mono">{check.value}</span>
+                        )}
+                      </div>
+                      <p className="text-slate-400 text-sm mt-1">{check.detail}</p>
+                      {check.meta?.eol && (
+                        <p className="text-slate-500 text-xs mt-1">
+                          EOL {check.meta.eol}
+                          {typeof check.meta.daysRemaining === 'number'
+                            ? ` · ${check.meta.daysRemaining} days remaining`
+                            : ''}
+                          {check.meta.latestInCycle ? ` · latest ${check.meta.latestInCycle}` : ''}
+                        </p>
+                      )}
+                    </div>
+                    <span
+                      className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${platformLevelPill(check.level)}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${platformLevelDot(check.level)}`} />
+                      {check.label}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              {(platformReport.links?.nodeEol || platformReport.links?.nodeReleases) && (
+                <p className="mt-4 text-slate-500 text-xs">
+                  References:{' '}
+                  {platformReport.links.nodeEol && (
+                    <a
+                      href={platformReport.links.nodeEol}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-400 hover:text-sky-300 underline-offset-2 hover:underline"
+                    >
+                      endoflife.date/nodejs
+                    </a>
+                  )}
+                  {platformReport.links.nodeEol && platformReport.links.nodeReleases ? ' · ' : ''}
+                  {platformReport.links.nodeReleases && (
+                    <a
+                      href={platformReport.links.nodeReleases}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-400 hover:text-sky-300 underline-offset-2 hover:underline"
+                    >
+                      Node release schedule
+                    </a>
+                  )}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-slate-400 text-sm">No report yet. Click Refresh.</p>
           )}
         </section>
 

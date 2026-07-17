@@ -32,6 +32,7 @@ const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
+const { buildPlatformMaintenanceReport } = require('./lib/platform-maintenance');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -608,6 +609,17 @@ app.get('/health', async (req, res) => {
 // Admin presence: active events and viewers (protected by admin key)
 // Registered early with other /api routes. Handler uses presenceByEvent (defined in Socket section).
 app.get('/api/admin/auth-status', adminAuthStatus);
+
+app.get('/api/admin/platform-maintenance', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    const report = await buildPlatformMaintenanceReport();
+    res.json(report);
+  } catch (err) {
+    console.error('[platform-maintenance]', err);
+    res.status(500).json({ error: err.message || 'Failed to build platform maintenance report' });
+  }
+});
 
 app.get('/api/admin/presence', async (req, res) => {
   if (!requireAdminAccess(req, res)) return;
