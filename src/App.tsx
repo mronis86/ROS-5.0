@@ -64,15 +64,19 @@ function AppContent() {
   const isLedOutput = location.pathname === '/led-output';
   const isUltritouchHealth =
     location.pathname === '/ultritouch-health' ||
-    location.pathname === '/ultritouch-health-monitor';
+    location.pathname === '/ultritouch-health-monitor' ||
+    location.pathname === '/ultritouch-health-2u' ||
+    location.pathname === '/ultritouch-health-2';
 
   // Broadcast / panel embed pages: no App chrome, AuthGuard shell, or slate wrappers.
   if (isLedOutput || isUltritouchHealth) {
     return (
       <Routes>
         <Route path="/led-output" element={<LedOutputPage />} />
-        <Route path="/ultritouch-health" element={<UltritouchHealthMonitorPage />} />
-        <Route path="/ultritouch-health-monitor" element={<UltritouchHealthMonitorPage />} />
+        <Route path="/ultritouch-health" element={<UltritouchHealthMonitorPage panel="4u" />} />
+        <Route path="/ultritouch-health-monitor" element={<UltritouchHealthMonitorPage panel="4u" />} />
+        <Route path="/ultritouch-health-2u" element={<UltritouchHealthMonitorPage panel="2u" />} />
+        <Route path="/ultritouch-health-2" element={<UltritouchHealthMonitorPage panel="2u" />} />
       </Routes>
     );
   }

@@ -27,8 +27,9 @@ import type {
   MonitorFeedSnapshot,
   MonitorPanelTab,
   OverallHealthState,
+  UltritouchPanelSize,
 } from '../types/ultritouchHealthMonitor';
-import { ULTRITOUCH_4_PANEL_HEIGHT, ULTRITOUCH_4_PANEL_WIDTH } from '../types/ultritouchHealthMonitor';
+import { ultritouchPanelDims } from '../types/ultritouchHealthMonitor';
 import UltritouchOpsLogin from '../components/UltritouchOpsLogin';
 
 const OPS_TOKEN_KEY = 'ros_ultritouch_ops_token';
@@ -207,10 +208,12 @@ function ActivityMonitor({
   mode,
   colorClass,
   paused = false,
+  compact = false,
 }: {
   mode: 'ok' | 'alert' | 'fail' | 'skip';
   colorClass: string;
   paused?: boolean;
+  compact?: boolean;
 }) {
   const heights = paused ? [28, 28, 28, 28, 28, 28, 28] : [38, 62, 48, 78, 55, 70, 44];
   const anim = paused
@@ -224,7 +227,7 @@ function ActivityMonitor({
           : 'ut-activity-bar-idle';
 
   return (
-    <div className="flex items-end gap-[3px] h-8 w-full" aria-hidden>
+    <div className={`flex items-end gap-[3px] w-full ${compact ? 'h-5' : 'h-8'}`} aria-hidden>
       {heights.map((h, i) => (
         <div
           key={i}
@@ -233,7 +236,7 @@ function ActivityMonitor({
             height: `${h}%`,
             animationDelay: paused ? undefined : `${i * 0.12}s`,
             animationPlayState: paused ? 'paused' : undefined,
-            minWidth: 4,
+            minWidth: compact ? 3 : 4,
             opacity: paused ? 0.45 : undefined,
           }}
         />
@@ -249,6 +252,7 @@ function ScorePanel({
   pollProgress,
   pollMs,
   syncEnabled,
+  compact = false,
 }: {
   percent: number;
   state: OverallHealthState;
@@ -256,6 +260,7 @@ function ScorePanel({
   pollProgress: number;
   pollMs: number;
   syncEnabled: boolean;
+  compact?: boolean;
 }) {
   const meta = syncEnabled
     ? OVERALL_META[state]
@@ -270,29 +275,42 @@ function ScorePanel({
 
   return (
     <aside
-      className="ut-card-enter flex flex-col rounded-2xl border border-slate-700/60 bg-slate-900/70 overflow-hidden"
+      className={`ut-card-enter flex flex-col border border-slate-700/60 bg-slate-900/70 overflow-hidden ${
+        compact ? 'rounded-xl' : 'rounded-2xl'
+      }`}
       style={{ animationDelay: '180ms' }}
     >
-      <div className={`h-1.5 w-full ${meta.rail}`} />
+      <div className={`w-full ${compact ? 'h-1' : 'h-1.5'} ${meta.rail}`} />
 
-      {/* Next poll — primary live indicator */}
-      <div className="px-3 pt-3 pb-2 border-b border-slate-800/80">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">
+      <div className={`border-b border-slate-800/80 ${compact ? 'px-2 pt-1.5 pb-1' : 'px-3 pt-3 pb-2'}`}>
+        <div
+          className={`uppercase tracking-[0.18em] text-slate-500 font-semibold ${
+            compact ? 'text-[8px]' : 'text-[10px]'
+          }`}
+        >
           {syncEnabled ? 'Next poll' : 'Sync'}
         </div>
         {syncEnabled ? (
-          <div className="flex items-end gap-1 mt-1">
-            <span className="text-5xl font-black tabular-nums text-sky-300 leading-none tracking-tighter">
+          <div className={`flex items-end gap-1 ${compact ? 'mt-0.5' : 'mt-1'}`}>
+            <span
+              className={`font-black tabular-nums text-sky-300 leading-none tracking-tighter ${
+                compact ? 'text-2xl' : 'text-5xl'
+              }`}
+            >
               {secondsLeft}
             </span>
-            <span className="text-lg font-bold text-sky-400/80 pb-1">s</span>
+            <span className={`font-bold text-sky-400/80 pb-0.5 ${compact ? 'text-xs' : 'text-lg'}`}>s</span>
           </div>
         ) : (
-          <div className="mt-1 text-3xl font-black uppercase tracking-tight text-slate-300 leading-none">
+          <div
+            className={`font-black uppercase tracking-tight text-slate-300 leading-none ${
+              compact ? 'mt-0.5 text-lg' : 'mt-1 text-3xl'
+            }`}
+          >
             Paused
           </div>
         )}
-        <div className="mt-2.5 h-2.5 rounded-full bg-slate-800 overflow-hidden">
+        <div className={`rounded-full bg-slate-800 overflow-hidden ${compact ? 'mt-1.5 h-1.5' : 'mt-2.5 h-2.5'}`}>
           <div
             className={`h-full rounded-full transition-[width] duration-200 ease-linear ${
               syncEnabled ? 'bg-sky-400' : 'bg-slate-500'
@@ -300,26 +318,52 @@ function ScorePanel({
             style={{ width: syncEnabled ? `${Math.max(3, pollProgress * 100)}%` : '100%' }}
           />
         </div>
-        {!syncEnabled ? (
+        {!syncEnabled && !compact ? (
           <div className="mt-1.5 text-[10px] text-slate-500">No auto-poll · no egress</div>
         ) : null}
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center px-3 py-3 gap-1.5">
-        <div className={`text-5xl font-black tabular-nums leading-none tracking-tighter ${meta.score}`}>
+      <div
+        className={`flex-1 flex flex-col items-center justify-center ${
+          compact ? 'px-1.5 py-1 gap-0.5' : 'px-3 py-3 gap-1.5'
+        }`}
+      >
+        <div
+          className={`font-black tabular-nums leading-none tracking-tighter ${meta.score} ${
+            compact ? 'text-2xl' : 'text-5xl'
+          }`}
+        >
           {syncEnabled ? percent : '—'}
         </div>
-        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-semibold">
+        <div
+          className={`uppercase tracking-[0.2em] text-slate-500 font-semibold ${
+            compact ? 'text-[8px]' : 'text-[10px]'
+          }`}
+        >
           {syncEnabled ? 'score' : 'frozen'}
         </div>
-        <div className={`mt-1 inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase ${meta.pill}`}>
-          <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
-          {meta.label}
-        </div>
+        {/* 2U already shows "Paused" above — skip duplicate pill under frozen */}
+        {!(compact && !syncEnabled) ? (
+          compact ? (
+            <div className={`mt-0.5 flex max-w-full items-center justify-center gap-1 ${meta.score}`}>
+              <span className={`w-1.5 h-1.5 shrink-0 rounded-full ${meta.dot}`} />
+              <span className="text-[8px] font-bold uppercase tracking-wide leading-none truncate">
+                {meta.label}
+              </span>
+            </div>
+          ) : (
+            <div
+              className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase ${meta.pill}`}
+            >
+              <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
+              {meta.label}
+            </div>
+          )
+        ) : null}
       </div>
 
-      <div className="px-3 pb-3 pt-2 border-t border-slate-800/80">
-        <div className="flex items-center justify-between text-[11px]">
+      <div className={`border-t border-slate-800/80 ${compact ? 'px-2 pb-1.5 pt-1' : 'px-3 pb-3 pt-2'}`}>
+        <div className={`flex items-center justify-between ${compact ? 'text-[9px]' : 'text-[11px]'}`}>
           <span className="text-slate-500 uppercase tracking-wide">Uptime</span>
           <span className="text-white font-bold tabular-nums">{formatUptime(uptime)}</span>
         </div>
@@ -334,12 +378,14 @@ function ServiceCard({
   onSelect,
   index,
   paused = false,
+  compact = false,
 }: {
   tile: HealthMonitorTile;
   selected: boolean;
   onSelect: () => void;
   index: number;
   paused?: boolean;
+  compact?: boolean;
 }) {
   const glyph = TILE_GLYPHS[tile.id] ?? '•';
   const styles = ACCENT_STYLES[tile.accent];
@@ -374,9 +420,9 @@ function ServiceCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`ut-card-enter relative flex rounded-2xl border overflow-hidden h-full w-full text-left touch-manipulation transition-colors duration-150 active:scale-[0.99] ${
-        paused ? '' : flashClass
-      } ${
+      className={`ut-card-enter relative flex border overflow-hidden h-full w-full text-left touch-manipulation transition-colors duration-150 active:scale-[0.99] ${
+        compact ? 'rounded-xl' : 'rounded-2xl'
+      } ${paused ? '' : flashClass} ${
         selected
           ? 'border-sky-400/70 ring-2 ring-sky-400/25'
           : paused
@@ -390,7 +436,7 @@ function ServiceCard({
       style={{ animationDelay: `${index * 55}ms` }}
     >
       <div
-        className={`w-1.5 shrink-0 self-stretch ${
+        className={`shrink-0 self-stretch ${compact ? 'w-1' : 'w-1.5'} ${
           paused
             ? 'bg-slate-600'
             : level === 'ok'
@@ -400,25 +446,37 @@ function ServiceCard({
                 : 'bg-rose-500'
         }`}
       />
-      <div className="flex flex-col flex-1 min-w-0 px-3 py-3 gap-1.5">
+      <div
+        className={`flex flex-col flex-1 min-w-0 ${
+          compact ? 'px-2 py-1.5 gap-0.5' : 'px-3 py-3 gap-1.5'
+        }`}
+      >
         <div className="flex items-start justify-between gap-2 min-w-0">
           <div className="min-w-0 flex-1">
             <div
-              className={`text-[10px] font-black tracking-[0.14em] uppercase ${
-                paused || level === 'fail' ? 'text-slate-500' : styles.text
-              }`}
+              className={`font-black tracking-[0.14em] uppercase ${
+                compact ? 'text-[8px]' : 'text-[10px]'
+              } ${paused || level === 'fail' ? 'text-slate-500' : styles.text}`}
             >
               {glyph}
             </div>
-            <div className="text-[1.05rem] font-black text-white leading-tight tracking-tight mt-0.5 break-words">
+            <div
+              className={`font-black text-white leading-tight tracking-tight mt-0.5 break-words ${
+                compact ? 'text-sm' : 'text-[1.05rem]'
+              }`}
+            >
               {tile.label}
             </div>
-            <div className="text-[11px] text-slate-400 mt-0.5 font-medium leading-snug">
-              {tile.subtitle}
-            </div>
+            {!compact ? (
+              <div className="text-[11px] text-slate-400 mt-0.5 font-medium leading-snug">
+                {tile.subtitle}
+              </div>
+            ) : null}
           </div>
           <div
-            className={`shrink-0 text-lg font-black leading-none tracking-tight pt-0.5 ${
+            className={`shrink-0 font-black leading-none tracking-tight pt-0.5 ${
+              compact ? 'text-sm' : 'text-lg'
+            } ${
               paused
                 ? 'text-slate-500'
                 : level === 'ok'
@@ -433,7 +491,9 @@ function ServiceCard({
         </div>
 
         <div
-          className={`text-[12px] font-mono leading-snug line-clamp-2 ${
+          className={`font-mono leading-snug ${
+            compact ? 'text-[10px] line-clamp-1' : 'text-[12px] line-clamp-2'
+          } ${
             paused
               ? 'text-slate-500'
               : level === 'ok'
@@ -447,18 +507,29 @@ function ServiceCard({
           {paused ? 'Sync paused — last snapshot' : tile.detail || '—'}
         </div>
 
-        <div className="mt-auto pt-1">
-          <div className="text-[8px] uppercase tracking-[0.14em] text-slate-500 mb-1 font-semibold">
-            {paused ? 'Idle' : 'Activity'}
-          </div>
-          <ActivityMonitor mode={activityMode} colorClass={activityColor} paused={paused} />
+        <div className={`mt-auto ${compact ? 'pt-0.5' : 'pt-1'}`}>
+          {!compact ? (
+            <div className="text-[8px] uppercase tracking-[0.14em] text-slate-500 mb-1 font-semibold">
+              {paused ? 'Idle' : 'Activity'}
+            </div>
+          ) : null}
+          <ActivityMonitor
+            mode={activityMode}
+            colorClass={activityColor}
+            paused={paused}
+            compact={compact}
+          />
         </div>
       </div>
     </button>
   );
 }
 
-const UltritouchHealthMonitorPage: React.FC = () => {
+const UltritouchHealthMonitorPage: React.FC<{ panel?: UltritouchPanelSize }> = ({
+  panel = '4u',
+}) => {
+  const is2u = panel === '2u';
+  const panelDims = ultritouchPanelDims(panel);
   const [searchParams] = useSearchParams();
   const mode = parseHealthMonitorMode(searchParams.get('mode'));
   const pollMs = parsePollIntervalMs(searchParams.get('interval'));
@@ -769,10 +840,10 @@ const UltritouchHealthMonitorPage: React.FC = () => {
     <div
       className="relative overflow-hidden bg-[#070b14] text-slate-100 select-none"
       style={{
-        width: ULTRITOUCH_4_PANEL_WIDTH,
-        height: ULTRITOUCH_4_PANEL_HEIGHT,
-        minWidth: ULTRITOUCH_4_PANEL_WIDTH,
-        minHeight: ULTRITOUCH_4_PANEL_HEIGHT,
+        width: panelDims.width,
+        height: panelDims.height,
+        minWidth: panelDims.width,
+        minHeight: panelDims.height,
       }}
     >
       <style>{MONITOR_MOTION_CSS}</style>
@@ -783,21 +854,31 @@ const UltritouchHealthMonitorPage: React.FC = () => {
             'radial-gradient(ellipse 70% 50% at 0% 0%, rgba(56,189,248,0.07), transparent 50%), radial-gradient(ellipse 60% 40% at 100% 100%, rgba(139,92,246,0.08), transparent 45%), linear-gradient(180deg, #0b1220 0%, #070b14 100%)',
         }}
       >
-        <header className="flex items-center gap-3 px-4 py-3 shrink-0 border-b border-slate-800/80">
-          <div className="shrink-0 flex items-center gap-2.5 min-w-0">
-            <AppLogo size="md" className="shrink-0 object-contain object-left max-h-10" />
+        <header
+          className={`flex items-center shrink-0 border-b border-slate-800/80 ${
+            is2u ? 'gap-2 px-2.5 py-1.5' : 'gap-3 px-4 py-3'
+          }`}
+        >
+          <div className="shrink-0 flex items-center gap-2 min-w-0">
+            <AppLogo
+              size={is2u ? 'sm' : 'md'}
+              className={`shrink-0 object-contain object-left ${is2u ? 'max-h-7' : 'max-h-10'}`}
+            />
             <AppBrandTitle
-              titleClassName="text-base font-bold text-white leading-none truncate"
-              taglineClassName="text-[9px] uppercase tracking-[0.08em] text-slate-500 leading-none mt-0.5"
+              titleClassName={`font-bold text-white leading-none truncate ${is2u ? 'text-sm' : 'text-base'}`}
+              taglineClassName={`uppercase tracking-[0.08em] text-slate-500 leading-none mt-0.5 ${
+                is2u ? 'text-[8px]' : 'text-[9px]'
+              }`}
               showTagline
             />
           </div>
           <div className="min-w-0 flex-1 text-right">
-            <div className="text-[10px] text-slate-500 truncate">
+            <div className={`text-slate-500 truncate ${is2u ? 'text-[9px]' : 'text-[10px]'}`}>
+              {is2u ? '2U · ' : ''}
               {modeLabel(mode, snapshot)} · {host}
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className={`flex items-center shrink-0 ${is2u ? 'gap-1.5' : 'gap-2'}`}>
             <TabButton active={activeTab === 'dashboard'} label="Dashboard" onClick={() => setActiveTab('dashboard')} />
             <TabButton active={activeTab === 'log'} label="Log" onClick={() => setActiveTab('log')} />
             <button
@@ -809,7 +890,9 @@ const UltritouchHealthMonitorPage: React.FC = () => {
                   ? 'Pause Health — stop dashboard auto-polling'
                   : 'Resume Health — start dashboard auto-polling again'
               }
-              className={`rounded-lg border px-3.5 py-2 text-sm font-semibold touch-manipulation active:scale-95 transition-colors ${
+              className={`rounded-lg border font-semibold touch-manipulation active:scale-95 transition-colors ${
+                is2u ? 'px-2.5 py-1.5 text-xs' : 'px-3.5 py-2 text-sm'
+              } ${
                 syncEnabled
                   ? 'border-amber-500/55 bg-amber-500/20 text-amber-100 hover:bg-amber-500/30'
                   : 'border-yellow-500/60 bg-yellow-500/25 text-yellow-50 hover:bg-yellow-500/35'
@@ -821,7 +904,9 @@ const UltritouchHealthMonitorPage: React.FC = () => {
               type="button"
               onClick={() => void refreshHealth(true)}
               disabled={loading}
-              className={`rounded-lg border px-3.5 py-2 text-sm font-semibold touch-manipulation disabled:opacity-50 active:scale-95 transition-colors ${refreshBtnClass}`}
+              className={`rounded-lg border font-semibold touch-manipulation disabled:opacity-50 active:scale-95 transition-colors ${
+                is2u ? 'px-2.5 py-1.5 text-xs' : 'px-3.5 py-2 text-sm'
+              } ${refreshBtnClass}`}
             >
               {loading ? '…' : 'Refresh'}
             </button>
@@ -829,11 +914,17 @@ const UltritouchHealthMonitorPage: React.FC = () => {
         </header>
 
         {activeTab === 'dashboard' ? (
-          <main className="flex-1 grid grid-cols-[1fr_168px] gap-3.5 px-4 py-3.5 min-h-0">
+          <main
+            className={`flex-1 min-h-0 grid ${
+              is2u
+                ? 'grid-cols-[1fr_120px] gap-2 px-2.5 py-1.5'
+                : 'grid-cols-[1fr_168px] gap-3.5 px-4 py-3.5'
+            }`}
+          >
             <div
-              className={`grid gap-3.5 min-h-0 ${
-                tiles.length >= 5 ? 'grid-cols-5' : 'grid-cols-4'
-              }`}
+              className={`grid min-h-0 ${
+                is2u ? 'gap-2' : 'gap-3.5'
+              } ${tiles.length >= 5 ? 'grid-cols-5' : 'grid-cols-4'}`}
             >
               {tiles.length > 0
                 ? tiles.map((tile, index) => (
@@ -841,6 +932,7 @@ const UltritouchHealthMonitorPage: React.FC = () => {
                       key={tile.id}
                       tile={tile}
                       index={index}
+                      compact={is2u}
                       paused={!syncEnabled}
                       selected={selectedServiceId === tile.id}
                       onSelect={() => handleSelectTile(tile.id)}
@@ -849,7 +941,9 @@ const UltritouchHealthMonitorPage: React.FC = () => {
                 : Array.from({ length: 4 }).map((_, i) => (
                     <div
                       key={i}
-                      className="ut-card-enter rounded-2xl border border-slate-800 bg-slate-900/40 animate-pulse"
+                      className={`ut-card-enter border border-slate-800 bg-slate-900/40 animate-pulse ${
+                        is2u ? 'rounded-xl' : 'rounded-2xl'
+                      }`}
                       style={{ animationDelay: `${i * 55}ms` }}
                     />
                   ))}
@@ -861,10 +955,15 @@ const UltritouchHealthMonitorPage: React.FC = () => {
               pollProgress={pollProgress}
               pollMs={pollMs}
               syncEnabled={syncEnabled}
+              compact={is2u}
             />
           </main>
         ) : (
-          <main className="flex-1 grid grid-cols-2 gap-3 px-4 py-3 min-h-0">
+          <main
+            className={`flex-1 grid grid-cols-2 min-h-0 ${
+              is2u ? 'gap-1.5 px-2 py-1' : 'gap-3 px-4 py-3'
+            }`}
+          >
             <section className="flex flex-col rounded-2xl border border-slate-700/50 bg-slate-900/40 min-h-0 overflow-hidden">
               <div className="px-3 py-2 border-b border-slate-800/80 flex items-center justify-between gap-2 shrink-0">
                 <div className="min-w-0">
@@ -1083,7 +1182,11 @@ const UltritouchHealthMonitorPage: React.FC = () => {
           </main>
         )}
 
-        <footer className="flex items-center justify-between px-4 py-1.5 shrink-0 border-t border-slate-800/80 text-[10px] text-slate-500">
+        <footer
+          className={`flex items-center justify-between shrink-0 border-t border-slate-800/80 text-slate-500 ${
+            is2u ? 'px-2 py-0.5 text-[9px]' : 'px-4 py-1.5 text-[10px]'
+          }`}
+        >
           <span>
             {activeTab === 'dashboard'
               ? 'Tap a service card for details · Pause Health is health-only'
@@ -1105,6 +1208,7 @@ const UltritouchHealthMonitorPage: React.FC = () => {
       </div>
       {showOpsLogin ? (
         <UltritouchOpsLogin
+          compact={is2u}
           busy={opsLoginBusy}
           error={opsLoginError}
           onCancel={() => {

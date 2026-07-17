@@ -27,7 +27,8 @@ import type {
   MonitorPanelTab,
   OverallHealthState,
 } from '../types/ultritouchHealthMonitor';
-import { ULTRITOUCH_4_PANEL_HEIGHT, ULTRITOUCH_4_PANEL_WIDTH } from '../types/ultritouchHealthMonitor';
+import { ultritouchPanelDims } from '../types/ultritouchHealthMonitor';
+import type { UltritouchPanelSize } from '../types/ultritouchHealthMonitor';
 
 const TILE_GLYPHS: Record<string, string> = {
   neon: 'DB',
@@ -393,7 +394,10 @@ function ServiceCard({
   );
 }
 
-const UltritouchHealthMonitorPage: React.FC = () => {
+const UltritouchHealthMonitorPage: React.FC<{ panel?: UltritouchPanelSize }> = ({
+  panel = '4u',
+}) => {
+  const panelDims = ultritouchPanelDims(panel);
   const [searchParams] = useSearchParams();
   const mode = parseHealthMonitorMode(searchParams.get('mode'));
   const pollMs = parsePollIntervalMs(searchParams.get('interval'));
@@ -518,10 +522,10 @@ const UltritouchHealthMonitorPage: React.FC = () => {
     <div
       className="overflow-hidden bg-[#070b14] text-slate-100 select-none"
       style={{
-        width: ULTRITOUCH_4_PANEL_WIDTH,
-        height: ULTRITOUCH_4_PANEL_HEIGHT,
-        minWidth: ULTRITOUCH_4_PANEL_WIDTH,
-        minHeight: ULTRITOUCH_4_PANEL_HEIGHT,
+        width: panelDims.width,
+        height: panelDims.height,
+        minWidth: panelDims.width,
+        minHeight: panelDims.height,
       }}
     >
       <style>{MONITOR_MOTION_CSS}</style>

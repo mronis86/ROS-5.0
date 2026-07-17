@@ -16,8 +16,10 @@ const App: React.FC = () => (
         <Routes>
           {/* Full-screen timer display — no header or connectivity bar */}
           <Route path="/timer" element={<OfflineTimerPage />} />
-          <Route path="/ultritouch-health" element={<UltritouchHealthMonitorPage />} />
-          <Route path="/ultritouch-health-monitor" element={<UltritouchHealthMonitorPage />} />
+          <Route path="/ultritouch-health" element={<UltritouchHealthMonitorPage panel="4u" />} />
+          <Route path="/ultritouch-health-monitor" element={<UltritouchHealthMonitorPage panel="4u" />} />
+          <Route path="/ultritouch-health-2u" element={<UltritouchHealthMonitorPage panel="2u" />} />
+          <Route path="/ultritouch-health-2" element={<UltritouchHealthMonitorPage panel="2u" />} />
           <Route element={<OfflineAppShell />}>
             <Route path="/" element={<EventListPage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />

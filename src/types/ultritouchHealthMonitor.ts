@@ -2,6 +2,22 @@
 export const ULTRITOUCH_4_PANEL_WIDTH = 1304;
 export const ULTRITOUCH_4_PANEL_HEIGHT = 485;
 
+/**
+ * Ross DashBoard Ultritouch 2 / 2U custom panel canvas.
+ * Common PanelBuilder size: gridwidth=1304 gridheight=203 (community / Ultrix layout).
+ */
+export const ULTRITOUCH_2_PANEL_WIDTH = 1304;
+export const ULTRITOUCH_2_PANEL_HEIGHT = 203;
+
+export type UltritouchPanelSize = '2u' | '4u';
+
+export function ultritouchPanelDims(panel: UltritouchPanelSize = '4u') {
+  if (panel === '2u') {
+    return { width: ULTRITOUCH_2_PANEL_WIDTH, height: ULTRITOUCH_2_PANEL_HEIGHT };
+  }
+  return { width: ULTRITOUCH_4_PANEL_WIDTH, height: ULTRITOUCH_4_PANEL_HEIGHT };
+}
+
 export type HealthMonitorMode = 'cloud' | 'offline';
 
 export type OverallHealthState = 'healthy' | 'degraded' | 'down' | 'loading';
