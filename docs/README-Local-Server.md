@@ -5,7 +5,7 @@ This setup provides a simple way to run the Run of Show application locally with
 ## 🎯 What This Includes
 
 - ✅ **Full React App** - Complete Run of Show interface from `Electron-React-Backup`
-- ✅ **Real-time Supabase Integration** - Live timer updates and database sync
+- ✅ **Real-time API Integration** - Live timer updates via Railway/Neon (Socket.IO)
 - ✅ **OSC Server** - External control via OSC commands (port 57121)
 - ✅ **Professional UI** - Exact same interface as the main app
 
@@ -55,7 +55,7 @@ The OSC server listens on **port 57121** and accepts these commands:
 ## 🔧 Features
 
 - **Real-time Updates**: Live timer synchronization across multiple browsers
-- **Database Integration**: Full Supabase connectivity with real data
+- **Database Integration**: Railway API → Neon Postgres
 - **Professional Interface**: Complete Run of Show functionality
 - **OSC Control**: External automation and control
 - **Multi-display Support**: Works with multiple monitors
@@ -79,7 +79,7 @@ To stop the servers:
 This approach gives you:
 - **100% functionality** of the main Run of Show app
 - **No custom development** needed
-- **Real Supabase integration** with live updates
+- **Real Railway/Neon integration** with live updates
 - **Professional interface** with all features
 - **OSC automation** support
 - **Easy deployment** - just run the batch file

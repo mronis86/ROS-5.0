@@ -123,10 +123,9 @@ The application responds to these OSC commands:
 
 ### Common Issues
 
-1. **"Supabase not available"**
+1. **"API / database not available"**
    - Make sure you're in the project directory
-   - Check that `src/services/supabase.py` exists
-   - Verify Supabase credentials
+   - Verify Railway API URL / Neon credentials (Supabase has been removed)
 
 2. **"OSC Server failed to start"**
    - Check if port 57121 is already in use
@@ -135,8 +134,8 @@ The application responds to these OSC commands:
 
 3. **"No event found"**
    - Verify the Event ID is correct
-   - Check Supabase connection
-   - Ensure the event exists in the database
+   - Check Railway API connectivity
+   - Ensure the event exists in Neon
 
 ### Debug Mode
 Run with debug output:
@@ -149,7 +148,7 @@ python python-osc-gui.py --debug
 This Python OSC GUI can work alongside your existing browser-based system:
 
 1. **Both systems can run simultaneously**
-2. **Both connect to the same Supabase database**
+2. **Both connect to the same Railway API / Neon database**
 3. **Both respond to the same OSC commands**
 4. **Use the Python GUI as a backup/alternative**
 

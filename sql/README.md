@@ -7,7 +7,8 @@ This folder contains all SQL schema and migration files for the Run of Show appl
 ### Core Schema Files
 - `complete-schema.sql` - Main database schema
 - `run-of-show-schema.sql` - Core run of show tables
-- `supabase-schema.sql` - Supabase-specific schema
+- `supabase-schema.sql` - Historical (pre-Neon) schema; do not use for new setups
+- `sub-cue-timers-supabase.sql` - Historical Supabase-era script; do not use for new setups
 
 ### Authentication & Users
 - `auth-schema.sql` - Authentication tables and functions

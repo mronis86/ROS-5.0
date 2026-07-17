@@ -12,7 +12,6 @@ import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeade
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import RoleSelectionModal from '../components/RoleSelectionModal';
-import CompleteChangeLog from '../components/CompleteChangeLog';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';

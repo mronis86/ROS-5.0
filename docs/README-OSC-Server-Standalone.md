@@ -74,19 +74,15 @@ The server listens on `localhost:57130` and responds to these OSC commands:
 
 ## 🔧 Configuration
 
-The server uses the same Supabase credentials as your existing `server.js`:
+OSC control talks to the Railway API / Neon database (not Supabase). Prefer `api-server.js` and the ROS-OSC-Control / Companion paths documented elsewhere.
 
-- **Supabase URL**: `https://huqijhevmtgardkyeowa.supabase.co`
+- **API**: `https://ros-50-production.up.railway.app` (or local `api-server.js`)
 - **OSC Port**: `57130`
 - **OSC Host**: `localhost`
 
 ## 📊 Database Updates
 
-The server updates the following fields in your Supabase database:
-
-- `activeItemId` - Currently active schedule item
-- `activeTimers` - Object containing all active timers
-- `updated_at` - Timestamp of last update
+Timer/cue state is persisted via the Railway API into Neon (`active_timers`, run-of-show data, etc.).
 
 ## 🎯 Benefits Over Browser OSC Modal
 
@@ -105,7 +101,7 @@ The server updates the following fields in your Supabase database:
 ### Server Won't Start
 - Check if port 57121 is available
 - Ensure Node.js and OSC library are installed
-- Verify Supabase credentials
+- Verify Railway API / Neon connectivity
 
 ### Database Updates Not Working
 - Check Supabase connection

@@ -513,22 +513,10 @@ export class DatabaseService {
 
   static async deleteRunOfShowData(eventId: string): Promise<boolean> {
     try {
-      if (true) { // Always use localStorage fallback since we're not using Supabase
-        console.warn('Supabase not configured, using localStorage fallback');
+       // Always use localStorage fallback since API path
+        console.warn('Legacy path disabled, using localStorage fallback');
         return this.deleteRunOfShowFromLocalStorage(eventId);
-      }
-
-      const { error } = await supabase
-        .from('run_of_show_data')
-        .delete()
-        .eq('event_id', eventId);
-
-      if (error) {
-        console.error('Error deleting run of show data:', error);
-        return this.deleteRunOfShowFromLocalStorage(eventId);
-      }
-
-      return true;
+      
     } catch (error) {
       console.error('Error deleting run of show data:', error);
       return this.deleteRunOfShowFromLocalStorage(eventId);
@@ -683,23 +671,9 @@ export class DatabaseService {
     try {
       console.log('🔄 Loading changes dynamically for event:', eventId);
       
-      if (true) { // Always use localStorage fallback since we're not using Supabase
+       // Always use localStorage fallback since API path
         return this.getRunOfShowFromLocalStorageById(eventId);
-      }
-
-      const { data, error } = await supabase
-        .from('run_of_show_data')
-        .select('*')
-        .eq('event_id', eventId)
-        .single();
-
-      if (error) {
-        console.error('❌ Error loading changes:', error);
-        return null;
-      }
-
-      console.log('✅ Changes loaded successfully');
-      return data;
+      
     } catch (error) {
       console.error('❌ Error loading changes dynamically:', error);
       return null;
@@ -819,7 +793,7 @@ export class DatabaseService {
 
   // ===== TIMER SYNCHRONIZATION =====
   
-  // Start a timer and save to Supabase for cross-client sync
+  // Start a timer via API for cross-client sync
   // Load a CUE (set loaded but not started)
   static async loadCue(eventId: string, itemId: number, userId: string, totalDurationSeconds: number, rowNumber?: number, cueDisplay?: string, timerId?: string): Promise<Record<string, unknown> | null> {
     try {
@@ -1017,7 +991,7 @@ export class DatabaseService {
 
   // Subscribe to timer changes for real-time updates
   static subscribeToTimerChanges(eventId: string, callback: (payload: any) => void) {
-    // Real-time updates are handled via Socket.IO and SSE, not Supabase
+    // Real-time updates are handled via Socket.IO and SSE
     console.warn('Real-time updates handled via Socket.IO and SSE');
     return null;
   }
@@ -1112,19 +1086,10 @@ export class DatabaseService {
 
   static async expireCompletedSubCueTimers() {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping expire completed sub-cue timers');
+       // Always use fallback since API path
+        console.warn('⚠️ Legacy path disabled, skipping expire completed sub-cue timers');
         return { data: 0, error: null };
-      }
-
-      const { data, error } = await supabase.rpc('expire_completed_sub_cue_timers');
-
-      if (error) {
-        console.error('❌ Error expiring completed sub-cue timers:', error);
-        return { data: 0, error };
-      }
-
-      return { data: data || 0, error: null };
+      
     } catch (error) {
       console.error('❌ Error expiring completed sub-cue timers:', error);
       return { data: 0, error };
@@ -1164,69 +1129,10 @@ export class DatabaseService {
   // Secondary Timer Functions
   static async getActiveSecondaryTimer(eventId: string) {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping get active secondary timer');
+       // Always use fallback since API path
+        console.warn('⚠️ Legacy path disabled, skipping get active secondary timer');
         return { data: null, error: null };
-      }
-
-      // Try RPC function first, fallback to direct table query
-      const { data: rpcData, error: rpcError } = await supabase.rpc('get_active_secondary_timer_for_event', {
-        p_event_id: eventId
-      });
-
-      if (rpcError && rpcError.code === 'PGRST204') {
-        // RPC function doesn't exist, try secondary_timers table first
-        console.log('🔄 RPC function not found, trying secondary_timers table');
-        
-        const { data: secondaryData, error: secondaryError } = await supabase
-          .from('secondary_timers')
-          .select('*')
-          .eq('event_id', eventId)
-          .eq('is_active', true)
-          .eq('is_running', true)
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (secondaryError && (secondaryError.code === '42P01' || secondaryError.message.includes('does not exist'))) {
-          // secondary_timers table doesn't exist, use sub_cue_timers as fallback
-          console.log('🔄 secondary_timers table not found, using sub_cue_timers as secondary timer');
-          
-          const { data: subCueData, error: subCueError } = await supabase
-            .from('sub_cue_timers')
-            .select('*')
-            .eq('event_id', eventId)
-            .eq('is_active', true)
-            .eq('is_running', true)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (subCueError) {
-            console.error('❌ Error getting sub-cue timers as secondary timer:', subCueError);
-            return { data: null, error: subCueError };
-          }
-
-          console.log('✅ Using sub-cue timer as secondary timer:', subCueData && subCueData.length > 0 ? subCueData[0] : null);
-          return { data: subCueData && subCueData.length > 0 ? subCueData[0] : null, error: null };
-        }
-
-        if (secondaryError) {
-          console.error('❌ Error getting active secondary timer from table:', secondaryError);
-          return { data: null, error: secondaryError };
-        }
-
-        return { data: secondaryData && secondaryData.length > 0 ? secondaryData[0] : null, error: null };
-      }
-
-      if (rpcError) {
-        console.error('❌ Error getting active secondary timer:', rpcError);
-        // If it's a 404 or table doesn't exist, return null data instead of error
-        if (rpcError.code === 'PGRST204' || rpcError.message.includes('does not exist')) {
-          return { data: null, error: null };
-        }
-        return { data: null, error: rpcError };
-      }
-
-      return { data: rpcData && rpcData.length > 0 ? rpcData[0] : null, error: null };
+      
     } catch (error) {
       console.error('❌ Error getting active secondary timer:', error);
       return { data: null, error };
@@ -1236,24 +1142,10 @@ export class DatabaseService {
 
   static async startSecondaryTimer(eventId: string, itemId: number, userId: string, durationSeconds: number) {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping start secondary timer');
+       // Always use fallback since API path
+        console.warn('⚠️ Legacy path disabled, skipping start secondary timer');
         return { data: null, error: null };
-      }
-
-      const { data, error } = await supabase.rpc('start_secondary_timer_for_event', {
-        p_event_id: eventId,
-        p_item_id: itemId,
-        p_user_id: userId,
-        p_duration_seconds: durationSeconds
-      });
-
-      if (error) {
-        console.error('❌ Error starting secondary timer:', error);
-        return { data: null, error };
-      }
-
-      return { data, error: null };
+      
     } catch (error) {
       console.error('❌ Error starting secondary timer:', error);
       return { data: null, error };
@@ -1262,21 +1154,10 @@ export class DatabaseService {
 
   static async stopSecondaryTimer(eventId: string) {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping stop secondary timer');
+       // Always use fallback since API path
+        console.warn('⚠️ Legacy path disabled, skipping stop secondary timer');
         return { data: null, error: null };
-      }
-
-      const { data, error } = await supabase.rpc('stop_secondary_timer_for_event', {
-        p_event_id: eventId
-      });
-
-      if (error) {
-        console.error('❌ Error stopping secondary timer:', error);
-        return { data: null, error };
-      }
-
-      return { data, error: null };
+      
     } catch (error) {
       console.error('❌ Error stopping secondary timer:', error);
       return { data: null, error };
@@ -1285,22 +1166,10 @@ export class DatabaseService {
 
   static async updateSecondaryTimerRemaining(eventId: string, remainingSeconds: number) {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping update secondary timer remaining');
+       // Always use fallback since API path
+        console.warn('⚠️ Legacy path disabled, skipping update secondary timer remaining');
         return { data: null, error: null };
-      }
-
-      const { data, error } = await supabase.rpc('update_secondary_timer_remaining', {
-        p_event_id: eventId,
-        p_remaining_seconds: remainingSeconds
-      });
-
-      if (error) {
-        console.error('❌ Error updating secondary timer remaining:', error);
-        return { data: null, error };
-      }
-
-      return { data, error: null };
+      
     } catch (error) {
       console.error('❌ Error updating secondary timer remaining:', error);
       return { data: null, error };
@@ -1310,27 +1179,10 @@ export class DatabaseService {
   // Clear all active timers for an event
   static async updateSubCueTimerRemaining(eventId: string, itemId: number, remainingSeconds: number): Promise<boolean> {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping update sub-cue timer remaining');
+       // Always use fallback since API path
+        console.warn('⚠️ Legacy path disabled, skipping update sub-cue timer remaining');
         return false;
-      }
-
-      const { error } = await supabase
-        .from('sub_cue_timers')
-        .update({ 
-          remaining_seconds: remainingSeconds,
-          updated_at: new Date().toISOString()
-        })
-        .eq('event_id', eventId)
-        .eq('item_id', itemId.toString())
-        .eq('is_active', true);
-
-      if (error) {
-        console.error('❌ Error updating sub-cue timer remaining time:', error);
-        return false;
-      }
-
-      return true;
+      
     } catch (error) {
       console.error('Error updating sub-cue timer remaining time:', error);
       return false;
@@ -1672,25 +1524,10 @@ export class DatabaseService {
   // Subscribe to table changes
   static subscribeToTableChanges(tableName: string, callback: (payload: any) => void, eventId?: string) {
     try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.error('❌ Supabase client not initialized');
+       // Always use fallback since API path
+        console.error('❌ Legacy path disabled');
         return null;
-      }
-
-      const filter = eventId ? `event_id=eq.${eventId}` : undefined;
       
-      return supabase
-        .channel(`${tableName}_changes`)
-        .on('postgres_changes', 
-          { 
-            event: '*', 
-            schema: 'public', 
-            table: tableName,
-            filter: filter
-          }, 
-          callback
-        )
-        .subscribe();
     } catch (error) {
       console.error(`❌ Error setting up ${tableName} subscription:`, error);
       return null;
@@ -1835,115 +1672,12 @@ export class DatabaseService {
     }
   }
 
-  // Hybrid Timer Data Fetching - Get all timer data from Supabase
-  // Get CUE data for a specific item
-  static async getCueDataForItem(eventId: string, itemId: string): Promise<any | null> {
-    try {
-      if (true) { // Always use fallback since we're not using Supabase
-        console.warn('⚠️ Supabase client not initialized, skipping get CUE data');
-        return null;
-      }
-
-      // Try run_of_show_data table first, then other possible tables
-      const possibleTables = ['run_of_show_data', 'schedule', 'items', 'schedule_items', 'event_items', 'cues', 'schedule_data', 'run_of_show', 'ros_items', 'event_schedule'];
-      
-      for (const tableName of possibleTables) {
-        try {
-          console.log(`🔄 Trying to fetch CUE data from table: ${tableName}`);
-          
-          // Try different query approaches for run_of_show_data
-          if (tableName === 'run_of_show_data') {
-            // Try multiple query approaches for run_of_show_data
-            const queryApproaches = [
-              // Approach 1: event_id + id
-              () => supabase.from(tableName).select('*').eq('event_id', eventId).eq('id', itemId).single(),
-              // Approach 2: just event_id (get all items for the event)
-              () => supabase.from(tableName).select('*').eq('event_id', eventId),
-              // Approach 3: try different field names
-              () => supabase.from(tableName).select('*').eq('event_id', eventId).eq('item_id', itemId).single(),
-              // Approach 4: try cue_id field
-              () => supabase.from(tableName).select('*').eq('event_id', eventId).eq('cue_id', itemId).single()
-            ];
-            
-            for (let i = 0; i < queryApproaches.length; i++) {
-              try {
-                console.log(`🔄 Trying query approach ${i + 1} for ${tableName}`);
-                const { data, error } = await queryApproaches[i]();
-                
-                if (!error && data) {
-                  console.log(`✅ Found CUE data in ${tableName} with approach ${i + 1}:`, data);
-                  console.log(`🔍 CUE data fields:`, Object.keys(data));
-                  
-                  // Handle array result from approach 2
-                  if (Array.isArray(data) && data.length > 0) {
-                    console.log(`🔍 Array data length: ${data.length}`);
-                    console.log(`🔍 First item fields:`, Object.keys(data[0]));
-                    
-                    const firstItem = data[0];
-                    
-                    // Check if schedule_items contains the CUE data
-                    if (firstItem.schedule_items && Array.isArray(firstItem.schedule_items)) {
-                      console.log(`🔍 Found schedule_items with ${firstItem.schedule_items.length} items`);
-                      console.log(`🔍 First schedule item:`, firstItem.schedule_items[0]);
-                      
-                      // Look for the item that matches our item_id
-                      const matchingScheduleItem = firstItem.schedule_items.find(item => 
-                        item.id === itemId || 
-                        item.item_id === itemId ||
-                        item.cue_id === itemId
-                      );
-                      
-                      if (matchingScheduleItem) {
-                        console.log('✅ Found matching schedule item:', matchingScheduleItem);
-                        return matchingScheduleItem;
-                      } else {
-                        console.log('ℹ️ No matching schedule item found, using first schedule item');
-                        return firstItem.schedule_items[0];
-                      }
-                    }
-                    
-                    return firstItem; // Return the first item from the array
-                  }
-                  
-                  return data;
-                }
-                
-                if (error) {
-                  console.log(`❌ Error with approach ${i + 1} for ${tableName}:`, error);
-                }
-              } catch (err) {
-                console.log(`❌ Exception with approach ${i + 1} for ${tableName}:`, err);
-              }
-            }
-          } else {
-            // Standard query for other tables
-            const { data, error } = await supabase
-              .from(tableName)
-              .select('*')
-              .eq('event_id', eventId)
-              .eq('id', itemId)
-              .single();
-
-            if (!error && data) {
-              console.log(`✅ Found CUE data in table: ${tableName}`, data);
-              console.log(`🔍 CUE data fields:`, Object.keys(data));
-              return data;
-            }
-          }
-        } catch (tableError) {
-          console.log(`🔄 Table ${tableName} not found or error:`, tableError);
-        }
-      }
-      
-      console.log('🔄 No CUE data found in any table');
-      return null;
-    } catch (error) {
-      console.error('❌ Error getting CUE data for item:', error);
-      return null;
-    }
+  // Legacy Supabase hybrid helpers — unused; API/Socket paths are used instead
+  static async getCueDataForItem(_eventId: string, _itemId: string): Promise<any | null> {
+    return null;
   }
 
-  static async getHybridTimerData(eventId: string): Promise<{
+  static async getHybridTimerData(_eventId: string): Promise<{
     activeTimer: any | null;
     secondaryTimer: any | null;
     subCueTimers: any[] | null;
@@ -1951,109 +1685,7 @@ export class DatabaseService {
     timerMessage: TimerMessage | null;
     cueData: any | null;
   } | null> {
-    try {
-      if (true) { // Always use localStorage fallback since we're not using Supabase
-        console.warn('Supabase not configured, cannot fetch hybrid timer data');
-        return null;
-      }
-
-      console.log('🔄 Fetching hybrid timer data for event:', eventId);
-
-      // Fetch all timer data in parallel
-      const [
-        activeTimerResult,
-        secondaryTimerResult,
-        subCueTimersResult,
-        lastLoadedCueResult,
-        timerMessageResult
-      ] = await Promise.all([
-        this.getActiveTimer(eventId),
-        this.getActiveSecondaryTimer(eventId),
-        this.getActiveSubCueTimers(eventId),
-        this.getLastLoadedCue(eventId),
-        this.getTimerMessage(eventId)
-      ]);
-
-      // Try to find CUE data in the active timer itself first
-      let cueData = null;
-      if (activeTimerResult) {
-        console.log('🔍 Active timer full data structure:', activeTimerResult);
-        console.log('🔍 Active timer fields:', Object.keys(activeTimerResult));
-        
-        // Check if CUE data is already in the active timer (cue_is column)
-        if (activeTimerResult.cue_is) {
-          console.log('✅ Found CUE data in active timer cue_is column:', activeTimerResult.cue_is);
-          cueData = activeTimerResult;
-        }
-      }
-      
-      // If not found in active timer, try to fetch from run_of_show_data table using last_loaded_cue_id
-      if (!cueData && activeTimerResult?.last_loaded_cue_id) {
-        cueData = await this.getCueDataForItem(eventId, activeTimerResult.last_loaded_cue_id);
-      }
-      
-      // Fallback to item_id if last_loaded_cue_id doesn't work
-      if (!cueData && activeTimerResult?.item_id) {
-        cueData = await this.getCueDataForItem(eventId, activeTimerResult.item_id);
-      }
-      
-      // If we still don't have cueData, try to find it in the run_of_show_data using the item_id as a string match
-      if (!cueData && activeTimerResult?.item_id) {
-        try {
-          console.log('🔄 Trying to find CUE data by matching item_id in run_of_show_data');
-          const { data, error } = await supabase
-            .from('run_of_show_data')
-            .select('*')
-            .eq('event_id', eventId);
-          
-          if (!error && data && data.length > 0) {
-            console.log(`🔍 Found ${data.length} items in run_of_show_data`);
-            // Look for an item that matches our item_id
-            const matchingItem = data.find(item => 
-              item.id === activeTimerResult.item_id || 
-              item.item_id === activeTimerResult.item_id ||
-              item.cue_id === activeTimerResult.item_id
-            );
-            
-            if (matchingItem) {
-              console.log('✅ Found matching CUE data:', matchingItem);
-              cueData = matchingItem;
-            } else {
-              console.log('ℹ️ No matching item found, using first item as fallback');
-              cueData = data[0];
-            }
-          }
-        } catch (err) {
-          console.log('❌ Error finding CUE data by matching:', err);
-        }
-      }
-
-      // Use sub-cue timers as secondary timer if secondary timer is not available
-      const secondaryTimer = secondaryTimerResult?.data || 
-        (subCueTimersResult?.data && subCueTimersResult.data.length > 0 ? subCueTimersResult.data[0] : null);
-
-      const result = {
-        activeTimer: activeTimerResult,
-        secondaryTimer: secondaryTimer,
-        subCueTimers: subCueTimersResult?.data || null,
-        lastLoadedCue: lastLoadedCueResult?.data || null,
-        timerMessage: timerMessageResult,
-        cueData: null // Disabled since tables don't exist
-      };
-
-      console.log('✅ Hybrid timer data fetched:', {
-        hasActiveTimer: !!result.activeTimer,
-        hasSecondaryTimer: !!result.secondaryTimer,
-        hasSubCueTimers: !!result.subCueTimers?.length,
-        hasLastLoadedCue: !!result.lastLoadedCue,
-        hasTimerMessage: !!result.timerMessage
-      });
-
-      return result;
-    } catch (error) {
-      console.error('❌ Error fetching hybrid timer data:', error);
-      return null;
-    }
+    return null;
   }
 
   // Helper methods for localStorage fallback
