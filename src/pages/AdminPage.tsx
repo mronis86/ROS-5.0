@@ -2084,7 +2084,7 @@ export default function AdminPage() {
               </h2>
               <p className="text-slate-500 text-sm mt-1">
                 Simple health check for the software versions that run your site and API — and when they need upgrading.
-                Admins are emailed when something is Review or Urgent (at most about once per day while it stays open).
+                Admins are emailed when something is Review or Urgent (at most about once a week while it stays open — these are planning reminders, not emergencies).
               </p>
             </div>
             <div className="flex items-center gap-3">
