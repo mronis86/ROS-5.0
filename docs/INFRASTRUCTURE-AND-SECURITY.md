@@ -50,7 +50,7 @@ Netlify hosts the **frontend** (built React app). Deploys can be triggered by **
 - **Config file:** `netlify.toml` at the **repository root**.
 - **Build command:** `bash netlify/build.sh` (see `netlify/build.sh`).
 - **Publish directory:** `dist` (Vite output).
-- **Node version:** 22.20.0 (set in `netlify.toml`; root `package.json` `engines` / `.nvmrc` pin Railway to Node 22 as well).
+- **Node version:** 22.20.0 (Netlify `NODE_VERSION`, Railway `nixpacks.toml` / `.nvmrc` / `package.json` engines).
 
 ### Build Process (netlify/build.sh)
 
