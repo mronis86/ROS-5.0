@@ -8,7 +8,7 @@
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "20.19.0"
+  NODE_VERSION = "22.20.0"
   NPM_VERSION = "10"
   NPM_FLAGS = "--prefer-offline=false"
   CI = "true"
