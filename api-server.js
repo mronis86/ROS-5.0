@@ -32,7 +32,7 @@ const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
-const { buildPlatformMaintenanceReport } = require('./lib/platform-maintenance');
+const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -5512,6 +5512,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   const { isOpsAlertsDisabled } = require('./lib/ops-alerts');
   if (!isOpsAlertsDisabled() && isAdminEmailNotifyConfigured()) {
     console.log('🚨 Ops alerts: API errors and security events will email admins');
+    startPlatformMaintenanceAlerts(pool);
   }
   console.log(`💡 Tip: Use 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find your IP address`);
   if (process.env.NEON_DATABASE_URL) {
