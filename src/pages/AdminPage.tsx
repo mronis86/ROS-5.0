@@ -199,11 +199,13 @@ interface PlatformMaintenanceCheck {
   title: string;
   level: PlatformCheckLevel;
   label: string;
+  whatIsThis?: string;
   plain?: string;
   detail?: string;
   action?: string | null;
   recommendBy?: string | null;
   recommendByLabel?: string | null;
+  dateRight?: string | null;
   value?: string | null;
   technical?: string;
   meta?: {
@@ -2146,19 +2148,24 @@ export default function AdminPage() {
                   <h3 className="text-sm font-semibold text-white mb-3">What to do</h3>
                   <ul className="space-y-3">
                     {platformReport.recommendations.map((rec) => (
-                      <li key={rec.id} className="text-sm">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <span className="font-medium text-slate-200">{rec.title}</span>
-                          {rec.recommendByLabel && (
-                            <span className="text-[11px] uppercase tracking-wide text-amber-300/90">
-                              {rec.recommendByLabel}
-                            </span>
-                          )}
+                      <li
+                        key={rec.id}
+                        className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_11rem] gap-2 sm:gap-4 text-sm items-start"
+                      >
+                        <div>
+                          <div className="font-medium text-slate-200">{rec.title}</div>
+                          <p className="text-slate-400 mt-0.5">{rec.action}</p>
                         </div>
-                        <p className="text-slate-400">{rec.action}</p>
-                        {rec.recommendByDisplay && (
-                          <p className="text-slate-500 text-xs mt-1">Target date: {rec.recommendByDisplay}</p>
-                        )}
+                        <div className="sm:text-right">
+                          <div className="inline-block rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 min-w-[9.5rem] sm:ml-auto">
+                            <div className="text-[10px] uppercase tracking-wide text-amber-200/80">
+                              {rec.recommendByLabel || 'Target'}
+                            </div>
+                            <div className="text-sm font-semibold text-amber-100 tabular-nums mt-0.5">
+                              {rec.recommendByDisplay || '—'}
+                            </div>
+                          </div>
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -2167,44 +2174,73 @@ export default function AdminPage() {
 
               <h3 className="text-sm font-semibold text-slate-300 mb-2">Status checklist</h3>
               <ul className="divide-y divide-slate-700/80">
-                {platformReport.checks.map((check) => (
-                  <li key={check.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-baseline gap-2">
-                        <span className="font-semibold text-white">{check.title}</span>
-                        {check.value != null && check.value !== '' && (
-                          <span className="text-slate-500 text-xs font-mono">{check.value}</span>
+                {platformReport.checks.map((check) => {
+                  const dateRight =
+                    check.dateRight ||
+                    (check.recommendBy
+                      ? new Date(`${check.recommendBy}T12:00:00.000Z`).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          timeZone: 'UTC',
+                        })
+                      : null);
+                  return (
+                    <li
+                      key={check.id}
+                      className="py-4 first:pt-0 last:pb-0 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_11rem] gap-3 sm:gap-4 items-start"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-baseline gap-2">
+                          <span className="font-semibold text-white">{check.title}</span>
+                          {check.value != null && check.value !== '' && (
+                            <span className="text-slate-500 text-xs font-mono">{check.value}</span>
+                          )}
+                        </div>
+                        {check.whatIsThis && (
+                          <p className="text-slate-500 text-xs mt-1 leading-relaxed">{check.whatIsThis}</p>
+                        )}
+                        <p className="text-slate-300 text-sm mt-1.5 leading-relaxed">
+                          {check.plain || check.detail}
+                        </p>
+                        {check.action && (
+                          <p className="text-slate-400 text-sm mt-2">
+                            <span className="text-slate-500">Action: </span>
+                            {check.action}
+                          </p>
                         )}
                       </div>
-                      <p className="text-slate-300 text-sm mt-1 leading-relaxed">
-                        {check.plain || check.detail}
-                      </p>
-                      {check.action && (
-                        <p className="text-slate-400 text-sm mt-2">
-                          <span className="text-slate-500">Action: </span>
-                          {check.action}
-                        </p>
-                      )}
-                      {check.recommendByLabel && (
-                        <p className="text-amber-200/80 text-xs mt-1">{check.recommendByLabel}</p>
-                      )}
-                      {check.meta?.eolDisplay && check.level === 'ok' && (
-                        <p className="text-slate-500 text-xs mt-1">
-                          Supported until {check.meta.eolDisplay}
-                          {typeof check.meta.daysRemaining === 'number'
-                            ? ` (${check.meta.daysRemaining} days left)`
-                            : ''}
-                        </p>
-                      )}
-                    </div>
-                    <span
-                      className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${platformLevelPill(check.level)}`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${platformLevelDot(check.level)}`} />
-                      {check.label}
-                    </span>
-                  </li>
-                ))}
+                      <div className="sm:text-right flex sm:flex-col items-center sm:items-end gap-2 shrink-0">
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${platformLevelPill(check.level)}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${platformLevelDot(check.level)}`} />
+                          {check.label === 'Good' || check.label === 'Review' || check.label === 'Urgent'
+                            ? check.label
+                            : check.level === 'ok'
+                              ? 'Good'
+                              : check.level === 'critical'
+                                ? 'Urgent'
+                                : check.level === 'warning'
+                                  ? 'Review'
+                                  : check.label}
+                        </span>
+                        {dateRight ? (
+                          <div className="rounded-lg border border-slate-600/80 bg-slate-900/50 px-2.5 py-1.5 min-w-[9.5rem]">
+                            <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                              {check.recommendByLabel || 'Date'}
+                            </div>
+                            <div className="text-sm font-semibold text-sky-300 tabular-nums leading-tight mt-0.5">
+                              {dateRight}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-slate-600 sm:mt-1">No date needed</div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
 
               {(platformReport.links?.nodeEol || platformReport.links?.nodeReleases) && (
