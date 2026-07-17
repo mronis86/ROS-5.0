@@ -37,18 +37,24 @@ const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
 const adminAuthStatus = createAdminAuthStatus(ADMIN_KEY);
 const apiAuthConfig = loadApiAuthConfig();
+/** Production Socket.IO origins. Extra hosts via SOCKET_CORS_ORIGINS (comma-separated). */
+const SOCKET_CORS_ORIGINS_DEFAULT = [
+  'http://localhost:3003',
+  'http://localhost:3000',
+  'https://ros1615.netlify.app',
+];
+const socketCorsOrigins = [
+  ...SOCKET_CORS_ORIGINS_DEFAULT,
+  ...(process.env.SOCKET_CORS_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+];
 const io = new Server(server, {
   cors: {
-    origin: isProduction
-      ? [
-          "http://localhost:3003",
-          "http://localhost:3000",
-          "https://your-app.netlify.app",
-          "https://your-app.vercel.app"
-        ]
-      : true, // allow any origin when not in production (local + other computers on LAN)
-    methods: ["GET", "POST"]
-  }
+    origin: isProduction ? socketCorsOrigins : true, // allow any origin when not in production (local + LAN)
+    methods: ['GET', 'POST'],
+  },
 });
 const PORT = process.env.PORT || 3001;
 
