@@ -199,11 +199,17 @@ interface PlatformMaintenanceCheck {
   title: string;
   level: PlatformCheckLevel;
   label: string;
-  detail: string;
+  plain?: string;
+  detail?: string;
+  action?: string | null;
+  recommendBy?: string | null;
+  recommendByLabel?: string | null;
   value?: string | null;
+  technical?: string;
   meta?: {
     major?: number;
     eol?: string | null;
+    eolDisplay?: string | null;
     daysRemaining?: number | null;
     latestInCycle?: string | null;
     lts?: boolean;
@@ -211,10 +217,22 @@ interface PlatformMaintenanceCheck {
   };
 }
 
+interface PlatformMaintenanceRecommendation {
+  id: string;
+  title: string;
+  level: PlatformCheckLevel;
+  action: string;
+  recommendBy?: string | null;
+  recommendByLabel?: string | null;
+  recommendByDisplay?: string | null;
+}
+
 interface PlatformMaintenanceReport {
   checkedAt: string;
   summary: {
     level: PlatformCheckLevel;
+    headline?: string;
+    audienceLabel?: string;
     critical: number;
     warning: number;
     ok: number;
@@ -231,7 +249,10 @@ interface PlatformMaintenanceReport {
   };
   eolSource?: string;
   eolError?: string | null;
+  eolNote?: string;
   checks: PlatformMaintenanceCheck[];
+  attention?: PlatformMaintenanceCheck[];
+  recommendations?: PlatformMaintenanceRecommendation[];
   links?: {
     nodeEol?: string;
     nodeReleases?: string;
@@ -2060,13 +2081,13 @@ export default function AdminPage() {
                 Platform maintenance
               </h2>
               <p className="text-slate-500 text-sm mt-1">
-                Node.js end-of-life and version pin checks for the API and build config.
+                Simple health check for the software versions that run your site and API — and when they need upgrading.
               </p>
             </div>
             <div className="flex items-center gap-3">
               {platformReport?.checkedAt && (
                 <span className="text-slate-500 text-xs tabular-nums">
-                  Updated {new Date(platformReport.checkedAt).toLocaleTimeString()}
+                  Checked {new Date(platformReport.checkedAt).toLocaleString()}
                 </span>
               )}
               <button
@@ -2075,7 +2096,7 @@ export default function AdminPage() {
                 disabled={platformLoading}
                 className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
               >
-                {platformLoading ? 'Checking…' : 'Refresh'}
+                {platformLoading ? 'Checking…' : 'Refresh dates'}
               </button>
             </div>
           </div>
@@ -2094,25 +2115,57 @@ export default function AdminPage() {
             </div>
           ) : platformReport ? (
             <>
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${platformLevelPill(platformReport.summary.level)}`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${platformLevelDot(platformReport.summary.level)}`} />
-                  Overall: {platformReport.summary.level}
-                </span>
-                <span className="text-slate-500 text-xs">
-                  {platformReport.summary.critical} critical · {platformReport.summary.warning} warning ·{' '}
-                  {platformReport.summary.ok} ok
-                </span>
-                {platformReport.eolSource && (
-                  <span className="text-slate-500 text-xs">
-                    · EOL data: {platformReport.eolSource}
-                    {platformReport.eolError ? ` (${platformReport.eolError})` : ''}
+              <div
+                className={`mb-5 rounded-xl border px-4 py-3 ${
+                  platformReport.summary.level === 'ok'
+                    ? 'border-emerald-500/30 bg-emerald-500/10'
+                    : platformReport.summary.level === 'critical'
+                      ? 'border-red-500/30 bg-red-500/10'
+                      : 'border-amber-500/30 bg-amber-500/10'
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${platformLevelPill(platformReport.summary.level)}`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${platformLevelDot(platformReport.summary.level)}`} />
+                    {platformReport.summary.audienceLabel || platformReport.summary.level}
                   </span>
-                )}
+                  <p className="text-white font-medium text-sm sm:text-base">
+                    {platformReport.summary.headline || 'Platform status'}
+                  </p>
+                </div>
+                <p className="text-slate-400 text-xs mt-2">
+                  {platformReport.eolNote ||
+                    'Support end dates update when you click Refresh dates (from endoflife.date).'}
+                </p>
               </div>
 
+              {platformReport.recommendations && platformReport.recommendations.length > 0 && (
+                <div className="mb-5 rounded-xl border border-slate-600/80 bg-slate-900/40 p-4">
+                  <h3 className="text-sm font-semibold text-white mb-3">What to do</h3>
+                  <ul className="space-y-3">
+                    {platformReport.recommendations.map((rec) => (
+                      <li key={rec.id} className="text-sm">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className="font-medium text-slate-200">{rec.title}</span>
+                          {rec.recommendByLabel && (
+                            <span className="text-[11px] uppercase tracking-wide text-amber-300/90">
+                              {rec.recommendByLabel}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-slate-400">{rec.action}</p>
+                        {rec.recommendByDisplay && (
+                          <p className="text-slate-500 text-xs mt-1">Target date: {rec.recommendByDisplay}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <h3 className="text-sm font-semibold text-slate-300 mb-2">Status checklist</h3>
               <ul className="divide-y divide-slate-700/80">
                 {platformReport.checks.map((check) => (
                   <li key={check.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -2120,17 +2173,27 @@ export default function AdminPage() {
                       <div className="flex flex-wrap items-baseline gap-2">
                         <span className="font-semibold text-white">{check.title}</span>
                         {check.value != null && check.value !== '' && (
-                          <span className="text-slate-400 text-xs font-mono">{check.value}</span>
+                          <span className="text-slate-500 text-xs font-mono">{check.value}</span>
                         )}
                       </div>
-                      <p className="text-slate-400 text-sm mt-1">{check.detail}</p>
-                      {check.meta?.eol && (
+                      <p className="text-slate-300 text-sm mt-1 leading-relaxed">
+                        {check.plain || check.detail}
+                      </p>
+                      {check.action && (
+                        <p className="text-slate-400 text-sm mt-2">
+                          <span className="text-slate-500">Action: </span>
+                          {check.action}
+                        </p>
+                      )}
+                      {check.recommendByLabel && (
+                        <p className="text-amber-200/80 text-xs mt-1">{check.recommendByLabel}</p>
+                      )}
+                      {check.meta?.eolDisplay && check.level === 'ok' && (
                         <p className="text-slate-500 text-xs mt-1">
-                          EOL {check.meta.eol}
+                          Supported until {check.meta.eolDisplay}
                           {typeof check.meta.daysRemaining === 'number'
-                            ? ` · ${check.meta.daysRemaining} days remaining`
+                            ? ` (${check.meta.daysRemaining} days left)`
                             : ''}
-                          {check.meta.latestInCycle ? ` · latest ${check.meta.latestInCycle}` : ''}
                         </p>
                       )}
                     </div>
@@ -2146,7 +2209,7 @@ export default function AdminPage() {
 
               {(platformReport.links?.nodeEol || platformReport.links?.nodeReleases) && (
                 <p className="mt-4 text-slate-500 text-xs">
-                  References:{' '}
+                  Official schedules:{' '}
                   {platformReport.links.nodeEol && (
                     <a
                       href={platformReport.links.nodeEol}
@@ -2154,7 +2217,7 @@ export default function AdminPage() {
                       rel="noreferrer"
                       className="text-sky-400 hover:text-sky-300 underline-offset-2 hover:underline"
                     >
-                      endoflife.date/nodejs
+                      Node end-of-life dates
                     </a>
                   )}
                   {platformReport.links.nodeEol && platformReport.links.nodeReleases ? ' · ' : ''}
@@ -2172,7 +2235,7 @@ export default function AdminPage() {
               )}
             </>
           ) : (
-            <p className="text-slate-400 text-sm">No report yet. Click Refresh.</p>
+            <p className="text-slate-400 text-sm">No report yet. Click Refresh dates.</p>
           )}
         </section>
 
