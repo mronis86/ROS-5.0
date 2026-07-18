@@ -1,0 +1,19 @@
+# Conservative Dependabot: weekly root npm updates, capped PRs.
+# Security updates: enable “Dependabot security updates” in GitHub repo settings.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    ignore:
+      # CRA toolchain churn; handle deliberately, not via weekly majors
+      - dependency-name: react-scripts
+        update-types:
+          - version-update:semver-major

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench, Bell, Package, BookOpen } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
@@ -406,6 +406,7 @@ export default function AdminPage() {
   const [platformReport, setPlatformReport] = useState<PlatformMaintenanceReport | null>(null);
   const [platformLoading, setPlatformLoading] = useState(false);
   const [platformError, setPlatformError] = useState<string | null>(null);
+  const [healthUrlCopied, setHealthUrlCopied] = useState(false);
 
   const fetchPlatformMaintenance = useCallback(async () => {
     setPlatformLoading(true);
@@ -2073,6 +2074,120 @@ export default function AdminPage() {
           ) : (
             <p className="text-slate-400 text-sm">No status yet. Click Refresh.</p>
           )}
+
+          <div className="mt-6 pt-5 border-t border-slate-700/80">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-sky-500/15 text-sky-400">
+                <Bell className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-white text-sm">External uptime monitor</h3>
+                <p className="text-slate-400 text-sm mt-1">
+                  Free outside check (e.g. UptimeRobot) that hits Railway <span className="font-mono text-slate-300">/health</span> every
+                  few minutes and emails you if the API is down. Complements this page and ops alert emails. Egress from these
+                  pings is negligible.
+                </p>
+                <div className="mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center">
+                  <code className="text-xs text-slate-300 bg-slate-900/60 border border-slate-700 rounded-md px-2.5 py-1.5 font-mono break-all">
+                    {`${getApiBaseUrl().replace(/\/$/, '')}/health`}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const url = `${getApiBaseUrl().replace(/\/$/, '')}/health`;
+                      try {
+                        await navigator.clipboard.writeText(url);
+                        setHealthUrlCopied(true);
+                        window.setTimeout(() => setHealthUrlCopied(false), 2000);
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-md transition-colors w-fit"
+                  >
+                    {healthUrlCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {healthUrlCopied ? 'Copied' : 'Copy URL'}
+                  </button>
+                  <a
+                    href="https://uptimerobot.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-2.5 py-1.5 bg-sky-700/80 hover:bg-sky-600 text-white text-xs rounded-md transition-colors w-fit"
+                  >
+                    Open UptimeRobot
+                  </a>
+                </div>
+                <ol className="mt-3 text-slate-500 text-xs list-decimal list-inside space-y-1">
+                  <li>Create a free HTTP(s) monitor with the URL above (5-minute interval).</li>
+                  <li>Optional keyword: <span className="font-mono text-slate-400">healthy</span>.</li>
+                  <li>Add your email as the alert contact and confirm it.</li>
+                </ol>
+                <p className="mt-2 text-slate-500 text-xs">
+                  Full steps: <span className="font-mono text-slate-400">docs/UPTIME-MONITORING.md</span> in the repo.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 pt-5 border-t border-slate-700/80">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-violet-500/15 text-violet-400">
+                <Package className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-white text-sm">Dependency updates (Dependabot)</h3>
+                <p className="text-slate-400 text-sm mt-1">
+                  GitHub opens pull requests for npm updates (capped weekly). You review and merge — nothing deploys
+                  automatically. Prefer security PRs; ignore noisy transitive “moderate” piles from old tooling.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a
+                    href="https://github.com/mronis86/ROS-5.0/pulls?q=is%3Apr+label%3Adependencies"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-2.5 py-1.5 bg-violet-700/80 hover:bg-violet-600 text-white text-xs rounded-md transition-colors"
+                  >
+                    Open dependency PRs
+                  </a>
+                  <a
+                    href="https://github.com/mronis86/ROS-5.0/security/dependabot"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-2.5 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-md transition-colors"
+                  >
+                    Security / Dependabot alerts
+                  </a>
+                </div>
+                <ol className="mt-3 text-slate-500 text-xs list-decimal list-inside space-y-1">
+                  <li>After push: GitHub → Settings → Code security → enable Dependabot alerts + security updates.</li>
+                  <li>Watch GitHub email / the PRs link above (not this Admin page) for new updates.</li>
+                  <li>Merge when ready; skip or postpone noisy majors.</li>
+                </ol>
+                <p className="mt-2 text-slate-500 text-xs">
+                  Details: <span className="font-mono text-slate-400">docs/DEPENDABOT.md</span> in the repo.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 pt-5 border-t border-slate-700/80">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-amber-500/15 text-amber-400">
+                <BookOpen className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-white text-sm">Mid-show API down</h3>
+                <p className="text-slate-400 text-sm mt-1">
+                  If Railway <span className="font-mono text-slate-300">/health</span> fails during a live event: confirm once,
+                  then fall back to the old system and/or offline show — do not debug production mid-cues. Fix cloud after
+                  the show.
+                </p>
+                <p className="mt-2 text-slate-500 text-xs">
+                  Full steps: <span className="font-mono text-slate-400">docs/SHOW-DOWN-RUNBOOK.md</span> in the repo.
+                </p>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section id="platform" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">

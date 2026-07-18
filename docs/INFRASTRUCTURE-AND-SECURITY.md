@@ -373,7 +373,9 @@ Before loading a new cue, the module may call **stop** on the current timer and 
 - [ ] **Admin:** Add production (and staging) domains to **Approved domains** in Admin so login works.
 - [ ] **Companion:** Point API Base URL to the production Railway URL; ensure operators have correct Event ID and sync interval.
 - [ ] **Secrets:** Confirm no secrets in repo; rotate any that were ever committed or shared inappropriately.
-- [ ] **Monitoring:** Use `/health` on Railway for availability; consider alerts on 5xx or DB/Upstash failures.
+- [ ] **Monitoring:** Use `/health` on Railway for availability. Set up an external free monitor (e.g. UptimeRobot) — see [UPTIME-MONITORING.md](./UPTIME-MONITORING.md). Consider alerts on 5xx or DB/Upstash failures.
+- [ ] **Dependencies:** Dependabot is configured (see [DEPENDABOT.md](./DEPENDABOT.md)). Enable Dependabot alerts + security updates in GitHub repo settings.
+- [ ] **Show fallback:** Know [SHOW-DOWN-RUNBOOK.md](./SHOW-DOWN-RUNBOOK.md) — API down mid-show → old system / offline, fix cloud after.
 
 ---
 

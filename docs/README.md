@@ -27,6 +27,9 @@ This folder contains all the project documentation files.
 - **[NETLIFY-FUNCTIONS-ROUTING-SOLUTION.md](./NETLIFY-FUNCTIONS-ROUTING-SOLUTION.md)** - Routing solutions
 - **[PORT-FIX-SUMMARY.md](./PORT-FIX-SUMMARY.md)** - Port configuration fixes
 - **[RECOVERY_GUIDE.md](./RECOVERY_GUIDE.md)** - Recovery procedures
+- **[SHOW-DOWN-RUNBOOK.md](./SHOW-DOWN-RUNBOOK.md)** - Mid-show API down → fallback
+- **[UPTIME-MONITORING.md](./UPTIME-MONITORING.md)** - Free external `/health` monitor
+- **[DEPENDABOT.md](./DEPENDABOT.md)** - Conservative dependency update PRs
 
 ### Google Sheets Integration
 - **[GOOGLE-SHEETS-FEATURES.md](./GOOGLE-SHEETS-FEATURES.md)** - Google Sheets features
