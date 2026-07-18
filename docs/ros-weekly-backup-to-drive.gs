@@ -9,6 +9,8 @@
  * 3. Run testBackupConnection() once to verify the API responds (View → Logs).
  * 4. Run runBackupToDrive() once and authorize Drive when prompted.
  * 5. Triggers (clock icon) → Add Trigger → runBackupToDrive, Time-driven, Week timer, pick day/time.
+ *
+ * Auth: send Railway ADMIN_KEY in the X-Admin-Key header (query ?key= no longer works when API auth is enabled).
  */
 
 const CONFIG = {
@@ -17,14 +19,21 @@ const CONFIG = {
   DRIVE_FOLDER_ID: ''   // Optional: folder ID from drive.google.com/drive/folders/FOLDER_ID — leave '' for My Drive root
 };
 
+function backupFetchOptions_() {
+  return {
+    muteHttpExceptions: true,
+    headers: { 'X-Admin-Key': CONFIG.API_KEY },
+  };
+}
+
 /**
  * Test only: fetch from API and log event count. Does not write to Drive.
  * Run this first to confirm API_BASE_URL and API_KEY work.
  */
 function testBackupConnection() {
-  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export?key=' + encodeURIComponent(CONFIG.API_KEY);
+  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export';
   try {
-    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    const response = UrlFetchApp.fetch(url, backupFetchOptions_());
     const code = response.getResponseCode();
     const text = response.getContentText();
     if (code !== 200) {
@@ -47,10 +56,10 @@ function testBackupConnection() {
  * Call this manually or via a time-driven trigger (e.g. weekly).
  */
 function runBackupToDrive() {
-  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export?key=' + encodeURIComponent(CONFIG.API_KEY);
+  const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export';
   let response;
   try {
-    response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    response = UrlFetchApp.fetch(url, backupFetchOptions_());
   } catch (e) {
     Logger.log('Fetch error: ' + e.toString());
     throw new Error('Could not reach API: ' + e.toString());
