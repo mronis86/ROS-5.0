@@ -5,30 +5,31 @@
  *
  * SETUP:
  * 1. Copy this entire file into script.google.com (New project).
- * 2. Set CONFIG below: API_BASE_URL, API_KEY, and optionally DRIVE_FOLDER_ID.
- * 3. Run testBackupConnection() once to verify the API responds (View → Logs).
- * 4. Run runBackupToDrive() once and authorize Drive when prompted.
- * 5. Triggers (clock icon) → Add Trigger → runBackupToDrive, Time-driven, Week timer, pick day/time.
+ * 2. In ROS Admin → Integration API tokens, create a token with scope: backup:export
+ * 3. Set CONFIG below: API_BASE_URL, API_TOKEN (the ros_itok_… value), optional DRIVE_FOLDER_ID.
+ * 4. Run testBackupConnection() once to verify the API responds (View → Logs).
+ * 5. Run runBackupToDrive() once and authorize Drive when prompted.
+ * 6. Triggers (clock icon) → Add Trigger → runBackupToDrive, Time-driven, Week timer, pick day/time.
  *
- * Auth: send Railway ADMIN_KEY in the X-Admin-Key header (query ?key= no longer works when API auth is enabled).
+ * Auth: Bearer integration token (backup:export). Do not put secrets in the URL query string.
  */
 
 const CONFIG = {
   API_BASE_URL: 'https://ros-50-production.up.railway.app',  // Your Railway API URL (no trailing slash)
-  API_KEY: 'YOUR_ADMIN_KEY',
+  API_TOKEN: 'YOUR_INTEGRATION_TOKEN',  // Admin → Integration API tokens → scope backup:export
   DRIVE_FOLDER_ID: ''   // Optional: folder ID from drive.google.com/drive/folders/FOLDER_ID — leave '' for My Drive root
 };
 
 function backupFetchOptions_() {
   return {
     muteHttpExceptions: true,
-    headers: { 'X-Admin-Key': CONFIG.API_KEY },
+    headers: { 'Authorization': 'Bearer ' + CONFIG.API_TOKEN },
   };
 }
 
 /**
  * Test only: fetch from API and log event count. Does not write to Drive.
- * Run this first to confirm API_BASE_URL and API_KEY work.
+ * Run this first to confirm API_BASE_URL and API_TOKEN work.
  */
 function testBackupConnection() {
   const url = CONFIG.API_BASE_URL + '/api/backup/upcoming-export';

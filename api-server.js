@@ -1340,8 +1340,13 @@ async function runWeeklyBackupToDrive() {
 
 // Export upcoming events as JSON (for Google Apps Script or other schedulers to fetch and save to Drive)
 // GET /api/backup/upcoming-export → { events: [ { eventId, eventName, eventDate, csv }, ... ] }
+// Auth: Integration token with backup:export (or admin) scope, or ADMIN_KEY / Neon is_admin.
 app.get('/api/backup/upcoming-export', async (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  const scopes = req.auth?.scopes || [];
+  const integrationOk =
+    req.auth?.type === 'integration' &&
+    (scopes.includes('backup:export') || scopes.includes('admin'));
+  if (!integrationOk && !requireAdminAccess(req, res)) return;
   try {
     const result = await pool.query(
       `SELECT event_id, event_name, event_date, schedule_items, custom_columns

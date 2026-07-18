@@ -3057,9 +3057,10 @@ export default function AdminPage() {
               </p>
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">Setup</p>
               <ol className="list-decimal list-inside space-y-2 text-sm">
-                <li>Go to <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">script.google.com</a> → <strong>New project</strong>.</li>
+                <li>In <strong>Admin → Integration API tokens</strong>, create a token with scope <code className="bg-slate-700 px-1 rounded">backup:export</code>. Copy the <code className="bg-slate-700 px-1 rounded">ros_itok_…</code> value.</li>
+                <li>Go to <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">script.google.com</a> → <strong>New project</strong> (or open your existing backup project).</li>
                 <li>Delete the default code and paste the script below (use <strong>Copy script</strong>).</li>
-                <li>At the top of the script, set <strong>CONFIG</strong>: <code className="bg-slate-700 px-1 rounded">API_BASE_URL</code> (your Railway API URL), <code className="bg-slate-700 px-1 rounded">API_KEY</code> (same as Admin key), and optionally <code className="bg-slate-700 px-1 rounded">DRIVE_FOLDER_ID</code> (leave empty for My Drive root).</li>
+                <li>At the top of the script, set <strong>CONFIG</strong>: <code className="bg-slate-700 px-1 rounded">API_BASE_URL</code> (your Railway API URL), <code className="bg-slate-700 px-1 rounded">API_TOKEN</code> (the integration token), and optionally <code className="bg-slate-700 px-1 rounded">DRIVE_FOLDER_ID</code> (leave empty for My Drive root).</li>
                 <li>Run <strong>testBackupConnection</strong> once (dropdown → testBackupConnection → Run). Check View → Logs; you should see e.g. &quot;OK: API returned N upcoming event(s).&quot;</li>
                 <li>Run <strong>runBackupToDrive</strong> once and authorize Drive when prompted. Check your Drive for a weekly folder (e.g. 2026-W06) with CSVs.</li>
                 <li><strong className="text-emerald-200">Set the timed trigger:</strong> Click the <strong>Triggers</strong> (clock) icon in the left sidebar → <strong>Add Trigger</strong> → Function: <code className="bg-slate-700 px-1 rounded">runBackupToDrive</code> → Event: <strong>Time-driven</strong> → Type: <strong>Week timer</strong> → Choose day and time (e.g. Monday 6:00 am). Save.</li>
