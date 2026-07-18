@@ -17,7 +17,8 @@ const patterns = [
   /C:\/Users\//i,
   /\/Users\/[^/]+\//,
   /OneDrive/i,
-  /ROS-5\.0[\\/]/i,
+  // Real path leaks under the project folder (not GitHub URLs like .../ROS-5.0/pulls)
+  /ROS-5\.0[\\/](?:src|node_modules|dist|public|offline-show)\b/i,
   /src[\\/]pages[\\/]/i,
 ];
 
