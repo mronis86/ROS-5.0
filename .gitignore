@@ -18,6 +18,9 @@ node_modules/electron/dist/
 .env.test.local
 .env.production.local
 
+# Local Sentry DSNs / notes (never commit)
+sentry/
+
 # Build outputs
 dist/
 build/

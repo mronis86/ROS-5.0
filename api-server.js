@@ -11,6 +11,8 @@ const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
 const { parseAgenda, findFirstTimeLineIndex } = require('./lib/agenda-parser');
 require('dotenv').config();
+const { initSentry, setupSentryExpressErrorHandler } = require('./lib/sentry-init');
+initSentry();
 
 // Force Railway rebuild - 2025-02-05 - Backup error details + redeploy
 // Auth is now handled via direct database connection
@@ -5491,6 +5493,7 @@ app.get('/api/monitor/snapshot', async (req, res) => {
   }
 });
 
+setupSentryExpressErrorHandler(app);
 app.use(createOpsErrorHandler(pool));
 
 // Start server on all network interfaces (allows local network access)
