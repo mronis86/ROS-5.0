@@ -50,10 +50,33 @@ If you upload a folder built **without** `VITE_SENTRY_DSN`, the browser app will
 
 ## Smoke test
 
-1. Deploy with DSNs set.
-2. Temporarily throw in the UI or hit an API path that errors.
-3. Confirm the issue appears in the matching Sentry project and email arrives.
-4. Remove the test throw.
+**Web (after Netlify deploy with DSN baked in):** on the live site, open the browser console and run:
+
+```js
+__rosSentrySmokeTest()
+```
+
+Bare `throw new Error(...)` in DevTools often never reaches Sentry.
+
+**API (after Railway has SENTRY_DSN + latest code):** open  
+`https://ros-50-production.up.railway.app/api/sentry-test`  
+You should see JSON `ok: true`. Check **ros-api** Issues.
+
+Remove `/api/sentry-test` after you confirm (or ask to lock/remove it).
+
+## Setup checklist warnings in Sentry UI
+
+Safe to ignore for now (we intentionally skipped these):
+
+- **Source maps** — we disable public source maps for privacy; stack traces stay minified. Optional later.
+- **Session Replay / Performance tracing** — off to protect free quota.
+- **“Finish SDK setup” wizard steps** — often clear after the first real event from `__rosSentrySmokeTest()` / `/api/sentry-test`.
+
+Required for “working”:
+
+- DSN set (Netlify build / Railway)
+- At least one Issue appears in the project
+- Alert email on new issues
 
 ## Related
 

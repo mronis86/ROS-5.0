@@ -18,6 +18,13 @@ export function initSentry(): void {
     tracesSampleRate: 0,
     sendDefaultPii: false,
   });
+
+  // Console helper: __rosSentrySmokeTest() — bare `throw` in DevTools often never reaches Sentry
+  (window as unknown as { __rosSentrySmokeTest?: () => string }).__rosSentrySmokeTest = () => {
+    const err = new Error('Sentry smoke test web');
+    Sentry.captureException(err);
+    return 'Sent to Sentry (check ros-web Issues in ~30s)';
+  };
 }
 
 export { Sentry };
