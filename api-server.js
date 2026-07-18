@@ -1,7 +1,7 @@
 // API Server for ROS-5.0
 // Sentry must init before Express is required so request instrumentation works.
 require('dotenv').config();
-const { initSentry, setupSentryExpressErrorHandler, registerSentrySmokeTestRoute } = require('./lib/sentry-init');
+const { initSentry, setupSentryExpressErrorHandler } = require('./lib/sentry-init');
 initSentry();
 
 const express = require('express');
@@ -494,7 +494,6 @@ app.use(express.json({ limit: '10mb' }));
 // API auth: resolves Bearer/query tokens; enforces REQUIRE_API_AUTH when legacy mode is off
 applyAuthRateLimits(app, pool);
 installOpsAlerts(app, pool);
-registerSentrySmokeTestRoute(app);
 app.use(createApiAuthMiddleware(pool, apiAuthConfig));
 registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);

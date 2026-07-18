@@ -10,8 +10,8 @@ On the API, `Sentry.init()` runs **before** `require('express')` so Express requ
 
 | Sentry project | Env var | Where |
 |---|---|---|
-| `ros-web` | `VITE_SENTRY_DSN` | Netlify build env **or** local `.env.local` before building the upload folder |
-| `ros-api` | `SENTRY_DSN` | Railway Variables |
+| `ros-web` (React) | `VITE_SENTRY_DSN` | Netlify build env **or** local `.env.local` before building the upload folder |
+| `ros-api` (Node) | `SENTRY_DSN` | Railway Variables |
 
 Optional: `VITE_SENTRY_ENVIRONMENT=production` / `SENTRY_ENVIRONMENT=production`.
 
@@ -32,7 +32,7 @@ Vite embeds `VITE_*` at **build time**.
 
 ### Git-connected Netlify
 
-1. Site → **Environment variables** → add `VITE_SENTRY_DSN` (ros-web DSN).
+1. Site → **Environment variables** → add `VITE_SENTRY_DSN` (ros-web DSN — not the Node DSN).
 2. Trigger a new deploy / clear cache and deploy.
 
 ### Manual folder upload (`netlify-*-V2`)
@@ -44,25 +44,15 @@ Vite embeds `VITE_*` at **build time**.
    VITE_SENTRY_ENVIRONMENT=production
    ```
 
-2. Rebuild the dated folder (`create-netlify-dated.ps1` or `npm run build` then copy), then upload.
+2. Rebuild the dated folder, then upload.
 
 If you upload a folder built **without** `VITE_SENTRY_DSN`, the browser app will not send errors to Sentry.
 
-## Smoke test
+## Verify / re-test
 
-**Web (after Netlify deploy with DSN baked in):** on the live site, open the browser console and run:
+Use Sentry’s project UI (**Issues**, or “Send a test event” if offered). Confirm alert email rules exist on **both** React and Node projects (“new issue” → email).
 
-```js
-__rosSentrySmokeTest()
-```
-
-Bare `throw new Error(...)` in DevTools often never reaches Sentry.
-
-**API (after Railway has SENTRY_DSN + latest code):** open  
-`https://ros-50-production.up.railway.app/api/sentry-test`  
-You should see JSON `ok: true`. Check **ros-api** Issues.
-
-Remove `/api/sentry-test` after you confirm (or ask to lock/remove it).
+Admin → **Services** also summarizes how Sentry fits next to uptime and ops emails.
 
 ## Setup checklist warnings in Sentry UI
 
@@ -70,15 +60,10 @@ Safe to ignore for now (we intentionally skipped these):
 
 - **Source maps** — we disable public source maps for privacy; stack traces stay minified. Optional later.
 - **Session Replay / Performance tracing** — off to protect free quota.
-- **“Finish SDK setup” wizard steps** — often clear after the first real event from `__rosSentrySmokeTest()` / `/api/sentry-test`.
-
-Required for “working”:
-
-- DSN set (Netlify build / Railway)
-- At least one Issue appears in the project
-- Alert email on new issues
+- **“Finish SDK setup” wizard** — often stays visible; use **Issues**, not the install checklist.
 
 ## Related
 
 - Uptime: [UPTIME-MONITORING.md](./UPTIME-MONITORING.md)
-- Ops emails (Resend): `lib/ops-alerts.js` — still runs alongside Sentry
+- Ops emails (Resend): `lib/ops-alerts.js` — still runs alongside Sentry (e.g. unauthorized API)
+- Admin → Services — in-app notes

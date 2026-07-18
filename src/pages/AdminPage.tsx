@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench, Bell, Package, BookOpen } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench, Bell, Package, BookOpen, Bug } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
+import { isSentryWebConfigured } from '../lib/sentry';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
 import {
   getLogoVariant,
@@ -2124,6 +2125,54 @@ export default function AdminPage() {
                 </ol>
                 <p className="mt-2 text-slate-500 text-xs">
                   Full steps: <span className="font-mono text-slate-400">docs/UPTIME-MONITORING.md</span> in the repo.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 pt-5 border-t border-slate-700/80">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-rose-500/15 text-rose-400">
+                <Bug className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-white text-sm">Error reporting (Sentry)</h3>
+                <p className="text-slate-400 text-sm mt-1">
+                  Catches uncaught errors in the Netlify app and Railway API, then emails via Sentry alert
+                  rules. Complements this health panel (live status), UptimeRobot (is it up?), and Resend ops
+                  emails (unauthorized API, etc.). Errors-only — no Session Replay; egress is tiny.
+                </p>
+                <p className="text-slate-500 text-xs mt-2">
+                  This build — web SDK:{' '}
+                  <span className={isSentryWebConfigured() ? 'text-emerald-400' : 'text-amber-400'}>
+                    {isSentryWebConfigured() ? 'DSN baked in' : 'no VITE_SENTRY_DSN in this build'}
+                  </span>
+                  . API uses Railway <span className="font-mono text-slate-400">SENTRY_DSN</span> (check
+                  logs for <span className="font-mono text-slate-400">[sentry] initialized</span>).
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a
+                    href="https://sentry.io/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-2.5 py-1.5 bg-rose-700/80 hover:bg-rose-600 text-white text-xs rounded-md transition-colors"
+                  >
+                    Open Sentry
+                  </a>
+                </div>
+                <ol className="mt-3 text-slate-500 text-xs list-decimal list-inside space-y-1">
+                  <li>
+                    Two projects: React web (<span className="font-mono text-slate-400">VITE_SENTRY_DSN</span> at
+                    build time) and Node API (<span className="font-mono text-slate-400">SENTRY_DSN</span> on
+                    Railway).
+                  </li>
+                  <li>Alert rules on both projects: new issue → your email (verify each project).</li>
+                  <li>
+                    Ignore the Install wizard / source-map checklist if Issues already receive events.
+                  </li>
+                </ol>
+                <p className="mt-2 text-slate-500 text-xs">
+                  Full steps: <span className="font-mono text-slate-400">docs/SENTRY-SETUP.md</span> in the repo.
                 </p>
               </div>
             </div>
