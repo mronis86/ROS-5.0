@@ -1,4 +1,9 @@
 // API Server for ROS-5.0
+// Sentry must init before Express is required so request instrumentation works.
+require('dotenv').config();
+const { initSentry, setupSentryExpressErrorHandler } = require('./lib/sentry-init');
+initSentry();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -10,9 +15,6 @@ const multer = require('multer');
 const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
 const { parseAgenda, findFirstTimeLineIndex } = require('./lib/agenda-parser');
-require('dotenv').config();
-const { initSentry, setupSentryExpressErrorHandler } = require('./lib/sentry-init');
-initSentry();
 
 // Force Railway rebuild - 2025-02-05 - Backup error details + redeploy
 // Auth is now handled via direct database connection

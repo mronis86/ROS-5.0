@@ -4,6 +4,8 @@ Catches uncaught errors in the Netlify SPA and Railway API and emails you via Se
 
 **Free-tier friendly:** no Session Replay, `tracesSampleRate: 0` (errors only). Egress is negligible.
 
+On the API, `Sentry.init()` runs **before** `require('express')` so Express request instrumentation works.
+
 ## Projects
 
 | Sentry project | Env var | Where |
