@@ -6271,23 +6271,9 @@ const RunOfShowPage: React.FC = () => {
         // NOTE: loadActiveTimerFromAPI() is now called AFTER schedule is loaded
         // in loadFromAPI() to prevent race condition where cue display text is missing
         
-        // Load current completed cues
+        // Load current completed cues (authenticated — bare fetch 401s under REQUIRE_API_AUTH)
         try {
-          const completedCuesResponse = await fetch(`${getApiBaseUrl()}/api/completed-cues/${event?.id}`);
-          if (completedCuesResponse.ok) {
-            const completedCuesArray = await completedCuesResponse.json();
-            console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);
-            
-            // Convert array to object format for consistency
-            const completedCuesObject = completedCuesArray.reduce((acc: Record<number, boolean>, cue: { item_id?: unknown }) => {
-              const id = normalizeScheduleItemId(cue.item_id);
-              if (id != null) acc[id] = true;
-              return acc;
-            }, {});
-            
-            setCompletedCues(completedCuesObject);
-            console.log('✅ Initial sync: Converted completed cues to object format:', completedCuesObject);
-          }
+          await syncCompletedCues();
         } catch (error) {
           console.error('❌ Initial sync failed to load completed cues:', error);
         }
