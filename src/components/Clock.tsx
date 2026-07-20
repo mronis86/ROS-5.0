@@ -72,24 +72,32 @@ const Clock: React.FC<ClockProps> = ({
     return Math.floor((syncedNow.getTime() - start.getTime()) / 1000);
   };
 
-  const isResolumeSynced = (timer: { resolume_state?: string; time_source?: string } | null | undefined) =>
+  const isResolumeSynced = (timer: { resolume_state?: string; mitti_state?: string; time_source?: string } | null | undefined) =>
     timer?.resolume_state === 'synced' ||
-    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
+    timer?.mitti_state === 'synced' ||
+    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed') ||
+    (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed');
 
-  const isResolumeArmed = (timer: { resolume_state?: string } | null | undefined) =>
-    timer?.resolume_state === 'armed';
+  const isResolumeArmed = (timer: { resolume_state?: string; mitti_state?: string } | null | undefined) =>
+    timer?.resolume_state === 'armed' || timer?.mitti_state === 'armed';
 
   const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
-    timer?.user_name === 'Resolume Sync' || timer?.user_id === 'companion-resolume';
+    timer?.user_name === 'Resolume Sync' ||
+    timer?.user_id === 'companion-resolume' ||
+    timer?.user_name === 'Mitti Sync' ||
+    timer?.user_id === 'companion-mitti';
 
   const enrichSubCueTimer = (timer: any) => {
     if (!timer || typeof timer !== 'object') return timer;
     if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
     if (!isResolumeCompanionSubCue(timer)) return timer;
+    const isMitti = timer?.user_id === 'companion-mitti' || timer?.user_name === 'Mitti Sync';
     return {
       ...timer,
-      time_source: 'resolume',
-      resolume_state: timer.is_running ? 'synced' : 'armed',
+      time_source: isMitti ? 'mitti' : 'resolume',
+      ...(isMitti
+        ? { mitti_state: timer.is_running ? 'synced' : 'armed' }
+        : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
     };
   };
 
@@ -105,7 +113,14 @@ const Clock: React.FC<ClockProps> = ({
 
   const shouldRejectResolumeAlignReset = (
     prev: { started_at?: string; duration_seconds?: number; is_running?: boolean } | null | undefined,
-    next: { started_at?: string; duration_seconds?: number; is_running?: boolean; resolume_state?: string; time_source?: string },
+    next: {
+      started_at?: string;
+      duration_seconds?: number;
+      is_running?: boolean;
+      resolume_state?: string;
+      mitti_state?: string;
+      time_source?: string;
+    },
     offsetMs: number
   ) => {
     if (!prev?.is_running || !next.is_running || !isResolumeSynced(next)) return false;

@@ -888,29 +888,37 @@ const RunOfShowPage: React.FC = () => {
   const [stoppedItems, setStoppedItems] = useState<Set<number>>(new Set());
   
   // Helper function to format cue display with proper spacing
-  /** True when timer is driven by Resolume OSC sync (from WebSocket timerUpdated). */
-  const isResolumeTimerSource = (timer: { time_source?: string; resolume_state?: string } | null | undefined) =>
-    timer?.time_source === 'resolume';
+  /** True when timer is driven by Resolume or Mitti OSC sync (from WebSocket timerUpdated). */
+  const isResolumeTimerSource = (timer: { time_source?: string; resolume_state?: string; mitti_state?: string } | null | undefined) =>
+    timer?.time_source === 'resolume' || timer?.time_source === 'mitti';
 
-  const isResolumeArmed = (timer: { resolume_state?: string } | null | undefined) =>
-    timer?.resolume_state === 'armed';
+  const isResolumeArmed = (timer: { resolume_state?: string; mitti_state?: string } | null | undefined) =>
+    timer?.resolume_state === 'armed' || timer?.mitti_state === 'armed';
 
-  const isResolumeSynced = (timer: { resolume_state?: string; time_source?: string } | null | undefined) =>
+  const isResolumeSynced = (timer: { resolume_state?: string; mitti_state?: string; time_source?: string } | null | undefined) =>
     timer?.resolume_state === 'synced' ||
-    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
+    timer?.mitti_state === 'synced' ||
+    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed') ||
+    (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed');
 
-  /** Sub-cue started by Companion Resolume align (detectable from DB fields without in-memory API state). */
+  /** Sub-cue started by Companion Resolume/Mitti align. */
   const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
-    timer?.user_name === 'Resolume Sync' || timer?.user_id === 'companion-resolume';
+    timer?.user_name === 'Resolume Sync' ||
+    timer?.user_id === 'companion-resolume' ||
+    timer?.user_name === 'Mitti Sync' ||
+    timer?.user_id === 'companion-mitti';
 
   const enrichSubCueTimer = (timer: any) => {
     if (!timer || typeof timer !== 'object') return timer;
     if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
     if (!isResolumeCompanionSubCue(timer)) return timer;
+    const isMitti = timer?.user_id === 'companion-mitti' || timer?.user_name === 'Mitti Sync';
     return {
       ...timer,
-      time_source: 'resolume',
-      resolume_state: timer.is_running ? 'synced' : 'armed',
+      time_source: isMitti ? 'mitti' : 'resolume',
+      ...(isMitti
+        ? { mitti_state: timer.is_running ? 'synced' : 'armed' }
+        : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
     };
   };
 
@@ -1062,19 +1070,23 @@ const RunOfShowPage: React.FC = () => {
       started_at?: string;
       duration_seconds?: number;
       resolume_state?: string;
+      mitti_state?: string;
       time_source?: string;
       is_running?: boolean;
       is_active?: boolean;
       resolume_align_seq?: number;
+      mitti_align_seq?: number;
     } | null | undefined,
     next: {
       started_at?: string;
       duration_seconds?: number;
       resolume_state?: string;
+      mitti_state?: string;
       time_source?: string;
       is_running?: boolean;
       is_active?: boolean;
       resolume_align_seq?: number;
+      mitti_align_seq?: number;
     }
   ) => {
     if (!isResolumeSynced(next) || !next.is_running || !next.is_active) return false;
@@ -1083,6 +1095,12 @@ const RunOfShowPage: React.FC = () => {
     if (
       next.resolume_align_seq != null &&
       next.resolume_align_seq !== prev.resolume_align_seq
+    ) {
+      return true;
+    }
+    if (
+      next.mitti_align_seq != null &&
+      next.mitti_align_seq !== prev.mitti_align_seq
     ) {
       return true;
     }

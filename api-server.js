@@ -84,6 +84,10 @@ const pool = new Pool({
 const resolumeTimeSourceByEvent = new Map(); // eventId -> { time_source, item_id, align_seq, align_reason }
 const resolumePendingByEvent = new Map(); // eventId -> { item_id } — armed, waiting for OSC align
 
+// Mitti sync: parallel in-memory flags (Companion OSC feedback → one-shot align)
+const mittiTimeSourceByEvent = new Map();
+const mittiPendingByEvent = new Map();
+
 function applyResolumeMeta(eventId, timerRow, options = {}) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
   const wantsSubCue = options.isSubCue === true;
@@ -118,6 +122,40 @@ function applyResolumeMeta(eventId, timerRow, options = {}) {
   return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
 }
 
+function applyMittiMeta(eventId, timerRow, options = {}) {
+  if (!timerRow || typeof timerRow !== 'object') return timerRow;
+  const wantsSubCue = options.isSubCue === true;
+  const rowItemId = timerRow.item_id != null ? String(timerRow.item_id) : '';
+
+  const synced = mittiTimeSourceByEvent.get(eventId);
+  if (synced?.time_source === 'mitti') {
+    if (!!synced.is_sub_cue !== wantsSubCue) {
+      return { ...timerRow, mitti_state: 'none' };
+    }
+    if (String(synced.item_id) !== rowItemId) {
+      return { ...timerRow, mitti_state: 'none' };
+    }
+    return {
+      ...timerRow,
+      time_source: 'mitti',
+      mitti_state: 'synced',
+      mitti_align_seq: synced.align_seq ?? 0,
+      mitti_align_reason: synced.align_reason ?? null,
+    };
+  }
+
+  const pending = mittiPendingByEvent.get(eventId);
+  if (pending) {
+    if (!!pending.is_sub_cue !== wantsSubCue) {
+      return { ...timerRow, mitti_state: 'none' };
+    }
+    if (rowItemId === String(pending.item_id)) {
+      return { ...timerRow, time_source: 'mitti', mitti_state: 'armed' };
+    }
+  }
+  return { ...timerRow, mitti_state: 'none' };
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** active_timers.event_id is UUID in Neon — ensure a calendar_events row exists. */
@@ -135,13 +173,15 @@ async function ensureCalendarEventExists(eventId, eventName = 'Quick Mode') {
 }
 
 function broadcastTimerUpdated(eventId, timerRow) {
-  const data = applyResolumeMeta(eventId, timerRow, { isSubCue: false });
+  let data = applyResolumeMeta(eventId, timerRow, { isSubCue: false });
+  data = applyMittiMeta(eventId, data, { isSubCue: false });
   io.to(`event:${eventId}`).emit('update', { type: 'timerUpdated', data });
   return data;
 }
 
 function broadcastSubCueTimerUpdated(eventId, timerRow) {
-  const data = applyResolumeMeta(eventId, timerRow, { isSubCue: true });
+  let data = applyResolumeMeta(eventId, timerRow, { isSubCue: true });
+  data = applyMittiMeta(eventId, data, { isSubCue: true });
   io.to(`event:${eventId}`).emit('update', { type: 'subCueTimerStarted', data });
   return data;
 }
@@ -157,6 +197,19 @@ function clearResolumePending(eventId) {
 function clearAllResolumeState(eventId) {
   clearResolumeTimeSource(eventId);
   clearResolumePending(eventId);
+}
+
+function clearMittiTimeSource(eventId) {
+  mittiTimeSourceByEvent.delete(eventId);
+}
+
+function clearMittiPending(eventId) {
+  mittiPendingByEvent.delete(eventId);
+}
+
+function clearAllMittiState(eventId) {
+  clearMittiTimeSource(eventId);
+  clearMittiPending(eventId);
 }
 
 // Upstash Redis REST API helper - for caching graphics data
@@ -3085,7 +3138,7 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
        FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1`,
       [eventId]
     );
-    const rows = result.rows.map((row) => applyResolumeMeta(eventId, row));
+    const rows = result.rows.map((row) => applyMittiMeta(eventId, applyResolumeMeta(eventId, row)));
     // Do not broadcast on GET — every fetch was pushing activeTimersUpdated to all clients and clearing loaded timers
     res.json(rows);
   } catch (error) {
@@ -3186,7 +3239,7 @@ app.post('/api/active-timers', async (req, res) => {
     
     // Use the elapsed_seconds from the database (which we set to 0 in the SQL)
     // Don't recalculate - it adds delay!
-    const timerData = applyResolumeMeta(event_id, result.rows[0]);
+    const timerData = applyMittiMeta(event_id, applyResolumeMeta(event_id, result.rows[0]));
     
     // Broadcast update via WebSocket with database elapsed_seconds
     broadcastUpdate(event_id, 'timerUpdated', timerData);
@@ -3423,7 +3476,9 @@ app.get('/api/sub-cue-timers/:eventId', async (req, res) => {
       'SELECT * FROM sub_cue_timers WHERE event_id = $1 AND is_running = true ORDER BY created_at DESC',
       [eventId]
     );
-    const rows = result.rows.map((row) => applyResolumeMeta(eventId, row, { isSubCue: true }));
+    const rows = result.rows.map((row) =>
+      applyMittiMeta(eventId, applyResolumeMeta(eventId, row, { isSubCue: true }), { isSubCue: true })
+    );
     res.json(rows);
   } catch (error) {
     console.error('Error fetching sub-cue timers:', error);
@@ -4630,6 +4685,279 @@ app.post('/api/timers/resolume-end', async (req, res) => {
   } catch (error) {
     console.error('Error in resolume-end:', error);
     res.status(500).json({ error: 'Failed to resolume-end', details: error.message });
+  }
+});
+
+// Mitti: mark cue armed (loaded, waiting for OSC feedback)
+app.post('/api/timers/mitti-arm', async (req, res) => {
+  try {
+    const { event_id, item_id, is_sub_cue } = req.body;
+    if (!event_id || item_id == null) {
+      return res.status(400).json({ error: 'event_id and item_id are required' });
+    }
+    const isSubCue = !!is_sub_cue;
+    clearMittiTimeSource(event_id);
+    mittiPendingByEvent.set(event_id, { item_id: parseInt(item_id, 10), is_sub_cue: isSubCue });
+    if (isSubCue) {
+      const subResult = await pool.query(
+        'SELECT * FROM sub_cue_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      if (subResult.rows[0]) broadcastSubCueTimerUpdated(event_id, subResult.rows[0]);
+    } else {
+      const timerResult = await pool.query(
+        'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      if (timerResult.rows[0]) broadcastTimerUpdated(event_id, timerResult.rows[0]);
+    }
+    res.json({
+      success: true,
+      event_id,
+      item_id: parseInt(item_id, 10),
+      is_sub_cue: isSubCue,
+      mitti_state: 'armed',
+    });
+  } catch (error) {
+    console.error('Error in mitti-arm:', error);
+    res.status(500).json({ error: 'Failed to mitti-arm', details: error.message });
+  }
+});
+
+app.post('/api/timers/mitti-disarm', async (req, res) => {
+  try {
+    const { event_id } = req.body;
+    if (!event_id) return res.status(400).json({ error: 'event_id is required' });
+    clearAllMittiState(event_id);
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    if (timerResult.rows[0]) broadcastTimerUpdated(event_id, timerResult.rows[0]);
+    res.json({ success: true, event_id });
+  } catch (error) {
+    console.error('Error in mitti-disarm:', error);
+    res.status(500).json({ error: 'Failed to mitti-disarm', details: error.message });
+  }
+});
+
+// Mitti: one-shot align from Companion OSC feedback (low egress — not per-tick HTTP)
+app.post('/api/timers/mitti-sync-align', async (req, res) => {
+  try {
+    const {
+      event_id,
+      item_id,
+      duration_seconds,
+      remaining_seconds,
+      cue_is,
+      user_id,
+      align_at,
+      latency_compensation_ms,
+      align_reason,
+      is_sub_cue,
+      row_number,
+    } = req.body;
+    if (!event_id || item_id == null) {
+      return res.status(400).json({ error: 'event_id and item_id are required' });
+    }
+    if (remaining_seconds == null || remaining_seconds === '') {
+      return res.status(400).json({ error: 'remaining_seconds is required' });
+    }
+
+    const isSubCue = !!is_sub_cue;
+    const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
+    let rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
+
+    const existingTable = isSubCue ? 'sub_cue_timers' : 'active_timers';
+    const existingTimer = await pool.query(
+      `SELECT started_at, duration_seconds, is_running FROM ${existingTable} WHERE event_id = $1 LIMIT 1`,
+      [event_id]
+    );
+    if (existingTimer.rows[0]?.is_running && existingTimer.rows[0].started_at) {
+      const existingDur = Number(existingTimer.rows[0].duration_seconds) || dur;
+      const startedMs = new Date(existingTimer.rows[0].started_at).getTime();
+      if (Number.isFinite(startedMs) && startedMs < Date.now() + 86400000) {
+        const existingRem = existingDur - (Date.now() - startedMs) / 1000;
+        if (existingRem <= 15 && rem > existingDur * 0.85) {
+          console.log(
+            `🎬 Mitti sync-align: clamping full-cue reset (was ~${Math.round(existingRem)}s left, align wanted ${Math.round(rem)}s)`
+          );
+          rem = Math.max(0, Math.min(rem, Math.max(0, existingRem)));
+        }
+      }
+    }
+
+    const elapsed = dur - rem;
+    const alignMs = align_at ? new Date(align_at).getTime() : Date.now();
+    const compensationMs = Math.max(0, Math.min(15000, parseInt(latency_compensation_ms, 10) || 0));
+    const startedAt = new Date(
+      (Number.isFinite(alignMs) ? alignMs : Date.now()) - elapsed * 1000 - compensationMs
+    ).toISOString();
+
+    clearMittiPending(event_id);
+    const prevSynced = mittiTimeSourceByEvent.get(event_id);
+    const alignSeq = (prevSynced?.align_seq || 0) + 1;
+    const reason =
+      typeof align_reason === 'string' && align_reason.trim() ? align_reason.trim() : 'align';
+    mittiTimeSourceByEvent.set(event_id, {
+      time_source: 'mitti',
+      item_id: parseInt(item_id, 10),
+      align_seq: alignSeq,
+      align_reason: reason,
+      is_sub_cue: isSubCue,
+    });
+
+    console.log(
+      `🎬 Mitti sync-align #${alignSeq} (${reason})${isSubCue ? ' [sub-cue]' : ''} - Event: ${event_id}, Item: ${item_id}, dur: ${dur}s, rem: ${rem}s, latency_ms: ${compensationMs}`
+    );
+
+    let broadcastData;
+    if (isSubCue) {
+      const rowNum = Number.isFinite(Number(row_number)) ? parseInt(row_number, 10) : 0;
+      await pool.query(
+        `INSERT INTO sub_cue_timers
+         (event_id, item_id, user_id, user_name, user_role, duration_seconds, row_number, cue_display, timer_id,
+          is_active, is_running, started_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, true, $10::timestamptz, NOW(), NOW())
+         ON CONFLICT (event_id) DO UPDATE SET
+           item_id = EXCLUDED.item_id,
+           user_id = EXCLUDED.user_id,
+           user_name = EXCLUDED.user_name,
+           user_role = EXCLUDED.user_role,
+           duration_seconds = EXCLUDED.duration_seconds,
+           row_number = EXCLUDED.row_number,
+           cue_display = EXCLUDED.cue_display,
+           is_active = true,
+           is_running = true,
+           started_at = EXCLUDED.started_at,
+           updated_at = NOW()`,
+        [
+          event_id,
+          parseInt(item_id, 10),
+          user_id || 'companion-mitti',
+          'Mitti Sync',
+          'OPERATOR',
+          dur,
+          rowNum,
+          cue_is || `CUE ${item_id}`,
+          null,
+          startedAt,
+        ]
+      );
+      const subResult = await pool.query(
+        'SELECT * FROM sub_cue_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      broadcastData = broadcastSubCueTimerUpdated(event_id, subResult.rows[0]);
+      const mainResult = await pool.query(
+        'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      if (mainResult.rows[0]) broadcastTimerUpdated(event_id, mainResult.rows[0]);
+    } else {
+      await pool.query(
+        `
+        INSERT INTO active_timers (
+          event_id, item_id, user_id, user_name, user_role, timer_state, is_active, is_running,
+          started_at, last_loaded_cue_id, cue_is, duration_seconds, elapsed_seconds, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, 'running', true, true, $8::timestamptz, $2, $6, $7, 0, NOW(), NOW())
+        ON CONFLICT (event_id)
+        DO UPDATE SET
+          item_id = $2,
+          user_id = $3,
+          user_name = $4,
+          user_role = $5,
+          timer_state = 'running',
+          is_active = true,
+          is_running = true,
+          started_at = $8::timestamptz,
+          last_loaded_cue_id = $2,
+          cue_is = COALESCE($6, active_timers.cue_is),
+          duration_seconds = $7,
+          elapsed_seconds = 0,
+          updated_at = NOW()
+      `,
+        [
+          event_id,
+          parseInt(item_id, 10),
+          user_id || 'companion-mitti',
+          'Mitti Sync',
+          'OPERATOR',
+          cue_is || `CUE ${item_id}`,
+          dur,
+          startedAt,
+        ]
+      );
+
+      const timerResult = await pool.query(
+        'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+        [event_id]
+      );
+      broadcastData = broadcastTimerUpdated(event_id, timerResult.rows[0]);
+    }
+
+    res.json({
+      success: true,
+      message: isSubCue ? 'Mitti sub-cue timer aligned' : 'Mitti timer aligned',
+      event_id,
+      item_id: parseInt(item_id, 10),
+      is_sub_cue: isSubCue,
+      duration_seconds: dur,
+      remaining_seconds: rem,
+      time_source: 'mitti',
+      mitti_state: 'synced',
+      mitti_align_seq: alignSeq,
+      mitti_align_reason: reason,
+      latency_compensation_ms: compensationMs,
+    });
+    console.log(`📡 Mitti sync-align broadcast to event:${event_id}`, broadcastData);
+  } catch (error) {
+    console.error('Error in mitti-sync-align:', error);
+    res.status(500).json({ error: 'Failed to mitti-sync-align', details: error.message });
+  }
+});
+
+app.post('/api/timers/mitti-end', async (req, res) => {
+  try {
+    const { event_id } = req.body;
+    if (!event_id) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
+    const synced = mittiTimeSourceByEvent.get(event_id);
+    const pending = mittiPendingByEvent.get(event_id);
+    const wasSubCue = !!(synced?.is_sub_cue ?? pending?.is_sub_cue);
+    clearAllMittiState(event_id);
+    console.log(
+      `🎬 Mitti end - cleared Mitti state for event: ${event_id}${wasSubCue ? ' [sub-cue]' : ''}`
+    );
+
+    const timerResult = await pool.query(
+      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+      [event_id]
+    );
+    if (timerResult.rows[0]) broadcastTimerUpdated(event_id, timerResult.rows[0]);
+
+    if (wasSubCue) {
+      const stopResult = await pool.query(
+        `UPDATE sub_cue_timers
+         SET is_running = false, is_active = false, updated_at = NOW()
+         WHERE event_id = $1 AND is_running = true
+         RETURNING *`,
+        [event_id]
+      );
+      if (stopResult.rows.length > 0) {
+        broadcastUpdate(event_id, 'subCueTimerStopped', {
+          event_id,
+          stopped_count: stopResult.rows.length,
+        });
+        console.log(`🎬 Mitti end - stopped ${stopResult.rows.length} sub-cue timer(s)`);
+      }
+    }
+
+    res.json({ success: true, message: 'Mitti time source cleared', event_id });
+  } catch (error) {
+    console.error('Error in mitti-end:', error);
+    res.status(500).json({ error: 'Failed to mitti-end', details: error.message });
   }
 });
 
