@@ -1,0 +1,25 @@
+{
+  "name": "companion-module-runofshow-mitti",
+  "version": "0.1.0",
+  "main": "src/main.js",
+  "scripts": {
+    "format": "prettier -w .",
+    "package": "companion-module-build"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": "^22.20",
+    "yarn": "^4"
+  },
+  "dependencies": {
+    "@companion-module/base": "~1.14.1",
+    "osc": "^2.4.5",
+    "run-of-show-timer-client": "file:.."
+  },
+  "devDependencies": {
+    "@companion-module/tools": "^2.6.1",
+    "prettier": "^3.7.4"
+  },
+  "prettier": "@companion-module/tools/.prettierrc.json",
+  "packageManager": "yarn@4.12.0"
+}

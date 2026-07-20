@@ -53,6 +53,7 @@
     "zip:offline-show": "node scripts/zip-offline-show.js",
     "zip:companion-full": "node scripts/zip-companion-module-full.js",
     "zip:companion-resolume": "node scripts/zip-companion-module-resolume-full.js",
+    "zip:companion-mitti": "node scripts/zip-companion-module-mitti-full.js",
     "zip:spout-bridge": "node scripts/zip-spout-bridge.js",
     "zip:master-backup": "node scripts/zip-master-backup.js --branch master",
     "prerender:led-cues": "node scripts/run-bake-led-prerenders.js",

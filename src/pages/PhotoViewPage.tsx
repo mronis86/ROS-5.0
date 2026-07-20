@@ -420,24 +420,32 @@ const PhotoViewPage: React.FC = () => {
     return `CUE ${cueStr}`;
   };
 
-  const isResolumeArmed = (timer: { resolume_state?: string } | null | undefined) =>
-    timer?.resolume_state === 'armed';
+  const isResolumeArmed = (timer: { resolume_state?: string; mitti_state?: string } | null | undefined) =>
+    timer?.resolume_state === 'armed' || timer?.mitti_state === 'armed';
 
-  const isResolumeSynced = (timer: { resolume_state?: string; time_source?: string } | null | undefined) =>
+  const isResolumeSynced = (timer: { resolume_state?: string; mitti_state?: string; time_source?: string } | null | undefined) =>
     timer?.resolume_state === 'synced' ||
-    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed');
+    timer?.mitti_state === 'synced' ||
+    (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed') ||
+    (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed');
 
   const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
-    timer?.user_name === 'Resolume Sync' || timer?.user_id === 'companion-resolume';
+    timer?.user_name === 'Resolume Sync' ||
+    timer?.user_id === 'companion-resolume' ||
+    timer?.user_name === 'Mitti Sync' ||
+    timer?.user_id === 'companion-mitti';
 
   const enrichSubCueTimer = (timer: any) => {
     if (!timer || typeof timer !== 'object') return timer;
     if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
     if (!isResolumeCompanionSubCue(timer)) return timer;
+    const isMitti = timer?.user_id === 'companion-mitti' || timer?.user_name === 'Mitti Sync';
     return {
       ...timer,
-      time_source: 'resolume',
-      resolume_state: timer.is_running ? 'synced' : 'armed',
+      time_source: isMitti ? 'mitti' : 'resolume',
+      ...(isMitti
+        ? { mitti_state: timer.is_running ? 'synced' : 'armed' }
+        : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
     };
   };
 
@@ -508,19 +516,23 @@ const PhotoViewPage: React.FC = () => {
       started_at?: string;
       duration_seconds?: number;
       resolume_state?: string;
+      mitti_state?: string;
       time_source?: string;
       is_running?: boolean;
       is_active?: boolean;
       resolume_align_seq?: number;
+      mitti_align_seq?: number;
     } | null | undefined,
     next: {
       started_at?: string;
       duration_seconds?: number;
       resolume_state?: string;
+      mitti_state?: string;
       time_source?: string;
       is_running?: boolean;
       is_active?: boolean;
       resolume_align_seq?: number;
+      mitti_align_seq?: number;
     }
   ) => {
     if (!isResolumeSynced(next) || !next.is_running || !next.is_active) return false;
@@ -529,6 +541,12 @@ const PhotoViewPage: React.FC = () => {
     if (
       next.resolume_align_seq != null &&
       next.resolume_align_seq !== prev.resolume_align_seq
+    ) {
+      return true;
+    }
+    if (
+      next.mitti_align_seq != null &&
+      next.mitti_align_seq !== prev.mitti_align_seq
     ) {
       return true;
     }
@@ -1462,9 +1480,13 @@ const PhotoViewPage: React.FC = () => {
                 (timer.is_running ||
                   timer.timer_state === 'running' ||
                   timer.resolume_state === 'armed' ||
+                  timer.mitti_state === 'armed' ||
                   timer.time_source === 'resolume' ||
+                  timer.time_source === 'mitti' ||
                   timer.user_name === 'Resolume Sync' ||
-                  timer.user_id === 'companion-resolume')
+                  timer.user_id === 'companion-resolume' ||
+                  timer.user_name === 'Mitti Sync' ||
+                  timer.user_id === 'companion-mitti')
             );
             console.log('🔄 PhotoView: Found active sub-cue timer:', activeSubCue);
 

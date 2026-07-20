@@ -24,6 +24,7 @@ const { validateRailwayApiToken } = require('./railway-client');
 const cloud = require('./cloud-data');
 const { pushReconnectSnapshotToRailway } = require('./cloud-reconnect-push');
 const { installCloudProxy } = require('./cloud-proxy');
+const { registerMediaSyncRoutes, applyMediaSyncMeta } = require('./media-sync-routes');
 
 function friendlyError(err) {
   const msg = err instanceof Error ? err.message : String(err);
@@ -35,8 +36,20 @@ function friendlyError(err) {
 }
 
 function registerRoutes(app, db, helpers) {
-  const broadcastUpdate = helpers.broadcastUpdate;
+  const broadcastUpdateRaw = helpers.broadcastUpdate;
   const broadcastCloudMode = helpers.broadcastCloudMode;
+
+  // Inject Resolume/Mitti armed/synced meta onto timer socket payloads (LAN)
+  function broadcastUpdate(eventId, updateType, data) {
+    let payload = data;
+    if (updateType === 'timerUpdated' && data) {
+      payload = applyMediaSyncMeta(eventId, data, { isSubCue: false });
+    } else if (updateType === 'subCueTimerStarted' && data) {
+      payload = applyMediaSyncMeta(eventId, data, { isSubCue: true });
+    }
+    return broadcastUpdateRaw(eventId, updateType, payload);
+  }
+
   app.get('/health', (_req, res) => {
     res.json({
       status: 'healthy',
@@ -217,6 +230,9 @@ function registerRoutes(app, db, helpers) {
 
   // Cloud on: forward /api/* to Railway/Neon (same paths as main app). LAN only falls through to SQLite routes below.
   installCloudProxy(app, db, broadcastUpdate);
+
+  // LAN companion media sync (Resolume + Mitti). Skipped when cloud proxy handles the request.
+  registerMediaSyncRoutes(app, db, { broadcastUpdate, normalizeActiveTimer });
 
   // ─── Calendar events (LAN only — cloud mode handled by proxy above) ───────
   app.get('/api/calendar-events', async (_req, res) => {
@@ -435,7 +451,9 @@ function registerRoutes(app, db, helpers) {
     const rows = db
       .prepare('SELECT * FROM active_timers WHERE event_id = ? ORDER BY updated_at DESC LIMIT 1')
       .all(req.params.eventId);
-    res.json(rows.map(normalizeActiveTimer));
+    res.json(
+      rows.map((row) => applyMediaSyncMeta(req.params.eventId, normalizeActiveTimer(row), { isSubCue: false }))
+    );
   });
 
   app.post('/api/active-timers', (req, res) => {

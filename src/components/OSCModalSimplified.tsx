@@ -90,6 +90,19 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
 
               <div className="text-center mb-4">
                 <a
+                  href="/companion-module-runofshow-mitti-full.zip"
+                  download="companion-module-runofshow-mitti-full.zip"
+                  className="block bg-orange-700 hover:bg-orange-600 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  🎞️ Companion Module — Mitti Sync
+                </a>
+                <div className="text-xs text-orange-300 mt-2">
+                  Mitti OSC feedback → ROS timer • Arm cue, TRT pull (select→restore), periodic re-sync
+                </div>
+              </div>
+
+              <div className="text-center mb-4">
+                <a
                   href="/companion-module-runofshow-resolume-full.zip"
                   download="companion-module-runofshow-resolume-full.zip"
                   className="block bg-fuchsia-700 hover:bg-fuchsia-600 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
