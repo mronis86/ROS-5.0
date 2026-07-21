@@ -1968,6 +1968,7 @@ const PhotoViewPage: React.FC = () => {
     'Remote Only': '#60A5FA',        // Light Blue
     'Break F&B/B2B': '#EC4899',              // Bright Pink
     'Breakout Session': '#20B2AA',           // Seafoam
+    'Delay Block': '#7C3AED',                 // Violet
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
     'Podium': '#8B4513',             // Brown

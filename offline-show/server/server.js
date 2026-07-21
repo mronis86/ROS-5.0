@@ -115,6 +115,43 @@ async function start() {
       }
     });
 
+    socket.on('forceClockSync', (data) => {
+      if (railwayBridge.isCloudConnected()) return;
+      const eventId = data?.eventId != null ? String(data.eventId) : '';
+      if (!eventId || !socket.rooms.has(`event:${eventId}`)) return;
+
+      const { normalizeActiveTimer, normalizeTimerMessage } = require('./db');
+      const activeTimer = normalizeActiveTimer(
+        db.prepare('SELECT * FROM active_timers WHERE event_id = ? ORDER BY updated_at DESC LIMIT 1').get(eventId)
+      );
+      broadcastUpdate(
+        eventId,
+        activeTimer && activeTimer.is_active && activeTimer.timer_state !== 'stopped'
+          ? 'timerUpdated'
+          : 'timersStopped',
+        activeTimer || { event_id: eventId }
+      );
+
+      const subCueTimers = db
+        .prepare('SELECT * FROM sub_cue_timers WHERE event_id = ? AND is_running = 1 ORDER BY created_at DESC')
+        .all(eventId);
+      if (subCueTimers.length > 0) {
+        for (const timer of subCueTimers) broadcastUpdate(eventId, 'subCueTimerStarted', timer);
+      } else {
+        broadcastUpdate(eventId, 'subCueTimerStopped', { event_id: eventId });
+      }
+
+      const timerMessage = normalizeTimerMessage(
+        db.prepare('SELECT * FROM timer_messages WHERE event_id = ? AND enabled = 1 ORDER BY created_at DESC LIMIT 1').get(eventId)
+      );
+      broadcastUpdate(
+        eventId,
+        'timerMessageUpdated',
+        timerMessage || { event_id: eventId, message: '', enabled: false }
+      );
+      io.to(`event:${eventId}`).emit('serverTime', { serverTime: new Date().toISOString() });
+    });
+
     socket.on('resetAllStates', (data) => {
       if (railwayBridge.isCloudConnected()) return;
       const eventId = data?.eventId != null ? String(data.eventId) : '';

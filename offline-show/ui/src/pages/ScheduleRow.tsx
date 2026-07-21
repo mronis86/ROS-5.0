@@ -407,6 +407,19 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         </div>
         );
       })()}
+      {item.programType === 'Delay Block' ? (
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-24 overflow-hidden border-r border-violet-400/60 px-12 py-2">
+          {[0, 1, 2].map((marker) => (
+            <span
+              key={marker}
+              className="min-w-[22rem] flex-1 shrink-0 whitespace-nowrap rounded-lg border-2 border-violet-300/80 bg-violet-900/80 px-6 py-2 text-center text-base font-bold tracking-wider text-violet-50 shadow-md"
+            >
+              ⏱ SEGMENT DELAY • ALL FOLLOWING START TIMES SHIFTED ⏱
+            </span>
+          ))}
+        </div>
+      ) : (
+      <>
       {/* Segment name column (after Duration) */}
       {visibleColumns.segmentName && (
         <div 
@@ -883,6 +896,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           </div>
         )
       ))}
+      </>
+      )}
     </>
   );
 

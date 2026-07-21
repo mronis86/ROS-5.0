@@ -245,6 +245,13 @@ class SocketClient {
     }
   }
 
+  emitForceClockSync(): boolean {
+    if (!this.socket?.connected || !this.eventId) return false;
+    console.log('📡 Emitting force clock sync request');
+    this.socket.emit('forceClockSync', { eventId: this.eventId });
+    return true;
+  }
+
   /** Content Review: broadcast selected schedule row id to followers in the same event. */
   emitContentReviewSelectionUpdate(itemId: number, userId: string, userName: string) {
     if (this.socket && this.eventId) {

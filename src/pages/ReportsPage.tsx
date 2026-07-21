@@ -517,6 +517,7 @@ const ReportsPage: React.FC = () => {
       'Remote Only': '#60A5FA',        // Light Blue
       'Break F&B/B2B': '#EC4899',              // Bright Pink
       'Breakout Session': '#20B2AA',           // Seafoam
+      'Delay Block': '#7C3AED',                 // Violet
       'TBD': '#6B7280',                // Medium Gray
       'KILLED': '#DC2626',             // Bright Red
       'Podium': '#FFFFFF',             // White (no highlighting)
@@ -538,6 +539,7 @@ const ReportsPage: React.FC = () => {
     { label: 'Remote Only', key: 'Remote Only' },
     { label: 'Break F&B / B2B', key: 'Break F&B/B2B' },
     { label: 'Breakout Session', key: 'Breakout Session' },
+    { label: 'Delay Block', key: 'Delay Block' },
     { label: 'TBD', key: 'TBD' },
     { label: 'KILLED', key: 'KILLED' },
   ];

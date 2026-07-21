@@ -17,6 +17,7 @@ const PROGRAM_TYPES = [
   'Remote Only',
   'Break F&B/B2B',
   'Breakout Session',
+  'Delay Block',
   'TBD',
   'KILLED'
 ] as const;
@@ -32,6 +33,7 @@ const PROGRAM_TYPE_COLORS: Record<string, string> = {
   'Remote Only': '#60A5FA',
   'Break F&B/B2B': '#EC4899',
   'Breakout Session': '#20B2AA',
+  'Delay Block': '#7C3AED',
   TBD: '#6B7280',
   KILLED: '#DC2626',
   'Full-Stage/Ted-Talk': '#EA580C'

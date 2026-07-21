@@ -275,6 +275,12 @@ class SocketClient {
     }
   }
 
+  emitForceClockSync(): boolean {
+    if (!this.socket?.connected || !this.eventId) return false;
+    this.socket.emit('forceClockSync', { eventId: this.eventId });
+    return true;
+  }
+
   emitContentReviewSelectionUpdate(itemId: number, userId: string, userName: string) {
     if (this.socket && this.eventId) {
       this.socket.emit('contentReviewSelectionUpdate', {

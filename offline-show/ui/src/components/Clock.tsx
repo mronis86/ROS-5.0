@@ -60,7 +60,6 @@ const Clock: React.FC<ClockProps> = ({
   const [lastActiveTimerId, setLastActiveTimerId] = useState<string | null>(null);
   const [lastActiveItemId, setLastActiveItemId] = useState<number | null>(null);
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
 
   // Clock component always runs in WebSocket-only mode
@@ -251,15 +250,16 @@ const Clock: React.FC<ClockProps> = ({
     }
 
     console.log('🔄 Clock: Setting up WebSocket connection for eventId:', eventId);
+    let loadInFlight = false;
 
     const loadActiveTimer = async () => {
-      if (isLoading) {
+      if (loadInFlight) {
         console.log('🔄 Already loading active timer, skipping...');
         return;
       }
       
       try {
-        setIsLoading(true);
+        loadInFlight = true;
         console.log('🔄 Loading active timer from API...');
         const activeTimer = await DatabaseService.getActiveTimer(eventId);
         if (activeTimer && activeTimer.timer_state !== 'stopped' && activeTimer.is_active) {
@@ -293,7 +293,11 @@ const Clock: React.FC<ClockProps> = ({
                 secondaryTimer: enrichSubCueTimer(runningSubCueTimer)
               }));
               console.log('✅ Clock: Initial load - sub-cue timer loaded:', runningSubCueTimer);
+            } else {
+              setHybridTimerData(prev => ({ ...prev, secondaryTimer: null }));
             }
+          } else {
+            setHybridTimerData(prev => ({ ...prev, secondaryTimer: null }));
           }
           
           // Load current timer message
@@ -368,7 +372,7 @@ const Clock: React.FC<ClockProps> = ({
       } catch (error) {
         console.error('❌ Error loading active timer:', error);
       } finally {
-        setIsLoading(false);
+        loadInFlight = false;
       }
     };
 
@@ -576,8 +580,19 @@ const Clock: React.FC<ClockProps> = ({
 
     socketClient.connect(eventId, callbacks);
 
+    const refreshClockOnReturn = () => {
+      if (document.hidden) return;
+      console.log('🔄 Clock: Visible/focused - silently refreshing timer state');
+      setCurrentTime(new Date());
+      void loadActiveTimer();
+    };
+    document.addEventListener('visibilitychange', refreshClockOnReturn);
+    window.addEventListener('focus', refreshClockOnReturn);
+
     return () => {
       console.log('🔄 Clock: Cleaning up WebSocket connection');
+      document.removeEventListener('visibilitychange', refreshClockOnReturn);
+      window.removeEventListener('focus', refreshClockOnReturn);
       socketClient.disconnect(eventId);
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component

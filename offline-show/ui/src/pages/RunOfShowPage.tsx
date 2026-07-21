@@ -631,6 +631,9 @@ const RunOfShowPage: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInsertRowModal, setShowInsertRowModal] = useState(false);
   const [insertRowPosition, setInsertRowPosition] = useState<number | null>(null);
+  const [showDelayBlockModal, setShowDelayBlockModal] = useState(false);
+  const [delayBlockDay, setDelayBlockDay] = useState(1);
+  const [delayDuration, setDelayDuration] = useState({ hours: 0, minutes: 5, seconds: 0 });
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [editingNotesItem, setEditingNotesItem] = useState<number | null>(null);
@@ -785,6 +788,7 @@ const RunOfShowPage: React.FC = () => {
   const [selectedBackup, setSelectedBackup] = useState<BackupData | null>(null);
   const [isPageVisible, setIsPageVisible] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [isForcingClockSync, setIsForcingClockSync] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState({
     start: true,
     programType: true,
@@ -964,9 +968,13 @@ const RunOfShowPage: React.FC = () => {
 
   const COMPLETED_ROW_CLASS =
     'bg-purple-950/90 ring-2 ring-inset ring-purple-400/45';
+  const DELAY_BLOCK_ROW_CLASS =
+    'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
 
   const isItemDimmed = (itemId: number) =>
     isItemCompleted(itemId) || stoppedItems.has(itemId);
+  const isDelayBlock = (itemId: number) =>
+    schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
 
   const getRowDimStyle = (item: { id: number; programType?: string }): React.CSSProperties => {
     if (item.programType === 'KILLED') return { opacity: 0.7 };
@@ -995,16 +1003,27 @@ const RunOfShowPage: React.FC = () => {
       customColumns
     ),
     ...getRowDimStyle(item),
+    ...(item.programType === 'Delay Block'
+      ? {
+          backgroundColor: '#2e1065',
+          backgroundImage:
+            'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
+        }
+      : {}),
     ...extra,
   });
 
   const getRowContainerClass = (itemId: number, index: number) =>
-    rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
+    isDelayBlock(itemId) && !isItemDimmed(itemId)
+      ? DELAY_BLOCK_ROW_CLASS
+      : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
 
   /** CUE + Timer columns: neutral unless the row is completed/stopped. */
   const getSideColumnRowClass = (itemId: number, index: number) =>
     isItemDimmed(itemId)
       ? COMPLETED_ROW_CLASS
+      : isDelayBlock(itemId)
+        ? DELAY_BLOCK_ROW_CLASS
       : index % 2 === 0
         ? 'bg-slate-800'
         : 'bg-slate-900';
@@ -1017,7 +1036,7 @@ const RunOfShowPage: React.FC = () => {
     speakers?: unknown;
     customFields?: Record<string, unknown>;
   }): React.CSSProperties =>
-    isItemDimmed(item.id)
+    isItemDimmed(item.id) || item.programType === 'Delay Block'
       ? getRowContainerStyle(item)
       : {
           height: getRowHeight(
@@ -1318,6 +1337,7 @@ const RunOfShowPage: React.FC = () => {
   // Countdown timer for sync check
   const [countdown, setCountdown] = useState(20);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [scheduleSyncState, setScheduleSyncState] = useState<'syncing' | 'ready' | 'error'>('syncing');
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // Drag-to-scroll refs and state
@@ -1426,7 +1446,7 @@ const RunOfShowPage: React.FC = () => {
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
     const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal;
-    const shouldPause = isUserEditing || anyModalOpen;
+    const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
 
     if (shouldPause) {
       // Pause: stop the interval
@@ -1442,7 +1462,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, event?.id, startCountdownTimer]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -2159,6 +2179,14 @@ const RunOfShowPage: React.FC = () => {
       
       if (activeTimer) {
         console.log('🔄 Loading timer from API:', activeTimer);
+
+        setHybridTimerData(prev => {
+          let refreshedTimer = activeTimer;
+          if (shouldRejectResolumeAlignReset(prev?.activeTimer, activeTimer, clockOffset)) {
+            refreshedTimer = { ...activeTimer, started_at: prev.activeTimer.started_at };
+          }
+          return { ...prev, activeTimer: refreshedTimer };
+        });
         
         // Set the active item
         setActiveItemId(activeTimer.item_id);
@@ -2237,6 +2265,7 @@ const RunOfShowPage: React.FC = () => {
         console.log('✅ Active timer loaded from API with accurate timing');
       } else {
         console.log('ℹ️ No active timer found in API - checking for recently completed cues');
+        setHybridTimerData(prev => ({ ...prev, activeTimer: null }));
         
         // When no active timer, check if there were recently completed cues
         // This helps Editor and Viewer roles see completed cues that were finished by other users
@@ -3160,7 +3189,7 @@ const RunOfShowPage: React.FC = () => {
 
   const programTypes = [
     'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
-    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'TBD', 'KILLED'
+    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'Delay Block', 'TBD', 'KILLED'
   ];
 
   // Program Type color mapping
@@ -3175,6 +3204,7 @@ const RunOfShowPage: React.FC = () => {
     'Remote Only': '#60A5FA',        // Light Blue
     'Break F&B/B2B': '#EC4899',              // Bright Pink
     'Breakout Session': '#20B2AA',           // Seafoam
+    'Delay Block': '#7C3AED',                 // Violet
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
     'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
@@ -5289,7 +5319,20 @@ const RunOfShowPage: React.FC = () => {
   }
   const loadFromAPI = useCallback(async () => {
     if (!event?.id) return;
-    
+
+    setScheduleSyncState('syncing');
+    const syncStartedAt = Date.now();
+    let scheduleReady = false;
+    const finishScheduleSync = async () => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await loadActiveTimerFromAPI();
+      const remainingAnimationMs = Math.max(0, 2500 - (Date.now() - syncStartedAt));
+      if (remainingAnimationMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, remainingAnimationMs));
+      }
+      scheduleReady = true;
+      setScheduleSyncState('ready');
+    };
     try {
       console.log('🔄 Loading from API for event:', event.id);
       
@@ -5392,11 +5435,7 @@ const RunOfShowPage: React.FC = () => {
         
         console.log('✅ Run of Show data loaded from API successfully');
         
-        // CRITICAL: Load active timer AFTER schedule is loaded to ensure cue display works
-        // Use setTimeout to ensure state updates are processed
-        setTimeout(() => {
-          loadActiveTimerFromAPI();
-        }, 100);
+        await finishScheduleSync();
       } else {
         console.log('ℹ️ No data found in API, falling back to localStorage for event:', event.id);
         // Fallback to localStorage if API has no data
@@ -5441,6 +5480,7 @@ const RunOfShowPage: React.FC = () => {
           setDayStartTimes(JSON.parse(savedDayStartTimes));
           console.log('📥 Loaded day start times from localStorage');
         }
+        await finishScheduleSync();
       }
     } catch (error) {
       console.error('❌ Error loading run of show data from API:', error);
@@ -5468,6 +5508,9 @@ const RunOfShowPage: React.FC = () => {
         }
       } else {
         console.log('❌ No schedule found in localStorage after error for event:', event.id);
+      }
+      if (!scheduleReady) {
+        setScheduleSyncState('error');
       }
     }
   }, [event?.id]);
@@ -5518,6 +5561,16 @@ const RunOfShowPage: React.FC = () => {
       console.log('❌ No event ID available for loading data');
     }
   }, [event?.id]);
+
+  const handleForceClockSync = () => {
+    if (currentUserRole !== 'OPERATOR') return;
+    if (!socketClient.emitForceClockSync()) {
+      alert('Clock sync could not be sent because the event connection is offline.');
+      return;
+    }
+    setIsForcingClockSync(true);
+    setTimeout(() => setIsForcingClockSync(false), 2500);
+  };
 
   // Set timezone from event data when component loads
   useEffect(() => {
@@ -6054,11 +6107,12 @@ const RunOfShowPage: React.FC = () => {
         // Tab hidden - disconnect WebSocket to allow server to sleep
         console.log('👁️ Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(event.id);
-      } else if (!socketClient.isConnected()) {
-        // Tab visible - reconnect and resync
-        console.log('👁️ Tab visible - reconnecting WebSocket');
-        socketClient.connect(event.id, callbacks);
-        callbacks.onInitialSync?.();
+      } else {
+        if (!socketClient.isConnected()) {
+          console.log('👁️ Tab visible - reconnecting WebSocket');
+          socketClient.connect(event.id, callbacks);
+        }
+        void loadFromAPI();
       }
     };
 
@@ -6072,7 +6126,7 @@ const RunOfShowPage: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       setViewers([]);
     };
-  }, [event?.id, user]);
+  }, [event?.id, user, loadFromAPI]);
 
   // Re-send presence when currentUserRole changes (so Viewers modal shows correct role)
   useEffect(() => {
@@ -6816,6 +6870,39 @@ const RunOfShowPage: React.FC = () => {
       timerDisplay: 'countdown',
       customFields: {}
     });
+  };
+
+  const addDelayBlock = () => {
+    const hours = Math.max(0, Math.floor(Number(delayDuration.hours) || 0));
+    const minutes = Math.max(0, Math.floor(Number(delayDuration.minutes) || 0));
+    const seconds = Math.max(0, Math.floor(Number(delayDuration.seconds) || 0));
+    if (hours * 3600 + minutes * 60 + seconds <= 0) {
+      alert('Enter a delay duration greater than zero.');
+      return;
+    }
+
+    addScheduleItem({
+      cue: '',
+      day: delayBlockDay,
+      programType: 'Delay Block',
+      shotType: '',
+      segmentName: 'Delay',
+      durationHours: hours,
+      durationMinutes: minutes,
+      durationSeconds: seconds,
+      notes: '',
+      assets: '',
+      speakers: '',
+      speakersText: '',
+      hasPPT: false,
+      hasQA: false,
+      timerId: '',
+      isPublic: false,
+      isIndented: false,
+      timerDisplay: 'countdown',
+      customFields: {},
+    });
+    setShowDelayBlockModal(false);
   };
 
   // Add a breakout room (sub-indented cue) for a Breakout Session
@@ -9711,8 +9798,51 @@ const RunOfShowPage: React.FC = () => {
           select option:checked {
             background-color: #3b82f6 !important;
           }
+          @keyframes ros-sync-progress {
+            from { transform: scaleX(0); }
+            to { transform: scaleX(1); }
+          }
         `}
       </style>
+      {scheduleSyncState !== 'ready' && (
+        <div
+          className="fixed left-0 right-0 bottom-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm"
+          style={{ top: 'var(--app-header-height)' }}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="rounded-xl border border-slate-600 bg-slate-800 px-8 py-6 text-center shadow-2xl">
+            <div className="flex items-center justify-center gap-3">
+              {scheduleSyncState === 'syncing' && (
+                <div className="h-7 w-7 shrink-0 animate-spin rounded-full border-2 border-slate-600 border-t-blue-400" />
+              )}
+              <div className="text-lg font-semibold text-white">
+                {scheduleSyncState === 'syncing' ? 'Syncing schedule and timer…' : 'Unable to verify latest schedule'}
+              </div>
+            </div>
+            <p className="mt-2 text-sm text-slate-300">
+              Editing will unlock when synchronization finishes.
+            </p>
+            {scheduleSyncState === 'syncing' && (
+              <div className="mt-4 h-1.5 w-64 overflow-hidden rounded-full bg-slate-700">
+                <div
+                  className="h-full w-full origin-left rounded-full bg-blue-500"
+                  style={{ animation: 'ros-sync-progress 2.5s ease-out forwards' }}
+                />
+              </div>
+            )}
+            {scheduleSyncState === 'error' && (
+              <button
+                type="button"
+                onClick={() => void loadFromAPI()}
+                className="mt-4 rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-500"
+              >
+                Retry Sync
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Fixed Header - Always Visible */}
       <div className="fixed top-[var(--app-header-height)] left-0 right-0 z-40 bg-slate-900 shadow-lg border-b border-slate-600" style={{ height: showGridHeaders ? '240px' : '150px' }}>
         <div className="py-2">
@@ -10057,8 +10187,8 @@ const RunOfShowPage: React.FC = () => {
                     // Detect user editing
                     handleUserEditing();
                     
-                    if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                      alert('Only EDITORs can change start time. Please change your role to EDITOR.');
+                    if (currentUserRole === 'VIEWER') {
+                      alert('Viewers cannot change start time. Please change your role to EDITOR or OPERATOR.');
                       return;
                     }
                     if (event?.numberOfDays && event.numberOfDays > 1) {
@@ -10074,12 +10204,12 @@ const RunOfShowPage: React.FC = () => {
                       setMasterStartTime(e.target.value);
                     }
                   }}
-                  disabled={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+                  disabled={currentUserRole === 'VIEWER'}
                   className="px-4 py-2 border-2 rounded-lg focus:outline-none w-36 transition-colors bg-slate-700 border-slate-600 text-white focus:border-blue-500"
                   style={{
                     colorScheme: 'dark'
                   }}
-                  title={currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can change start time' : `Set ${(event?.numberOfDays && event.numberOfDays > 1) ? `Day ${selectedDay}` : 'master'} start time`}
+                  title={currentUserRole === 'VIEWER' ? 'Editors or Operators can change start time' : `Set ${(event?.numberOfDays && event.numberOfDays > 1) ? `Day ${selectedDay}` : 'master'} start time`}
                 />
               </div>
             </div>
@@ -10467,6 +10597,17 @@ const RunOfShowPage: React.FC = () => {
                   </button>
                 )}
               </div>
+              {currentUserRole === 'OPERATOR' && (
+                <button
+                  type="button"
+                  onClick={handleForceClockSync}
+                  disabled={isForcingClockSync}
+                  className="h-7 shrink-0 whitespace-nowrap px-2 bg-cyan-700 hover:bg-cyan-600 disabled:bg-emerald-700 text-white text-xs font-medium rounded transition-colors"
+                  title="Force every Clock page for this event to reload its timer state"
+                >
+                  {isForcingClockSync ? '✓ Sent' : '↻ Clock'}
+                </button>
+              )}
               </div>
             </div>
           </div>
@@ -11067,6 +11208,22 @@ const RunOfShowPage: React.FC = () => {
                           >
                             <span>⧉</span>
                             <span>Duplicate Row</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleModalEditing();
+                              setActiveJumpMenu(null);
+                              setInsertRowPosition(schedule.findIndex(scheduleItem => scheduleItem.id === item.id));
+                              setDelayBlockDay(item.day || selectedDay);
+                              setDelayDuration({ hours: 0, minutes: 5, seconds: 0 });
+                              setShowDelayBlockModal(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2 border-t border-slate-600"
+                            title="Insert a schedule-only delay after this row"
+                          >
+                            <span>⏱</span>
+                            <span>Add Delay Block</span>
                           </button>
                           {/* Add Breakout Room button - only show for Breakout Session items */}
                           {item.programType === 'Breakout Session' && !indentedCues[item.id] && (
@@ -11737,13 +11894,14 @@ const RunOfShowPage: React.FC = () => {
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
                       <div className="text-sm font-mono text-slate-300">
-                        {item.timerId || 'TIMER'}
+                        {item.programType === 'Delay Block' ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
                       </div>
                       <div className="flex flex-col gap-1">
                         {!indentedCues[item.id] ? (
                           <>
                             <button
                               onClick={async () => {
+                                if (item.programType === 'Delay Block') return;
                                 console.log('🔥🔥🔥 LOAD BUTTON CLICKED!');
                                 console.log('🔥🔥🔥 currentUserRole:', currentUserRole);
                                 console.log('🔥🔥🔥 item.id:', item.id);
@@ -11768,17 +11926,17 @@ const RunOfShowPage: React.FC = () => {
                                   console.error('🔥🔥🔥 loadCue failed:', error);
                                 }
                               }}
-                              disabled={activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
+                              disabled={item.programType === 'Delay Block' || activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                item.programType === 'Delay Block' || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeItemId === item.id
                                     ? 'bg-blue-600 text-white cursor-default'
                                     : 'bg-slate-600 hover:bg-slate-500 text-white'
                               }`}
-                              title={currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
+                              title={item.programType === 'Delay Block' ? 'Delay Blocks only adjust the schedule' : currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
                             >
-                              {activeItemId === item.id ? 'LOADED' : 'LOAD'}
+                              {item.programType === 'Delay Block' ? 'DELAY' : activeItemId === item.id ? 'LOADED' : 'LOAD'}
                             </button>
                             <button
                               onClick={async () => {
@@ -11788,9 +11946,9 @@ const RunOfShowPage: React.FC = () => {
                                 }
                                 await toggleTimer(item.id);
                               }}
-                              disabled={activeItemId !== item.id || (activeTimers[item.id] ? false : Object.keys(activeTimers).length > 0) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
+                              disabled={item.programType === 'Delay Block' || activeItemId !== item.id || (activeTimers[item.id] ? false : Object.keys(activeTimers).length > 0) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                item.programType === 'Delay Block' || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeTimers[item.id]
                                     ? isResolumeRunningRow
@@ -11800,7 +11958,7 @@ const RunOfShowPage: React.FC = () => {
                                     ? 'bg-green-600 hover:bg-green-500 text-white'
                                     : 'bg-slate-600 text-slate-400 cursor-not-allowed'
                               }`}
-                              title={currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' ? 'Only OPERATORs can start/stop timers' : (activeTimers[item.id] ? 'Stop timer' : 'Start timer')}
+                              title={item.programType === 'Delay Block' ? 'Delay Blocks do not run timers' : currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' ? 'Only OPERATORs can start/stop timers' : (activeTimers[item.id] ? 'Stop timer' : 'Start timer')}
                             >
                               {activeTimers[item.id] ? 'STOP' : 'START'}
                             </button>
@@ -11874,6 +12032,59 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       </div>
+      {showDelayBlockModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-600 bg-slate-800 shadow-2xl">
+            <div className="border-b border-slate-600 px-5 py-4">
+              <h2 className="text-lg font-semibold text-white">Add Delay Block</h2>
+              <p className="mt-1 text-sm text-slate-300">
+                This schedule-only block pushes all later start times.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-3 p-5">
+              {([
+                ['hours', 'Hours'],
+                ['minutes', 'Minutes'],
+                ['seconds', 'Seconds'],
+              ] as const).map(([field, label]) => (
+                <label key={field} className="text-sm text-slate-200">
+                  {label}
+                  <input
+                    type="number"
+                    min="0"
+                    value={delayDuration[field]}
+                    onChange={(e) => setDelayDuration(prev => ({
+                      ...prev,
+                      [field]: Math.max(0, Number.parseInt(e.target.value, 10) || 0),
+                    }))}
+                    className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-violet-400 focus:outline-none"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-600 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDelayBlockModal(false);
+                  setInsertRowPosition(null);
+                  handleModalClosed();
+                }}
+                className="rounded bg-slate-600 px-4 py-2 text-white hover:bg-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addDelayBlock}
+                className="rounded bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-500"
+              >
+                Add Delay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Add Item Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">

@@ -5395,6 +5395,66 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('forceClockSync', async (data) => {
+    const eventId = data?.eventId != null ? String(data.eventId) : '';
+    if (!eventId || String(socketToEvent.get(socket.id) || '') !== eventId) return;
+    const presence = presenceByEvent.get(eventId)?.get(socket.id);
+    if (presence?.userRole !== 'OPERATOR') {
+      console.warn(`🕐 Rejected force clock sync from non-operator socket: ${socket.id}`);
+      return;
+    }
+
+    console.log(`🕐 Force clock sync requested for event: ${eventId}`);
+    try {
+      const [activeResult, subCueResult, messageResult] = await Promise.all([
+        pool.query(
+          'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+          [eventId]
+        ),
+        pool.query(
+          'SELECT * FROM sub_cue_timers WHERE event_id = $1 AND is_running = true ORDER BY created_at DESC',
+          [eventId]
+        ),
+        pool.query(
+          'SELECT * FROM timer_messages WHERE event_id = $1 AND enabled = true ORDER BY created_at DESC LIMIT 1',
+          [eventId]
+        ),
+      ]);
+
+      const activeTimer = activeResult.rows[0];
+      if (activeTimer && activeTimer.is_active !== false && activeTimer.timer_state !== 'stopped') {
+        broadcastTimerUpdated(eventId, activeTimer);
+      } else {
+        io.to(`event:${eventId}`).emit('update', {
+          type: 'timersStopped',
+          data: { event_id: eventId },
+        });
+      }
+
+      if (subCueResult.rows.length > 0) {
+        for (const timerRow of subCueResult.rows) {
+          broadcastSubCueTimerUpdated(eventId, timerRow);
+        }
+      } else {
+        io.to(`event:${eventId}`).emit('update', {
+          type: 'subCueTimerStopped',
+          data: { event_id: eventId },
+        });
+      }
+
+      io.to(`event:${eventId}`).emit('update', {
+        type: 'timerMessageUpdated',
+        data: messageResult.rows[0] || { event_id: eventId, message: '', enabled: false },
+      });
+      io.to(`event:${eventId}`).emit('serverTime', {
+        serverTime: new Date().toISOString(),
+      });
+      console.log(`✅ Force clock sync broadcast for event: ${eventId}`);
+    } catch (error) {
+      console.error('❌ Force clock sync error:', error);
+    }
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     releaseSocketRowLocks(socket.id);

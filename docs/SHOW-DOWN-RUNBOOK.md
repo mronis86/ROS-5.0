@@ -39,3 +39,4 @@ Health URL: `https://ros-50-production.up.railway.app/health`
 - [UPTIME-MONITORING.md](./UPTIME-MONITORING.md) — free external monitor setup  
 - Admin → **Services** — live status + uptime / Dependabot notes  
 - [INFRASTRUCTURE-AND-SECURITY.md](./INFRASTRUCTURE-AND-SECURITY.md) — stack overview  
+- [OFFLINE-RESILIENCE-PLAN.md](./OFFLINE-RESILIENCE-PLAN.md) — planned failover, reconnect, clock-sync, and rehearsal improvements

@@ -46,6 +46,7 @@ const CLIENT_TO_RAILWAY = [
   'showStartOvertimeUpdate',
   'startCueSelectionUpdate',
   'requestSync',
+  'forceClockSync',
 ];
 
 /** Railway → LAN direct events (not wrapped in `update`) */
