@@ -102,7 +102,7 @@ export async function persistLedEventSettings(
   writeLedEventSettingsToLocal(eventId, patch);
 
   try {
-    const existing = await DatabaseService.getRunOfShowData(eventId);
+    const existing = await DatabaseService.getRunOfShowData(eventId, { bypassCache: true });
     const baseSettings = applyLedEventSettingsPatch(
       options.priorSettings || existing?.settings,
       patch
@@ -112,6 +112,7 @@ export async function persistLedEventSettings(
       event_id: eventId,
       event_name: options.eventName || existing?.event_name || 'Event',
       event_date: options.eventDate || existing?.event_date || '',
+      // Prefer explicit schedule only when provided; otherwise keep DB copy (bypass cache above).
       schedule_items: options.scheduleItems || existing?.schedule_items || [],
       custom_columns: options.customColumns || existing?.custom_columns || [],
       settings: baseSettings,

@@ -24,6 +24,7 @@ import {
   getSpeakerForLayoutSlot,
   getTitleFromSource,
   ledLayoutToCustomFields,
+  mergeLedScheduleItems,
   mergeLedStyles,
   normalizeLedLayout,
   parseScheduleItems,
@@ -36,7 +37,6 @@ import { socketClient } from '../services/socket-client';
 import { dispatchLedOutputClear } from '../lib/ledOutputClear';
 import {
   ledEventSettingsFromRosSettings,
-  persistLedEventSettings,
   writeLedEventSettingsToLocal,
 } from '../lib/ledEventSettings';
 import { Event } from '../types/Event';
@@ -106,11 +106,13 @@ const LedLayoutsPage: React.FC = () => {
     custom_columns: unknown[];
     settings: Record<string, unknown>;
   } | null>(null);
-  const settingsSaveReadyRef = useRef(false);
-  const settingsSaveSkipOnceRef = useRef(true);
-  const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleRef = useRef(schedule);
+  const layoutsRef = useRef(layouts);
 
+  useEffect(() => {
+    layoutsRef.current = layouts;
+  }, [layouts]);
+
+  /** Full replace — used on initial page load only. */
   const applyScheduleFromItems = useCallback((items: ScheduleItem[], replaceLayouts = false) => {
     setSchedule(items);
     setLayouts((prev) => {
@@ -131,22 +133,63 @@ const LedLayoutsPage: React.FC = () => {
     });
   }, []);
 
-  const fetchLatestSchedule = useCallback(async (): Promise<ScheduleItem[]> => {
+  /** Pull segment/speaker text from ROS without touching in-progress LED layouts. */
+  const applyScheduleTextKeepLayouts = useCallback((items: ScheduleItem[]) => {
+    const layoutMap = layoutsRef.current;
+    setSchedule(
+      items.map((item) => {
+        const layout = layoutMap[item.id] ?? getLedLayoutFromItem(item);
+        return {
+          ...item,
+          customFields: ledLayoutToCustomFields(item.customFields, layout),
+        };
+      })
+    );
+    setLayouts((prev) => {
+      const next = { ...prev };
+      items.forEach((item) => {
+        if (!next[item.id]) {
+          next[item.id] = getLedLayoutFromItem(item);
+        }
+      });
+      return next;
+    });
+  }, []);
+
+  const fetchLatestSchedule = useCallback(async (opts?: {
+    syncSettings?: boolean;
+  }): Promise<ScheduleItem[]> => {
     const id = event?.id || eventId;
     if (!id) return [];
+    const syncSettings = opts?.syncSettings !== false;
 
-    const data = await DatabaseService.getRunOfShowData(id);
+    const data = await DatabaseService.getRunOfShowData(id, { bypassCache: true });
     if (data) {
       setRunOfShowMeta({
         event_date: data.event_date || '',
         custom_columns: data.custom_columns || [],
         settings: data.settings || {},
       });
-      setOutputClock(parseLedClockFromSettings(data.settings));
-      setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
-      writeLedEventSettingsToLocal(id, ledEventSettingsFromRosSettings(data.settings));
+      if (syncSettings) {
+        setOutputClock(parseLedClockFromSettings(data.settings));
+        setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
+        writeLedEventSettingsToLocal(id, ledEventSettingsFromRosSettings(data.settings));
+      }
       const items = parseScheduleItems(data.schedule_items);
-      if (items.length) return items;
+      if (items.length) {
+        try {
+          const saved = localStorage.getItem(`runOfShowSchedule_${id}`);
+          if (saved) {
+            const localItems = parseScheduleItems(JSON.parse(saved));
+            if (localItems.length) {
+              return mergeLedScheduleItems(items, localItems) as ScheduleItem[];
+            }
+          }
+        } catch {
+          /* ignore local merge errors */
+        }
+        return items;
+      }
     }
 
     const saved = localStorage.getItem(`runOfShowSchedule_${id}`);
@@ -162,7 +205,6 @@ const LedLayoutsPage: React.FC = () => {
     }
 
     setIsLoading(true);
-    settingsSaveSkipOnceRef.current = true;
     try {
       const items = await fetchLatestSchedule();
       applyScheduleFromItems(items, true);
@@ -172,16 +214,12 @@ const LedLayoutsPage: React.FC = () => {
       console.error('LedLayoutsPage: load failed', error);
     } finally {
       setIsLoading(false);
-      settingsSaveReadyRef.current = true;
     }
   }, [event?.id, eventId, fetchLatestSchedule, applyScheduleFromItems]);
 
+  // Local-only preview for output page in this browser. API write happens on Save Layouts.
   useEffect(() => {
-    scheduleRef.current = schedule;
-  }, [schedule]);
-
-  useEffect(() => {
-    if (!settingsSaveReadyRef.current || isLoading) return;
+    if (isLoading) return;
     const id = event?.id || eventId;
     if (!id) return;
     writeLedEventSettingsToLocal(id, {
@@ -189,63 +227,6 @@ const LedLayoutsPage: React.FC = () => {
       ledClock: outputClock,
     });
   }, [outputBackground, outputClock, isLoading, event?.id, eventId]);
-
-  useEffect(() => {
-    if (!settingsSaveReadyRef.current || isLoading) return;
-    if (settingsSaveSkipOnceRef.current) {
-      settingsSaveSkipOnceRef.current = false;
-      return;
-    }
-
-    const id = event?.id || eventId;
-    if (!id) return;
-
-    if (settingsSaveTimerRef.current) {
-      clearTimeout(settingsSaveTimerRef.current);
-    }
-
-    settingsSaveTimerRef.current = setTimeout(() => {
-      void persistLedEventSettings(
-        id,
-        { ledOutputBackground: outputBackground, ledClock: outputClock },
-        {
-          eventName: event?.name,
-          eventDate: runOfShowMeta?.event_date,
-          priorSettings: runOfShowMeta?.settings,
-          scheduleItems: scheduleRef.current,
-          customColumns: runOfShowMeta?.custom_columns,
-        }
-      ).then((ok) => {
-        if (ok) {
-          setRunOfShowMeta((prev) => ({
-            event_date: prev?.event_date || '',
-            custom_columns: prev?.custom_columns || [],
-            settings: {
-              ...(prev?.settings || {}),
-              ledClock: outputClock,
-              ledOutputBackground: outputBackground,
-            },
-          }));
-        }
-      });
-    }, 450);
-
-    return () => {
-      if (settingsSaveTimerRef.current) {
-        clearTimeout(settingsSaveTimerRef.current);
-      }
-    };
-  }, [
-    outputBackground,
-    outputClock,
-    isLoading,
-    event?.id,
-    event?.name,
-    eventId,
-    runOfShowMeta?.event_date,
-    runOfShowMeta?.settings,
-    runOfShowMeta?.custom_columns,
-  ]);
 
   const refreshScheduleText = useCallback(
     async (manual = false) => {
@@ -255,14 +236,22 @@ const LedLayoutsPage: React.FC = () => {
       setIsRefreshing(true);
       setSaveMessage(null);
       try {
-        const items = await fetchLatestSchedule();
+        const items = await fetchLatestSchedule({ syncSettings: false });
         if (!items.length) {
           if (manual) setSaveMessage('No schedule data found to refresh.');
           return;
         }
 
-        applyScheduleFromItems(items, false);
-        localStorage.setItem(`runOfShowSchedule_${id}`, JSON.stringify(items));
+        applyScheduleTextKeepLayouts(items);
+        const layoutMap = layoutsRef.current;
+        const withLayouts = items.map((item) => ({
+          ...item,
+          customFields: ledLayoutToCustomFields(
+            item.customFields,
+            layoutMap[item.id] ?? getLedLayoutFromItem(item)
+          ),
+        }));
+        localStorage.setItem(`runOfShowSchedule_${id}`, JSON.stringify(withLayouts));
         setLastTextRefresh(new Date());
         if (manual) {
           setSaveMessage('Text refreshed — segment names and speakers updated from schedule.');
@@ -274,46 +263,12 @@ const LedLayoutsPage: React.FC = () => {
         setIsRefreshing(false);
       }
     },
-    [event?.id, eventId, fetchLatestSchedule, applyScheduleFromItems]
+    [event?.id, eventId, fetchLatestSchedule, applyScheduleTextKeepLayouts]
   );
 
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  useEffect(() => {
-    const id = event?.id || eventId;
-    if (!id) return;
-
-    const callbacks = {
-      onRunOfShowDataUpdated: (data: {
-        schedule_items?: unknown;
-        settings?: Record<string, unknown>;
-      }) => {
-        if (data?.settings) {
-          setOutputClock(parseLedClockFromSettings(data.settings));
-          setOutputBackground(parseLedOutputBackgroundFromSettings(data.settings));
-          writeLedEventSettingsToLocal(id, ledEventSettingsFromRosSettings(data.settings));
-        }
-        const items = parseScheduleItems(data?.schedule_items);
-        if (!items.length) return;
-        applyScheduleFromItems(items, false);
-        setLayouts((prev) => {
-          const next = { ...prev };
-          items.forEach((item) => {
-            if (item.customFields?.ledLayout) {
-              next[item.id] = getLedLayoutFromItem(item);
-            }
-          });
-          return next;
-        });
-        setLastTextRefresh(new Date());
-      },
-    };
-
-    socketClient.connect(id, callbacks);
-    return () => socketClient.disconnect(id);
-  }, [event?.id, eventId, applyScheduleFromItems]);
 
   const selectedItem = useMemo(
     () => schedule.find((s) => s.id === selectedId) ?? null,
@@ -338,7 +293,11 @@ const LedLayoutsPage: React.FC = () => {
   };
 
   const patchSelectedLayout = (patch: Partial<LedLayoutConfig>) => {
-    setSelectedLayout({ ...selectedLayout, ...patch });
+    if (selectedId == null) return;
+    setLayouts((prev) => {
+      const current = prev[selectedId] ?? DEFAULT_LED_LAYOUT;
+      return { ...prev, [selectedId]: normalizeLedLayout({ ...current, ...patch }) };
+    });
   };
 
   const syncCurrentTitleFromSchedule = () => {
@@ -427,8 +386,18 @@ const LedLayoutsPage: React.FC = () => {
     setSaveMessage(null);
 
     try {
-      const updatedSchedule = schedule.map((item) => {
-        const layout = layouts[item.id] ?? DEFAULT_LED_LAYOUT;
+      // Start from the latest ROS schedule so we don't overwrite concurrent cue edits
+      // with a stale copy from this page — only LED layout fields are applied.
+      const existing = await DatabaseService.getRunOfShowData(id, { bypassCache: true });
+      const latestItems = parseScheduleItems(existing?.schedule_items);
+      const baseItems =
+        latestItems.length > 0 ? (latestItems as ScheduleItem[]) : schedule;
+
+      const updatedSchedule = baseItems.map((item) => {
+        const layout =
+          layouts[item.id] ??
+          layouts[Number(item.id)] ??
+          getLedLayoutFromItem(item);
         const normalized = normalizeLedLayout({
           ...layout,
           outputAnimation: layout.outputAnimation ?? DEFAULT_LED_OUTPUT_ANIMATION,
@@ -439,9 +408,23 @@ const LedLayoutsPage: React.FC = () => {
         };
       });
 
+      // Also persist layouts for cues that exist only in the LED editor view.
+      const latestIds = new Set(updatedSchedule.map((item) => Number(item.id)));
+      schedule.forEach((item) => {
+        if (latestIds.has(Number(item.id))) return;
+        const layout = layouts[item.id] ?? DEFAULT_LED_LAYOUT;
+        const normalized = normalizeLedLayout({
+          ...layout,
+          outputAnimation: layout.outputAnimation ?? DEFAULT_LED_OUTPUT_ANIMATION,
+        });
+        updatedSchedule.push({
+          ...item,
+          customFields: ledLayoutToCustomFields(item.customFields, normalized),
+        });
+      });
+
       localStorage.setItem(`runOfShowSchedule_${id}`, JSON.stringify(updatedSchedule));
 
-      const existing = await DatabaseService.getRunOfShowData(id);
       const priorSettings = existing?.settings || runOfShowMeta?.settings || {};
       const { ledOutput: _legacyLedOutput, ...restSettings } = priorSettings as Record<
         string,
@@ -452,7 +435,7 @@ const LedLayoutsPage: React.FC = () => {
         ledClock: outputClock,
         ledOutputBackground: outputBackground,
       };
-      await DatabaseService.saveRunOfShowData({
+      const result = await DatabaseService.saveRunOfShowData({
         event_id: id,
         event_name: event?.name || existing?.event_name || 'Event',
         event_date: existing?.event_date || runOfShowMeta?.event_date || '',
@@ -480,7 +463,12 @@ const LedLayoutsPage: React.FC = () => {
         });
         return next;
       });
-      setSaveMessage('Layouts saved.');
+
+      if (!result) {
+        setSaveMessage('Saved locally only — API sync failed. Refresh may lose changes until API is up.');
+      } else {
+        setSaveMessage('Layouts saved.');
+      }
     } catch (error) {
       console.error('LedLayoutsPage: save failed', error);
       setSaveMessage('Save failed — check console.');
@@ -496,9 +484,9 @@ const LedLayoutsPage: React.FC = () => {
           <div>
             <h1 className="text-xl font-semibold">LED Text Layouts</h1>
             <p className="text-slate-400 text-sm mt-1">
-              {event?.name || 'Event'} · Drag elements on the canvas · 4K scales to HD
+              {event?.name || 'Event'} · Drag on canvas · Save to persist · Refresh text for ROS names
               {lastTextRefresh ? (
-                <span className="text-slate-500"> · Text synced {lastTextRefresh.toLocaleTimeString()}</span>
+                <span className="text-slate-500"> · Loaded {lastTextRefresh.toLocaleTimeString()}</span>
               ) : null}
             </p>
           </div>
@@ -508,6 +496,7 @@ const LedLayoutsPage: React.FC = () => {
               onClick={() => refreshScheduleText(true)}
               disabled={isRefreshing || !schedule.length}
               className="px-4 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 rounded-lg text-sm font-medium"
+              title="Pull latest segment names and speakers from Run of Show. Does not change your layouts."
             >
               {isRefreshing ? 'Refreshing…' : 'Refresh text'}
             </button>
@@ -542,6 +531,12 @@ const LedLayoutsPage: React.FC = () => {
             >
               Download Spout
             </a>
+            <span
+              className="hidden lg:inline text-[11px] text-slate-500 max-w-[14rem] leading-snug"
+              title="Bake offline WebMs with: npm run prerender:led-cues -- --eventId=… --token=…"
+            >
+              Offline: bake WebMs then Spout → Prerender pack
+            </span>
           </div>
         </div>
       </div>

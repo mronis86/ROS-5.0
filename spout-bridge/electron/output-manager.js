@@ -1,7 +1,16 @@
 const { BrowserWindow } = require('electron');
+const path = require('path');
+const { pathToFileURL } = require('url');
 const { normalizeBaseUrl } = require('./auth-session');
 const { SpoutSender } = require('./spout-sender');
 const { extractPaintBitmap } = require('./bitmap-utils');
+const { createCueFollower } = require('./cue-follower');
+const {
+  loadManifest,
+  resolvePlayFileUrl,
+  resolveStillFileUrl,
+  findCue,
+} = require('./prerender-pack');
 
 class OutputManager {
   constructor() {
@@ -20,16 +29,33 @@ class OutputManager {
     this._pendingNativeImage = null;
     this._lastFrame = null;
     this._publishLoop = null;
+    this._cueFollower = null;
+    this._pack = null;
+    this._activeCueId = null;
   }
 
   buildLedUrl(config) {
     const base = normalizeBaseUrl(config.appBaseUrl);
     const eventId = encodeURIComponent(String(config.eventId || '').trim());
-    // key=1 = broadcast mode (true transparent or solid event color on master)
     return `${base}/led-output?eventId=${eventId}&key=1`;
   }
 
+  isPrerenderMode(config) {
+    return String(config?.sourceMode || 'live').toLowerCase() === 'prerender';
+  }
+
   async validateApi(config) {
+    if (this.isPrerenderMode(config)) {
+      try {
+        const { manifest, root } = loadManifest(config.prerenderPackPath);
+        const count = Object.keys(manifest.cues || {}).length;
+        const name = manifest.eventName || manifest.eventId || path.basename(root);
+        return { ok: true, message: `Prerender pack — ${name} (${count} cues)` };
+      } catch (err) {
+        return { ok: false, message: err.message || 'Invalid prerender pack' };
+      }
+    }
+
     const base = normalizeBaseUrl(config.apiBaseUrl);
     const eventId = String(config.eventId || '').trim();
     const token = String(config.apiToken || '').trim();
@@ -60,6 +86,7 @@ class OutputManager {
   }
 
   _emitStatus(patch) {
+    const source = this.config && this.isPrerenderMode(this.config) ? 'prerender' : 'live';
     this.onStatus?.({
       running: this.running,
       fps: this.fps,
@@ -67,7 +94,13 @@ class OutputManager {
       frames: this.frameCount,
       captureAttempts: this.captureAttempts,
       spout: this.spout.statusMessage,
-      url: this.config ? this.buildLedUrl(this.config) : '',
+      url: this.config
+        ? source === 'prerender'
+          ? `prerender:${this.config.prerenderPackPath || ''}`
+          : this.buildLedUrl(this.config)
+        : '',
+      sourceMode: source,
+      activeCueId: this._activeCueId,
       spoutSendsOk: this.spout.sendOkCount ?? 0,
       spoutSendsFailed: this.spout.sendFailCount ?? 0,
       ...patch,
@@ -92,6 +125,13 @@ class OutputManager {
     }
   }
 
+  _stopCueFollower() {
+    if (this._cueFollower) {
+      this._cueFollower.dispose();
+      this._cueFollower = null;
+    }
+  }
+
   _tickFps() {
     const now = Date.now();
     if (now - this.lastFpsTick >= 1000) {
@@ -104,7 +144,6 @@ class OutputManager {
 
   _onCompositorFrame(image) {
     if (!this.running || !image) return;
-    // Compositor may paint faster than target FPS — keep only the newest frame.
     this._pendingNativeImage = image;
   }
 
@@ -158,6 +197,104 @@ class OutputManager {
     });
   }
 
+  async _playPrerenderCue(itemId) {
+    if (!this.window || this.window.isDestroyed() || !this._pack) return;
+    const cue = findCue(this._pack.manifest, itemId);
+    if (!cue) {
+      this._emitStatus({
+        warning: `No prerender file for cue ${itemId}`,
+      });
+      return;
+    }
+    const fileUrl = resolvePlayFileUrl(this._pack.root, cue);
+    if (!fileUrl) {
+      this._emitStatus({
+        warning: `Missing enter prerender for cue ${itemId}`,
+      });
+      return;
+    }
+    const stillUrl = resolveStillFileUrl(this._pack.root, cue);
+    const durationMs = Math.max(
+      0,
+      Number(cue?.durationMs?.clip ?? cue?.durationMs?.enter) || 0
+    );
+    const format = String(
+      cue?.format || path.extname(new URL(fileUrl).pathname).slice(1)
+    ).toLowerCase();
+    this._activeCueId = itemId;
+    await this.window.webContents.executeJavaScript(
+      `window.rosPrerenderPlayer && window.rosPrerenderPlayer.playEnter(` +
+        `${JSON.stringify(fileUrl)}, ${JSON.stringify({
+          stillUrl,
+          durationMs,
+          format,
+        })})`
+        + `)`
+    );
+    this._emitStatus({ message: `Playing enter prerender cue ${itemId}` });
+  }
+
+  async _clearPrerenderCue() {
+    this._activeCueId = null;
+    if (!this.window || this.window.isDestroyed()) return;
+    await this.window.webContents.executeJavaScript(
+      `window.rosPrerenderPlayer && window.rosPrerenderPlayer.clearCue()`
+    );
+    this._emitStatus({ message: 'Prerender cleared (idle)' });
+  }
+
+  _createCaptureWindow(width, height, fps) {
+    this.window = new BrowserWindow({
+      width,
+      height,
+      show: true,
+      x: -24000,
+      y: -24000,
+      skipTaskbar: true,
+      frame: false,
+      focusable: false,
+      transparent: true,
+      useContentSize: true,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        backgroundThrottling: false,
+        webSecurity: false,
+      },
+    });
+
+    this.window.setMenuBarVisibility(false);
+    this.window.webContents.setZoomFactor(1);
+    this.window.webContents.setFrameRate(fps);
+
+    this.window.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      console.warn('[led-output] load failed:', code, desc, url);
+      this._emitStatus({ error: `Page load failed (${code}): ${desc}` });
+    });
+
+    this.window.webContents.on('console-message', (_e, level, message) => {
+      if (level >= 2) {
+        console.warn('[led-output]', message);
+      }
+    });
+  }
+
+  async _loadUrl(url) {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('LED page load timeout (15s)')), 15000);
+      this.window.webContents.once('did-finish-load', () => {
+        clearTimeout(timeout);
+        console.log('[led-output] page loaded:', url);
+        resolve();
+      });
+      this.window.loadURL(url).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+
   async start(config) {
     try {
       await this.stop();
@@ -169,78 +306,102 @@ class OutputManager {
       this.pixelBuffer = null;
       this._pendingNativeImage = null;
       this._lastFrame = null;
+      this._pack = null;
+      this._activeCueId = null;
       this._stopFrameSubscription();
       this._stopPublishLoop();
+      this._stopCueFollower();
 
       const width = Math.max(640, Number(config.width) || 1920);
       const height = Math.max(360, Number(config.height) || 1080);
-      const fps = Math.min(60, Math.max(15, Number(config.fps) || 60));
+      // Default output is locked to 60 Hz/FPS. Checkbox opts into the field.
+      const fps = config.useSelectedFps
+        ? Math.min(60, Math.max(15, Number(config.fps) || 60))
+        : 60;
       this.targetFps = fps;
-
-      let ledUrl;
-      try {
-        ledUrl = this.buildLedUrl(config);
-        new URL(ledUrl);
-      } catch {
-        return {
-          ok: false,
-          message: `Invalid hosted app URL: "${config.appBaseUrl}" (use http://localhost:3003)`,
-        };
-      }
 
       const spoutOk = await this.spout.init(config.spoutName);
       if (!spoutOk) {
         return { ok: false, message: this.spout.statusMessage || 'Spout init failed' };
       }
 
-      this.window = new BrowserWindow({
-        width,
-        height,
-        show: true,
-        x: -24000,
-        y: -24000,
-        skipTaskbar: true,
-        frame: false,
-        focusable: false,
-        useContentSize: true,
-        backgroundColor: '#000000',
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true,
-          backgroundThrottling: false,
-        },
-      });
-
-      this.window.setMenuBarVisibility(false);
-      this.window.webContents.setZoomFactor(1);
-      this.window.webContents.setFrameRate(fps);
-
-      this.window.webContents.on('did-fail-load', (_e, code, desc, url) => {
-        console.warn('[led-output] load failed:', code, desc, url);
-        this._emitStatus({ error: `Page load failed (${code}): ${desc}` });
-      });
-
-      this.window.webContents.on('console-message', (_e, level, message) => {
-        if (level >= 2) {
-          console.warn('[led-output]', message);
-        }
-      });
-
+      this._createCaptureWindow(width, height, fps);
       this.running = true;
 
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('LED page load timeout (15s)')), 15000);
-        this.window.webContents.once('did-finish-load', () => {
-          clearTimeout(timeout);
-          console.log('[led-output] page loaded:', ledUrl);
-          resolve();
-        });
-        this.window.loadURL(ledUrl).catch((err) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-      });
+      if (this.isPrerenderMode(config)) {
+        let pack;
+        try {
+          pack = loadManifest(config.prerenderPackPath);
+        } catch (err) {
+          await this.stop();
+          return { ok: false, message: err.message || 'Invalid prerender pack' };
+        }
+        this._pack = pack;
 
+        const playerPath = path.join(__dirname, '..', 'renderer', 'prerender-player.html');
+        const playerUrl = pathToFileURL(playerPath).href;
+        await this._loadUrl(playerUrl);
+
+        const offlineUrl = normalizeBaseUrl(config.offlineShowUrl || 'http://127.0.0.1:3004');
+        const eventId = String(config.eventId || pack.manifest.eventId || '').trim();
+        if (!eventId) {
+          await this.stop();
+          return { ok: false, message: 'Event ID required for prerender cue follow' };
+        }
+
+        let ioClient;
+        try {
+          ioClient = require('socket.io-client');
+        } catch {
+          await this.stop();
+          return {
+            ok: false,
+            message: 'socket.io-client missing — run npm install in spout-bridge/',
+          };
+        }
+
+        this._cueFollower = createCueFollower({
+          ioClient,
+          url: offlineUrl,
+          eventId,
+          onPlayCue: (itemId) => {
+            this._playPrerenderCue(itemId).catch((err) => {
+              this._emitStatus({ warning: err.message || 'Play failed' });
+            });
+          },
+          onClear: () => {
+            this._clearPrerenderCue().catch(() => {});
+          },
+          onStatus: (status) => {
+            this._emitStatus({
+              message: status.message,
+              warning: status.ok ? undefined : status.message,
+            });
+          },
+        });
+
+        this._startFrameSubscription();
+        this._startPublishLoop(fps);
+        this._emitStatus({
+          message: `Prerender mode — ${Object.keys(pack.manifest.cues || {}).length} cues`,
+          url: `prerender:${pack.root}`,
+        });
+        return { ok: true, url: `prerender:${pack.root}` };
+      }
+
+      let ledUrl;
+      try {
+        ledUrl = this.buildLedUrl(config);
+        new URL(ledUrl);
+      } catch {
+        await this.stop();
+        return {
+          ok: false,
+          message: `Invalid hosted app URL: "${config.appBaseUrl}" (use http://localhost:3003)`,
+        };
+      }
+
+      await this._loadUrl(ledUrl);
       this._startFrameSubscription();
       this._startPublishLoop(fps);
       console.log(`[capture] Spout publish loop @ ${fps} fps (compositor-fed, frame hold)`);
@@ -257,8 +418,11 @@ class OutputManager {
     this.running = false;
     this._pendingNativeImage = null;
     this._lastFrame = null;
+    this._activeCueId = null;
+    this._pack = null;
     this._stopPublishLoop();
     this._stopFrameSubscription();
+    this._stopCueFollower();
     if (this.window && !this.window.isDestroyed()) {
       this.window.destroy();
     }

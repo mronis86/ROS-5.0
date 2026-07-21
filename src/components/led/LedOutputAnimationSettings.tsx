@@ -129,7 +129,7 @@ const LedOutputAnimationSettings: React.FC<LedOutputAnimationSettingsProps> = ({
             <input
               type="range"
               min={0}
-              max={2000}
+              max={3840}
               step={8}
               value={value.slideDistancePx}
               onChange={(e) => patch({ slideDistancePx: parseInt(e.target.value, 10) || 0 })}
@@ -140,7 +140,8 @@ const LedOutputAnimationSettings: React.FC<LedOutputAnimationSettingsProps> = ({
                 { label: 'Short', px: 48 },
                 { label: 'Medium', px: 192 },
                 { label: 'Long', px: 480 },
-                { label: 'Off-screen', px: 960 },
+                { label: 'Half screen', px: 1920 },
+                { label: 'Off-screen', px: 3840 },
               ].map((preset) => (
                 <button
                   key={preset.px}
@@ -157,8 +158,8 @@ const LedOutputAnimationSettings: React.FC<LedOutputAnimationSettingsProps> = ({
               ))}
             </div>
             <p className="text-[11px] text-slate-500 mt-1">
-              How far off-position the graphic starts before sliding in. Use with left/right/up/down
-              styles — try 400–1200 for a long travel on 4K.
+              How far off-position the graphic starts before sliding in. Off-screen is full 4K width
+              (3840px) so left/right moves start fully outside the frame.
             </p>
           </label>
         ) : null}

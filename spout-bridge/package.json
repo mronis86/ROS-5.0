@@ -4,17 +4,19 @@
   "description": "Portable ROS LED Output → Spout bridge for Windows",
   "private": true,
   "main": "electron/main.js",
-  "scripts": {
-    "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder --win portable"
-  },
   "dependencies": {
-    "koffi": "^2.9.0"
+    "koffi": "^2.9.0",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8"
+  },
+  "scripts": {
+    "start": "electron .",
+    "bake": "electron scripts/bake-led-prerenders.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win portable"
   },
   "build": {
     "appId": "com.sinor.ros.ledspout",
@@ -25,20 +27,25 @@
     "files": [
       "electron/**/*",
       "renderer/**/*",
+      "scripts/**/*",
       "package.json"
     ],
     "extraResources": [
       {
         "from": "vendor/",
         "to": "vendor",
-        "filter": ["SpoutLibrary.dll"]
+        "filter": [
+          "SpoutLibrary.dll"
+        ]
       }
     ],
     "win": {
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "ROS-LED-Spout-${version}-portable.exe"

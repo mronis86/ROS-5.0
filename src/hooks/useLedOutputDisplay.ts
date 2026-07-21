@@ -50,7 +50,45 @@ type UseLedOutputDisplayArgs = {
   manualClearNonce?: number;
   /** When true, hide any cue that was already loaded when the page opened (refresh). */
   suppressBootCue?: boolean;
+  /** Bump when schedule contents change so snapshots rebuild (e.g. prerender load). */
+  contentRevision?: number;
+  /**
+   * Prerender bake: no wall-clock timers. Caller drives enter progress via seekBakeMs
+   * so capture can grab every frame at the correct CSS animation time.
+   */
+  bakeSeekMode?: boolean;
 };
+
+function waitAnimationFrames(count: number): Promise<void> {
+  return new Promise((resolve) => {
+    let left = Math.max(1, count);
+    const tick = () => {
+      left -= 1;
+      if (left <= 0) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+function pauseAndSeekLedAnimations(enterMs: number) {
+  const root =
+    document.querySelector('[data-led-output-root]') ||
+    document.querySelector('[data-led-canvas]') ||
+    document.body;
+  const anims =
+    typeof (root as Element).getAnimations === 'function'
+      ? (root as Element).getAnimations({ subtree: true })
+      : document.getAnimations();
+  for (const anim of anims) {
+    try {
+      anim.pause();
+      anim.currentTime = Math.max(0, enterMs);
+    } catch {
+      /* ignore unfinished / non-CSS animations */
+    }
+  }
+}
 
 export function useLedOutputDisplay({
   isCueActive,
@@ -59,6 +97,8 @@ export function useLedOutputDisplay({
   animation,
   manualClearNonce = 0,
   suppressBootCue = false,
+  contentRevision = 0,
+  bakeSeekMode = false,
 }: UseLedOutputDisplayArgs) {
   const [snapshot, setSnapshot] = useState<DisplaySnapshot | null>(null);
   const [phase, setPhase] = useState<LedOutputPhase>('idle');
@@ -70,6 +110,8 @@ export function useLedOutputDisplay({
   const suppressedCueIdRef = useRef<number | null>(null);
   const holdTimerRef = useRef<number | null>(null);
   const bootCueCapturedRef = useRef(false);
+  const bakeSeekModeRef = useRef(bakeSeekMode);
+  const getScheduleItemsRef = useRef(getScheduleItems);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -82,6 +124,14 @@ export function useLedOutputDisplay({
   useEffect(() => {
     activeItemIdRef.current = activeItemId;
   }, [activeItemId]);
+
+  useEffect(() => {
+    bakeSeekModeRef.current = bakeSeekMode;
+  }, [bakeSeekMode]);
+
+  useEffect(() => {
+    getScheduleItemsRef.current = getScheduleItems;
+  }, [getScheduleItems]);
 
   const clearHoldTimer = useCallback(() => {
     if (holdTimerRef.current != null) {
@@ -176,6 +226,7 @@ export function useLedOutputDisplay({
 
   // Cue became inactive — hold (optional) then exit
   useEffect(() => {
+    if (bakeSeekMode) return;
     if (isCueActive && activeItemId != null) return;
 
     const currentPhase = phaseRef.current;
@@ -200,7 +251,7 @@ export function useLedOutputDisplay({
     }
 
     beginExit(anim);
-  }, [isCueActive, activeItemId, beginExit, finishExit, clearHoldTimer]);
+  }, [isCueActive, activeItemId, beginExit, finishExit, clearHoldTimer, bakeSeekMode]);
 
   // Cue became active — build snapshot, hold (optional) then enter
   useEffect(() => {
@@ -238,13 +289,32 @@ export function useLedOutputDisplay({
     }
 
     const isNewCue = lastCueIdRef.current !== activeItemId;
+    const anim = animationRef.current;
+
+    // Bake seek: park once; external seekBakeMs drives progress (no timers).
+    if (bakeSeekMode) {
+      if (
+        !isNewCue &&
+        (currentPhase === 'hold-in' || currentPhase === 'enter' || currentPhase === 'visible')
+      ) {
+        return;
+      }
+      lastCueIdRef.current = activeItemId;
+      clearHoldTimer();
+      setSnapshot(nextSnapshot);
+      if (anim.style === 'none' || anim.inDurationMs === 0) {
+        setPhase(anim.inDelayMs > 0 ? 'hold-in' : 'visible');
+      } else {
+        setPhase('hold-in');
+      }
+      return;
+    }
 
     if (!isNewCue && (currentPhase === 'visible' || currentPhase === 'enter')) {
       return;
     }
 
     lastCueIdRef.current = activeItemId;
-    const anim = animationRef.current;
 
     if (anim.inDelayMs > 0) {
       setSnapshot(nextSnapshot);
@@ -256,11 +326,21 @@ export function useLedOutputDisplay({
     }
 
     startEnter(nextSnapshot, anim);
-  }, [isCueActive, activeItemId, getScheduleItems, finishExit, startEnter, clearHoldTimer]);
+  }, [
+    isCueActive,
+    activeItemId,
+    getScheduleItems,
+    contentRevision,
+    finishExit,
+    startEnter,
+    clearHoldTimer,
+    bakeSeekMode,
+  ]);
 
   useEffect(() => () => clearHoldTimer(), [clearHoldTimer]);
 
   const handleAnimationEnd = useCallback(() => {
+    if (bakeSeekModeRef.current) return;
     if (phaseRef.current === 'enter') {
       setPhase('visible');
       return;
@@ -270,7 +350,50 @@ export function useLedOutputDisplay({
     }
   }, [finishExit]);
 
-  return { snapshot, phase, handleAnimationEnd };
+  /** Absolute time into enter sequence: 0 = start of in-delay. */
+  const seekBakeMs = useCallback(async (ms: number) => {
+    if (!bakeSeekModeRef.current) return;
+    const id = activeItemIdRef.current;
+    if (id == null) return;
+
+    const items = getScheduleItemsRef.current();
+    const nextSnapshot = buildSnapshot(items, id);
+    if (!nextSnapshot) return;
+
+    const anim = animationRef.current;
+    const delay = Math.max(0, anim.inDelayMs || 0);
+    const dur = Math.max(0, anim.inDurationMs || 0);
+    const t = Math.max(0, Number(ms) || 0);
+
+    lastCueIdRef.current = id;
+    setSnapshot(nextSnapshot);
+
+    if (anim.style === 'none' || dur === 0) {
+      setPhase(t < delay ? 'hold-in' : 'visible');
+      await waitAnimationFrames(2);
+      return;
+    }
+
+    if (t < delay) {
+      setPhase('hold-in');
+      await waitAnimationFrames(2);
+      return;
+    }
+
+    const enterMs = t - delay;
+    if (enterMs >= dur) {
+      setPhase('visible');
+      await waitAnimationFrames(2);
+      return;
+    }
+
+    setPhase('enter');
+    await waitAnimationFrames(2);
+    pauseAndSeekLedAnimations(enterMs);
+    await waitAnimationFrames(1);
+  }, []);
+
+  return { snapshot, phase, handleAnimationEnd, seekBakeMs };
 }
 
 export { DEFAULT_LED_OUTPUT_ANIMATION };

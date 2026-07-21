@@ -1,6 +1,15 @@
 # ROS LED Spout Bridge
 
-Portable **Windows** app that loads the hosted **LED Output** page for an event and publishes frames to [Spout](https://spout.zeal.co/) for Resolume, TouchDesigner, OBS, etc.
+Portable **Windows** app that publishes LED graphics to [Spout](https://spout.zeal.co/) for Resolume, TouchDesigner, OBS, etc.
+
+## Modes
+
+| Mode | Source | Cue follow |
+|------|--------|------------|
+| **Live page** | Hosted `/led-output` (Netlify or local Vite) | Socket on the LED page (cloud/API) |
+| **Offline prerender** | Local APNG, WebP, or WebM pack | Offline-show LAN server (`:3004`) |
+
+Resolume always selects Spout sender **`ROS LED`** — only Spout's source changes.
 
 ## Requirements
 
@@ -8,75 +17,83 @@ Portable **Windows** app that loads the hosted **LED Output** page for an event 
 - DirectX 11 GPU (NVIDIA/AMD recommended)
 - [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) (usually already installed)
 - `SpoutLibrary.dll` in `vendor/` (see [vendor/README.md](vendor/README.md))
-- Integration API token (`ros_itok_…`) from **Admin → Integration API tokens** with `read` scope
+- **Live mode:** Integration API token (`ros_itok_…`) with `read` scope
+- **Prerender mode:** offline-show running + a baked pack (see below)
+- **Bake script:** [ffmpeg](https://ffmpeg.org/) on PATH (APNG encoder)
 
-## Quick start (development)
+## Quick start (live)
 
 1. Copy `SpoutLibrary.dll` into `spout-bridge/vendor/`
-2. Double-click `launcher/start-ros-led-spout.bat`  
+2. Double-click `launcher/start-ros-led-spout.bat`
    Or from this folder: `npm install` then `npm start`
-3. Fill in:
-   - **Hosted app URL** — `http://localhost:3003` for local dev, or your Netlify ROS URL when deployed
-   - **API base URL** — Railway API (default: `https://ros-50-production.up.railway.app`)
-   - **API token** — event-scoped integration token
-   - **Event ID** — show UUID
-4. **Test connection** → **Start Spout**
-5. In Resolume (or other app), add a **Spout** input and select sender name (default `ROS LED`)
+3. Source mode: **Live page**
+4. Fill in app URL, API URL, token, event ID → **Test connection** → **Start Spout**
+5. In Resolume, add Spout input → sender `ROS LED`
 
-## How auth works (Option A)
+## Offline prerender workflow
 
-The Electron main process registers a `webRequest` hook on `{apiOrigin}/api/*` and injects:
+### 1. Bake animations (before the show / while online)
 
+With the ROS app running locally (`npm run dev` on `:3003`) or pointed at production:
+
+```bash
+# from repo root (spout-bridge deps installed)
+npm run prerender:led-cues -- --eventId=<uuid> --token=<ros_itok_...>
+
+# optional
+#   --appUrl=http://localhost:3003
+#   --apiUrl=https://ros-50-production.up.railway.app
+#   --out=./led-prerenders/<eventId>
+#   --width=1920 --height=1080 --holdSeconds=1
+#   --format=apng
+#   --formats=apng,webp,webm  # captures once, writes separate format folders
 ```
-Authorization: Bearer <your ros_itok_ token>
+
+Output pack:
+
+```text
+led-prerenders/<eventId>/
+  manifest.json
+  cues/
+    42-enter.apng
+    42-enter-last.png
 ```
 
-The LED output page loads without login (`/led-output` bypasses the main app shell). URLs include `key=1` for true transparent or solid-color broadcast output. API calls from the page to Railway are authenticated automatically. Socket.IO cue follow works as on the normal output page (no token required today).
+Choose **APNG** for the most accurate alpha, lossless **WebP** for smaller files, or experimental **WebM** for the smallest files. Selecting multiple formats captures each cue once and creates separate `APNG/`, `WebP/`, and `WebM/` pack folders. Resolume does not play these files — Spout does.
 
-Config is saved to `%APPDATA%/ros-led-spout/ros-led-spout-config.json` (Electron `userData`).
+### 2. Run offline-show + Spout prerender
+
+1. Start offline-show (`:3004`) and open the event.
+2. Spout → Source mode **Offline prerender pack**
+3. Browse to the pack folder, set Event ID, Offline show URL `http://127.0.0.1:3004`
+4. **Test pack** → **Start Spout**
+5. Load/run/stop cues in offline Run of Show — Spout plays matching `{itemId}-enter.apng`
+
+Missing cue files stay clear and show a warning in the Spout status panel.
+
+## How auth works (live)
+
+The Electron main process injects `Authorization: Bearer <token>` on `{apiOrigin}/api/*` requests.
+
+Config is saved under `%LOCALAPPDATA%/ros-led-spout/`.
 
 ## Build portable `.exe`
 
 ```bash
 cd spout-bridge
 npm install
-# ensure vendor/SpoutLibrary.dll exists
 npm run dist
 ```
-
-Output: `dist/ROS-LED-Spout-0.1.0-portable.exe` (and unpacked folder). Copy `vendor/SpoutLibrary.dll` next to the portable exe if not bundled.
-
-## Folder layout
-
-```
-spout-bridge/
-  electron/           Main process, Spout sender, output window
-  renderer/           Config UI
-  vendor/             SpoutLibrary.dll (you provide)
-  launcher/           start-ros-led-spout.bat
-  package.json
-```
-
-## Resolution notes
-
-Default output size is **1920×1080 @ 60fps**. The capture window requests that frame rate from Chromium (`setFrameRate`), and Spout publishes on a **fixed timer** at your configured FPS. When the LED page is static, the last frame is **held and re-sent** so receivers get a steady stream.
-
-The status line shows `Publish: ~60 fps (target 60)` — actual rate should match target within a few fps.
-
-The hosted LED canvas is designed at 3840×2160 internally; scaling matches a browser window at the chosen capture size.
 
 ## Troubleshooting
 
 | Issue | Fix |
 |--------|-----|
-| API 401/403 | Regenerate token; ensure `read` scope and matching `event_id` |
-| Spout DLL missing | Copy into `vendor/` per README |
-| Resolume sees no sender | Confirm Start Spout is running; check GPU preference (High performance) in Windows Graphics Settings |
-| App crashes on Start Spout | Set Windows Graphics → High performance for Electron; ensure `SpoutLibrary.dll` matches v2.007.x from [Spout2 releases](https://github.com/leadedge/Spout2/releases) |
-| Terminal cache errors | Usually harmless; app now uses `%LOCALAPPDATA%\\ros-led-spout` for cache. Close duplicate Electron instances if errors persist |
-| ~1 fps publish rate | Restart after update; ensure Vite/dev app is running at the App URL; load a cue so the LED page animates |
-| Black output | Set LED background to transparent in LED Set page for keying |
-| Dual GPU laptop | Set this app to use discrete GPU in Windows settings |
+| API 401/403 | Regenerate token; `read` scope; matching event |
+| Bake: ffmpeg not found | Install ffmpeg or pass `--ffmpeg=` path |
+| Prerender: no animation on cue | Confirm `{itemId}-enter.apng` exists |
+| Cue follow disconnected | Start offline-show on `:3004` |
+| Black output | Use transparent LED background for keying |
 
 ## License
 
