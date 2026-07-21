@@ -75,11 +75,11 @@ class ApiClient {
     const url = `${apiBaseUrl}${endpoint}`;
     
     const defaultOptions: RequestInit = {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
-      ...options,
     };
 
     try {

@@ -107,12 +107,12 @@ class ApiClient {
     const url = `${apiBaseUrl}${endpoint}`;
     
     const defaultOptions: RequestInit = {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
         ...authHeaders(),
         ...options.headers,
       },
-      ...options,
     };
 
     try {
@@ -409,10 +409,13 @@ class ApiClient {
   }
 
   async clearChangeLog(eventId: string, adminKey: string) {
-    return this.request(`/api/change-log/${eventId}`, {
+    const endpoint = `/api/change-log/${eventId}`;
+    const result = await this.request(endpoint, {
       method: 'DELETE',
       headers: { 'X-Admin-Key': adminKey },
     });
+    this.cache.delete(endpoint);
+    return result;
   }
 
   // Timer Messages

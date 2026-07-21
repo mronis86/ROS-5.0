@@ -3175,54 +3175,44 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
 
+    if (!event?.id) {
+      alert('❌ Error: No event ID found. No change logs were cleared.');
+      return;
+    }
+    if (!user) {
+      console.error('❌ No user found');
+      alert('❌ Authentication error. Please refresh and try again. No change logs were cleared.');
+      return;
+    }
+
     try {
-      // Clear local changes
+      console.log('🔄 Attempting to clear master change log for event:', event.id);
+      console.log('🔄 Current user:', user.id, user.email);
+
+      const result = await changeLogService.clearMasterChangeLog(event.id, password);
+      console.log('🔄 Clear master result:', result);
+      if (!result.success) {
+        console.log('❌ Failed to clear master change log:', result.error);
+        alert(`❌ Change logs were not cleared.\n\nError: ${result.error}`);
+        return;
+      }
+
+      console.log('🔄 Verifying master change log is cleared...');
+      const reloadedMasterLog = await changeLogService.getMasterChangeLog(event.id);
+      console.log('🔄 Master change log after clearing:', reloadedMasterLog.length, 'records');
+      setMasterChangeLog(reloadedMasterLog);
+      if (reloadedMasterLog.length > 0) {
+        alert(`⚠️ Master clear could not be verified: ${reloadedMasterLog.length} records remain.\n\nLocal changes were not cleared.`);
+        return;
+      }
+
       changeLogService.clearLocalChanges();
       setChangeLog([]);
-      console.log('✅ Local changes cleared');
-      
-      // Clear master changes with detailed error handling
-      if (event?.id) {
-        console.log('🔄 Attempting to clear master change log for event:', event.id);
-        
-        // Get current user info for debugging
-        console.log('🔄 Current user:', user?.id, user?.email);
-        
-        if (!user) {
-          console.error('❌ No user found');
-          alert('❌ Authentication error. Please refresh and try again.');
-          return;
-        }
-        
-        const result = await changeLogService.clearMasterChangeLog(event.id, password);
-        console.log('🔄 Clear master result:', result);
-        
-        if (result.success) {
-          setMasterChangeLog([]);
-          console.log('✅ Master change log cleared successfully');
-          alert(`✅ Successfully cleared ${result.deletedCount} master change log entries`);
-          
-          // Force reload to verify
-          console.log('🔄 Verifying master change log is cleared...');
-          const reloadedMasterLog = await changeLogService.getMasterChangeLog(event.id);
-          console.log('🔄 Master change log after clearing:', reloadedMasterLog.length, 'records');
-          setMasterChangeLog(reloadedMasterLog);
-          
-          if (reloadedMasterLog.length === 0) {
-            alert(`✅ All change logs cleared successfully!\n\n- Local changes: ✅ Cleared\n- Master changes: ✅ Cleared (${result.deletedCount} records deleted)`);
-          } else {
-            alert(`⚠️ Partial success:\n\n- Local changes: ✅ Cleared\n- Master changes: ⚠️ ${result.deletedCount} deleted, but ${reloadedMasterLog.length} remain\n\nSome records may be protected by RLS policies.`);
-          }
-        } else {
-          console.log('❌ Failed to clear master change log:', result.error);
-          alert(`⚠️ Partial success:\n\n- Local changes: ✅ Cleared\n- Master changes: ❌ Failed\n\nError: ${result.error}\n\nThis might be due to database permissions. Check the console for details.`);
-        }
-      } else {
-        alert('❌ Error: No event ID found. Cannot clear master change log.');
-      }
+      console.log('✅ Local and master change logs cleared successfully');
+      alert(`✅ All change logs cleared successfully!\n\n- Local changes: ✅ Cleared\n- Master changes: ✅ Cleared (${result.deletedCount} records deleted)`);
     } catch (error) {
       console.error('Error clearing change logs:', error);
-      alert('❌ Error clearing change logs. Check the console for details.');
+      alert('❌ Error clearing change logs. No local changes were cleared.');
     }
   };
 
