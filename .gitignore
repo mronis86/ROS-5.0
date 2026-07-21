@@ -18,6 +18,10 @@ node_modules/electron/dist/
 .env.test.local
 .env.production.local
 
+# LED offline prerender packs (baked locally; large WebMs)
+led-prerenders/
+ROS-5.0-master-backup-*.zip
+
 # Local Sentry DSNs / notes (never commit)
 sentry/
 

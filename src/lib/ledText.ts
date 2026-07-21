@@ -80,6 +80,7 @@ export const DEFAULT_LED_LAYOUT: LedLayoutConfig = {
   sessionTitle: { ...DEFAULT_SESSION_TITLE },
   speakers: [],
   styles: {},
+  outputAnimation: { ...DEFAULT_LED_OUTPUT_ANIMATION },
 };
 
 const LED_LAYOUT_KEY = 'ledLayout';
@@ -196,15 +197,30 @@ export function normalizeLedLayout(raw: Partial<LedLayoutConfig>): LedLayoutConf
           }))
       : [...DEFAULT_LED_LAYOUT.speakers],
     styles: raw.styles && typeof raw.styles === 'object' ? raw.styles : {},
-    ...(raw.outputAnimation != null
-      ? { outputAnimation: parseLedOutputAnimation(raw.outputAnimation) }
-      : {}),
+    // Always persist a concrete animation object so refresh/API round-trips keep cue timing.
+    outputAnimation: parseLedOutputAnimation(raw.outputAnimation),
   };
 }
 
 export function parseLedLayout(raw: unknown): LedLayoutConfig {
-  if (!raw || typeof raw !== 'object') return { ...DEFAULT_LED_LAYOUT };
-  const o = raw as Record<string, unknown>;
+  let data: unknown = raw;
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return {
+        ...DEFAULT_LED_LAYOUT,
+        outputAnimation: { ...DEFAULT_LED_OUTPUT_ANIMATION },
+      };
+    }
+  }
+  if (!data || typeof data !== 'object') {
+    return {
+      ...DEFAULT_LED_LAYOUT,
+      outputAnimation: { ...DEFAULT_LED_OUTPUT_ANIMATION },
+    };
+  }
+  const o = data as Record<string, unknown>;
 
   if (isV2Layout(o as LedLayoutConfig)) {
     return normalizeLedLayout(o as LedLayoutConfig);
@@ -217,8 +233,14 @@ export function parseLedLayout(raw: unknown): LedLayoutConfig {
     ? o.speakerSlots.filter((n): n is number => typeof n === 'number' && n >= 1 && n <= 7)
     : [1];
   const styles = o.styles && typeof o.styles === 'object' ? (o.styles as Partial<LedTextStyles>) : {};
-
-  return normalizeLedLayout(migrateLegacyTemplate(template, titleSource, customTitle, speakerSlots, styles));
+  const migrated = normalizeLedLayout(
+    migrateLegacyTemplate(template, titleSource, customTitle, speakerSlots, styles)
+  );
+  // Preserve animation if a legacy blob somehow carried it.
+  if (o.outputAnimation != null) {
+    return normalizeLedLayout({ ...migrated, outputAnimation: o.outputAnimation as LedLayoutConfig['outputAnimation'] });
+  }
+  return migrated;
 }
 
 export function getLedLayoutFromItem(item: { customFields?: Record<string, unknown> }): LedLayoutConfig {
@@ -325,7 +347,7 @@ export function findScheduleItemById(
   return items.find((item) => Number(item.id) === want) ?? null;
 }
 
-/** Prefer API schedule text; keep local ledLayout when API row is missing it (stale cache). */
+/** Prefer API schedule text; keep local ledLayout / outputAnimation when API is missing them. */
 export function mergeLedScheduleItems(
   apiItems: LedScheduleItem[],
   localItems: LedScheduleItem[]
@@ -336,16 +358,44 @@ export function mergeLedScheduleItems(
   const localById = new Map(localItems.map((item) => [String(item.id), item]));
   return apiItems.map((apiItem) => {
     const local = localById.get(String(apiItem.id));
-    const localLayout = local?.customFields?.[LED_LAYOUT_KEY];
-    const apiLayout = apiItem.customFields?.[LED_LAYOUT_KEY];
-    if (!localLayout || apiLayout) return apiItem;
-    return {
-      ...apiItem,
-      customFields: ledLayoutToCustomFields(
-        apiItem.customFields,
-        parseLedLayout(localLayout)
-      ),
-    };
+    const localLayoutRaw = local?.customFields?.[LED_LAYOUT_KEY];
+    const apiLayoutRaw = apiItem.customFields?.[LED_LAYOUT_KEY];
+
+    if (!localLayoutRaw) return apiItem;
+
+    if (!apiLayoutRaw) {
+      return {
+        ...apiItem,
+        customFields: ledLayoutToCustomFields(
+          apiItem.customFields,
+          parseLedLayout(localLayoutRaw)
+        ),
+      };
+    }
+
+    const apiLayout = parseLedLayout(apiLayoutRaw);
+    const localLayout = parseLedLayout(localLayoutRaw);
+    // API row has layout but no saved animation; keep local cue timing.
+    const apiHadExplicitAnim =
+      apiLayoutRaw &&
+      typeof apiLayoutRaw === 'object' &&
+      (apiLayoutRaw as Record<string, unknown>).outputAnimation != null;
+    const localHadExplicitAnim =
+      localLayoutRaw &&
+      typeof localLayoutRaw === 'object' &&
+      (localLayoutRaw as Record<string, unknown>).outputAnimation != null;
+
+    if (!apiHadExplicitAnim && localHadExplicitAnim) {
+      return {
+        ...apiItem,
+        customFields: ledLayoutToCustomFields(apiItem.customFields, {
+          ...apiLayout,
+          outputAnimation: localLayout.outputAnimation,
+        }),
+      };
+    }
+
+    return apiItem;
   });
 }
 

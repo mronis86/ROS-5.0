@@ -2489,6 +2489,57 @@ app.get('/api/custom-columns.csv', async (req, res) => {
   }
 });
 
+/** Keep LED layout / outputAnimation when a schedule save omits them (e.g. stale ROS tab). */
+function mergeLedLayoutsPreservingAnimation(incomingItems, existingItems) {
+  if (!Array.isArray(incomingItems) || !Array.isArray(existingItems) || !existingItems.length) {
+    return incomingItems;
+  }
+
+  const parseLayout = (raw) => {
+    if (!raw) return null;
+    if (typeof raw === 'string') {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+    return typeof raw === 'object' ? raw : null;
+  };
+
+  const byId = new Map(existingItems.map((item) => [Number(item.id), item]));
+  return incomingItems.map((item) => {
+    const prev = byId.get(Number(item.id));
+    if (!prev) return item;
+
+    const prevCf = prev.customFields || prev.custom_fields || {};
+    const nextCf = { ...(item.customFields || item.custom_fields || {}) };
+    const prevLayout = parseLayout(prevCf.ledLayout);
+    const nextLayout = parseLayout(nextCf.ledLayout);
+
+    if (prevLayout && !nextLayout) {
+      return { ...item, customFields: { ...nextCf, ledLayout: prevLayout } };
+    }
+
+    if (
+      nextLayout &&
+      prevLayout &&
+      prevLayout.outputAnimation != null &&
+      nextLayout.outputAnimation == null
+    ) {
+      return {
+        ...item,
+        customFields: {
+          ...nextCf,
+          ledLayout: { ...nextLayout, outputAnimation: prevLayout.outputAnimation },
+        },
+      };
+    }
+
+    return item;
+  });
+}
+
 app.post('/api/run-of-show-data', async (req, res) => {
   try {
     const {
@@ -2593,6 +2644,8 @@ app.post('/api/run-of-show-data', async (req, res) => {
       } else {
         console.log(`🔒 Save merge: no active row locks for event ${event_id}`);
       }
+
+      scheduleToSave = mergeLedLayoutsPreservingAnimation(scheduleToSave, existingItems);
     }
 
     let result;

@@ -11,6 +11,15 @@ const DEFAULTS = {
   width: 1920,
   height: 1080,
   fps: 60,
+  /** false = fixed 60 Hz/FPS; true = use the FPS field. Applies to Spout and bake. */
+  useSelectedFps: false,
+  /** Browser-native offline animation formats; each gets its own pack folder. */
+  bakeFormats: ['apng'],
+  /** 'live' = hosted LED page; 'prerender' = local WebM pack + offline cue follow */
+  sourceMode: 'live',
+  prerenderPackPath: '',
+  prerenderBakeRootPath: '',
+  offlineShowUrl: 'http://127.0.0.1:3004',
 };
 
 function configPath() {

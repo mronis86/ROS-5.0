@@ -11,23 +11,59 @@
     <div class="app">
       <header>
         <h1>ROS LED Spout</h1>
-        <p class="subtitle">Connect to LED output and publish to Spout (Windows)</p>
+        <p class="subtitle">Live LED page → Spout, or offline lossless animation pack → Spout</p>
       </header>
+
+      <section class="panel workflow-panel">
+        <h2>Offline backup workflow</h2>
+        <ol class="workflow-steps">
+          <li><strong>Live (normal):</strong> Source = Live page → Start Spout (cloud).</li>
+          <li><strong>Before show / for safety:</strong> fill Live fields → choose format → <em>Bake pack…</em>.</li>
+          <li><strong>If cloud is down:</strong> Source = Offline prerender → point at that pack → Start Spout → run cues in offline-show (:3004).</li>
+        </ol>
+      </section>
 
       <form id="config-form" class="panel">
         <label>
-          <span>Hosted app URL</span>
-          <input id="appBaseUrl" type="url" placeholder="http://localhost:3003" required />
+          <span>Source mode</span>
+          <select id="sourceMode">
+            <option value="live">1 · Live page (normal / online)</option>
+            <option value="prerender">2 · Offline prerender pack (APNG / WebP / WebM)</option>
+          </select>
         </label>
-        <label>
-          <span>API base URL (Railway)</span>
-          <input id="apiBaseUrl" type="url" placeholder="https://ros-50-production.up.railway.app" required />
-        </label>
-        <label>
-          <span>Integration API token</span>
-          <input id="apiToken" type="password" placeholder="ros_itok_…" autocomplete="off" required />
-          <small>Admin → Integration API tokens · scope <code>read</code> · event-scoped recommended</small>
-        </label>
+
+        <div id="live-fields">
+          <label>
+            <span>Hosted app URL</span>
+            <input id="appBaseUrl" type="url" placeholder="https://your-netlify-app.netlify.app or http://localhost:3003" />
+          </label>
+          <label>
+            <span>API base URL (Railway)</span>
+            <input id="apiBaseUrl" type="url" placeholder="https://ros-50-production.up.railway.app" />
+          </label>
+          <label>
+            <span>Integration API token</span>
+            <input id="apiToken" type="password" placeholder="ros_itok_…" autocomplete="off" />
+            <small>Admin → Integration API tokens · scope <code>read</code></small>
+          </label>
+        </div>
+
+        <div id="prerender-fields" class="hidden">
+          <label>
+            <span>Prerender pack folder</span>
+            <div class="row pack-row">
+              <input id="prerenderPackPath" type="text" placeholder="Folder that contains manifest.json" readonly />
+              <button type="button" id="pick-pack-btn" class="btn secondary">Browse…</button>
+            </div>
+            <small>Must already contain <code>manifest.json</code> from Bake pack — not an empty Desktop folder.</small>
+          </label>
+          <label>
+            <span>Offline show URL (cue follow)</span>
+            <input id="offlineShowUrl" type="url" placeholder="http://127.0.0.1:3004" />
+            <small>Spout plays the matching lossless animation when you load/run cues in offline-show</small>
+          </label>
+        </div>
+
         <label>
           <span>Event ID</span>
           <input id="eventId" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required />
@@ -50,21 +86,52 @@
             <input id="height" type="number" min="360" max="2160" step="1" />
           </label>
           <label>
-            <span>FPS</span>
+            <span>Selected FPS</span>
             <input id="fps" type="number" min="15" max="60" step="1" />
           </label>
         </div>
 
+        <label class="checkbox-row" for="useSelectedFps">
+          <input id="useSelectedFps" type="checkbox" />
+          <span>
+            Use selected FPS. Off = default 60 FPS / 60 Hz for Spout and bake.
+          </span>
+        </label>
+
+        <fieldset class="format-fieldset">
+          <legend>Bake formats (select one or more)</legend>
+          <label class="format-option" for="formatApng">
+            <input id="formatApng" type="checkbox" value="apng" />
+            <span><strong>APNG</strong><small>Lossless alpha · recommended</small></span>
+          </label>
+          <label class="format-option" for="formatWebp">
+            <input id="formatWebp" type="checkbox" value="webp" />
+            <span><strong>Animated WebP</strong><small>Lossless alpha · smaller</small></span>
+          </label>
+          <label class="format-option" for="formatWebm">
+            <input id="formatWebm" type="checkbox" value="webm" />
+            <span><strong>WebM</strong><small>Experimental alpha · smallest</small></span>
+          </label>
+          <small class="format-help">Multiple selections create separate format folders from one frame capture.</small>
+        </fieldset>
+
         <div class="actions">
-          <button type="button" id="validate-btn" class="btn secondary">Test connection</button>
+          <button type="button" id="validate-btn" class="btn secondary">Test</button>
+          <button type="button" id="bake-btn" class="btn bake">Bake pack…</button>
           <button type="submit" id="start-btn" class="btn primary">Start Spout</button>
           <button type="button" id="stop-btn" class="btn danger" disabled>Stop</button>
         </div>
+        <p class="bake-hint">
+          <strong>Bake pack…</strong> records each cue’s <em>animate-in</em> in the selected format.
+          Offline Spout plays that clip once when you load/run the cue.
+          Default output and bake rate is 60 FPS; enable the checkbox to use the selected rate.
+        </p>
       </form>
 
       <section class="panel status-panel">
         <h2>Status</h2>
-        <div id="status-api" class="status-line muted">API: not tested</div>
+        <div id="status-api" class="status-line muted">API / pack: not tested</div>
+        <div id="status-bake" class="status-line muted"></div>
         <div id="status-spout-dll" class="status-line muted">Spout DLL: checking…</div>
         <div id="status-output" class="status-line muted">Output: stopped</div>
         <div id="status-fps" class="status-line muted"></div>
@@ -73,8 +140,8 @@
 
       <footer>
         <p>
-          API auth uses <strong>Option A</strong>: Bearer token injected on Railway <code>/api/*</code> requests.
-          Socket cue follow uses the event room automatically from the LED page.
+          Resolume always uses Spout sender <code>ROS LED</code>.
+          Offline mode only changes where Spout gets pixels (live page vs local animations).
         </p>
       </footer>
     </div>

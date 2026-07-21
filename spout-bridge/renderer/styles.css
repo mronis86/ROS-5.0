@@ -61,7 +61,7 @@ label span {
   font-size: 0.8rem;
 }
 
-input {
+input:not([type='checkbox']):not([type='radio']) {
   width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
@@ -71,9 +71,38 @@ input {
   font-size: 0.9rem;
 }
 
-input:focus {
+input:not([type='checkbox']):not([type='radio']):focus {
   outline: 2px solid #0891b2;
   border-color: #0891b2;
+}
+
+input:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0f172a;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.pack-row {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.pack-row input {
+  margin: 0;
 }
 
 label small {
@@ -135,6 +164,143 @@ label small code {
 .btn.danger {
   background: #b91c1c;
   color: #fff;
+}
+
+.btn.bake {
+  background: #c2410c;
+  color: #fff;
+}
+
+.btn.bake:hover:not(:disabled) {
+  background: #9a3412;
+}
+
+.bake-hint {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.bake-hint code {
+  color: #cbd5e1;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 2px 0 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0f172a;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.checkbox-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  flex-shrink: 0;
+  accent-color: #0891b2;
+  cursor: pointer;
+}
+
+.checkbox-row > span {
+  display: block;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.format-fieldset {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.format-fieldset legend {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.format-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #0f172a;
+  cursor: pointer;
+}
+
+.format-option:has(input:checked) {
+  border-color: #0891b2;
+  background: #083344;
+}
+
+.format-option input {
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  accent-color: #0891b2;
+}
+
+.format-option > span {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 0.75rem;
+}
+
+.format-option small {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.25;
+}
+
+.format-help {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+.workflow-panel h2 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.workflow-steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.workflow-steps li {
+  margin-bottom: 6px;
+}
+
+.workflow-steps strong {
+  color: var(--text);
 }
 
 .status-panel h2 {

@@ -143,6 +143,11 @@ input:focus, select:focus, textarea:focus {
   opacity: 1;
 }
 
+/* Deterministic WebM bake: keep CSS animations paused so seekBake can set currentTime. */
+html.led-bake-seek .led-output-animator {
+  animation-play-state: paused !important;
+}
+
 .led-output-enter-fade {
   animation: ledFadeIn var(--led-anim-duration, 400ms) var(--led-anim-easing, ease-out) both;
 }

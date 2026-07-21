@@ -55,6 +55,7 @@
     "zip:companion-resolume": "node scripts/zip-companion-module-resolume-full.js",
     "zip:spout-bridge": "node scripts/zip-spout-bridge.js",
     "zip:master-backup": "node scripts/zip-master-backup.js --branch master",
+    "prerender:led-cues": "node scripts/run-bake-led-prerenders.js",
     "build": "vite build && node scripts/verify-dist-privacy.js",
     "preview": "vite preview",
     "test": "react-scripts test",

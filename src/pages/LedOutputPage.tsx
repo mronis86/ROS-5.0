@@ -40,10 +40,22 @@ import {
   subscribeLedEventSettings,
   writeLedEventSettingsToLocal,
 } from '../lib/ledEventSettings';
+import {
+  LED_PRERENDER_READY_ATTR,
+  enterOnlyLedPrerenderAnimation,
+  isLedBakeSeekMode,
+  isLedPrerenderMode,
+  parseLedPrerenderItemId,
+  type LedBakeControl,
+} from '../lib/ledPrerender';
 
 const LedOutputPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const eventId = searchParams.get('eventId');
+  const prerenderMode = isLedPrerenderMode(searchParams);
+  const bakeSeekMode = isLedBakeSeekMode(searchParams);
+  const prerenderItemId = prerenderMode ? parseLedPrerenderItemId(searchParams) : null;
+  const hideClock = searchParams.get('clock') === '0';
   const [schedule, setSchedule] = useState<LedScheduleItem[]>([]);
   const [outputClock, setOutputClock] = useState<LedOutputClock>(DEFAULT_LED_OUTPUT_CLOCK);
   const [outputBackground, setOutputBackground] = useState<LedOutputBackground>(
@@ -56,8 +68,22 @@ const LedOutputPage: React.FC = () => {
   const isCueActiveRef = useRef(false);
   const outputClockRef = useRef(outputClock);
 
-  const { activeItemId, isCueActive, hasHydrated } = useActiveCueFollow(eventId);
-  const liveTimer = useLedOutputTimer(eventId);
+  const liveFollow = useActiveCueFollow(prerenderMode ? null : eventId);
+  // Wait until schedule is loaded before activating prerender — otherwise
+  // useLedOutputDisplay runs once with empty items and never retries.
+  const prerenderItemInSchedule =
+    prerenderItemId != null &&
+    schedule.some((item) => Number(item.id) === Number(prerenderItemId));
+  const activeItemId = prerenderMode
+    ? prerenderItemInSchedule
+      ? prerenderItemId
+      : null
+    : liveFollow.activeItemId;
+  const isCueActive = prerenderMode
+    ? prerenderItemInSchedule
+    : liveFollow.isCueActive;
+  const hasHydrated = prerenderMode ? true : liveFollow.hasHydrated;
+  const liveTimer = useLedOutputTimer(prerenderMode ? null : eventId);
 
   useEffect(() => {
     scheduleRef.current = schedule;
@@ -84,17 +110,148 @@ const LedOutputPage: React.FC = () => {
     if (activeItemId == null) return DEFAULT_LED_OUTPUT_ANIMATION;
     const item = findScheduleItemById(schedule, activeItemId);
     if (!item) return DEFAULT_LED_OUTPUT_ANIMATION;
-    return getCueOutputAnimation(getLedLayoutFromItem(item));
-  }, [activeItemId, schedule]);
+    const anim = getCueOutputAnimation(getLedLayoutFromItem(item));
+    // Bake/capture: play the real animate-in only (no exit).
+    return prerenderMode ? enterOnlyLedPrerenderAnimation(anim) : anim;
+  }, [activeItemId, prerenderMode, schedule]);
 
-  const { snapshot, phase, handleAnimationEnd } = useLedOutputDisplay({
+  const { snapshot, phase, handleAnimationEnd, seekBakeMs } = useLedOutputDisplay({
     isCueActive,
     activeItemId,
     getScheduleItems,
     animation: resolvedAnimation,
     manualClearNonce,
-    suppressBootCue: hasHydrated,
+    suppressBootCue: prerenderMode ? false : hasHydrated,
+    contentRevision: schedule.length,
+    bakeSeekMode,
   });
+
+  useEffect(() => {
+    if (!bakeSeekMode) {
+      document.documentElement.classList.remove('led-bake-seek');
+      return;
+    }
+    document.documentElement.classList.add('led-bake-seek');
+    return () => document.documentElement.classList.remove('led-bake-seek');
+  }, [bakeSeekMode]);
+
+  // Deterministic bake API for Spout bake-pack (seek CSS frames; not wall-clock capture).
+  useEffect(() => {
+    if (!prerenderMode || !bakeSeekMode) {
+      delete window.__ledBakeControl;
+      document.documentElement.removeAttribute('data-led-bake-control');
+      return;
+    }
+
+    const control: LedBakeControl = {
+      ready: Boolean(prerenderItemInSchedule && snapshot != null),
+      getTiming: () => {
+        const inDelayMs = resolvedAnimation.inDelayMs ?? 0;
+        const inMs = resolvedAnimation.inDurationMs ?? 0;
+        return {
+          inDelayMs,
+          inMs,
+          clipMs: inDelayMs + inMs,
+          style: resolvedAnimation.style,
+        };
+      },
+      seek: (ms: number) => seekBakeMs(ms),
+    };
+    window.__ledBakeControl = control;
+    document.documentElement.setAttribute(
+      'data-led-bake-control',
+      control.ready ? '1' : '0'
+    );
+
+    return () => {
+      delete window.__ledBakeControl;
+      document.documentElement.removeAttribute('data-led-bake-control');
+    };
+  }, [
+    prerenderMode,
+    bakeSeekMode,
+    prerenderItemInSchedule,
+    snapshot,
+    resolvedAnimation.inDelayMs,
+    resolvedAnimation.inDurationMs,
+    resolvedAnimation.style,
+    seekBakeMs,
+  ]);
+
+  // Bake script / Spout capture waits for this marker before grabbing frames.
+  useEffect(() => {
+    if (!prerenderMode) {
+      document.documentElement.removeAttribute(LED_PRERENDER_READY_ATTR);
+      document.documentElement.removeAttribute('data-led-prerender-error');
+      return;
+    }
+
+    if (schedule.length > 0 && prerenderItemId != null && !prerenderItemInSchedule) {
+      document.documentElement.removeAttribute(LED_PRERENDER_READY_ATTR);
+      document.documentElement.setAttribute(
+        'data-led-prerender-error',
+        `itemId ${prerenderItemId} not in schedule`
+      );
+      return;
+    }
+
+    document.documentElement.removeAttribute('data-led-prerender-error');
+    document.documentElement.setAttribute('data-led-prerender-phase', phase);
+    document.documentElement.setAttribute(
+      'data-led-prerender-in-ms',
+      String(resolvedAnimation.inDurationMs ?? 0)
+    );
+    document.documentElement.setAttribute(
+      'data-led-prerender-in-delay-ms',
+      String(resolvedAnimation.inDelayMs ?? 0)
+    );
+    const clipMs =
+      (resolvedAnimation.inDelayMs ?? 0) + (resolvedAnimation.inDurationMs ?? 0);
+    document.documentElement.setAttribute('data-led-prerender-clip-ms', String(clipMs));
+
+    // Bake-seek: ready to sample as soon as snapshot exists.
+    // Legacy wall-clock bake: recording while enter sequence runs.
+    const recording = bakeSeekMode
+      ? Boolean(prerenderItemInSchedule && snapshot != null)
+      : prerenderItemInSchedule &&
+        snapshot != null &&
+        (phase === 'hold-in' || phase === 'enter' || phase === 'visible');
+    if (recording) {
+      document.documentElement.setAttribute('data-led-prerender-recording', '1');
+    } else {
+      document.documentElement.removeAttribute('data-led-prerender-recording');
+    }
+
+    const ready =
+      prerenderItemId != null &&
+      prerenderItemInSchedule &&
+      snapshot != null &&
+      (bakeSeekMode || phase === 'visible');
+    if (ready) {
+      document.documentElement.setAttribute(LED_PRERENDER_READY_ATTR, '1');
+    } else {
+      document.documentElement.removeAttribute(LED_PRERENDER_READY_ATTR);
+    }
+    return () => {
+      document.documentElement.removeAttribute(LED_PRERENDER_READY_ATTR);
+      document.documentElement.removeAttribute('data-led-prerender-error');
+      document.documentElement.removeAttribute('data-led-prerender-phase');
+      document.documentElement.removeAttribute('data-led-prerender-in-ms');
+      document.documentElement.removeAttribute('data-led-prerender-in-delay-ms');
+      document.documentElement.removeAttribute('data-led-prerender-clip-ms');
+      document.documentElement.removeAttribute('data-led-prerender-recording');
+    };
+  }, [
+    prerenderMode,
+    bakeSeekMode,
+    prerenderItemId,
+    prerenderItemInSchedule,
+    schedule.length,
+    snapshot,
+    phase,
+    resolvedAnimation.inDurationMs,
+    resolvedAnimation.inDelayMs,
+  ]);
 
   const readLocalSchedule = useCallback((): LedScheduleItem[] => {
     if (!eventId) return [];
@@ -182,7 +339,7 @@ const LedOutputPage: React.FC = () => {
   }, [loadSchedule]);
 
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || prerenderMode) return;
     const callbacks = {
       onRunOfShowDataUpdated: (data: {
         schedule_items?: unknown;
@@ -196,12 +353,12 @@ const LedOutputPage: React.FC = () => {
     };
     socketClient.connect(eventId, callbacks);
     return () => socketClient.disconnect(eventId);
-  }, [eventId, applyRosData, triggerManualClear]);
+  }, [eventId, prerenderMode, applyRosData, triggerManualClear]);
 
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || prerenderMode) return;
     return subscribeLedOutputClear(eventId, triggerManualClear);
-  }, [eventId, triggerManualClear]);
+  }, [eventId, prerenderMode, triggerManualClear]);
 
   useEffect(() => {
     if (isCueActive || !pendingScheduleRef.current) return;
@@ -210,7 +367,8 @@ const LedOutputPage: React.FC = () => {
 
   const animator = getLedOutputAnimatorStyle(phase, resolvedAnimation);
   const showGraphic = snapshot != null && animator.visible;
-  const showClock = shouldShowLedClock(outputClock, showGraphic);
+  const showClock =
+    !hideClock && !prerenderMode && shouldShowLedClock(outputClock, showGraphic);
   const canvasBackground = resolveLedCanvasBackground(outputBackground);
 
   // Override global slate-900 on html / body / #root / .App (see index.css).
@@ -226,6 +384,7 @@ const LedOutputPage: React.FC = () => {
 
   return (
     <div
+      data-led-output-root="1"
       className="led-output-surface fixed inset-0 z-0"
       style={{
         backgroundColor: canvasBackground,
