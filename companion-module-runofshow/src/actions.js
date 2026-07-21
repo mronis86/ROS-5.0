@@ -314,8 +314,14 @@ async function adjustTimerDuration(self, secondsDelta) {
 		const fallbackDur = item
 			? (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
 			: 300
-		const current = currentDur || fallbackDur || 300
-		const newDur = Math.max(0, current + secondsDelta)
+		const currentValue = Number(currentDur)
+		const fallbackValue = Number(fallbackDur)
+		const current = Number.isFinite(currentValue)
+			? currentValue
+			: Number.isFinite(fallbackValue)
+				? fallbackValue
+				: 300
+		const newDur = Math.max(1, Math.floor(current + secondsDelta))
 		await self.apiPut(`/api/active-timers/${eventId}/${itemId}/duration`, {
 			duration_seconds: newDur,
 		})

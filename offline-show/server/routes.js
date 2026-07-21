@@ -576,6 +576,15 @@ function registerRoutes(app, db, helpers) {
     res.json({ success: true, event_id });
   });
 
+  app.post('/api/led-output/clear', (req, res) => {
+    const { event_id: eventId } = req.body || {};
+    if (!eventId) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
+    broadcastUpdate(eventId, 'ledOutputClear', { eventId });
+    res.json({ ok: true });
+  });
+
   // ─── Completed cues ─────────────────────────────────────────────────────────
   app.get('/api/completed-cues/:eventId', (req, res) => {
     const rows = db.prepare('SELECT * FROM completed_cues WHERE event_id = ?').all(req.params.eventId);

@@ -86,6 +86,19 @@ The launcher waits until `/health` responds before opening the browser (avoids C
 
 Open http://127.0.0.1:3004/ manually if the auto-open tab failed — use a normal browser tab, not an embedded preview.
 
+## Companion on the show LAN
+
+Use the regular **Run of Show** Companion module; a separate offline module is
+not required. Point its **API Base URL** at the offline show server:
+
+- Companion on the show laptop: `http://127.0.0.1:3004`
+- Companion on another LAN computer: `http://<show-laptop-ip>:3004`
+
+Keep Companion pointed at this LAN URL throughout the show. In Cloud mode the
+offline server proxies commands to Railway; in LAN-only mode it runs the same
+timer commands against local SQLite. Give the show laptop a stable LAN address
+and allow TCP port 3004 through Windows Firewall.
+
 ## Main app
 
 Port **3003** (`npm run dev`) — unchanged. Do not add portable aliases to main Vite config.

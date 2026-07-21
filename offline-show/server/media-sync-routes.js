@@ -446,14 +446,79 @@ function registerMediaSyncRoutes(app, db, helpers) {
   registerSourceRoutes('mitti');
 
   // Companion arm/load helpers used by both modules (LAN)
+  app.post('/api/timers/start', (req, res) => {
+    const { event_id, item_id, started_at } = req.body || {};
+    if (!event_id || item_id == null) {
+      return res.status(400).json({ error: 'event_id and item_id are required' });
+    }
+    const ts = nowIso();
+    const result = db.prepare(`
+      UPDATE active_timers
+      SET is_active = 1, is_running = 1, timer_state = 'running',
+          started_at = ?, updated_at = ?
+      WHERE event_id = ? AND item_id = ?
+    `).run(started_at || ts, ts, event_id, item_id);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Loaded timer not found for event and item' });
+    }
+    const row = getMainTimer(event_id);
+    emit(event_id, 'timerUpdated', row);
+    res.json({
+      success: true,
+      message: 'Timer started',
+      event_id,
+      item_id,
+    });
+  });
+
   app.post('/api/timers/stop', (req, res) => {
     const { event_id, item_id } = req.body || {};
     if (!event_id) return res.status(400).json({ error: 'event_id is required' });
     const ts = nowIso();
+    const timerBeforeStop = db.prepare(`
+      SELECT * FROM active_timers
+      WHERE event_id = ? AND (item_id = ? OR ? IS NULL)
+      LIMIT 1
+    `).get(event_id, item_id, item_id);
     db.prepare(`
       UPDATE active_timers SET is_running = 0, is_active = 0, timer_state = 'stopped', updated_at = ?
       WHERE event_id = ? AND (item_id = ? OR ? IS NULL)
     `).run(ts, event_id, item_id, item_id);
+
+    if (timerBeforeStop?.is_running && timerBeforeStop.started_at) {
+      const startedAtMs = new Date(timerBeforeStop.started_at).getTime();
+      if (Number.isFinite(startedAtMs)) {
+        const actualSeconds = Math.floor((Date.now() - startedAtMs) / 1000);
+        const scheduledSeconds = Number(timerBeforeStop.duration_seconds) || 0;
+        const overtimeMinutes = Math.floor((actualSeconds - scheduledSeconds) / 60);
+        if (Math.abs(overtimeMinutes) >= 1) {
+          const numericItemId = Number(timerBeforeStop.item_id);
+          const overtimeItemId = Number.isFinite(numericItemId)
+            ? Math.trunc(numericItemId)
+            : timerBeforeStop.item_id;
+          db.prepare(`
+            INSERT INTO overtime_minutes
+              (event_id, item_id, overtime_minutes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(event_id, item_id) DO UPDATE SET
+              overtime_minutes = excluded.overtime_minutes,
+              updated_at = excluded.updated_at
+          `).run(
+            event_id,
+            String(overtimeItemId),
+            overtimeMinutes,
+            ts,
+            ts
+          );
+          emit(event_id, 'overtimeUpdate', {
+            event_id,
+            item_id: overtimeItemId,
+            overtimeMinutes,
+          });
+        }
+      }
+    }
+
     const row = getMainTimer(event_id);
     if (row) {
       emit(event_id, 'timerStopped', row);
@@ -471,7 +536,11 @@ function registerMediaSyncRoutes(app, db, helpers) {
       }
       const ts = nowIso();
       const id = randomUUID();
-      const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
+      const rawDuration = Number(duration_seconds);
+      const dur =
+        duration_seconds == null || !Number.isFinite(rawDuration)
+          ? 300
+          : Math.max(0, Math.floor(rawDuration));
       db.prepare(`
         INSERT INTO active_timers (
           id, event_id, item_id, user_id, user_name, user_role, timer_state,
