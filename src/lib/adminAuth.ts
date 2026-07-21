@@ -109,11 +109,14 @@ export async function adminFetch(path: string, init?: RequestInit): Promise<Resp
   });
 }
 
-/** Gate for destructive Run-of-Show actions (e.g. clear change log). */
-export function verifyClearLogPassword(password: string): boolean {
-  const envPassword = import.meta.env.VITE_CLEAR_LOG_PASSWORD as string | undefined;
-  if (envPassword && password === envPassword) return true;
+/** Verify destructive Run-of-Show actions against the configured admin key. */
+export async function verifyClearLogPassword(password: string): Promise<boolean> {
   const adminKey = getStoredAdminKey();
   if (adminKey && password === adminKey) return true;
-  return false;
+  try {
+    const status = await fetchAdminAuthStatus(password);
+    return status.adminKeyConfigured === true && status.keyMatches === true;
+  } catch {
+    return false;
+  }
 }

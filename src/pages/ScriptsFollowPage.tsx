@@ -38,6 +38,106 @@ interface ScriptData {
 
 type UserRole = 'SCROLLER' | 'VIEWER';
 
+let mammothLoader: Promise<any> | null = null;
+let pdfJsLoader: Promise<any> | null = null;
+
+function loadBrowserLibrary(src: string, globalName: string): Promise<any> {
+  const existing = (window as any)[globalName];
+  if (existing) return Promise.resolve(existing);
+
+  return new Promise((resolve, reject) => {
+    const loadedScript = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
+    const script = loadedScript || document.createElement('script');
+    const onLoad = () => {
+      const library = (window as any)[globalName];
+      if (library) resolve(library);
+      else reject(new Error(`${globalName} loaded without exposing its browser API.`));
+    };
+    const onError = () => reject(new Error(`Could not load ${globalName}.`));
+
+    script.addEventListener('load', onLoad, { once: true });
+    script.addEventListener('error', onError, { once: true });
+    if (!loadedScript) {
+      script.src = src;
+      document.head.appendChild(script);
+    }
+  });
+}
+
+function normalizeImportedScript(text: string): string {
+  return text
+    .replace(/\u0000/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+}
+
+async function extractPdfScript(file: File): Promise<string> {
+  pdfJsLoader ??= loadBrowserLibrary(
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+    'pdfjsLib'
+  );
+  const pdfjsLib = await pdfJsLoader;
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pages: string[] = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const lines = new Map<number, { x: number; text: string }[]>();
+
+    for (const item of content.items as any[]) {
+      const text = String(item.str || '').trim();
+      if (!text) continue;
+      const y = Math.round(Number(item.transform?.[5]) || 0);
+      const x = Number(item.transform?.[4]) || 0;
+      if (!lines.has(y)) lines.set(y, []);
+      lines.get(y)!.push({ x, text });
+    }
+
+    const pageText = [...lines.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([, parts]) =>
+        parts
+          .sort((a, b) => a.x - b.x)
+          .map(part => part.text)
+          .join(' ')
+      )
+      .join('\n');
+    pages.push(pageText);
+  }
+  return normalizeImportedScript(pages.join('\n\n'));
+}
+
+async function extractImportedScript(file: File): Promise<string> {
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+
+  if (extension === 'txt') {
+    return normalizeImportedScript(await file.text());
+  }
+  if (extension === 'doc') {
+    throw new Error('Older .doc files are not supported. Open the file in Word and save it as .docx.');
+  }
+  if (extension === 'docx') {
+    mammothLoader ??= loadBrowserLibrary(
+      'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js',
+      'mammoth'
+    );
+    const mammoth = await mammothLoader;
+    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    return normalizeImportedScript(result.value || '');
+  }
+  if (extension === 'pdf') {
+    return extractPdfScript(file);
+  }
+
+  throw new Error('Unsupported script file. Choose a .txt, .docx, or .pdf file.');
+}
+
 const ScriptsFollowPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -58,6 +158,7 @@ const ScriptsFollowPage: React.FC = () => {
   const [userRole, setUserRole] = useState<UserRole>('VIEWER');
   const [scrollerPosition, setScrollerPosition] = useState<number>(0);
   const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importError, setImportError] = useState<string>('');
   const [isEditingScript, setIsEditingScript] = useState<boolean>(false);
   const [editScriptText, setEditScriptText] = useState<string>('');
   const [previewComments, setPreviewComments] = useState<Comment[]>([]);
@@ -464,8 +565,10 @@ const ScriptsFollowPage: React.FC = () => {
     if (!file) return;
 
     setIsImporting(true);
+    setImportError('');
     try {
-      const text = await file.text();
+      const text = await extractImportedScript(file);
+      if (!text) throw new Error('No readable text was found in this file.');
       setScriptText(text);
       console.log('✅ Script imported successfully');
       
@@ -476,8 +579,10 @@ const ScriptsFollowPage: React.FC = () => {
       }
     } catch (error) {
       console.error('❌ Error importing script:', error);
+      setImportError(error instanceof Error ? error.message : 'Could not read this script file.');
     } finally {
       setIsImporting(false);
+      event.target.value = '';
     }
   };
 
@@ -943,10 +1048,15 @@ const ScriptsFollowPage: React.FC = () => {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".txt,.pdf,.doc,.docx"
+              accept=".txt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               onChange={handleFileImport}
               className="hidden"
             />
+            {importError && (
+              <span className="max-w-xs text-xs text-red-300" role="alert">
+                {importError}
+              </span>
+            )}
 
             {/* Save Script Button */}
             <button

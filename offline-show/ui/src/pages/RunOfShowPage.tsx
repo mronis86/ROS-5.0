@@ -149,7 +149,7 @@ const RunOfShowPage: React.FC = () => {
 
     // Update local state for immediate UI feedback
     const localChanges = changeLogService.getLocalChanges();
-    setChangeLog(localChanges.slice(0, 100)); // Keep last 100 changes
+    setChangeLog(localChanges);
     
     console.log('📝 Change logged to buffer:', enhancedDescription);
   };
@@ -326,8 +326,8 @@ const RunOfShowPage: React.FC = () => {
           console.log('🔄 Local changes after adding to service:', localChanges.length);
           console.log('🔄 Latest change:', localChanges[localChanges.length - 1]);
           console.log('🔄 Current changeLog state length:', changeLog.length);
-          setChangeLog(localChanges.slice(0, 100));
-          console.log('🔄 Set changeLog to:', localChanges.slice(0, 100).length, 'changes');
+          setChangeLog(localChanges);
+          console.log('🔄 Set changeLog to:', localChanges.length, 'changes');
           
           console.log('✅ Debounced change logged to change log service:', pendingChange?.description || 'unknown');
           console.log('🔄 Removed pending change from queue:', changeKey);
@@ -529,7 +529,7 @@ const RunOfShowPage: React.FC = () => {
     
     // Update local state for immediate UI feedback
     const localChanges = changeLogService.getLocalChanges();
-    setChangeLog(localChanges.slice(0, 100));
+    setChangeLog(localChanges);
     
     console.log(`✅ All ${processedIds.size} pending changes processed immediately`);
     
@@ -1602,7 +1602,7 @@ const RunOfShowPage: React.FC = () => {
       // Force reload local changes from localStorage
       changeLogService.reloadLocalChanges();
       const localChanges = changeLogService.getLocalChanges();
-      setChangeLog(localChanges.slice(0, 100));
+      setChangeLog(localChanges);
       console.log('📝 Loaded local changes:', localChanges.length);
       
       // Load master change log from API
@@ -1627,7 +1627,7 @@ const RunOfShowPage: React.FC = () => {
       // Set up periodic refresh
       const interval = setInterval(() => {
         const localChanges = changeLogService.getLocalChanges();
-        setChangeLog(localChanges.slice(0, 100));
+        setChangeLog(localChanges);
       }, 2000); // Refresh every 2 seconds
       
       // Start the change log sync timer (syncs to master change log every 5 minutes)
@@ -2801,7 +2801,7 @@ const RunOfShowPage: React.FC = () => {
     
     try {
       console.log('🔄 Loading master change log for event:', event.id);
-      const masterChanges = await changeLogService.getMasterChangeLog(event.id, 100);
+      const masterChanges = await changeLogService.getMasterChangeLog(event.id);
       setMasterChangeLog(masterChanges);
       console.log('📊 Loaded master change log:', masterChanges.length, 'changes');
       
@@ -9266,7 +9266,7 @@ const RunOfShowPage: React.FC = () => {
                       onClick={() => {
                         changeLogService.reloadLocalChanges();
                         const localChanges = changeLogService.getLocalChanges();
-                        setChangeLog(localChanges.slice(0, 100));
+                        setChangeLog(localChanges);
                         console.log('🔄 Manually reloaded local changes:', localChanges.length);
                       }}
                       className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"

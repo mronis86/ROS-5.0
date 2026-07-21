@@ -281,7 +281,7 @@ class ChangeLogService {
   }
 
   // Get master change log from API
-  async getMasterChangeLog(eventId: string, limit: number = 100): Promise<any[]> {
+  async getMasterChangeLog(eventId: string, limit?: number): Promise<any[]> {
     try {
       console.log('🔄 Fetching master change log from API for event:', eventId);
       

@@ -395,8 +395,9 @@ class ApiClient {
   }
 
   // Change Log
-  async getChangeLog(eventId: string, limit: number = 100) {
-    return this.request(`/api/change-log/${eventId}?limit=${limit}`);
+  async getChangeLog(eventId: string, limit?: number) {
+    const query = typeof limit === 'number' ? `?limit=${limit}` : '';
+    return this.request(`/api/change-log/${eventId}${query}`);
   }
 
   async logChange(changeData: any) {
@@ -405,6 +406,13 @@ class ApiClient {
       body: JSON.stringify(changeData),
     });
     return result;
+  }
+
+  async clearChangeLog(eventId: string, adminKey: string) {
+    return this.request(`/api/change-log/${eventId}`, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Key': adminKey },
+    });
   }
 
   // Timer Messages

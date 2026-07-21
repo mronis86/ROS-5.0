@@ -3606,12 +3606,16 @@ app.post('/api/sub-cue-timers', async (req, res) => {
 app.get('/api/change-log/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
-    const limit = parseInt(req.query.limit) || 100;
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : null;
     
     // Try change_log_batches first, fallback to change_log
     const batchesResult = await pool.query(
-      'SELECT * FROM change_log_batches WHERE event_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [eventId, limit]
+      `SELECT * FROM change_log_batches
+       WHERE event_id = $1
+       ORDER BY created_at DESC
+       ${limit ? 'LIMIT $2' : ''}`,
+      limit ? [eventId, limit] : [eventId]
     );
 
     if (batchesResult.rows.length > 0) {
@@ -3633,8 +3637,11 @@ app.get('/api/change-log/:eventId', async (req, res) => {
 
     // Fallback to regular change_log
     const result = await pool.query(
-      'SELECT * FROM change_log WHERE event_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [eventId, limit]
+      `SELECT * FROM change_log
+       WHERE event_id = $1
+       ORDER BY created_at DESC
+       ${limit ? 'LIMIT $2' : ''}`,
+      limit ? [eventId, limit] : [eventId]
     );
     res.json(result.rows);
   } catch (error) {
@@ -3703,6 +3710,7 @@ app.post('/api/change-log', async (req, res) => {
 
 // DELETE endpoint to clear change log for an event
 app.delete('/api/change-log/:eventId', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
   try {
     const { eventId } = req.params;
     

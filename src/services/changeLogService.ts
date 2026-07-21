@@ -253,14 +253,11 @@ class ChangeLogService {
   }
 
   // Clear master change log
-  async clearMasterChangeLog(eventId: string): Promise<{ success: boolean; error?: string; deletedCount: number }> {
+  async clearMasterChangeLog(eventId: string, adminKey: string): Promise<{ success: boolean; error?: string; deletedCount: number }> {
     try {
       console.log('🔄 Clearing master change log for event:', eventId);
       
-      // Use apiClient instead of direct fetch to ensure correct API URL
-      const result = await apiClient.request(`/api/change-log/${eventId}`, {
-        method: 'DELETE'
-      });
+      const result = await apiClient.clearChangeLog(eventId, adminKey);
       
       console.log(`✅ Cleared ${result.deletedCount || 0} change log entries`);
       
@@ -280,7 +277,7 @@ class ChangeLogService {
   }
 
   // Get master change log from API
-  async getMasterChangeLog(eventId: string, limit: number = 100): Promise<any[]> {
+  async getMasterChangeLog(eventId: string, limit?: number): Promise<any[]> {
     try {
       console.log('🔄 Fetching master change log from API for event:', eventId);
       
