@@ -23,7 +23,7 @@
     "googleapis": "^144.0.0",
     "helmet": "^8.1.0",
     "jose": "^6.2.3",
-    "lucide-react": "^0.263.1",
+    "lucide-react": "^1.25.0",
     "mammoth": "^1.6.0",
     "moment": "^2.29.4",
     "morgan": "^1.10.1",
