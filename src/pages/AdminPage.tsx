@@ -69,6 +69,63 @@ interface EventAccessCalendarRow {
   date: string;
 }
 
+/** Matches VALID_SCOPES in lib/api-auth.js — keep hints in sync with enforcement there. */
+const INTEGRATION_TOKEN_SCOPES: Array<{
+  id: string;
+  label: string;
+  hint: string;
+  recommendedFor: string;
+}> = [
+  {
+    id: 'read',
+    label: 'read',
+    hint: 'GET schedule, events, timers, and other show data.',
+    recommendedFor: 'Any client that only needs to fetch state',
+  },
+  {
+    id: 'control',
+    label: 'control',
+    hint: 'Start/stop cues and timers (Companion-style control routes). Does not allow saving the full schedule.',
+    recommendedFor: 'Bitfocus Companion, Spout, show-control panels',
+  },
+  {
+    id: 'write',
+    label: 'write',
+    hint: 'Create/update schedule rows, run-of-show saves, and reconnect snapshot uploads to Neon.',
+    recommendedFor: 'Offline show Cloud on (must include with read + control)',
+  },
+  {
+    id: 'backup:export',
+    label: 'backup:export',
+    hint: 'Export upcoming-event backup payloads for the Google Apps Script Drive backup.',
+    recommendedFor: 'Scheduled Drive backup script only',
+  },
+  {
+    id: 'admin',
+    label: 'admin',
+    hint: 'Full API access, including admin routes. Prefer scoped tokens unless you truly need this.',
+    recommendedFor: 'Break-glass / internal tooling only',
+  },
+];
+
+const INTEGRATION_SCOPE_PRESETS: Array<{ label: string; scopes: string[]; blurb: string }> = [
+  {
+    label: 'Companion',
+    scopes: ['read', 'control'],
+    blurb: 'Cue/timer control',
+  },
+  {
+    label: 'Offline show',
+    scopes: ['read', 'control', 'write'],
+    blurb: 'LAN ↔ cloud sync',
+  },
+  {
+    label: 'Drive backup',
+    scopes: ['backup:export'],
+    blurb: 'Apps Script export',
+  },
+];
+
 const PUZZLE_ALL_COLORS = [
   { name: 'red', bg: 'bg-red-500', border: 'border-red-400' },
   { name: 'green', bg: 'bg-green-500', border: 'border-green-400' },
@@ -367,7 +424,7 @@ export default function AdminPage() {
   const [integrationTokensError, setIntegrationTokensError] = useState<string | null>(null);
   const [newTokenName, setNewTokenName] = useState('');
   const [newTokenEventId, setNewTokenEventId] = useState('');
-  const [newTokenScopes, setNewTokenScopes] = useState('read,control');
+  const [newTokenScopes, setNewTokenScopes] = useState<string[]>(['read', 'control']);
   const [creatingToken, setCreatingToken] = useState(false);
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
   const [createdTokenCopied, setCreatedTokenCopied] = useState(false);
@@ -1466,10 +1523,13 @@ export default function AdminPage() {
     setCreatedTokenValue(null);
     setCreatedTokenCopied(false);
     try {
-      const scopes = newTokenScopes
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const scopes = INTEGRATION_TOKEN_SCOPES.map((s) => s.id).filter((id) =>
+        newTokenScopes.includes(id)
+      );
+      if (scopes.length === 0) {
+        setIntegrationTokensError('Select at least one scope.');
+        return;
+      }
       const res = await adminFetch('/api/admin/integration-tokens', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1487,6 +1547,7 @@ export default function AdminPage() {
       setCreatedTokenValue((data as { token?: string }).token || null);
       setNewTokenName('');
       setNewTokenEventId('');
+      setNewTokenScopes(['read', 'control']);
       await fetchIntegrationTokens();
     } catch (e) {
       setIntegrationTokensError(e instanceof Error ? e.message : 'Request failed');
@@ -2801,16 +2862,14 @@ export default function AdminPage() {
             </button>
           </div>
           <p className="text-slate-500 text-sm mb-4">
-            Scoped tokens for Bitfocus Companion, Spout, and other integrations. Use scopes{' '}
-            <code className="text-slate-400">read,control</code> for Companion on one event. The full secret is shown
-            once when you create or regenerate a token — copy it then. Use Regenerate if you lose it.
+            For Companion, offline show, Spout, and backups. Secret is shown once on create/regenerate — copy it then.
           </p>
           {integrationTokensError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               {integrationTokensError}
             </div>
           )}
-          <div className="grid gap-3 sm:grid-cols-2 mb-4">
+          <div className="grid gap-2 sm:grid-cols-2 mb-2">
             <input
               type="text"
               value={newTokenName}
@@ -2822,21 +2881,71 @@ export default function AdminPage() {
               type="text"
               value={newTokenEventId}
               onChange={(e) => setNewTokenEventId(e.target.value)}
-              placeholder="Event ID (optional — limits token to one event)"
+              placeholder="Event ID (optional)"
               className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono"
             />
-            <input
-              type="text"
-              value={newTokenScopes}
-              onChange={(e) => setNewTokenScopes(e.target.value)}
-              placeholder="Scopes: read,control,write,backup:export"
-              className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm sm:col-span-2"
-            />
           </div>
+          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span className="text-slate-500 text-xs shrink-0">Scopes</span>
+            <div className="flex flex-wrap gap-1">
+              {INTEGRATION_TOKEN_SCOPES.map((scope) => {
+                const checked = newTokenScopes.includes(scope.id);
+                return (
+                  <button
+                    key={scope.id}
+                    type="button"
+                    aria-pressed={checked}
+                    onClick={() => {
+                      setNewTokenScopes((prev) =>
+                        checked ? prev.filter((s) => s !== scope.id) : [...prev, scope.id]
+                      );
+                    }}
+                    title={scope.hint}
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-colors ${
+                      checked
+                        ? 'bg-slate-600 border-slate-500 text-white'
+                        : 'bg-transparent border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {scope.label}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="text-slate-700 text-xs">·</span>
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-slate-600 text-[11px]">Fill</span>
+              {INTEGRATION_SCOPE_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => setNewTokenScopes([...preset.scopes])}
+                  title={`${preset.blurb}: ${preset.scopes.join(', ')}`}
+                  className="px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-sky-300 underline-offset-2 hover:underline"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <details className="mb-3">
+            <summary className="cursor-pointer text-[11px] text-slate-600 hover:text-slate-400 select-none">
+              What each scope does
+            </summary>
+            <div className="mt-1.5 grid gap-1 text-[11px] text-slate-500 sm:grid-cols-2">
+              {INTEGRATION_TOKEN_SCOPES.map((scope) => (
+                <p key={scope.id} className="leading-snug">
+                  <code className="text-slate-400">{scope.label}</code>
+                  {': '}
+                  {scope.hint}
+                </p>
+              ))}
+            </div>
+          </details>
           <button
             type="button"
             onClick={createIntegrationToken}
-            disabled={creatingToken || !newTokenName.trim()}
+            disabled={creatingToken || !newTokenName.trim() || newTokenScopes.length === 0}
             className="mb-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg"
           >
             {creatingToken ? 'Creating…' : 'Create token'}
