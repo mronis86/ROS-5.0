@@ -31,8 +31,12 @@ adding an Ontime-style server tick engine.
   explicitly approves synchronization.
 - Prevent dual-master behavior where cloud and local systems both believe
   they own the live timer.
-- Preserve local `started_at` and active timer state when pushing back to
-  cloud.
+- On reconnect, push the live cue with a **countdown handoff**: take the
+  remaining time shown on the show laptop (Resolume/Mitti-style), recompute
+  `started_at` relative to reconnect time, and POST that to Railway so
+  Netlify/OBS clocks snap to the same remaining — including mid-cue and
+  overtime — until the next cloud cue load/start.
+- Preserve loaded (not running) cue state as well when present.
 
 ### 3. Refresh server time periodically
 

@@ -287,16 +287,10 @@ export class DatabaseService {
       return result;
     } catch (error) {
       console.error('❌ Error saving run of show data:', error);
-      console.error('❌ Error details:', error.message, error.details, error.hint);
-      // Fallback to localStorage with user info if available
-      const fallbackData = {
-        ...data,
-        last_modified_by: userInfo?.userId,
-        last_modified_by_name: userInfo?.userName,
-        last_modified_by_role: userInfo?.userRole,
-        updated_at: new Date().toISOString()
-      };
-      return this.saveRunOfShowToLocalStorage(fallbackData);
+      console.error('❌ Error details:', (error as any)?.message, (error as any)?.details, (error as any)?.hint);
+      // Do not fall back to localStorage — that looks like a successful save while
+      // Railway/SQLite never received the write (breaks cloud sync in Cloud on mode).
+      throw error;
     }
   }
 
@@ -1226,10 +1220,13 @@ export class DatabaseService {
   static async getCompletedCues(eventId: string) {
     try {
       console.log('🔄 Getting completed cues via API:', eventId);
-      
-      // API-based implementation - placeholder
-      console.log('🔄 Getting completed cues via API:', eventId);
-      return null;
+      const response = await fetch(`${API_BASE_URL}/api/completed-cues/${eventId}`);
+      if (!response.ok) {
+        console.error('❌ Failed to get completed cues:', response.status, response.statusText);
+        return null;
+      }
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
     } catch (error) {
       console.error('❌ Error getting completed cues:', error);
       return null;

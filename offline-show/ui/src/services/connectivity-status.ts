@@ -17,6 +17,8 @@ export type RailwayApiTokenStatus = {
   prefix: string | null;
   source: 'env' | 'db' | null;
   locked: boolean;
+  canWrite?: boolean | null;
+  writeError?: string | null;
 };
 
 export type ConnectivitySnapshot = {

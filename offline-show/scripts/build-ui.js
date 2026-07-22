@@ -11,7 +11,7 @@ function ensureUiDeps() {
   if (fs.existsSync(viteBin)) return viteBin;
 
   console.log('Installing offline UI dependencies (first time or after update)...');
-  execSync('npm install', { cwd: uiRoot, stdio: 'inherit' });
+  execSync('npm install --no-audit --no-fund', { cwd: uiRoot, stdio: 'inherit' });
   if (!fs.existsSync(viteBin)) {
     throw new Error('vite not found after npm install in offline-show/ui');
   }

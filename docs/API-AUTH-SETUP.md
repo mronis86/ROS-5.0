@@ -166,7 +166,7 @@ When `REQUIRE_API_AUTH` is enabled, paste token into Companion **API Token** fie
 
 **vMix / Netlify graphics URLs** are separate feeds and are not affected by Railway `REQUIRE_API_AUTH`.
 
-**Offline show** (LAN port 3004) is unaffected for LAN-only mode. For **cloud sync**, paste an Integration API token in the offline app connectivity bar (**API** button), or set `OFFLINE_RAILWAY_API_TOKEN` on the show server. Token needs scopes `read` + `control` when `REQUIRE_API_AUTH` is enabled.
+**Offline show** (LAN port 3004) is unaffected for LAN-only mode. For **cloud sync / Cloud on reconnect**, paste an Integration API token in the offline app connectivity bar (**API** button), or set `OFFLINE_RAILWAY_API_TOKEN` on the show server. Token needs scopes **`read` + `control` + `write`** when `REQUIRE_API_AUTH` is enabled (`write` is required to upload schedule + active timer; `control` alone is enough for Companion cue/timer routes but not for reconnect snapshot POSTs).
 
 ---
 

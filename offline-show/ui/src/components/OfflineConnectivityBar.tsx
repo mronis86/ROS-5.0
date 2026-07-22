@@ -12,8 +12,15 @@ import {
 import { getOfflineDisplayName } from '../services/offline-user';
 import { onCloudModeChange } from '../services/socket-client';
 import { performCloudReconnect } from '../services/offline-sync-bridge';
+import {
+  loadCloudReconnectPreview,
+  type CloudReconnectPreview,
+} from '../services/cloud-reconnect-preview';
+import OfflineDialog from './OfflineDialog';
+import CloudReconnectPreviewPanel from './CloudReconnectPreviewPanel';
 
 const POLL_MS = 12_000;
+const PREVIEW_REFRESH_MS = 2000;
 
 type PillKey = 'internet' | 'railway' | 'neon' | 'localLan';
 
@@ -23,6 +30,12 @@ const PILL_ORDER: { key: PillKey; short: string }[] = [
   { key: 'neon', short: 'Neon' },
   { key: 'localLan', short: 'Local LAN' },
 ];
+
+type DialogState =
+  | { kind: 'toggle-mode'; next: 'lan-only' | 'cloud-connected'; message: string }
+  | { kind: 'reconnect-failed'; error: string }
+  | { kind: 'clear-token' }
+  | { kind: 'notice'; title: string; message: string; tone?: 'info' | 'warn' | 'error' };
 
 const OfflineConnectivityBar: React.FC = () => {
   const [snapshot, setSnapshot] = useState<ConnectivitySnapshot | null>(null);
@@ -34,6 +47,9 @@ const OfflineConnectivityBar: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [pushPreview, setPushPreview] = useState<CloudReconnectPreview | null>(null);
+  const [pushPreviewLoading, setPushPreviewLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -69,6 +85,47 @@ const OfflineConnectivityBar: React.FC = () => {
     });
   }, [refresh]);
 
+  const closeDialog = useCallback(() => {
+    if (toggling || tokenSaving) return;
+    setDialog(null);
+    setPushPreview(null);
+    setPushPreviewLoading(false);
+  }, [toggling, tokenSaving]);
+
+  const refreshPushPreview = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setPushPreviewLoading(true);
+    try {
+      const preview = await loadCloudReconnectPreview();
+      setPushPreview(preview);
+    } catch (e) {
+      setPushPreview({
+        ok: false,
+        error: e instanceof Error ? e.message : 'Could not build upload preview.',
+        eventName: '',
+        eventId: '',
+        showMode: null,
+        scheduleCount: 0,
+        rows: [],
+        liveCue: null,
+        completed: [],
+        indentedCount: 0,
+        subCue: null,
+      });
+    } finally {
+      if (!opts?.silent) setPushPreviewLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const showPreview =
+      dialog?.kind === 'toggle-mode' && dialog.next === 'cloud-connected' && !toggling;
+    if (!showPreview) return;
+
+    void refreshPushPreview();
+    const id = window.setInterval(() => void refreshPushPreview({ silent: true }), PREVIEW_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [dialog, toggling, refreshPushPreview]);
+
   const handleSaveToken = async () => {
     const trimmed = tokenInput.trim();
     if (!trimmed) return;
@@ -80,72 +137,111 @@ const OfflineConnectivityBar: React.FC = () => {
       setTokenPanelOpen(false);
       await refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Could not save token');
+      setDialog({
+        kind: 'notice',
+        title: 'Could not save token',
+        message: e instanceof Error ? e.message : 'Could not save token',
+        tone: 'error',
+      });
     } finally {
       setTokenSaving(false);
     }
   };
 
-  const handleClearToken = async () => {
-    if (!window.confirm('Remove the saved Railway API token from this show laptop?')) return;
+  const runClearToken = async () => {
     setTokenSaving(true);
     try {
       const cleared = await clearRailwayApiToken();
       setTokenStatus(cleared);
       setTokenInput('');
+      setDialog(null);
       await refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Could not clear token');
+      setDialog({
+        kind: 'notice',
+        title: 'Could not clear token',
+        message: e instanceof Error ? e.message : 'Could not clear token',
+        tone: 'error',
+      });
     } finally {
       setTokenSaving(false);
     }
   };
 
-  const handleToggleCloud = async () => {
-    if (toggling) return;
-    const next = cloudMode?.lanOnly ? 'cloud-connected' : 'lan-only';
-    const tokenReady = tokenStatus?.configured === true;
-    const confirmMsg =
-      next === 'lan-only'
-        ? 'Switch to LAN only? Event list and schedules use the local SQLite copy on this show laptop. No Railway/Neon reads or writes. All devices on :3004 will follow.'
-        : tokenReady
-          ? 'Turn Cloud on? Run of Show will PAUSE, upload your current schedule and show state to the hosted app, then reconnect. Your screen will NOT reload from cloud.'
-          : 'Turn Cloud on? You have not saved a Railway API token yet — cloud sync will fail until you add one (Admin → Integration API tokens, scopes read + control).\n\nContinue anyway?';
-    if (!window.confirm(confirmMsg)) return;
-
+  const runModeSwitch = async (next: 'lan-only' | 'cloud-connected') => {
     setToggling(true);
     try {
       if (next === 'cloud-connected') {
         const result = await performCloudReconnect(getOfflineDisplayName());
         if (!result.ok) {
-          const proceed = window.confirm(
-            `${result.error || 'Could not upload offline show data.'}\n\nConnect anyway without uploading? (Hosted app may show older data.)`
-          );
-          if (!proceed) return;
-          await setCloudMode('cloud-connected', getOfflineDisplayName());
-        } else {
-          const items = result.stats?.scheduleItems;
-          const timerItem = result.stats?.activeTimerItemId;
-          const timerState = result.stats?.activeTimerState;
-          const timerNote =
-            result.stats?.activeTimer === true && timerItem != null
-              ? `\n\nActive cue synced: item ${timerItem}${timerState ? ` (${timerState})` : ''}.`
-              : result.stats?.activeTimerSource === 'no-live-timer'
-                ? '\n\nNo loaded/running cue was detected — hosted app may not show the current cue.'
-                : '\n\nActive cue was not synced — check server log for reconnect timer push.';
-          alert(
-            `Cloud connected. Uploaded ${items ?? 'your'} schedule item(s) to the hosted app. Your Run of Show screen was kept as-is.${timerNote}`
-          );
+          setDialog({
+            kind: 'reconnect-failed',
+            error: result.error || 'Could not upload offline show data.',
+          });
+          return;
         }
+        console.log('☁️ Cloud connected', {
+          scheduleItems: result.stats?.scheduleItems,
+          activeTimerItemId: result.stats?.activeTimerItemId,
+          activeTimerState: result.stats?.activeTimerState,
+          remainingSeconds: result.stats?.activeTimerRemainingSeconds,
+        });
+        setDialog(null);
       } else {
         await setCloudMode(next, getOfflineDisplayName());
+        setDialog(null);
       }
       await refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Could not change cloud mode');
+      setDialog({
+        kind: 'notice',
+        title: 'Could not change cloud mode',
+        message: e instanceof Error ? e.message : 'Could not change cloud mode',
+        tone: 'error',
+      });
     } finally {
       setToggling(false);
     }
+  };
+
+  const runConnectWithoutUpload = async () => {
+    setToggling(true);
+    try {
+      await setCloudMode('cloud-connected', getOfflineDisplayName());
+      setDialog(null);
+      await refresh();
+    } catch (e) {
+      setDialog({
+        kind: 'notice',
+        title: 'Could not change cloud mode',
+        message: e instanceof Error ? e.message : 'Could not change cloud mode',
+        tone: 'error',
+      });
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleToggleCloud = () => {
+    if (toggling || dialog) return;
+    const next = cloudMode?.lanOnly ? 'cloud-connected' : 'lan-only';
+    const tokenReady = tokenStatus?.configured === true;
+    const message =
+      next === 'lan-only'
+        ? 'Switch to LAN only? Event list and schedules use the local SQLite copy on this show laptop. No Railway/Neon reads or writes. All devices on :3004 will follow.'
+        : `${
+            tokenReady
+              ? ''
+              : 'Warning: no Railway API token saved yet. Upload may fail until you add one (API button → scopes read + control + write).\n\n'
+          }Turn Cloud on? This will briefly pause, upload the snapshot below to the hosted app, then reconnect. Your screen will not reload from cloud.`;
+    if (next === 'cloud-connected') {
+      setPushPreview(null);
+      setPushPreviewLoading(true);
+    } else {
+      setPushPreview(null);
+      setPushPreviewLoading(false);
+    }
+    setDialog({ kind: 'toggle-mode', next, message });
   };
 
   const host =
@@ -153,6 +249,30 @@ const OfflineConnectivityBar: React.FC = () => {
 
   const lanOnly = cloudMode?.lanOnly ?? snapshot?.lanOnly ?? true;
   const tokenConfigured = tokenStatus?.configured === true;
+
+  const dialogTitle =
+    dialog?.kind === 'toggle-mode'
+      ? dialog.next === 'cloud-connected'
+        ? 'Turn Cloud on'
+        : 'Switch to LAN only'
+      : dialog?.kind === 'reconnect-failed'
+        ? 'Cloud upload failed'
+        : dialog?.kind === 'clear-token'
+          ? 'Clear API token'
+          : dialog?.kind === 'notice'
+            ? dialog.title
+            : '';
+
+  const dialogMessage =
+    dialog?.kind === 'toggle-mode'
+      ? dialog.message
+      : dialog?.kind === 'reconnect-failed'
+        ? `${dialog.error}\n\nConnect anyway without uploading? (Hosted app may show older data.)`
+        : dialog?.kind === 'clear-token'
+          ? 'Remove the saved Railway API token from this show laptop?'
+          : dialog?.kind === 'notice'
+            ? dialog.message
+            : '';
 
   return (
     <footer className="offline-connectivity-bar" role="status" aria-live="polite">
@@ -167,7 +287,7 @@ const OfflineConnectivityBar: React.FC = () => {
         <button
           type="button"
           className={`offline-cloud-toggle ${lanOnly ? 'offline-cloud-toggle--lan' : 'offline-cloud-toggle--cloud'}`}
-          onClick={() => void handleToggleCloud()}
+          onClick={handleToggleCloud}
           disabled={toggling}
           title={
             lanOnly
@@ -180,15 +300,22 @@ const OfflineConnectivityBar: React.FC = () => {
 
         <button
           type="button"
-          className={`offline-api-token-btn ${tokenConfigured ? 'offline-api-token-btn--ok' : 'offline-api-token-btn--missing'}`}
+          className={`offline-api-token-btn ${
+            tokenConfigured && tokenStatus?.canWrite !== false
+              ? 'offline-api-token-btn--ok'
+              : 'offline-api-token-btn--missing'
+          }`}
           onClick={() => setTokenPanelOpen((open) => !open)}
           title={
             tokenConfigured
-              ? `Railway API token configured (${tokenStatus?.prefix ?? 'saved'})`
+              ? tokenStatus?.canWrite === false
+                ? tokenStatus.writeError ||
+                  'Token cannot write to Railway — needs scopes read + control + write'
+                : `Railway API token configured (${tokenStatus?.prefix ?? 'saved'})`
               : 'Railway API token required for cloud sync — click to configure'
           }
         >
-          API {tokenConfigured ? '✓' : '!'}
+          API {tokenConfigured && tokenStatus?.canWrite !== false ? '✓' : '!'}
         </button>
 
         <div className="offline-connectivity-bar__pills">
@@ -243,13 +370,23 @@ const OfflineConnectivityBar: React.FC = () => {
           </div>
           <p className="offline-api-token-panel__hint">
             Create in the hosted app: <strong>Admin → Integration API tokens</strong> with scopes{' '}
-            <strong>read</strong> and <strong>control</strong>. Paste the token here once per show
-            laptop.
+            <strong>read</strong>, <strong>control</strong>, and <strong>write</strong>. Companion
+            can use read+control; offline <em>Cloud on</em> reconnect also needs write (schedule +
+            timer upload). Paste the token here once per show laptop.
           </p>
           {tokenStatus?.configured ? (
             <p className="offline-api-token-panel__status">
               Configured: <code>{tokenStatus.prefix}</code>
               {tokenStatus.source === 'env' ? ' (from server env)' : ''}
+              {tokenStatus.canWrite === false ? (
+                <span className="offline-api-token-panel__status--warn">
+                  {' '}
+                  — cannot write to cloud
+                  {tokenStatus.writeError ? `: ${tokenStatus.writeError}` : ''}
+                </span>
+              ) : tokenStatus.canWrite === true ? (
+                <span> — write OK</span>
+              ) : null}
             </p>
           ) : (
             <p className="offline-api-token-panel__status offline-api-token-panel__status--warn">
@@ -281,7 +418,11 @@ const OfflineConnectivityBar: React.FC = () => {
                     type="button"
                     className="offline-api-token-panel__clear"
                     disabled={tokenSaving}
-                    onClick={() => void handleClearToken()}
+                    onClick={() =>
+                      setDialog({
+                        kind: 'clear-token',
+                      })
+                    }
                   >
                     Clear
                   </button>
@@ -296,6 +437,48 @@ const OfflineConnectivityBar: React.FC = () => {
           )}
         </div>
       ) : null}
+
+      <OfflineDialog
+        open={dialog != null}
+        title={dialogTitle}
+        message={dialogMessage}
+        tone={
+          dialog?.kind === 'notice'
+            ? dialog.tone || 'info'
+            : dialog?.kind === 'reconnect-failed'
+              ? 'warn'
+              : dialog?.kind === 'clear-token'
+                ? 'warn'
+                : 'info'
+        }
+        busy={toggling || tokenSaving}
+        confirmLabel={
+          dialog?.kind === 'toggle-mode'
+            ? dialog.next === 'cloud-connected'
+              ? 'Turn Cloud on'
+              : 'Switch to LAN'
+            : dialog?.kind === 'reconnect-failed'
+              ? 'Connect anyway'
+              : dialog?.kind === 'clear-token'
+                ? 'Clear token'
+                : undefined
+        }
+        cancelLabel={dialog?.kind === 'reconnect-failed' ? 'Stay on LAN' : 'Cancel'}
+        onCancel={closeDialog}
+        onConfirm={
+          dialog?.kind === 'toggle-mode'
+            ? () => void runModeSwitch(dialog.next)
+            : dialog?.kind === 'reconnect-failed'
+              ? () => void runConnectWithoutUpload()
+              : dialog?.kind === 'clear-token'
+                ? () => void runClearToken()
+                : undefined
+        }
+      >
+        {dialog?.kind === 'toggle-mode' && dialog.next === 'cloud-connected' ? (
+          <CloudReconnectPreviewPanel preview={pushPreview} loading={pushPreviewLoading} />
+        ) : null}
+      </OfflineDialog>
     </footer>
   );
 };

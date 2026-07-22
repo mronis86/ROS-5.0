@@ -9,7 +9,7 @@ import { NeonBackupService, BackupData } from '../services/neon-backup-service';
 import { useAuth } from '../contexts/OfflineAuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { sseClient } from '../services/sse-client';
-import { socketClient } from '../services/socket-client';
+import { socketClient, onCloudModeChange } from '../services/socket-client';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import CompleteChangeLog from '../components/CompleteChangeLog';
 import OSCModal from '../components/OSCModal';
@@ -29,6 +29,21 @@ import {
   isIndentedScheduleItem,
 } from '../lib/scheduleStartTime';
 import { verifyClearLogPassword } from '../lib/adminAuth';
+import {
+  clearRunOfShowReconnectHandlers,
+  registerRunOfShowLocalFlush,
+  registerRunOfShowSnapshotBuilder,
+  registerPostCloudReconnectHandler,
+  isCloudReconnecting,
+  isCloudReconnectUploadActive,
+  shouldIgnoreRemoteSchedule,
+  markLocalMutationGuard,
+  type ReconnectSnapshot,
+} from '../services/offline-sync-bridge';
+
+function eventIdsMatch(a: unknown, b: unknown): boolean {
+  return a != null && b != null && String(a) === String(b);
+}
 
 // Speaker interface/type definition
 interface Speaker {
@@ -742,12 +757,14 @@ const RunOfShowPage: React.FC = () => {
     activeItemId: null as number | null,
     activeTimers: {} as Record<number, boolean>,
     loadedItems: {} as Record<number, boolean>,
+    completedCues: {} as Record<number, boolean>,
     timerProgress: {} as Record<number, { elapsed: number; total: number; startedAt: Date | null }>,
     schedule: [] as typeof schedule,
     eventId: null as string | undefined,
     userId: null as string | undefined,
     userName: '',
     userRole: 'OPERATOR' as string,
+    clockOffset: 0,
   });
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
@@ -1333,7 +1350,132 @@ const RunOfShowPage: React.FC = () => {
   // Track if user is actively editing
   const [isUserEditing, setIsUserEditing] = useState(false);
   const [editingTimeout, setEditingTimeout] = useState<NodeJS.Timeout | null>(null);
-  
+
+  /** Per-row edit locks from other (and self) editors: rowId → { userId, userName } */
+  const [rowLocks, setRowLocks] = useState<Record<number, { userId: string; userName: string }>>({});
+  const rowLocksRef = useRef(rowLocks);
+  const localEditingRowIdRef = useRef<number | null>(null);
+  const rowLockHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const modalLockRowIdRef = useRef<number | null>(null);
+  const releaseRowEditLockRef = useRef<(rowId: number) => void>(() => {});
+  const finishEditingSessionRef = useRef<() => void>(() => {});
+  const startCountdownTimerRef = useRef<() => void>(() => {});
+  const blurFocusedScheduleCellRef = useRef<(rowId?: number | null) => void>(() => {});
+  /** Last schedule snapshot accepted from server (used to preserve rows locked by others on save). */
+  const lastSyncedScheduleRef = useRef<any[]>([]);
+  const scheduleVersionRef = useRef<number | null>(null);
+  const lastAcceptedUpdatedAtRef = useRef<number>(0);
+  const cloudConnectedRef = useRef(false);
+  const lastCloudSaveErrorAlertAtRef = useRef(0);
+  const isUserEditingRef = useRef(false);
+  const scheduleRef = useRef(schedule);
+  const customColumnsRef = useRef(customColumns);
+  const eventNameRef = useRef(eventName);
+  const masterStartTimeRef = useRef(masterStartTime);
+  const dayStartTimesRef = useRef(dayStartTimes);
+  const indentedCuesRef = useRef(indentedCues);
+  const trackWasDurationsRef = useRef(trackWasDurations);
+  const originalDurationsRef = useRef(originalDurations);
+  const eventTimezoneRef = useRef(eventTimezone);
+  const flushSaveToAPIRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    rowLocksRef.current = rowLocks;
+  }, [rowLocks]);
+
+  useEffect(() => {
+    isUserEditingRef.current = isUserEditing;
+  }, [isUserEditing]);
+
+  useEffect(() => { scheduleRef.current = schedule; }, [schedule]);
+  useEffect(() => { customColumnsRef.current = customColumns; }, [customColumns]);
+  useEffect(() => { eventNameRef.current = eventName; }, [eventName]);
+  useEffect(() => { masterStartTimeRef.current = masterStartTime; }, [masterStartTime]);
+  useEffect(() => { dayStartTimesRef.current = dayStartTimes; }, [dayStartTimes]);
+  useEffect(() => { indentedCuesRef.current = indentedCues; }, [indentedCues]);
+  useEffect(() => { trackWasDurationsRef.current = trackWasDurations; }, [trackWasDurations]);
+  useEffect(() => { originalDurationsRef.current = originalDurations; }, [originalDurations]);
+  useEffect(() => { eventTimezoneRef.current = eventTimezone; }, [eventTimezone]);
+
+  const rememberSyncedSchedule = useCallback((data: any) => {
+    if (!data) return;
+    let items = data.schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = null;
+      }
+    }
+    if (Array.isArray(items)) {
+      lastSyncedScheduleRef.current = items;
+    }
+    if (data.version != null && !Number.isNaN(Number(data.version))) {
+      scheduleVersionRef.current = Number(data.version);
+    }
+    if (data.updated_at) {
+      const ts = new Date(data.updated_at).getTime();
+      if (Number.isFinite(ts) && ts >= lastAcceptedUpdatedAtRef.current) {
+        lastAcceptedUpdatedAtRef.current = ts;
+      }
+    }
+  }, []);
+
+  /** Reject older cloud snapshots that would clobber a newer local save. */
+  const shouldRejectStaleRemoteSchedule = useCallback((data: any) => {
+    if (!data?.updated_at) return false;
+    const remoteTs = new Date(data.updated_at).getTime();
+    if (!Number.isFinite(remoteTs)) return false;
+    if (lastAcceptedUpdatedAtRef.current <= 0) return false;
+    if (remoteTs < lastAcceptedUpdatedAtRef.current) {
+      console.log('⏭️ Skipping stale remote schedule', {
+        remote: data.updated_at,
+        accepted: new Date(lastAcceptedUpdatedAtRef.current).toISOString(),
+      });
+      return true;
+    }
+    return false;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/connectivity-status', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        cloudConnectedRef.current =
+          data.cloudConnected === true || data.cloudMode === 'cloud-connected';
+      })
+      .catch(() => {});
+    return onCloudModeChange((payload) => {
+      cloudConnectedRef.current = payload.cloudConnected === true || payload.mode === 'cloud-connected';
+    });
+  }, []);
+
+  /** Keep locally-edited / self-locked rows when applying a remote schedule snapshot. */
+  const mergeSchedulePreservingLocalEdits = useCallback((remoteItems: any[], localItems: any[]) => {
+    const protectIds = new Set<number>();
+    if (localEditingRowIdRef.current != null) {
+      protectIds.add(Number(localEditingRowIdRef.current));
+    }
+    const myId = user?.id ? String(user.id) : '';
+    if (myId) {
+      for (const [rowId, lock] of Object.entries(rowLocksRef.current || {})) {
+        if (lock?.userId === myId) protectIds.add(Number(rowId));
+      }
+    }
+    if (protectIds.size === 0) return remoteItems;
+    const localById = new Map((localItems || []).map((item: any) => [Number(item.id), item]));
+    console.log('🔒 Sync merge: preserving local rows', Array.from(protectIds));
+    return remoteItems.map((remote: any) => {
+      const id = Number(remote.id);
+      if (protectIds.has(id) && localById.has(id)) {
+        return localById.get(id);
+      }
+      return remote;
+    });
+  }, [user?.id]);
+
   // Countdown timer for sync check
   const [countdown, setCountdown] = useState(20);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -1362,14 +1504,179 @@ const RunOfShowPage: React.FC = () => {
     
     // Set new timeout to resume syncing after 5 seconds of inactivity
     const timeout = setTimeout(() => {
-      console.log('⏸️ User stopped editing - resuming sync');
-      setIsUserEditing(false);
-      // Restart countdown when user stops editing
-      startCountdownTimer();
+      console.log('⏸️ User stopped editing - unlocking row, blurring, then resuming sync countdown');
+      finishEditingSessionRef.current();
     }, 5000);
     
     setEditingTimeout(timeout);
   };
+
+  const stopRowLockHeartbeat = useCallback(() => {
+    if (rowLockHeartbeatRef.current) {
+      clearInterval(rowLockHeartbeatRef.current);
+      rowLockHeartbeatRef.current = null;
+    }
+  }, []);
+
+  const startRowLockHeartbeat = useCallback((rowId: number) => {
+    stopRowLockHeartbeat();
+    rowLockHeartbeatRef.current = setInterval(() => {
+      if (!user?.id || localEditingRowIdRef.current !== rowId) return;
+      const { userName } = getPresenceUserFields(user);
+      socketClient.emitRowEditStart(rowId, user.id, userName);
+    }, 10000);
+  }, [stopRowLockHeartbeat, user]);
+
+  const claimRowEditLock = useCallback((rowId: number) => {
+    if (!user?.id || !event?.id) return;
+    if (currentUserRoleRef.current === 'VIEWER') return;
+    const existing = rowLocksRef.current[rowId];
+    if (existing && existing.userId !== user.id) return;
+
+    const previous = localEditingRowIdRef.current;
+    if (previous != null && previous !== rowId) {
+      socketClient.emitRowEditEnd(previous, user.id);
+      setRowLocks((prev) => {
+        if (!prev[previous] || prev[previous].userId !== user.id) return prev;
+        const next = { ...prev };
+        delete next[previous];
+        return next;
+      });
+    }
+
+    localEditingRowIdRef.current = rowId;
+    const { userName } = getPresenceUserFields(user);
+    socketClient.emitRowEditStart(rowId, user.id, userName);
+    setRowLocks((prev) => ({
+      ...prev,
+      [rowId]: { userId: user.id, userName },
+    }));
+    startRowLockHeartbeat(rowId);
+  }, [user, event?.id, startRowLockHeartbeat]);
+
+  const releaseRowEditLock = useCallback((rowId: number) => {
+    if (!user?.id) return;
+    if (modalLockRowIdRef.current === rowId) return; // modal still holding this row
+    if (localEditingRowIdRef.current === rowId) {
+      localEditingRowIdRef.current = null;
+      stopRowLockHeartbeat();
+    }
+    socketClient.emitRowEditEnd(rowId, user.id);
+    setRowLocks((prev) => {
+      if (!prev[rowId] || prev[rowId].userId !== user.id) return prev;
+      const next = { ...prev };
+      delete next[rowId];
+      return next;
+    });
+  }, [user?.id, stopRowLockHeartbeat]);
+
+  releaseRowEditLockRef.current = releaseRowEditLock;
+
+  /** Blur whatever schedule cell currently has focus (so sync can apply cleanly). */
+  const blurFocusedScheduleCell = useCallback((rowId?: number | null) => {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || typeof active.blur !== 'function') return;
+    if (rowId != null) {
+      const rowEl = document.querySelector(`[data-item-id="${rowId}"]`);
+      if (rowEl?.contains(active)) active.blur();
+      return;
+    }
+    if (active.closest?.('[data-item-id]')) active.blur();
+  }, []);
+
+  blurFocusedScheduleCellRef.current = blurFocusedScheduleCell;
+
+  /**
+   * End of an edit session (idle timeout / modal settle):
+   * 1) flush pending save first (so cloud does not pull stale Neon)
+   * 2) brief ignore window for Railway echo race
+   * 3) unlock / blur
+   * 4) resume the sync countdown
+   */
+  const finishEditingSession = useCallback(() => {
+    void (async () => {
+      try {
+        await flushSaveToAPIRef.current?.();
+        markLocalMutationGuard(5000);
+      } catch (e) {
+        console.warn('⚠️ Finish edit: flush save failed', e);
+      }
+      const rowId = localEditingRowIdRef.current;
+      if (rowId != null && modalLockRowIdRef.current !== rowId) {
+        releaseRowEditLock(rowId);
+        blurFocusedScheduleCell(rowId);
+      } else {
+        blurFocusedScheduleCell(rowId ?? null);
+      }
+      setIsUserEditing(false);
+      startCountdownTimerRef.current();
+    })();
+  }, [releaseRowEditLock, blurFocusedScheduleCell]);
+
+  finishEditingSessionRef.current = finishEditingSession;
+
+  const handleRowFocus = useCallback((rowId: number) => {
+    claimRowEditLock(rowId);
+  }, [claimRowEditLock]);
+
+  const handleRowBlur = useCallback((rowId: number) => {
+    // Delay so focus can move between cells in the same row without unlocking
+    setTimeout(() => {
+      if (modalLockRowIdRef.current === rowId) return;
+      if (localEditingRowIdRef.current !== rowId) return;
+      const active = document.activeElement as HTMLElement | null;
+      const rowEl = document.querySelector(`[data-item-id="${rowId}"]`);
+      if (rowEl && active && rowEl.contains(active)) return;
+      releaseRowEditLock(rowId);
+    }, 150);
+  }, [releaseRowEditLock]);
+
+  // Keep row lock while notes/assets/speakers/participants modals are open for that row
+  useEffect(() => {
+    let activeModalRow: number | null = null;
+    if (showNotesModal && editingNotesItem != null && editingNotesItem > 0) {
+      activeModalRow = editingNotesItem;
+    } else if (showAssetsModal && editingAssetsItem != null && editingAssetsItem > 0) {
+      activeModalRow = editingAssetsItem;
+    } else if (showSpeakersModal && editingSpeakersItem != null && editingSpeakersItem > 0) {
+      activeModalRow = editingSpeakersItem;
+    } else if (showParticipantsModal && editingParticipantsItem != null && editingParticipantsItem > 0) {
+      activeModalRow = editingParticipantsItem;
+    }
+
+    if (activeModalRow != null) {
+      modalLockRowIdRef.current = activeModalRow;
+      claimRowEditLock(activeModalRow);
+      return;
+    }
+
+    if (modalLockRowIdRef.current != null) {
+      const rowId = modalLockRowIdRef.current;
+      modalLockRowIdRef.current = null;
+      releaseRowEditLock(rowId);
+    }
+  }, [
+    showNotesModal,
+    editingNotesItem,
+    showAssetsModal,
+    editingAssetsItem,
+    showSpeakersModal,
+    editingSpeakersItem,
+    showParticipantsModal,
+    editingParticipantsItem,
+    claimRowEditLock,
+    releaseRowEditLock,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      stopRowLockHeartbeat();
+      const rowId = localEditingRowIdRef.current;
+      if (rowId != null && user?.id) {
+        socketClient.emitRowEditEnd(rowId, user.id);
+      }
+    };
+  }, [stopRowLockHeartbeat, user?.id]);
 
   // Function to handle modal editing state (stays paused until modal closes)
   const handleModalEditing = useCallback(() => {
@@ -1392,32 +1699,62 @@ const RunOfShowPage: React.FC = () => {
     
     setCountdown(20);
     setIsSyncing(false);
-    
+
+    // Use a local counter so sync/unlock/blur side effects are NOT inside setState
+    // (React may skip or double-invoke state updaters).
+    let remaining = 20;
+
     const interval = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          // Trigger WebSocket sync when countdown reaches zero
-          console.log('🔄 Countdown sync: Triggering WebSocket sync request');
-          setIsSyncing(true);
-          
-          // Request fresh data via WebSocket
-          if (socketClient && event?.id) {
-            socketClient.emitSyncRequest();
-            console.log('📡 Countdown sync: Emitted sync request via WebSocket');
-          }
-          
-          setTimeout(() => {
-            setIsSyncing(false);
-            setCountdown(20); // Restart countdown
-          }, 3000);
-          return 0;
+      remaining -= 1;
+      if (remaining > 0) {
+        setCountdown(remaining);
+        return;
+      }
+
+      clearInterval(interval);
+      countdownIntervalRef.current = null;
+      setCountdown(0);
+      setIsSyncing(true);
+
+      console.log('🔄 Countdown sync: unlocking/blurring if needed, then sync request');
+
+      void (async () => {
+        try {
+          await flushSaveToAPIRef.current?.();
+          markLocalMutationGuard(5000);
+        } catch (e) {
+          console.warn('⚠️ Countdown sync: flush save failed before requestSync', e);
         }
-        return prev - 1;
-      });
+
+        // Safety net: clear leftover focus/lock after flush (not before).
+        const rowId = localEditingRowIdRef.current;
+        if (rowId != null && modalLockRowIdRef.current !== rowId) {
+          releaseRowEditLockRef.current(rowId);
+        }
+        blurFocusedScheduleCellRef.current(rowId ?? null);
+
+        // Cloud mode: LAN already gets mutations via proxy + Railway bridge.
+        // requestSync pulls a full Neon snapshot and can overwrite in-progress saves.
+        if (cloudConnectedRef.current) {
+          console.log('📡 Countdown sync: cloud connected — skip requestSync (local flush only)');
+          return;
+        }
+        if (socketClient && event?.id) {
+          socketClient.emitSyncRequest();
+          console.log('📡 Countdown sync: Emitted sync request via WebSocket');
+        }
+      })();
+
+      setTimeout(() => {
+        setIsSyncing(false);
+        startCountdownTimerRef.current(); // Restart countdown at 20s
+      }, 3000);
     }, 1000);
     
     countdownIntervalRef.current = interval;
   }, [socketClient, event?.id]);
+
+  startCountdownTimerRef.current = startCountdownTimer;
 
   const stopCountdownTimer = useCallback(() => {
     if (countdownIntervalRef.current) {
@@ -1430,18 +1767,16 @@ const RunOfShowPage: React.FC = () => {
 
   // Function to resume editing when modal closes
   const handleModalClosed = useCallback(() => {
-    console.log('✏️ Modal closed - resuming sync in 5 seconds');
+    console.log('✏️ Modal closed - unlocking/blurring and resuming sync in 5 seconds');
     
     // Set timeout to resume syncing after 5 seconds
     const timeout = setTimeout(() => {
-      console.log('⏸️ User stopped editing - resuming sync');
-      setIsUserEditing(false);
-      // Restart countdown when user stops editing (resets to 20s)
-      startCountdownTimer();
+      console.log('⏸️ User stopped editing - unlocking row, blurring, then resuming sync countdown');
+      finishEditingSessionRef.current();
     }, 5000);
     
     setEditingTimeout(timeout);
-  }, [startCountdownTimer]);
+  }, []);
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
@@ -2821,6 +3156,420 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  const buildActiveTimerForReconnect = useCallback(async (): Promise<Record<string, unknown> | null> => {
+    const ui = reconnectTimerStateRef.current;
+    const eventId = ui.eventId ?? event?.id;
+    const userId = ui.userId ?? user?.id;
+    if (!eventId || !userId) return null;
+
+    const hybrid = ui.hybridTimerData?.activeTimer;
+    const fromDb = await DatabaseService.getActiveTimer(eventId);
+
+    const dbLive =
+      fromDb &&
+      (fromDb.timer_state === 'running' ||
+        fromDb.timer_state === 'loaded' ||
+        fromDb.is_running === true ||
+        fromDb.is_active === true);
+
+    const toNum = (v: unknown): number | null => {
+      if (v == null || v === '') return null;
+      const n = typeof v === 'string' ? parseInt(v, 10) : Number(v);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    let itemId: number | null = null;
+
+    if (hybrid?.item_id != null) {
+      itemId = toNum(hybrid.item_id);
+    } else if (ui.activeItemId != null && (ui.loadedItems[ui.activeItemId] || ui.activeTimers[ui.activeItemId])) {
+      itemId = ui.activeItemId;
+    } else {
+      const runningKey = Object.keys(ui.activeTimers).find((k) => ui.activeTimers[parseInt(k, 10)]);
+      if (runningKey) {
+        itemId = parseInt(runningKey, 10);
+      } else {
+        const loadedKey = Object.keys(ui.loadedItems).find((k) => ui.loadedItems[parseInt(k, 10)]);
+        if (loadedKey) itemId = parseInt(loadedKey, 10);
+        else if (ui.activeItemId != null) itemId = ui.activeItemId;
+        else if (dbLive && fromDb?.item_id != null) itemId = toNum(fromDb.item_id);
+      }
+    }
+
+    if (itemId == null) return null;
+
+    const isRunning =
+      hybrid?.is_running === true ||
+      Boolean(ui.activeTimers[itemId]) ||
+      (dbLive &&
+        fromDb?.item_id === itemId &&
+        (fromDb?.is_running === true || fromDb?.timer_state === 'running'));
+
+    const isLoaded =
+      isRunning ||
+      hybrid?.is_active === true ||
+      Boolean(ui.loadedItems[itemId]) ||
+      ui.activeItemId === itemId ||
+      (dbLive &&
+        fromDb?.item_id === itemId &&
+        (fromDb?.is_active === true || fromDb?.timer_state === 'loaded'));
+
+    if (!isLoaded && !isRunning) return null;
+
+    const timerState = isRunning ? 'running' : 'loaded';
+    const progress = ui.timerProgress[itemId];
+    const scheduleItems = ui.schedule.length > 0 ? ui.schedule : schedule;
+    const scheduleItem = scheduleItems.find((s) => s.id === itemId);
+    const totalSeconds =
+      hybrid?.duration_seconds ??
+      (fromDb?.item_id === itemId ? fromDb?.duration_seconds : null) ??
+      progress?.total ??
+      (scheduleItem
+        ? scheduleItem.durationHours * 3600 +
+          scheduleItem.durationMinutes * 60 +
+          scheduleItem.durationSeconds
+        : 300);
+
+    let startedAt: string | null =
+      (hybrid?.started_at as string | null | undefined) ??
+      (fromDb?.item_id === itemId ? (fromDb?.started_at as string | null) : null) ??
+      null;
+    if (isRunning && progress?.startedAt) {
+      startedAt =
+        progress.startedAt instanceof Date
+          ? progress.startedAt.toISOString()
+          : typeof progress.startedAt === 'string'
+            ? progress.startedAt
+            : startedAt;
+    }
+
+    // Far-future placeholder means "loaded / not started" — never use it for a running handoff.
+    const startedMs = startedAt ? new Date(startedAt).getTime() : NaN;
+    const startedAtIsPlausible =
+      Number.isFinite(startedMs) && startedMs < Date.now() + 60_000;
+    if (isRunning && !startedAtIsPlausible) {
+      startedAt = null;
+    }
+
+    const cueIs =
+      (hybrid?.cue_is as string | undefined) ??
+      (fromDb?.item_id === itemId ? (fromDb?.cue_is as string | undefined) : undefined) ??
+      (scheduleItem ? formatCueDisplay(scheduleItem.customFields?.cue) : null);
+
+    // Screen remaining (with clockOffset) so cloud handoff matches what operators see.
+    let remainingSeconds: number | null = null;
+    if (isRunning) {
+      if (startedAt && typeof totalSeconds === 'number' && startedAtIsPlausible) {
+        const elapsed = (Date.now() + (ui.clockOffset || 0) - startedMs) / 1000;
+        remainingSeconds = Number(totalSeconds) - elapsed;
+      } else if (
+        progress &&
+        typeof progress.total === 'number' &&
+        typeof progress.elapsed === 'number'
+      ) {
+        remainingSeconds = Number(progress.total) - Number(progress.elapsed);
+      }
+    }
+
+    return {
+      event_id: eventId,
+      item_id: itemId,
+      user_id: (hybrid?.user_id as string | undefined) ?? (fromDb?.user_id as string | undefined) ?? userId,
+      user_name: ui.userName || user?.full_name || user?.email || 'Unknown',
+      user_role: ui.userRole || currentUserRole || 'OPERATOR',
+      timer_state: timerState,
+      is_active: true,
+      is_running: isRunning,
+      started_at: startedAt,
+      last_loaded_cue_id:
+        toNum(hybrid?.last_loaded_cue_id) ??
+        (fromDb?.item_id === itemId ? toNum(fromDb?.last_loaded_cue_id) : null) ??
+        itemId,
+      cue_is: cueIs,
+      duration_seconds: totalSeconds,
+      ...(remainingSeconds != null && Number.isFinite(remainingSeconds)
+        ? { remaining_seconds: remainingSeconds }
+        : {}),
+    };
+  }, [event?.id, user?.id, user?.full_name, user?.email, schedule, currentUserRole]);
+
+  useEffect(() => {
+    reconnectTimerStateRef.current = {
+      hybridTimerData,
+      activeItemId,
+      activeTimers,
+      loadedItems,
+      completedCues,
+      timerProgress,
+      schedule,
+      eventId: event?.id,
+      userId: user?.id,
+      userName: user?.full_name || user?.email || 'Unknown',
+      userRole: currentUserRole || 'OPERATOR',
+      clockOffset,
+    };
+  }, [
+    hybridTimerData,
+    activeItemId,
+    activeTimers,
+    loadedItems,
+    completedCues,
+    timerProgress,
+    schedule,
+    event?.id,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    currentUserRole,
+    clockOffset,
+  ]);
+
+  useEffect(() => {
+    registerRunOfShowLocalFlush(async () => {
+      if (!event?.id || !user?.id) return;
+      await backupScheduleData();
+      await finalizeAllPendingChanges();
+
+      const timer = await buildActiveTimerForReconnect();
+      if (!timer) return;
+
+      const itemId = timer.item_id as number;
+      const duration = (timer.duration_seconds as number) ?? 300;
+      const cueDisplay = timer.cue_is as string | undefined;
+      const isRunning = timer.is_running === true || timer.timer_state === 'running';
+      let startedAt: Date;
+      if (
+        isRunning &&
+        timer.remaining_seconds != null &&
+        Number.isFinite(Number(timer.remaining_seconds))
+      ) {
+        const rem = Number(timer.remaining_seconds);
+        const elapsed = duration - rem;
+        startedAt = new Date(Date.now() - elapsed * 1000);
+      } else if (timer.started_at) {
+        const ms = new Date(String(timer.started_at)).getTime();
+        startedAt =
+          Number.isFinite(ms) && ms < Date.now() + 60_000
+            ? new Date(ms)
+            : new Date(Date.now() + clockOffset);
+      } else {
+        startedAt = new Date(Date.now() + clockOffset);
+      }
+
+      if (isRunning) {
+        await DatabaseService.startTimer(
+          event.id,
+          itemId,
+          user.id,
+          duration,
+          startedAt,
+          undefined,
+          cueDisplay,
+          undefined
+        );
+      } else {
+        await DatabaseService.loadCue(
+          event.id,
+          itemId,
+          user.id,
+          duration,
+          undefined,
+          cueDisplay,
+          undefined
+        );
+      }
+    });
+    registerRunOfShowSnapshotBuilder(async (): Promise<{ ok: boolean; snapshot?: ReconnectSnapshot }> => {
+      if (!event?.id || !user?.id || schedule.length === 0) {
+        return { ok: false };
+      }
+
+      const [completed, indented, subCueResult, activeTimer] = await Promise.all([
+        DatabaseService.getCompletedCues(event.id),
+        DatabaseService.getIndentedCues(event.id),
+        DatabaseService.getActiveSubCueTimer(event.id),
+        buildActiveTimerForReconnect(),
+      ]);
+
+      const completedFromApi = Array.isArray(completed) ? completed : [];
+      const completedIds = new Set(
+        completedFromApi
+          .map((c: { item_id?: unknown }) =>
+            typeof c.item_id === 'number' ? c.item_id : parseInt(String(c.item_id), 10)
+          )
+          .filter((id: number) => Number.isFinite(id))
+      );
+      // Always merge live UI completed flags (ref) — same purple rows on screen.
+      const liveCompleted = reconnectTimerStateRef.current.completedCues || {};
+      const completedFromUi = Object.entries(liveCompleted)
+        .filter(([, done]) => done)
+        .map(([idStr]) => {
+          const itemId = parseInt(idStr, 10);
+          if (!Number.isFinite(itemId) || completedIds.has(itemId)) return null;
+          const row = schedule.find((s) => s.id === itemId);
+          return {
+            event_id: event.id,
+            item_id: itemId,
+            cue_id: row ? formatCueDisplay(row.customFields?.cue) : `CUE ${itemId}`,
+            user_id: user.id,
+            user_name: user.full_name || user.email || 'Unknown',
+            user_role: currentUserRole || 'OPERATOR',
+          };
+        })
+        .filter(Boolean) as Record<string, unknown>[];
+
+      const mergedCompleted = [...completedFromApi, ...completedFromUi];
+      // Ensure every UI-completed row is present even if API row used a string id mismatch.
+      for (const [idStr, done] of Object.entries(liveCompleted)) {
+        if (!done) continue;
+        const itemId = parseInt(idStr, 10);
+        if (!Number.isFinite(itemId)) continue;
+        const already = mergedCompleted.some((c) => {
+          const cid =
+            typeof (c as { item_id?: unknown }).item_id === 'number'
+              ? (c as { item_id: number }).item_id
+              : parseInt(String((c as { item_id?: unknown }).item_id), 10);
+          return cid === itemId;
+        });
+        if (already) continue;
+        const row = schedule.find((s) => s.id === itemId);
+        mergedCompleted.push({
+          event_id: event.id,
+          item_id: itemId,
+          cue_id: row ? formatCueDisplay(row.customFields?.cue) : `CUE ${itemId}`,
+          user_id: user.id,
+          user_name: user.full_name || user.email || 'Unknown',
+          user_role: currentUserRole || 'OPERATOR',
+        });
+      }
+
+      return {
+        ok: true,
+        snapshot: {
+          event_id: event.id,
+          run_of_show: {
+            event_id: event.id,
+            event_name: event.name,
+            event_date: event.date,
+            schedule_items: schedule,
+            custom_columns: customColumns,
+            settings: {
+              eventName,
+              masterStartTime,
+              dayStartTimes,
+              numberOfDays: event?.numberOfDays,
+              show_mode: showMode,
+              track_was_durations: trackWasDurations,
+              ...(Object.keys(originalDurations).length > 0 && {
+                original_durations: originalDurations,
+              }),
+            },
+            last_modified_by: user.id,
+            last_modified_by_name: user.full_name || user.email || 'Unknown',
+            last_modified_by_role: currentUserRole || 'OPERATOR',
+          },
+          active_timer: activeTimer,
+          completed_cues: mergedCompleted,
+          indented_cues: Array.isArray(indented) ? indented : [],
+          sub_cue_timer: subCueResult?.data ?? null,
+        },
+      };
+    });
+
+    registerPostCloudReconnectHandler((stats) => {
+      const itemId = stats?.activeTimerItemId != null ? Number(stats.activeTimerItemId) : null;
+      if (itemId == null || Number.isNaN(itemId)) return;
+      const timerState = String(stats.activeTimerState || 'loaded');
+      const isRunning = timerState === 'running';
+      const duration =
+        stats.activeTimerDurationSeconds != null
+          ? Number(stats.activeTimerDurationSeconds)
+          : 300;
+      const remaining =
+        stats.activeTimerRemainingSeconds != null
+          ? Number(stats.activeTimerRemainingSeconds)
+          : null;
+      const startedAt =
+        typeof stats.activeTimerStartedAt === 'string'
+          ? stats.activeTimerStartedAt
+          : isRunning && remaining != null && Number.isFinite(remaining)
+            ? new Date(Date.now() - (duration - remaining) * 1000).toISOString()
+            : '2099-12-31T23:59:59.999Z';
+
+      console.log('☁️ Applying reconnect timer handoff to local UI', {
+        itemId,
+        timerState,
+        remaining,
+        duration,
+        startedAt,
+      });
+
+      setHybridTimerData((prev: any) => ({
+        ...prev,
+        activeTimer: {
+          ...(prev?.activeTimer || {}),
+          event_id: event?.id,
+          item_id: itemId,
+          timer_state: timerState,
+          is_active: true,
+          is_running: isRunning,
+          duration_seconds: duration,
+          started_at: startedAt,
+          last_loaded_cue_id: itemId,
+        },
+      }));
+      setActiveItemId(itemId);
+      setLoadedItems((prev) => ({ ...prev, [itemId]: true }));
+      if (isRunning) {
+        setActiveTimers((prev) => ({ ...prev, [itemId]: true }));
+        setTimerProgress((prev) => ({
+          ...prev,
+          [itemId]: {
+            elapsed:
+              remaining != null && Number.isFinite(remaining)
+                ? Math.max(0, duration - remaining)
+                : prev[itemId]?.elapsed || 0,
+            total: duration,
+            startedAt: new Date(startedAt),
+          },
+        }));
+      } else {
+        setActiveTimers((prev) => {
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+        setTimerProgress((prev) => ({
+          ...prev,
+          [itemId]: { elapsed: 0, total: duration, startedAt: null },
+        }));
+      }
+      markLocalMutationGuard(5000);
+    });
+
+    return () => clearRunOfShowReconnectHandlers();
+  }, [
+    buildActiveTimerForReconnect,
+    event?.id,
+    event?.name,
+    event?.date,
+    event?.numberOfDays,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    schedule,
+    customColumns,
+    completedCues,
+    showMode,
+    trackWasDurations,
+    originalDurations,
+    eventName,
+    masterStartTime,
+    dayStartTimes,
+    currentUserRole,
+    clockOffset,
+  ]);
+
   // Load master change log from API
   const loadMasterChangeLog = async () => {
     if (!event?.id) {
@@ -4080,8 +4829,14 @@ const RunOfShowPage: React.FC = () => {
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values
   const getRemainingTime = () => {
-    // Use hybrid timer data (ClockPage style) for real-time updates
-    if (hybridTimerData?.activeTimer) {
+    const hybrid = hybridTimerData?.activeTimer;
+    const hybridRunning =
+      hybrid &&
+      (hybrid.is_running === true || hybrid.timer_state === 'running');
+
+    // Prefer hybrid only when it is actually running — a loaded hybrid must not
+    // block local activeTimers countdown (start used to leave hybrid stuck on loaded).
+    if (hybridRunning) {
       const progress = hybridTimerProgress;
       return progress.total - progress.elapsed;
     }
@@ -4106,6 +4861,12 @@ const RunOfShowPage: React.FC = () => {
         const remaining = progress.total - progress.elapsed;
         return remaining;
       }
+    }
+
+    // Loaded (not running) hybrid — show full duration remaining
+    if (hybrid && !hybridRunning) {
+      const progress = hybridTimerProgress;
+      return progress.total - progress.elapsed;
     }
     
     // If no active timer, check for loaded CUE
@@ -4144,11 +4905,14 @@ const RunOfShowPage: React.FC = () => {
 
   // Get remaining percentage for progress bar
   const getRemainingPercentage = () => {
-    // Use hybrid timer data (ClockPage style) for real-time updates
-    if (hybridTimerData?.activeTimer) {
+    const hybrid = hybridTimerData?.activeTimer;
+    const hybridRunning =
+      hybrid &&
+      (hybrid.is_running === true || hybrid.timer_state === 'running');
+
+    if (hybridRunning) {
       const progress = hybridTimerProgress;
       const remainingSeconds = progress.total - progress.elapsed;
-      // Handle negative values (overrun) - show 0% when overrun
       if (remainingSeconds < 0) return 0;
       return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
     }
@@ -4160,7 +4924,6 @@ const RunOfShowPage: React.FC = () => {
       if (timerProgress[activeTimerId]) {
         const progress = timerProgress[activeTimerId];
         const remainingSeconds = progress.total - progress.elapsed;
-        // Handle negative values (overrun) - show 0% when overrun
         if (remainingSeconds < 0) return 0;
         return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
       }
@@ -4175,6 +4938,13 @@ const RunOfShowPage: React.FC = () => {
         const remainingSeconds = progress.total - progress.elapsed;
         return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
       }
+    }
+
+    if (hybrid && !hybridRunning) {
+      const progress = hybridTimerProgress;
+      const remainingSeconds = progress.total - progress.elapsed;
+      if (remainingSeconds < 0) return 0;
+      return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
     }
     
     // If no active timer, check for loaded CUE
@@ -4368,22 +5138,44 @@ const RunOfShowPage: React.FC = () => {
     
     setSchedule(updatedSchedule);
     
+    const hybridRunning =
+      hybridTimerData?.activeTimer &&
+      (hybridTimerData.activeTimer.is_running === true ||
+        hybridTimerData.activeTimer.timer_state === 'running') &&
+      Number(hybridTimerData.activeTimer.item_id) === Number(numericActiveItemId);
+    const isRunningLocally = Boolean(activeTimers[numericActiveItemId]) || hybridRunning;
+
     // Update the timer progress if it exists
-    if (timerProgress[numericActiveItemId]) {
+    if (timerProgress[numericActiveItemId] || isRunningLocally) {
       console.log('🔄 Updating timer duration for item:', numericActiveItemId, 'new duration:', newDurationSeconds);
       
       // Always update the timer progress total duration
       setTimerProgress(prev => ({
         ...prev,
         [numericActiveItemId]: {
-          ...prev[numericActiveItemId],
+          ...(prev[numericActiveItemId] || { elapsed: 0, startedAt: null }),
           total: newDurationSeconds
         }
       }));
+
+      if (hybridRunning || hybridTimerData?.activeTimer?.item_id != null) {
+        setHybridTimerData((prev: any) => {
+          const t = prev?.activeTimer;
+          if (!t || Number(t.item_id) !== Number(numericActiveItemId)) return prev;
+          return {
+            ...prev,
+            activeTimer: {
+              ...t,
+              duration_seconds: newDurationSeconds,
+            },
+          };
+        });
+      }
       
       // If timer is currently running, update it in the database immediately for real-time sync
-      if (activeTimers[numericActiveItemId]) {
+      if (isRunningLocally) {
         console.log('🔄 Updating running timer duration in database for real-time sync');
+        markLocalMutationGuard(5000);
         await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
       }
     }
@@ -4452,9 +5244,12 @@ const RunOfShowPage: React.FC = () => {
       }
     });
     setActiveTimers({});
+    // Clear hybrid immediately so clocks don't keep the previous running cue (WS may be delayed).
+    setHybridTimerData((prev: any) => ({ ...prev, activeTimer: null }));
     
     // Stop all timers via API
     console.log('🔄 Stopping all timers in API for event:', event.id, 'user:', user.id);
+    markLocalMutationGuard(5000);
     const stopResult = await DatabaseService.stopAllTimersForEvent(
       event.id, 
       user.id, 
@@ -4636,12 +5431,30 @@ const RunOfShowPage: React.FC = () => {
       
       try {
         console.log('🔄 Calling DatabaseService.loadCue now...');
+        markLocalMutationGuard(5000);
         const loadResult = await DatabaseService.loadCue(event.id, numericItemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId);
         console.log('🔄 Load CUE result:', loadResult);
         if (!loadResult) {
           console.error('❌ Load CUE failed - check database connection and functions');
         } else {
           console.log('✅ Load CUE succeeded!');
+          // Optimistic hybrid update — do not wait for socket echo (critical after cloud reconnect).
+          setHybridTimerData((prev: any) => ({
+            ...prev,
+            activeTimer: {
+              ...(typeof loadResult === 'object' && loadResult ? loadResult : {}),
+              event_id: event.id,
+              item_id: numericItemId,
+              timer_state: 'loaded',
+              is_active: true,
+              is_running: false,
+              duration_seconds: totalSeconds,
+              cue_is: cueDisplay,
+              last_loaded_cue_id: numericItemId,
+              started_at:
+                (loadResult as any)?.started_at || '2099-12-31T23:59:59.999Z',
+            },
+          }));
         }
       } catch (error) {
         console.error('❌ Load CUE error:', error);
@@ -5229,84 +6042,146 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [showParticipantsModal, editingParticipantsItem, schedule, modalForm.speakers]);
 
+  // Immediate save (also used to flush before tab hide). Debounced wrapper below.
+  const performSaveToAPI = React.useCallback(async () => {
+    if (!event?.id) return;
+
+    try {
+      const scheduleNow = scheduleRef.current;
+      const indentedNow = indentedCuesRef.current;
+      // Convert duration fields to duration_seconds for database storage
+      // Also set isIndented property based on indentedCues state
+      let scheduleWithDurationSeconds = scheduleNow.map(item => ({
+        ...item,
+        duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+        isIndented: indentedNow[item.id] ? true : false
+      }));
+
+      // Skip overwriting rows currently locked by someone else — keep last synced copy
+      const myId = user?.id ? String(user.id) : '';
+      const locks = rowLocksRef.current;
+      let preservedLockCount = 0;
+      if (myId && locks && Object.keys(locks).length > 0) {
+        const syncedById = new Map(
+          (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+        );
+        scheduleWithDurationSeconds = scheduleWithDurationSeconds.map((item) => {
+          const lock = locks[item.id] || locks[Number(item.id)];
+          if (lock && lock.userId && lock.userId !== myId) {
+            const synced = syncedById.get(Number(item.id));
+            if (synced) {
+              preservedLockCount += 1;
+              return {
+                ...synced,
+                duration_seconds:
+                  (synced.durationHours || 0) * 3600 +
+                  (synced.durationMinutes || 0) * 60 +
+                  (synced.durationSeconds || 0),
+                isIndented: indentedNow[synced.id]
+                  ? true
+                  : Boolean(synced.isIndented),
+              };
+            }
+          }
+          return item;
+        });
+      }
+      if (preservedLockCount > 0) {
+        console.log(`🔒 Save: preserved ${preservedLockCount} row(s) locked by others`);
+      }
+
+      // Debug logging for duration conversion
+      if (scheduleNow.length > 0) {
+        console.log('🔄 RunOfShow: Converting duration fields to duration_seconds:', {
+          firstItem: {
+            durationHours: scheduleNow[0].durationHours,
+            durationMinutes: scheduleNow[0].durationMinutes,
+            durationSeconds: scheduleNow[0].durationSeconds,
+            calculatedDurationSeconds: scheduleWithDurationSeconds[0].duration_seconds
+          }
+        });
+      }
+
+      const originals = originalDurationsRef.current || {};
+      const dataToSave = {
+        event_id: event.id,
+        event_name: event.name,
+        event_date: event.date,
+        schedule_items: scheduleWithDurationSeconds,
+        custom_columns: customColumnsRef.current,
+        settings: {
+          eventName: eventNameRef.current,
+          masterStartTime: masterStartTimeRef.current,
+          dayStartTimes: dayStartTimesRef.current,
+          numberOfDays: event?.numberOfDays,
+          timezone: eventTimezoneRef.current,
+          lastSaved: new Date().toISOString(),
+          show_mode: showModeRef.current,
+          track_was_durations: trackWasDurationsRef.current,
+          ...(Object.keys(originals).length > 0 && { original_durations: originals })
+        }
+      };
+
+      // Reduce logging frequency
+      if (Math.random() < 0.05) { // Only log 5% of the time
+        console.log('🔄 Auto-saving to API:', {
+          eventId: event.id,
+          scheduleItemsCount: scheduleNow.length,
+          customColumnsCount: customColumnsRef.current.length,
+          eventName: eventNameRef.current,
+          masterStartTime: masterStartTimeRef.current,
+          preservedLockCount,
+          sampleScheduleItem: scheduleNow[0] ? {
+            id: scheduleNow[0].id,
+            segmentName: scheduleNow[0].segmentName,
+            speakersText: scheduleNow[0].speakersText ? 'Has speakers data' : 'No speakers data',
+            speakers: scheduleNow[0].speakers ? 'Has speakers data' : 'No speakers data'
+          } : 'No schedule items'
+        });
+      }
+
+      const result = await DatabaseService.saveRunOfShowData(dataToSave, {
+        userId: user?.id || 'unknown',
+        userName: user?.full_name || user?.email || 'Unknown User',
+        userRole: currentUserRole || 'VIEWER'
+      });
+
+      if (result) {
+        rememberSyncedSchedule(result);
+        markLocalMutationGuard(5000);
+        lastCloudSaveErrorAlertAtRef.current = 0;
+      }
+
+      // Auto-save logging reduced - only log occasionally
+      if (Math.random() < 0.1) { // Only log 10% of the time
+        console.log('✅ Auto-saved to API successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error auto-saving to API:', error);
+      if (cloudConnectedRef.current) {
+        const now = Date.now();
+        if (now - (lastCloudSaveErrorAlertAtRef.current || 0) > 15000) {
+          lastCloudSaveErrorAlertAtRef.current = now;
+          const msg =
+            error instanceof Error
+              ? error.message
+              : 'Schedule save to cloud failed';
+          alert(
+            `Cloud save failed — your change is only on this screen until this is fixed.\n\n${msg}\n\nUsually the Railway API token is missing the write scope. Open the offline API button and paste a token with read + control + write.`
+          );
+        }
+      }
+    }
+  }, [event?.id, event?.name, event?.date, event?.numberOfDays, user, currentUserRole, rememberSyncedSchedule]);
+
+  flushSaveToAPIRef.current = performSaveToAPI;
+
   // API functions with debouncing
   const saveToAPI = React.useCallback(
-    debounce(async () => {
-      if (!event?.id) return;
-      
-      try {
-        // Convert duration fields to duration_seconds for database storage
-        // Also set isIndented property based on indentedCues state
-        const scheduleWithDurationSeconds = schedule.map(item => ({
-          ...item,
-          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
-          isIndented: indentedCues[item.id] ? true : false
-        }));
-
-        // Debug logging for duration conversion
-        if (schedule.length > 0) {
-          console.log('🔄 RunOfShow: Converting duration fields to duration_seconds:', {
-            firstItem: {
-              durationHours: schedule[0].durationHours,
-              durationMinutes: schedule[0].durationMinutes,
-              durationSeconds: schedule[0].durationSeconds,
-              calculatedDurationSeconds: scheduleWithDurationSeconds[0].duration_seconds
-            }
-          });
-        }
-
-        const dataToSave = {
-          event_id: event.id,
-          event_name: event.name,
-          event_date: event.date,
-          schedule_items: scheduleWithDurationSeconds,
-          custom_columns: customColumns,
-          settings: {
-            eventName,
-            masterStartTime,
-            dayStartTimes,
-            numberOfDays: event?.numberOfDays,
-            timezone: eventTimezone,
-            lastSaved: new Date().toISOString(),
-            show_mode: showMode,
-            track_was_durations: trackWasDurations,
-            ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
-          }
-        };
-        
-        
-        // Reduce logging frequency
-        if (Math.random() < 0.05) { // Only log 5% of the time
-          console.log('🔄 Auto-saving to API:', {
-            eventId: event.id,
-            scheduleItemsCount: schedule.length,
-            customColumnsCount: customColumns.length,
-            eventName,
-            masterStartTime,
-            sampleScheduleItem: schedule[0] ? {
-              id: schedule[0].id,
-              segmentName: schedule[0].segmentName,
-              speakersText: schedule[0].speakersText ? 'Has speakers data' : 'No speakers data',
-              speakers: schedule[0].speakers ? 'Has speakers data' : 'No speakers data'
-            } : 'No schedule items'
-          });
-        }
-        
-        const result = await DatabaseService.saveRunOfShowData(dataToSave, {
-          userId: user?.id || 'unknown',
-          userName: user?.full_name || user?.email || 'Unknown User',
-          userRole: currentUserRole || 'VIEWER'
-        });
-        
-        // Auto-save logging reduced - only log occasionally
-        if (Math.random() < 0.1) { // Only log 10% of the time
-          console.log('✅ Auto-saved to API successfully');
-        }
-      } catch (error) {
-        console.error('❌ Error auto-saving to API:', error);
-      }
-    }, 2000), // Debounce for 2 seconds
-    [event?.id, event?.name, event?.date, schedule, customColumns, eventName, masterStartTime, dayStartTimes, indentedCues, showMode, trackWasDurations, originalDurations]
+    debounce(() => {
+      void performSaveToAPI();
+    }, 2000),
+    [performSaveToAPI]
   );
 
   // Debounce utility function
@@ -5351,6 +6226,15 @@ const RunOfShowPage: React.FC = () => {
       
       
       if (data) {
+        if (isUserEditingRef.current || isCloudReconnecting()) {
+          console.log('⏭️ loadFromAPI skipped — editing or local mutation guard');
+          setScheduleSyncState('ready');
+          return;
+        }
+        if (shouldRejectStaleRemoteSchedule(data)) {
+          setScheduleSyncState('ready');
+          return;
+        }
         console.log('📥 Data loaded from API:', {
           scheduleItemsCount: data.schedule_items?.length || 0,
           customColumnsCount: data.custom_columns?.length || 0,
@@ -5366,7 +6250,9 @@ const RunOfShowPage: React.FC = () => {
         
         // Force a new array reference to ensure React detects the change
         const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
-        setSchedule(newSchedule);
+        const mergedSchedule = mergeSchedulePreservingLocalEdits(newSchedule, scheduleRef.current);
+        setSchedule(mergedSchedule);
+        rememberSyncedSchedule(data);
         setCustomColumns(data.custom_columns || []);
         
         if (data.settings?.eventName) setEventName(data.settings.eventName);
@@ -5378,7 +6264,7 @@ const RunOfShowPage: React.FC = () => {
         console.log('🔍 Full settings object:', data.settings);
         
         // FIRST: Always load star selection from main schedule (this is the source of truth)
-        const startCueItem = newSchedule.find(item => item.isStartCue === true);
+        const startCueItem = mergedSchedule.find(item => item.isStartCue === true);
         if (startCueItem) {
           setStartCueId(startCueItem.id);
           console.log('⭐ START cue marker restored from schedule:', startCueItem.id);
@@ -5513,7 +6399,7 @@ const RunOfShowPage: React.FC = () => {
         setScheduleSyncState('error');
       }
     }
-  }, [event?.id]);
+  }, [event?.id, shouldRejectStaleRemoteSchedule, mergeSchedulePreservingLocalEdits, rememberSyncedSchedule]);
 
   // Dynamic loading function that preserves timers and state
   const loadChangesDynamically = useCallback(async () => {
@@ -5591,14 +6477,24 @@ const RunOfShowPage: React.FC = () => {
       onRunOfShowDataUpdated: (data: any) => {
         
         // Skip if this update was made by the current user (prevent save loops)
-        if (data && data.last_modified_by === user?.id) {
+        if (data && String(data.last_modified_by) === String(user?.id)) {
           console.log('⏭️ Skipping WebSocket update - change made by current user');
+          rememberSyncedSchedule(data);
           return;
         }
         
         // Skip if user is actively editing (prevent conflicts)
-        if (isUserEditing) {
+        if (isUserEditingRef.current) {
           console.log('⏭️ Skipping WebSocket update - user is actively editing');
+          return;
+        }
+
+        if (isCloudReconnecting()) {
+          console.log('⏭️ Skipping WebSocket schedule update - local mutation / reconnect guard');
+          return;
+        }
+
+        if (shouldRejectStaleRemoteSchedule(data)) {
           return;
         }
         
@@ -5606,6 +6502,13 @@ const RunOfShowPage: React.FC = () => {
         
         // Add small delay to ensure WebSocket updates are processed consistently
         setTimeout(() => {
+          if (isUserEditingRef.current || isCloudReconnecting()) {
+            console.log('⏭️ Delayed schedule apply skipped — editing or local guard active');
+            return;
+          }
+          if (shouldRejectStaleRemoteSchedule(data)) {
+            return;
+          }
           // Update schedule items (parse if string, e.g. from timer duration update from Companion)
           let scheduleItems = data.schedule_items;
           if (typeof scheduleItems === 'string') {
@@ -5621,8 +6524,10 @@ const RunOfShowPage: React.FC = () => {
               cue: item.customFields?.cue,
               isIndented: item.isIndented
             })));
-            setSchedule(scheduleItems);
-            console.log('✅ Real-time: Schedule items updated');
+            const merged = mergeSchedulePreservingLocalEdits(scheduleItems, scheduleRef.current);
+            setSchedule(merged);
+            rememberSyncedSchedule(data);
+            console.log('✅ Real-time: Schedule items updated (merge-safe)');
           }
         
           // Update custom columns
@@ -5718,8 +6623,14 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimerUpdated: (data: any) => {
-        console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
-        if (data && data.event_id === event?.id) {
+        // Only block during the upload itself — never during the post-connect settle window
+        // (that was leaving the last offline cue running on screen).
+        if (isCloudReconnectUploadActive()) {
+          console.log('⏭️ Skipping timer WebSocket update during cloud reconnect upload');
+          return;
+        }
+        console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: eventIdsMatch(data?.event_id, event?.id) });
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
           // Update hybrid timer data directly from WebSocket (ClockPage style)
           setHybridTimerData(prev => {
             if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, data)) {
@@ -5799,7 +6710,7 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimersStopped: (data: any) => {
-        if (data && data.event_id === event?.id) {
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
           // Clear hybrid timer data when all stopped (ClockPage style)
           setHybridTimerData(prev => ({
             ...prev,
@@ -5887,7 +6798,11 @@ const RunOfShowPage: React.FC = () => {
         });
       },
       onActiveTimersUpdated: (data: any) => {
-        
+        if (isCloudReconnectUploadActive()) {
+          console.log('⏭️ Skipping activeTimers WebSocket update during cloud reconnect upload');
+          return;
+        }
+
         // Handle array format (from server broadcast) - ClockPage style
         let timerData = data;
         if (Array.isArray(data) && data.length > 0) {
@@ -5895,7 +6810,7 @@ const RunOfShowPage: React.FC = () => {
           console.log('📡 RunOfShow: Processing first timer from array:', timerData);
         }
         
-        console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: timerData?.event_id === event?.id });
+        console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: eventIdsMatch(timerData?.event_id, event?.id) });
         if (timerData && eventIdsMatch(timerData.event_id, event?.id)) {
           // Debounce: Only update if timer data has actually changed
           const currentTimer = hybridTimerData?.activeTimer;
@@ -5951,11 +6866,19 @@ const RunOfShowPage: React.FC = () => {
               userEmail,
               userRole: role,
             });
+            socketClient.emitRowLocksRequest();
+            // Re-claim local editing row after reconnect
+            if (localEditingRowIdRef.current != null && role !== 'VIEWER') {
+              socketClient.emitRowEditStart(localEditingRowIdRef.current, user.id, userName);
+              startRowLockHeartbeat(localEditingRowIdRef.current);
+            }
           } else {
             console.log(`👁️ Presence: skipped (no user or event: user=${!!user}, eventId=${event?.id})`);
           }
         } else {
           setViewers([]);
+          setRowLocks({});
+          stopRowLockHeartbeat();
         }
       },
       onPresenceUpdated: (list) => {
@@ -5967,6 +6890,44 @@ const RunOfShowPage: React.FC = () => {
         }));
         console.log(`👁️ Presence: received presenceUpdated, viewers=${normalized.length}`, normalized);
         setViewers(normalized);
+      },
+      onRowLocked: (data) => {
+        if (!data || String(data.eventId) !== String(event.id)) return;
+        const rowId = Number(data.rowId);
+        if (Number.isNaN(rowId)) return;
+        setRowLocks((prev) => ({
+          ...prev,
+          [rowId]: { userId: String(data.userId), userName: String(data.userName || 'Someone') },
+        }));
+      },
+      onRowUnlocked: (data) => {
+        if (!data || String(data.eventId) !== String(event.id)) return;
+        const rowId = Number(data.rowId);
+        if (Number.isNaN(rowId)) return;
+        setRowLocks((prev) => {
+          if (!prev[rowId]) return prev;
+          const next = { ...prev };
+          delete next[rowId];
+          return next;
+        });
+      },
+      onRowLocksSnapshot: (data) => {
+        if (!data || String(data.eventId) !== String(event.id)) return;
+        const next: Record<number, { userId: string; userName: string }> = {};
+        for (const lock of data.locks || []) {
+          const rowId = Number(lock.rowId);
+          if (Number.isNaN(rowId)) continue;
+          next[rowId] = { userId: String(lock.userId), userName: String(lock.userName || 'Someone') };
+        }
+        // Preserve our optimistic local lock if we still hold it
+        if (localEditingRowIdRef.current != null && user?.id) {
+          const mine = localEditingRowIdRef.current;
+          if (!next[mine] || next[mine].userId === user.id) {
+            const { userName } = getPresenceUserFields(user);
+            next[mine] = { userId: user.id, userName };
+          }
+        }
+        setRowLocks(next);
       },
       onForceDisconnect: () => {
         setShowDisconnectedByAdminModal(true);
@@ -6104,13 +7065,23 @@ const RunOfShowPage: React.FC = () => {
     // Handle tab visibility changes - resync when user returns to tab
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Tab hidden - disconnect WebSocket to allow server to sleep
-        console.log('👁️ Tab hidden - disconnecting WebSocket to save costs');
-        socketClient.disconnect(event.id);
+        // Tab hidden - flush save, then disconnect WebSocket to allow server to sleep
+        console.log('👁️ Tab hidden - flushing save, then disconnecting WebSocket to save costs');
+        const flush = flushSaveToAPIRef.current;
+        Promise.resolve(flush ? flush() : undefined)
+          .catch((err) => console.warn('Flush save on tab hide failed:', err))
+          .finally(() => {
+            socketClient.disconnect(event.id);
+          });
       } else {
         if (!socketClient.isConnected()) {
           console.log('👁️ Tab visible - reconnecting WebSocket');
           socketClient.connect(event.id, callbacks);
+        }
+        // Avoid hard cloud reload while editing or shortly after a local save (prevents reverts).
+        if (isUserEditingRef.current || isCloudReconnecting()) {
+          console.log('👁️ Tab visible — skip loadFromAPI (editing or local mutation guard)');
+          return;
         }
         void loadFromAPI();
       }
@@ -6121,6 +7092,11 @@ const RunOfShowPage: React.FC = () => {
     // Cleanup on unmount
     return () => {
       console.log('🔌 Disconnecting WebSocket connections for event:', event.id);
+      if (isUserEditingRef.current) {
+        void flushSaveToAPIRef.current?.().catch((err) => {
+          console.warn('Flush save during page cleanup failed:', err);
+        });
+      }
       // sseClient.disconnect(event.id); // DISABLED: SSE causes excessive API calls
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -7549,6 +8525,24 @@ const RunOfShowPage: React.FC = () => {
         
         setActiveTimerIntervals(prev => ({ ...prev, [itemId]: timer }));
         setActiveTimers(prev => ({ ...prev, [itemId]: true }));
+        // Optimistic hybrid — countdown UI reads hybridTimerData, not only activeTimers/timerProgress.
+        setHybridTimerData((prev: any) => ({
+          ...prev,
+          activeTimer: {
+            ...(prev?.activeTimer && Number(prev.activeTimer.item_id) === Number(itemId)
+              ? prev.activeTimer
+              : {}),
+            event_id: event.id,
+            item_id: itemId,
+            timer_state: 'running',
+            is_active: true,
+            is_running: true,
+            duration_seconds: totalSeconds,
+            started_at: now.toISOString(),
+            last_loaded_cue_id: itemId,
+            cue_is: formatCueDisplay(item.customFields?.cue),
+          },
+        }));
         // Don't clear completed state when starting a timer - let it persist
         
         // Start drift detection for long-running timers
@@ -7572,10 +8566,29 @@ const RunOfShowPage: React.FC = () => {
         // Update active_timers table in API
         console.log('🔄 Starting timer in API for item:', itemId, 'at:', serverTime.toISOString(), 'row:', rowNumber, 'cue:', cueDisplay, 'timerId:', timerId);
         try {
+          markLocalMutationGuard(5000);
           const startResult = await DatabaseService.startTimer(event.id, itemId, user.id, totalSeconds, serverTime, rowNumber, cueDisplay, timerId);
           console.log('✅ Timer started in API:', startResult);
           if (!startResult) {
             console.error('❌ Start timer failed - check database connection and functions');
+          } else {
+            setHybridTimerData((prev: any) => ({
+              ...prev,
+              activeTimer: {
+                ...(typeof startResult === 'object' && startResult ? startResult : {}),
+                event_id: event.id,
+                item_id: itemId,
+                timer_state: 'running',
+                is_active: true,
+                is_running: true,
+                duration_seconds:
+                  (startResult as any)?.duration_seconds ?? totalSeconds,
+                started_at:
+                  (startResult as any)?.started_at || serverTime.toISOString(),
+                last_loaded_cue_id: itemId,
+                cue_is: cueDisplay,
+              },
+            }));
           }
         } catch (error) {
           console.error('❌ Start timer error:', error);
@@ -11778,18 +12791,24 @@ const RunOfShowPage: React.FC = () => {
                      <div 
                        key={item.id}
                        data-item-id={item.id}
-                       className={`border-b-2 border-slate-600 flex ${getRowContainerClass(item.id, index)}`}
+                       className={`border-b-2 border-slate-600 flex relative ${getRowContainerClass(item.id, index)} ${rowLocks[item.id] && user?.id && rowLocks[item.id].userId !== user.id ? 'bg-amber-950/40 ring-2 ring-inset ring-amber-400' : ''}`}
                        style={getRowContainerStyle(item, {
                          textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
                          textDecorationThickness: item.programType === 'KILLED' ? '4px' : 'auto',
                          textDecorationColor: item.programType === 'KILLED' ? '#DC2626' : 'auto',
                          color: item.programType === 'KILLED' ? '#9CA3AF' : 'inherit',
                        })}
+                       onFocusCapture={() => handleRowFocus(item.id)}
+                       onBlurCapture={() => handleRowBlur(item.id)}
                      >
                       <ScheduleRow
                         asFragment
                         className=""
                         isRowDimmed={isItemDimmed(item.id)}
+                        rowLock={rowLocks[item.id] || null}
+                        currentUserId={user?.id}
+                        onRowEditStart={claimRowEditLock}
+                        onRowEditEnd={releaseRowEditLock}
                         item={item}
                         index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}

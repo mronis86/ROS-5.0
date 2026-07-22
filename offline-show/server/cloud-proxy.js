@@ -428,11 +428,25 @@ function broadcastLanFromProxy(broadcastUpdate, method, pathname, body, data) {
     broadcastUpdate(eventId, 'runOfShowDataUpdated', data);
   } else if (pathname.includes('active-timers')) {
     if (pathname.endsWith('/stop-all')) {
-      broadcastUpdate(eventId, 'timersStopped', data || { event_id: eventId });
+      // Railway HTTP body omits event_id; clients require it to clear hybrid state.
+      broadcastUpdate(eventId, 'timersStopped', {
+        ...(data && typeof data === 'object' ? data : {}),
+        event_id: eventId,
+      });
     } else if (pathname.endsWith('/stop')) {
-      broadcastUpdate(eventId, 'timerStopped', data);
-      broadcastUpdate(eventId, 'timerUpdated', data);
+      const timer = data?.timer || data;
+      broadcastUpdate(eventId, 'timerStopped', timer);
+      if (timer && (timer.item_id != null || timer.event_id)) {
+        broadcastUpdate(eventId, 'timerUpdated', timer);
+      }
+    } else if (pathname.includes('/duration')) {
+      // Railway returns { success, schedule_updated, timer } — only the timer row is a socket payload.
+      const timer = data?.timer;
+      if (timer && typeof timer === 'object') {
+        broadcastUpdate(eventId, 'timerUpdated', timer);
+      }
     } else {
+      // POST /api/active-timers returns the timer row itself
       broadcastUpdate(eventId, 'timerUpdated', data);
     }
   } else if (pathname.includes('completed-cues')) {
