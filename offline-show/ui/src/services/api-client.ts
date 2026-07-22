@@ -88,7 +88,22 @@ class ApiClient {
       const response = await fetch(url, defaultOptions);
       
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let detail = '';
+        try {
+          const errBody = await response.json();
+          detail =
+            (errBody && (errBody.error || errBody.message)) ||
+            (typeof errBody === 'string' ? errBody : '');
+        } catch {
+          /* ignore */
+        }
+        const err = new Error(
+          detail
+            ? `HTTP ${response.status}: ${detail}`
+            : `HTTP error! status: ${response.status}`
+        ) as Error & { status?: number };
+        err.status = response.status;
+        throw err;
       }
       
       const data = await response.json();

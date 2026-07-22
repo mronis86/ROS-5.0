@@ -133,7 +133,8 @@ function registerRoutes(app, db, helpers) {
         return res.status(400).json({ error: check.error || 'Token validation failed' });
       }
       const saved = setRailwayApiToken(db, token);
-      res.json(saved);
+      clearConnectivityCache();
+      res.json({ ...saved, canWrite: true, writeError: null });
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : 'Could not save token' });
     }
@@ -141,7 +142,9 @@ function registerRoutes(app, db, helpers) {
 
   app.delete('/api/railway-api-token', (_req, res) => {
     try {
-      res.json(clearRailwayApiToken(db));
+      const cleared = clearRailwayApiToken(db);
+      clearConnectivityCache();
+      res.json({ ...cleared, canWrite: null, writeError: null });
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : 'Could not clear token' });
     }
@@ -184,7 +187,8 @@ function registerRoutes(app, db, helpers) {
       await probeRailwayReachable();
       if (!getRailwayApiToken(db)) {
         return res.status(400).json({
-          error: 'Railway API token is not configured. Open API token settings in the connectivity bar and paste an Integration token (read + control).',
+          error:
+            'Railway API token is not configured. Open API token settings in the connectivity bar and paste an Integration token (scopes read + control + write).',
         });
       }
       const pushStats = await pushReconnectSnapshotToRailway(db, snapshot);

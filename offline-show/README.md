@@ -82,6 +82,8 @@ offline-show\launcher\start-offline-show.bat
 
 This rebuilds the UI from source, then starts the server on port 3004.
 
+**Desktop launcher with icon:** double-click `offline-show\launcher\create-desktop-shortcut.bat` once. That builds `ros-offline-show.ico` from the Sinor Track logo and places **ROS Offline Show** shortcuts on your Desktop and in `launcher\` (pin those — `.bat` files cannot carry a custom icon by themselves).
+
 The launcher waits until `/health` responds before opening the browser (avoids Chrome `chrome-error://` if the tab opens too early).
 
 Open http://127.0.0.1:3004/ manually if the auto-open tab failed — use a normal browser tab, not an embedded preview.

@@ -23,7 +23,7 @@ try {
 }
 
 console.log('Installing offline-show server dependencies...');
-run('npm install', offlineRoot);
+run('npm install --no-audit --no-fund', offlineRoot);
 
 const needsUiBuild = forceRebuild || !fs.existsSync(uiDistIndex);
 

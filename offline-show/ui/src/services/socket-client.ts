@@ -35,6 +35,9 @@ export interface SocketCallbacks {
   onForceDisconnect?: () => void;
   onServerTime?: (data: any) => void;
   onScheduleUpdated?: (data: any) => void;
+  onRowLocked?: (data: { eventId: string; rowId: number; userId: string; userName: string }) => void;
+  onRowUnlocked?: (data: { eventId: string; rowId: number }) => void;
+  onRowLocksSnapshot?: (data: { eventId: string; locks: { rowId: number; userId: string; userName: string }[] }) => void;
 }
 
 type Subscriber = { eventId: string; callbacks: SocketCallbacks };
@@ -190,6 +193,15 @@ class SocketClient {
         case 'presenceUpdated':
           this.invoke(activeEventId, 'onPresenceUpdated', message.data || []);
           break;
+        case 'rowLocked':
+          this.invoke(activeEventId, 'onRowLocked', message.data);
+          break;
+        case 'rowUnlocked':
+          this.invoke(activeEventId, 'onRowUnlocked', message.data);
+          break;
+        case 'rowLocksSnapshot':
+          this.invoke(activeEventId, 'onRowLocksSnapshot', message.data);
+          break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);
       }
@@ -295,6 +307,46 @@ class SocketClient {
   emitContentReviewRequestState() {
     if (this.socket && this.eventId) {
       this.socket.emit('contentReviewRequestState', { eventId: this.eventId });
+    }
+  }
+
+  /** Claim (or refresh) a schedule row edit lock for collaborative editing. */
+  emitRowEditStart(rowId: number, userId: string, userName: string) {
+    if (this.socket && this.eventId && rowId != null && userId) {
+      console.log(`🔒 emitRowEditStart row=${rowId} user=${userName} → ${this.eventId}`);
+      this.socket.emit('rowEditStart', {
+        eventId: this.eventId,
+        rowId,
+        userId,
+        userName: userName || '',
+      });
+    } else {
+      console.warn('🔒 emitRowEditStart skipped (socket not ready)', {
+        hasSocket: !!this.socket,
+        connected: this.socket?.connected,
+        eventId: this.eventId,
+        rowId,
+        userId,
+      });
+    }
+  }
+
+  /** Release a schedule row edit lock. */
+  emitRowEditEnd(rowId: number, userId: string) {
+    if (this.socket && this.eventId && rowId != null) {
+      console.log(`🔒 emitRowEditEnd row=${rowId}`);
+      this.socket.emit('rowEditEnd', {
+        eventId: this.eventId,
+        rowId,
+        userId,
+      });
+    }
+  }
+
+  /** Request current row locks for this event (after reconnect). */
+  emitRowLocksRequest() {
+    if (this.socket && this.eventId) {
+      this.socket.emit('rowLocksRequest', { eventId: this.eventId });
     }
   }
 

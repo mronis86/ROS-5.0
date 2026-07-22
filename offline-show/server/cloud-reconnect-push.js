@@ -36,11 +36,75 @@ function toItemId(v) {
   return Number.isNaN(n) ? null : n;
 }
 
-function elapsedSecondsFromStartedAt(startedAt) {
+function elapsedSecondsFromStartedAt(startedAt, nowMs = Date.now()) {
   if (!startedAt || startedAt === 'null') return 0;
   const startMs = new Date(startedAt).getTime();
   if (Number.isNaN(startMs)) return 0;
-  return Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+  return Math.max(0, Math.floor((nowMs - startMs) / 1000));
+}
+
+/**
+ * Resolume/Mitti-style handoff: freeze local remaining, then set started_at
+ * relative to "now" so Railway/Netlify clocks show the same countdown
+ * (including overtime when remaining is negative).
+ */
+function alignStartedAtFromRemaining(timer, nowMs = Date.now()) {
+  if (!timer) return timer;
+  const isRunning = asBool(timer.is_running) || timer.timer_state === 'running';
+  if (!isRunning) {
+    return {
+      ...timer,
+      remaining_seconds: null,
+      useServerTime: false,
+    };
+  }
+
+  const duration = Math.max(1, Math.floor(Number(timer.duration_seconds) || 300));
+  let remaining = null;
+
+  if (timer.remaining_seconds != null && timer.remaining_seconds !== '') {
+    const parsed = Number(timer.remaining_seconds);
+    if (Number.isFinite(parsed)) remaining = parsed;
+  }
+
+  if (remaining == null) {
+    const startedAt = timer.started_at;
+    if (!startedAt || startedAt === 'null') {
+      return {
+        ...timer,
+        duration_seconds: duration,
+        started_at: null,
+        remaining_seconds: null,
+        useServerTime: true,
+      };
+    }
+    const startMs = new Date(startedAt).getTime();
+    // Far-future "loaded" placeholder must not be treated as a running clock.
+    if (!Number.isFinite(startMs) || startMs > nowMs + 60_000) {
+      return {
+        ...timer,
+        duration_seconds: duration,
+        started_at: null,
+        remaining_seconds: null,
+        useServerTime: true,
+      };
+    }
+    remaining = duration - elapsedSecondsFromStartedAt(startedAt, nowMs);
+  }
+
+  // Cap absurd future remaining (bad client payload) but allow overtime (< 0).
+  if (remaining > duration) remaining = duration;
+
+  const elapsed = duration - remaining;
+  const started_at = new Date(nowMs - elapsed * 1000).toISOString();
+
+  return {
+    ...timer,
+    duration_seconds: duration,
+    started_at,
+    remaining_seconds: remaining,
+    useServerTime: false,
+  };
 }
 
 function readLocalActiveTimer(db, eventId) {
@@ -51,7 +115,7 @@ function readLocalActiveTimer(db, eventId) {
 }
 
 /** Pick the live timer: UI/client hint first, then local SQLite; never use a stopped DB row over UI. */
-function resolveActiveTimerForPush(db, eventId, clientTimer) {
+function resolveActiveTimerForPush(db, eventId, clientTimer, nowMs = Date.now()) {
   const local = readLocalActiveTimer(db, eventId);
   const client =
     clientTimer?.item_id != null
@@ -74,15 +138,27 @@ function resolveActiveTimerForPush(db, eventId, clientTimer) {
     picked = clientLive ? client : local;
   }
 
+  // Prefer UI remaining when provided (screen truth at reconnect).
+  if (clientLive && client.remaining_seconds != null && client.remaining_seconds !== '') {
+    picked = { ...picked, remaining_seconds: client.remaining_seconds };
+  }
+
   const isRunning = asBool(picked.is_running) || picked.timer_state === 'running';
-  const isActive =
-    isRunning || asBool(picked.is_active) || picked.timer_state === 'loaded';
   const timerState = isRunning ? 'running' : 'loaded';
   const itemId = toItemId(picked.item_id);
   if (itemId == null) return null;
 
-  const startedAt = picked.started_at;
-  const useServerTime = isRunning && (!startedAt || startedAt === 'null');
+  const aligned = alignStartedAtFromRemaining(
+    {
+      ...picked,
+      item_id: itemId,
+      timer_state: timerState,
+      is_active: true,
+      is_running: isRunning,
+      duration_seconds: picked.duration_seconds ?? 300,
+    },
+    nowMs
+  );
 
   return {
     event_id: eventId,
@@ -93,11 +169,12 @@ function resolveActiveTimerForPush(db, eventId, clientTimer) {
     timer_state: timerState,
     is_active: true,
     is_running: isRunning,
-    started_at: useServerTime ? null : startedAt,
+    started_at: aligned.started_at,
     last_loaded_cue_id: toItemId(picked.last_loaded_cue_id) ?? itemId,
     cue_is: picked.cue_is || null,
-    duration_seconds: picked.duration_seconds ?? 300,
-    useServerTime,
+    duration_seconds: aligned.duration_seconds,
+    remaining_seconds: aligned.remaining_seconds,
+    useServerTime: aligned.useServerTime === true,
   };
 }
 
@@ -122,12 +199,15 @@ async function pushActiveTimerToRailway(db, eventId, clientTimer) {
     duration_seconds: resolved.duration_seconds,
   };
 
-  console.log('☁️↑ Reconnect active timer push:', {
+  console.log('☁️↑ Reconnect active timer push (countdown handoff):', {
     item_id: payload.item_id,
     timer_state: payload.timer_state,
     is_running: payload.is_running,
     started_at: payload.started_at,
+    remaining_seconds: resolved.remaining_seconds,
+    duration_seconds: payload.duration_seconds,
     cue_is: payload.cue_is,
+    aligned: resolved.is_running && !resolved.useServerTime,
   });
 
   const saved = await railwayRequest('POST', '/api/active-timers', payload);
@@ -143,6 +223,9 @@ async function pushActiveTimerToRailway(db, eventId, clientTimer) {
     pushed: true,
     itemId: payload.item_id,
     timerState: payload.timer_state,
+    remainingSeconds: resolved.remaining_seconds,
+    durationSeconds: payload.duration_seconds,
+    startedAt: payload.started_at,
     railwayItemId: saved?.item_id ?? payload.item_id,
     railwayTimerState: saved?.timer_state ?? payload.timer_state,
   };
@@ -166,6 +249,9 @@ async function pushReconnectSnapshotToRailway(db, body) {
     activeTimer: false,
     activeTimerItemId: null,
     activeTimerState: null,
+    activeTimerRemainingSeconds: null,
+    activeTimerDurationSeconds: null,
+    activeTimerStartedAt: null,
     activeTimerSource: null,
     completedCuesAdded: 0,
     indentedCuesAdded: 0,
@@ -180,6 +266,10 @@ async function pushReconnectSnapshotToRailway(db, body) {
   stats.activeTimer = timerResult.pushed === true;
   stats.activeTimerItemId = timerResult.itemId ?? null;
   stats.activeTimerState = timerResult.timerState ?? null;
+  stats.activeTimerRemainingSeconds =
+    timerResult.remainingSeconds != null ? timerResult.remainingSeconds : null;
+  stats.activeTimerDurationSeconds = timerResult.durationSeconds ?? null;
+  stats.activeTimerStartedAt = timerResult.startedAt ?? null;
   stats.activeTimerSource = timerResult.pushed ? 'push' : timerResult.reason ?? 'skipped';
 
   if (ros && Array.isArray(items) && items.length > 0) {
@@ -196,6 +286,10 @@ async function pushReconnectSnapshotToRailway(db, body) {
     if (again.pushed) {
       stats.activeTimerItemId = again.itemId;
       stats.activeTimerState = again.timerState;
+      stats.activeTimerRemainingSeconds =
+        again.remainingSeconds != null ? again.remainingSeconds : stats.activeTimerRemainingSeconds;
+      stats.activeTimerDurationSeconds = again.durationSeconds ?? stats.activeTimerDurationSeconds;
+      stats.activeTimerStartedAt = again.startedAt ?? stats.activeTimerStartedAt;
     }
   }
 
@@ -266,10 +360,21 @@ async function pushReconnectSnapshotToRailway(db, body) {
 
   console.log(
     `☁️↑ Reconnect push: ${stats.scheduleItems} schedule items, timer=${stats.activeTimer}` +
-      (stats.activeTimer ? ` (item ${stats.activeTimerItemId}, ${stats.activeTimerState})` : '') +
+      (stats.activeTimer
+        ? ` (item ${stats.activeTimerItemId}, ${stats.activeTimerState}` +
+          (stats.activeTimerRemainingSeconds != null
+            ? `, remaining ${stats.activeTimerRemainingSeconds}s`
+            : '') +
+          ')'
+        : '') +
       `, +${stats.completedCuesAdded} cues`
   );
   return stats;
 }
 
-module.exports = { pushReconnectSnapshotToRailway };
+module.exports = {
+  pushReconnectSnapshotToRailway,
+  resolveActiveTimerForPush,
+  alignStartedAtFromRemaining,
+  elapsedSecondsFromStartedAt,
+};

@@ -16,13 +16,16 @@ type OverlayListener = (state: ReconnectOverlayState) => void;
 
 type SnapshotBuilder = () => Promise<{ ok: boolean; snapshot?: ReconnectSnapshot }>;
 
+type PostReconnectHandler = (stats: Record<string, unknown>) => void;
+
 let flushHandler: (() => Promise<void>) | null = null;
 let snapshotBuilder: SnapshotBuilder | null = null;
+let postReconnectHandler: PostReconnectHandler | null = null;
 const overlayListeners = new Set<OverlayListener>();
 
-/** True while upload/connect runs OR briefly after to ignore stale cloud WebSocket/API pulls. */
+/** True while upload/connect runs OR briefly after to ignore stale cloud schedule pulls. */
 let reconnecting = false;
-let ignoreRemoteUntil = 0;
+let ignoreRemoteScheduleUntil = 0;
 
 const idleOverlay: ReconnectOverlayState = { active: false, message: '' };
 
@@ -44,19 +47,61 @@ export function registerRunOfShowSnapshotBuilder(handler: SnapshotBuilder) {
   snapshotBuilder = handler;
 }
 
+export function registerPostCloudReconnectHandler(handler: PostReconnectHandler) {
+  postReconnectHandler = handler;
+}
+
 export function clearRunOfShowReconnectHandlers() {
   flushHandler = null;
   snapshotBuilder = null;
+  postReconnectHandler = null;
 }
 
+/** True only while the reconnect upload is in flight (not the post-connect settle window). */
+export function isCloudReconnectUploadActive(): boolean {
+  return reconnecting;
+}
+
+/**
+ * Ignore stale schedule snapshots during upload + short settle.
+ * Timer socket updates must NOT use this — otherwise load/adjust look stuck
+ * while hybridTimerData keeps the previous running cue.
+ */
+export function shouldIgnoreRemoteSchedule(): boolean {
+  return reconnecting || Date.now() < ignoreRemoteScheduleUntil;
+}
+
+/** @deprecated Prefer shouldIgnoreRemoteSchedule / isCloudReconnectUploadActive */
 export function isCloudReconnecting(): boolean {
-  return reconnecting || Date.now() < ignoreRemoteUntil;
+  return shouldIgnoreRemoteSchedule();
+}
+
+/** Brief window after a local save/timer mutation to ignore stale cloud schedule echoes. */
+export function markLocalMutationGuard(ms = 5000): void {
+  const until = Date.now() + Math.max(0, ms);
+  if (until > ignoreRemoteScheduleUntil) ignoreRemoteScheduleUntil = until;
 }
 
 export async function flushRunOfShowToLocal(): Promise<boolean> {
   if (!flushHandler) return false;
   await flushHandler();
   return true;
+}
+
+/** Peek the same snapshot Cloud on will upload — no network write. */
+export async function peekCloudReconnectSnapshot(): Promise<{
+  ok: boolean;
+  snapshot?: ReconnectSnapshot;
+  error?: string;
+}> {
+  if (!snapshotBuilder) {
+    return { ok: false, error: 'Open Run of Show on this event before going online.' };
+  }
+  const built = await snapshotBuilder();
+  if (!built.ok || !built.snapshot) {
+    return { ok: false, error: 'No schedule items on screen to upload.' };
+  }
+  return { ok: true, snapshot: built.snapshot };
 }
 
 function setOverlay(message: string) {
@@ -98,7 +143,8 @@ export async function performCloudReconnect(updatedBy?: string): Promise<{
     }
 
     setOverlay('Uploading to cloud — please wait…');
-    ignoreRemoteUntil = Date.now() + 120_000;
+    // Short settle for schedule only — timer WS must keep flowing for load/adjust.
+    ignoreRemoteScheduleUntil = Date.now() + 8_000;
     const res = await fetch('/api/cloud-mode/reconnect', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -106,12 +152,21 @@ export async function performCloudReconnect(updatedBy?: string): Promise<{
     });
 
     if (!res.ok) {
-      ignoreRemoteUntil = 0;
+      ignoreRemoteScheduleUntil = 0;
       const err = (await res.json().catch(() => ({}))) as { error?: string };
       return { ok: false, error: err.error || `Reconnect failed (${res.status})` };
     }
 
     const data = (await res.json()) as { sync?: Record<string, unknown> };
+    // Keep a brief schedule guard after success; allow timer updates immediately.
+    ignoreRemoteScheduleUntil = Date.now() + 5_000;
+    if (data.sync && postReconnectHandler) {
+      try {
+        postReconnectHandler(data.sync);
+      } catch (e) {
+        console.warn('⚠️ post-reconnect UI handoff failed', e);
+      }
+    }
     return { ok: true, stats: data.sync };
   } finally {
     reconnecting = false;

@@ -5,3 +5,4 @@ ui/dist/
 *.db
 *.db-wal
 *.db-shm
+launcher/*.lnk

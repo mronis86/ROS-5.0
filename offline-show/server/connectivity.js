@@ -1,7 +1,8 @@
 'use strict';
 
 const { getCloudMode } = require('./cloud-mode');
-const { getRailwayApiTokenStatus } = require('./railway-api-token');
+const { getRailwayApiToken, getRailwayApiTokenStatus } = require('./railway-api-token');
+const { probeRailwayTokenWriteAccess } = require('./railway-client');
 
 const RAILWAY_HEALTH_URL =
   process.env.OFFLINE_RAILWAY_HEALTH_URL || 'https://ros-50-production.up.railway.app/health';
@@ -14,11 +15,14 @@ const INTERNET_PROBE_URLS = (
   .filter(Boolean);
 const PROBE_TIMEOUT_MS = Number(process.env.OFFLINE_PROBE_TIMEOUT_MS || 4000);
 const CACHE_MS = Number(process.env.OFFLINE_CONNECTIVITY_CACHE_MS || 8000);
+const WRITE_PROBE_CACHE_MS = Number(process.env.OFFLINE_TOKEN_WRITE_PROBE_CACHE_MS || 60000);
 
 let cache = { at: 0, mode: null, data: null };
+let writeProbeCache = { at: 0, tokenPrefix: null, result: null };
 
 function clearConnectivityCache() {
   cache = { at: 0, mode: null, data: null };
+  writeProbeCache = { at: 0, tokenPrefix: null, result: null };
 }
 
 function skippedPill(label, reason) {
@@ -179,13 +183,35 @@ async function probeConnectivity(db) {
     neon = cloudProbes.neon;
   }
 
+  const tokenStatus = getRailwayApiTokenStatus(db);
+  let railwayApiToken = { ...tokenStatus, canWrite: null, writeError: null };
+  if (tokenStatus.configured && cloud.cloudConnected) {
+    const token = getRailwayApiToken(db);
+    const prefix = tokenStatus.prefix;
+    const nowMs = Date.now();
+    let writeProbe = writeProbeCache.result;
+    if (
+      !writeProbe ||
+      writeProbeCache.tokenPrefix !== prefix ||
+      nowMs - writeProbeCache.at >= WRITE_PROBE_CACHE_MS
+    ) {
+      writeProbe = await probeRailwayTokenWriteAccess(token);
+      writeProbeCache = { at: nowMs, tokenPrefix: prefix, result: writeProbe };
+    }
+    railwayApiToken = {
+      ...tokenStatus,
+      canWrite: writeProbe.canWrite === true,
+      writeError: writeProbe.canWrite ? null : writeProbe.error || 'Write check failed',
+    };
+  }
+
   const data = {
     app: 'offline-show',
     cloudMode: cloud.mode,
     lanOnly: cloud.lanOnly,
     cloudConnected: cloud.cloudConnected,
     cloudModeUpdatedAt: cloud.updatedAt,
-    railwayApiToken: getRailwayApiTokenStatus(db),
+    railwayApiToken,
     timestamp: new Date().toISOString(),
     cached: false,
     internet,
