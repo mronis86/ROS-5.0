@@ -483,6 +483,11 @@ export default function AdminPage() {
   const [orphanEventData, setOrphanEventData] = useState<
     Array<{
       eventId: string;
+      name?: string | null;
+      date?: string | null;
+      location?: string | null;
+      scheduleItemCount?: number | null;
+      lastUpdatedAt?: string | null;
       relatedTotal: number;
       relatedCounts: Record<string, number>;
     }>
@@ -2725,7 +2730,7 @@ export default function AdminPage() {
             <div>
               <h3 className="text-sm font-semibold text-white mb-2">Orphaned data (no calendar row)</h3>
               <p className="text-slate-500 text-xs mb-2">
-                Leftovers from older hard deletes. Safe to purge when you are sure the event is gone for good.
+                Leftovers from older hard deletes. Name/date come from saved Run of Show data when available.
               </p>
               {eventLifecycleLoading && orphanEventData.length === 0 ? (
                 <div className="h-16 bg-slate-700/60 rounded-lg animate-pulse" />
@@ -2739,7 +2744,22 @@ export default function AdminPage() {
                       className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2.5"
                     >
                       <div className="min-w-0">
-                        <div className="text-amber-100 text-sm font-mono truncate">{row.eventId}</div>
+                        <div className="text-amber-50 text-sm font-medium truncate">
+                          {row.name?.trim() || 'Unknown event name'}
+                        </div>
+                        <div className="text-slate-400 text-xs mt-0.5">
+                          {row.date || 'No date'}
+                          {row.location ? ` · ${row.location}` : ''}
+                          {typeof row.scheduleItemCount === 'number'
+                            ? ` · ${row.scheduleItemCount} schedule item(s)`
+                            : ''}
+                          {row.lastUpdatedAt
+                            ? ` · ROS updated ${new Date(row.lastUpdatedAt).toLocaleString()}`
+                            : ''}
+                        </div>
+                        <div className="text-slate-500 text-[11px] font-mono mt-1 truncate" title={row.eventId}>
+                          {row.eventId}
+                        </div>
                         <div className="text-slate-500 text-xs mt-0.5">
                           {row.relatedTotal} row(s)
                           {row.relatedCounts
