@@ -6,6 +6,7 @@ import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
@@ -773,7 +774,9 @@ const GreenRoomPage: React.FC = () => {
         
         // Load current active timer
         try {
-          const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`);
+          const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`, {
+            headers: apiJsonHeaders(),
+          });
           if (activeTimerResponse.ok) {
             const activeTimers = await activeTimerResponse.json();
             // Removed verbose logging to prevent console spam

@@ -1,4 +1,6 @@
 // Offline show: all API calls go to the LAN server on :3004 (cloud vs SQLite decided server-side).
+import { apiJsonHeaders } from '../lib/sessionAuth';
+
 const getApiBaseUrl = () => {
   if (typeof window !== 'undefined') return window.location.origin;
   return '';
@@ -77,8 +79,8 @@ class ApiClient {
     const defaultOptions: RequestInit = {
       ...options,
       headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
+        ...apiJsonHeaders(),
+        ...(options.headers || {}),
       },
     };
 

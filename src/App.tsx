@@ -25,6 +25,7 @@ import ReportsPage from './pages/ReportsPage';
 import ContentReviewPage from './pages/ContentReviewPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
+import OperatorCueDisplayPage from './pages/OperatorCueDisplayPage';
 import ScriptsFollowPage from './pages/ScriptsFollowPage';
 import TeleprompterPage from './pages/TeleprompterPage';
 import AdminPage from './pages/AdminPage';
@@ -51,6 +52,7 @@ function AppContent() {
   const isClock = location.pathname === '/clock';
   const isGreenRoom = location.pathname === '/green-room';
   const isPhotoView = location.pathname === '/photo-view';
+  const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
   const isTeleprompter = location.pathname === '/teleprompter';
   const isGoogleSheets = location.pathname === '/google-sheets-vmix';
@@ -86,6 +88,7 @@ function AppContent() {
     isPinNotesPopout ||
     isGreenRoom ||
     isPhotoView ||
+    isOperatorCueDisplay ||
     isScriptsFollow ||
     isTeleprompter ||
     isGoogleSheets ||
@@ -103,7 +106,7 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && !isUltritouchHealth && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && !isUltritouchHealth && <AppHeader />}
       
       {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isNetlifyXML && !isLocalXML && !isAdmin && (
         <AuthGuard>
@@ -122,6 +125,7 @@ function AppContent() {
             <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />
+            <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
           </Routes>

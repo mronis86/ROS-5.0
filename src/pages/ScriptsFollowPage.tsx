@@ -865,7 +865,9 @@ const ScriptsFollowPage: React.FC = () => {
   // Load list of saved scripts
   const loadSavedScripts = async () => {
     try {
-      const response = await fetch(`${getApiBaseUrl()}/api/scripts`);
+      const response = await fetch(`${getApiBaseUrl()}/api/scripts`, {
+        headers: apiJsonHeaders(),
+      });
       const data = await response.json();
       setSavedScripts(data);
     } catch (error) {
@@ -944,7 +946,9 @@ const ScriptsFollowPage: React.FC = () => {
   // Load a script from database
   const loadScriptFromDatabase = async (scriptId: string) => {
     try {
-      const response = await fetch(`${getApiBaseUrl()}/api/scripts/${scriptId}`);
+      const response = await fetch(`${getApiBaseUrl()}/api/scripts/${scriptId}`, {
+        headers: apiJsonHeaders(),
+      });
       const data = await response.json();
       
       setScriptText(data.script.script_text);

@@ -29,6 +29,7 @@ import {
   isIndentedScheduleItem,
 } from '../lib/scheduleStartTime';
 import { verifyClearLogPassword } from '../lib/adminAuth';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 
 // Speaker interface/type definition
 interface Speaker {
@@ -5979,7 +5980,9 @@ const RunOfShowPage: React.FC = () => {
         
         // Load current completed cues
         try {
-          const completedCuesResponse = await fetch(`${getApiBaseUrl()}/api/completed-cues/${event?.id}`);
+          const completedCuesResponse = await fetch(`${getApiBaseUrl()}/api/completed-cues/${event?.id}`, {
+            headers: apiJsonHeaders(),
+          });
           if (completedCuesResponse.ok) {
             const completedCuesArray = await completedCuesResponse.json();
             console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);

@@ -275,7 +275,9 @@ const QuickModePage: React.FC = () => {
 
     const hydrateFromApi = async () => {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`);
+        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`, {
+          headers: apiJsonHeaders(),
+        });
         if (!res.ok || cancelled) return;
         const rows = await res.json();
         const row = Array.isArray(rows) ? rows[0] : rows;

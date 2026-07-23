@@ -57,6 +57,8 @@ const EventListPage: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [quickModeSelectedIds, setQuickModeSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<Event[]>([]);
+  const [permanentDelete, setPermanentDelete] = useState(false);
+  const isAdminUser = canAccessAdmin(user);
 
   const openNewQuickMode = () => {
     clearQuickModeNewSessionDedupe();
@@ -431,19 +433,16 @@ const EventListPage: React.FC = () => {
     setBulkDeleteTargets([]);
     setDeleteConfirmInput('');
     setDeleteConfirmCode('');
+    setPermanentDelete(false);
   };
 
-  const deleteEventFully = async (event: Event) => {
+  const deleteEventFully = async (event: Event, permanent: boolean) => {
     const calendarId = event.calendarId || event.id;
     try {
-      await DatabaseService.deleteRunOfShowData(calendarId);
-    } catch (error) {
-      console.error('Error deleting run-of-show data:', error);
-    }
-    try {
-      await DatabaseService.deleteCalendarEvent(calendarId);
+      await DatabaseService.deleteCalendarEvent(calendarId, { permanent: permanent && isAdminUser });
     } catch (error) {
       console.error('Error deleting calendar event:', error);
+      throw error;
     }
   };
 
@@ -452,6 +451,7 @@ const EventListPage: React.FC = () => {
 
   const performDeleteEvent = async () => {
     if (!deleteConfirmMatch) return;
+    const doPermanent = isAdminUser && permanentDelete;
 
     if (bulkDeleteTargets.length > 0) {
       const targets = bulkDeleteTargets;
@@ -462,7 +462,7 @@ const EventListPage: React.FC = () => {
       setQuickModeSelectedIds(new Set());
       try {
         for (const event of targets) {
-          await deleteEventFully(event);
+          await deleteEventFully(event, doPermanent);
         }
       } finally {
         setIsDeleting(false);
@@ -477,7 +477,10 @@ const EventListPage: React.FC = () => {
     closeDeleteConfirmModal();
     setEvents((prev) => prev.filter((event) => event.id !== id));
     try {
-      await deleteEventFully(eventToDelete);
+      await deleteEventFully(eventToDelete, doPermanent);
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      await loadEventsFromSupabase();
     } finally {
       setIsDeleting(false);
     }
@@ -489,6 +492,7 @@ const EventListPage: React.FC = () => {
     setBulkDeleteTargets(targetEvents);
     setDeleteConfirmInput('');
     setDeleteConfirmCode(generateDeleteCode());
+    setPermanentDelete(false);
   };
 
   const toggleQuickModeSelected = (id: string) => {
@@ -505,6 +509,7 @@ const EventListPage: React.FC = () => {
     setEventToDelete(event);
     setDeleteConfirmInput('');
     setDeleteConfirmCode(generateDeleteCode());
+    setPermanentDelete(false);
   };
 
   const clearQuickModeSelection = () => setQuickModeSelectedIds(new Set());
@@ -1173,16 +1178,50 @@ const EventListPage: React.FC = () => {
               {bulkDeleteTargets.length > 0 ? `Delete ${bulkDeleteTargets.length} Quick Mode Sessions` : 'Delete Event'}
             </h2>
             <p className="text-slate-300 text-sm mb-3">
-              {bulkDeleteTargets.length > 0 ? (
+              {permanentDelete && isAdminUser ? (
+                bulkDeleteTargets.length > 0 ? (
+                  <>
+                    This will <strong className="text-red-300">permanently delete</strong>{' '}
+                    <strong className="text-white">{bulkDeleteTargets.length}</strong> Quick Mode session(s) and
+                    all related Run of Show / timer data. This cannot be undone.
+                  </>
+                ) : (
+                  <>
+                    This will <strong className="text-red-300">permanently delete</strong>{' '}
+                    <strong className="text-white">{eventToDelete?.name}</strong> and all related Run of Show /
+                    timer data. This cannot be undone.
+                  </>
+                )
+              ) : bulkDeleteTargets.length > 0 ? (
                 <>
-                  This will permanently delete <strong className="text-white">{bulkDeleteTargets.length}</strong> Quick Mode session(s) and their timer data. This cannot be undone.
+                  This removes <strong className="text-white">{bulkDeleteTargets.length}</strong> Quick Mode
+                  session(s) from the calendar. Run of Show data is kept so an admin can restore or permanently
+                  purge later.
                 </>
               ) : (
                 <>
-                  This will permanently delete <strong className="text-white">{eventToDelete?.name}</strong> and its Run of Show data. This cannot be undone.
+                  This removes <strong className="text-white">{eventToDelete?.name}</strong> from the calendar.
+                  Run of Show and related data are kept so an admin can restore the event or permanently purge it
+                  later.
                 </>
               )}
             </p>
+            {isAdminUser && (
+              <label className="flex items-start gap-2.5 mb-4 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={permanentDelete}
+                  onChange={(e) => setPermanentDelete(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-500 bg-slate-700 text-red-500 focus:ring-red-500"
+                />
+                <span className="text-sm text-slate-300">
+                  <span className="font-medium text-red-300">Permanently delete all related data</span>
+                  <span className="block text-xs text-slate-500 mt-0.5">
+                    Skips restore. Removes calendar row plus Run of Show, timers, notes, and other attached rows.
+                  </span>
+                </span>
+              </label>
+            )}
             <p className="text-slate-400 text-xs mb-2">
               Copy or type the phrase below to confirm:
             </p>
@@ -1207,9 +1246,13 @@ const EventListPage: React.FC = () => {
               <button
                 onClick={performDeleteEvent}
                 disabled={!deleteConfirmMatch}
-                className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+                className={`flex-1 px-4 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors ${
+                  permanentDelete && isAdminUser
+                    ? 'bg-red-800 hover:bg-red-700'
+                    : 'bg-red-600 hover:bg-red-500'
+                }`}
               >
-                Delete Permanently
+                {permanentDelete && isAdminUser ? 'Delete permanently' : 'Delete from calendar'}
               </button>
             </div>
           </div>

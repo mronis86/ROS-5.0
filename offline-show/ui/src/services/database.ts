@@ -1,7 +1,8 @@
 import { apiClient, getApiBaseUrl } from './api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 
-// Always use Railway (single source of truth from api-client)
-const API_BASE_URL = getApiBaseUrl();
+// Resolve at call time (LAN origin), not only at module load.
+const apiBase = () => getApiBaseUrl();
 
 export interface CalendarEvent {
   id?: string;
@@ -46,6 +47,18 @@ export interface TimerMessage {
 
 
 export class DatabaseService {
+  /** Always attach session/integration token when present (LAN ignores unknown Authorization). */
+  private static apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const extra =
+      init.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+        ? (init.headers as Record<string, string>)
+        : {};
+    return fetch(url, {
+      ...init,
+      headers: { ...apiJsonHeaders(), ...extra },
+    });
+  }
+
   // Calendar Event Methods
   static async saveCalendarEvent(event: Omit<CalendarEvent, 'id' | 'created_at' | 'updated_at'>): Promise<CalendarEvent | null> {
     try {
@@ -808,7 +821,7 @@ export class DatabaseService {
         timerId
       });
       
-      const response = await fetch(`${API_BASE_URL}/api/active-timers`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -845,7 +858,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Starting timer via API:', { eventId, itemId, userId, totalDurationSeconds, startedAt, rowNumber, cueDisplay, timerId });
       
-      const response = await fetch(`${API_BASE_URL}/api/active-timers`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -883,7 +896,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Stopping timer via API:', { eventId, itemId, userId, userName, userRole });
       
-      const response = await fetch(`${API_BASE_URL}/api/active-timers/stop`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers/stop`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -916,7 +929,7 @@ export class DatabaseService {
     try {
       console.log(`🔄 Updating timer duration via API for event ${eventId}, item ${itemId} to ${newDurationSeconds}s`);
 
-      const response = await fetch(`${API_BASE_URL}/api/active-timers/${eventId}/${itemId}/duration`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers/${eventId}/${itemId}/duration`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -945,7 +958,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Stopping all timers via API:', { eventId, userId, userName, userRole });
       
-      const response = await fetch(`${API_BASE_URL}/api/active-timers/stop-all`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers/stop-all`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -977,7 +990,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Getting active timer via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/active-timers/${eventId}`);
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers/${eventId}`);
       if (response.ok) {
         const timers = await response.json();
         return timers.length > 0 ? timers[0] : null;
@@ -1001,7 +1014,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Checking active sub-cue timer via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers/${eventId}`);
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/sub-cue-timers/${eventId}`);
       if (response.ok) {
         const timers = await response.json();
         return { data: timers.length > 0, error: null };
@@ -1017,7 +1030,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Getting active sub-cue timer via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers/${eventId}`);
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/sub-cue-timers/${eventId}`);
       if (response.ok) {
         const timers = await response.json();
         return { data: timers.length > 0 ? timers[0] : null, error: null };
@@ -1033,7 +1046,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Getting active sub-cue timers via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers/${eventId}`);
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/sub-cue-timers/${eventId}`);
       if (response.ok) {
         const timers = await response.json();
         return { data: timers, error: null };
@@ -1049,7 +1062,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Starting sub-cue timer via API:', { eventId, itemId, userId, durationSeconds, rowNumber, cueDisplay, timerId, userName, userRole });
       
-      const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/sub-cue-timers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1101,7 +1114,7 @@ export class DatabaseService {
       console.log('🔄 Stopping sub-cue timer via API:', { eventId, itemId });
       
       // Update all sub-cue timers for this event to stopped
-      const response = await fetch(`${API_BASE_URL}/api/sub-cue-timers/stop`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/sub-cue-timers/stop`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1194,7 +1207,7 @@ export class DatabaseService {
       // Use the existing stop-all endpoint instead of DELETE
       console.log('🔄 Clearing all active timers for event via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/active-timers/stop-all`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers/stop-all`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1241,7 +1254,7 @@ export class DatabaseService {
     try {
       console.log('🟣 Marking cue as completed via API:', { eventId, itemId, userId, userName, userRole });
       
-      const response = await fetch(`${API_BASE_URL}/api/completed-cues`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/completed-cues`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1275,7 +1288,7 @@ export class DatabaseService {
     try {
       console.log('🟣 Unmarking cue as completed via API:', { eventId, itemId });
       
-      const response = await fetch(`${API_BASE_URL}/api/completed-cues`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/completed-cues`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -1305,7 +1318,7 @@ export class DatabaseService {
     try {
       console.log('🟣 Clearing all completed cues from Neon database via API:', { eventId });
       
-      const response = await fetch(`${API_BASE_URL}/api/completed-cues/${eventId}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/completed-cues/${eventId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -1330,7 +1343,7 @@ export class DatabaseService {
     try {
       console.log('⏰ Clearing all overtime minutes from database via API:', { eventId });
       
-      const response = await fetch(`${API_BASE_URL}/api/overtime-minutes/${eventId}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/overtime-minutes/${eventId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -1362,7 +1375,7 @@ export class DatabaseService {
     updated_at?: string;
   } | null> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/content-review/${eventId}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/content-review/${eventId}`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -1390,7 +1403,7 @@ export class DatabaseService {
     }
   ): Promise<boolean> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/content-review/${eventId}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/content-review/${eventId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1413,7 +1426,7 @@ export class DatabaseService {
     try {
       console.log('🟠 Getting indented cues via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/indented-cues/${eventId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -1439,7 +1452,7 @@ export class DatabaseService {
     try {
       console.log('🟠 Marking cue as indented via API:', { eventId, itemId, parentItemId, userId, userName, userRole });
       
-      const response = await fetch(`${API_BASE_URL}/api/indented-cues`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/indented-cues`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1473,7 +1486,7 @@ export class DatabaseService {
     try {
       console.log('🟠 Unmarking cue as indented via API:', { eventId, itemId });
       
-      const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}/${itemId}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/indented-cues/${eventId}/${itemId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -1498,7 +1511,7 @@ export class DatabaseService {
     try {
       console.log('🟠 Clearing indented cues via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/indented-cues/${eventId}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/indented-cues/${eventId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -1553,7 +1566,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Getting last loaded CUE via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/active-timers/${eventId}`);
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/active-timers/${eventId}`);
       
       if (!response.ok) {
         console.log('ℹ️ No active timer found in database');
@@ -1586,7 +1599,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Saving timer message via API:', message);
       
-      const response = await fetch(`${API_BASE_URL}/api/timer-messages`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/timer-messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1612,7 +1625,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Getting timer message via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/timer-messages/${eventId}`);
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/timer-messages/${eventId}`);
       if (response.ok) {
         const messages = await response.json();
         return messages.length > 0 ? messages[0] : null;
@@ -1628,7 +1641,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Updating timer message via API:', { id, updates });
       
-      const response = await fetch(`${API_BASE_URL}/api/timer-messages/${id}`, {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/timer-messages/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1657,7 +1670,7 @@ export class DatabaseService {
     try {
       console.log('🔄 Getting timer messages via API:', eventId);
       
-      const response = await fetch(`${API_BASE_URL}/api/timer-messages/${eventId}`);
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/timer-messages/${eventId}`);
       if (response.ok) {
         const messages = await response.json();
         console.log('✅ Timer messages loaded via API:', messages.length);

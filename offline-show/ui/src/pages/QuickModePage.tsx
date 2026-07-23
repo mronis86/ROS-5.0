@@ -4,6 +4,7 @@ import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { socketClient, onCloudModeChange } from '../services/socket-client';
 import { fetchConnectivityStatus, type ConnectivitySnapshot } from '../services/connectivity-status';
 import { resolveQuickModeEventId } from '../lib/quickModeEvent';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 
 type QuickTimer = {
   id: number;
@@ -236,7 +237,7 @@ const QuickModePage: React.FC = () => {
         };
         const res = await fetch(`${getApiBaseUrl()}/api/run-of-show-data`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiJsonHeaders(),
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -303,7 +304,9 @@ const QuickModePage: React.FC = () => {
 
     const hydrateFromApi = async () => {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`);
+        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`, {
+          headers: apiJsonHeaders(),
+        });
         if (!res.ok || cancelled) return;
         const rows = await res.json();
         const row = Array.isArray(rows) ? rows[0] : rows;
@@ -388,7 +391,7 @@ const QuickModePage: React.FC = () => {
   const callApi = async (path: string, method: 'POST' | 'PUT', body: Record<string, any>) => {
     const res = await fetch(`${getApiBaseUrl()}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiJsonHeaders(),
       body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

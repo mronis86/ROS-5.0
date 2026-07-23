@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { getApiBaseUrl } from '../services/api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -252,7 +253,9 @@ const TeleprompterPage: React.FC = () => {
     if (!eventId) return;
     
     try {
-      const response = await fetch(`${getApiBaseUrl()}/api/scripts/${eventId}`);
+      const response = await fetch(`${getApiBaseUrl()}/api/scripts/${eventId}`, {
+        headers: apiJsonHeaders(),
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.script_text) {

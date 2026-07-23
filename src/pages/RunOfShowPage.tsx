@@ -10397,7 +10397,7 @@ const RunOfShowPage: React.FC = () => {
                           </svg>
                         </button>
                         {showOperatorActionsSubmenu && (
-                          <div className="absolute left-full top-0 ml-1 min-w-[11rem] w-44 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
+                          <div className="absolute left-full top-0 ml-1 min-w-[12rem] w-52 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
                             <button
                               onClick={() => {
                                 setShowMenuDropdown(false);
@@ -10411,6 +10411,25 @@ const RunOfShowPage: React.FC = () => {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                               </svg>
                               Photo View
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                const operatorUrl = `/operator-cue-display?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}&eventDate=${encodeURIComponent(event?.date || '')}&eventLocation=${encodeURIComponent(event?.location || '')}`;
+                                window.open(
+                                  operatorUrl,
+                                  'ros-operator-cue-display',
+                                  'width=1920,height=1080,menubar=no,toolbar=no,location=no,status=no'
+                                );
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="16:9 operator cue sheet for control-room monitors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                              </svg>
+                              Operator Large view
                             </button>
                             <button
                               onClick={() => {

@@ -190,8 +190,9 @@ class ApiClient {
     return result;
   }
 
-  async deleteCalendarEvent(id: string) {
-    const result = await this.request(`/api/calendar-events/${id}`, {
+  async deleteCalendarEvent(id: string, options?: { permanent?: boolean }) {
+    const qs = options?.permanent ? '?permanent=1' : '';
+    const result = await this.request(`/api/calendar-events/${id}${qs}`, {
       method: 'DELETE',
     });
     

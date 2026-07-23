@@ -1,4 +1,5 @@
 import { apiClient, getApiBaseUrl } from './api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 
 export interface LocalChange {
   id: string;
@@ -260,6 +261,7 @@ class ChangeLogService {
       
       const res = await fetch(`${getApiBaseUrl()}/api/change-log/${eventId}`, {
         method: 'DELETE',
+        headers: apiJsonHeaders(),
       });
       const result = res.ok ? await res.json().catch(() => ({})) : {};
       const deletedCount = (result as { deletedCount?: number }).deletedCount ?? 0;

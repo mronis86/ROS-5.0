@@ -82,9 +82,20 @@ app.get('/health', (req, res) => {
 
 app.get('/api/calendar-events', async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM calendar_events ORDER BY date DESC'
-    );
+    let result;
+    try {
+      result = await pool.query(
+        `SELECT * FROM calendar_events
+         WHERE deleted_at IS NULL
+         ORDER BY date DESC`
+      );
+    } catch (colErr) {
+      if (colErr && colErr.code === '42703') {
+        result = await pool.query('SELECT * FROM calendar_events ORDER BY date DESC');
+      } else {
+        throw colErr;
+      }
+    }
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching calendar events:', error);
@@ -153,16 +164,45 @@ app.put('/api/calendar-events/:id', async (req, res) => {
 app.delete('/api/calendar-events/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query(
-      'DELETE FROM calendar_events WHERE id = $1 RETURNING *',
-      [id]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Event not found' });
+    // Soft-delete when column exists; fall back to hard delete on older local DBs.
+    let result;
+    try {
+      result = await pool.query(
+        `UPDATE calendar_events
+         SET deleted_at = NOW(), updated_at = NOW()
+         WHERE id = $1 AND deleted_at IS NULL
+         RETURNING *`,
+        [id]
+      );
+      if (result.rows.length === 0) {
+        // Maybe column missing or already deleted — try hard delete as last resort for local
+        const hard = await pool.query(
+          'DELETE FROM calendar_events WHERE id = $1 RETURNING *',
+          [id]
+        );
+        if (hard.rows.length === 0) {
+          return res.status(404).json({ error: 'Event not found' });
+        }
+        return res.json({ message: 'Event deleted successfully', softDeleted: false });
+      }
+      return res.json({
+        message: 'Calendar event removed; Run of Show data retained',
+        softDeleted: true,
+      });
+    } catch (colErr) {
+      if (colErr && colErr.code === '42703') {
+        // deleted_at column missing
+        result = await pool.query(
+          'DELETE FROM calendar_events WHERE id = $1 RETURNING *',
+          [id]
+        );
+        if (result.rows.length === 0) {
+          return res.status(404).json({ error: 'Event not found' });
+        }
+        return res.json({ message: 'Event deleted successfully', softDeleted: false });
+      }
+      throw colErr;
     }
-    
-    res.json({ message: 'Event deleted successfully' });
   } catch (error) {
     console.error('Error deleting calendar event:', error);
     res.status(500).json({ error: 'Failed to delete calendar event' });

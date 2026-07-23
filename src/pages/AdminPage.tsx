@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench, Bell, Package, BookOpen, Bug } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench, Bell, Package, BookOpen, Bug, RotateCcw, Trash2 } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
 import { isSentryWebConfigured } from '../lib/sentry';
@@ -241,6 +241,7 @@ function statusDotClasses(level: ServiceLevel): string {
 const ADMIN_NAV: { id: string; label: string }[] = [
   { id: 'services', label: 'Services' },
   { id: 'platform', label: 'Platform' },
+  { id: 'events-cleanup', label: 'Event cleanup' },
   { id: 'timers', label: 'Timers' },
   { id: 'presence', label: 'Events' },
   { id: 'access', label: 'Access' },
@@ -465,6 +466,28 @@ export default function AdminPage() {
   const [platformLoading, setPlatformLoading] = useState(false);
   const [platformError, setPlatformError] = useState<string | null>(null);
   const [healthUrlCopied, setHealthUrlCopied] = useState(false);
+  const [eventLifecycleLoading, setEventLifecycleLoading] = useState(false);
+  const [eventLifecycleError, setEventLifecycleError] = useState<string | null>(null);
+  const [deletedCalendarEvents, setDeletedCalendarEvents] = useState<
+    Array<{
+      id: string;
+      name: string;
+      date: string;
+      location?: string;
+      eventId?: string | null;
+      deletedAt?: string;
+      relatedTotal?: number;
+      relatedCounts?: Record<string, number>;
+    }>
+  >([]);
+  const [orphanEventData, setOrphanEventData] = useState<
+    Array<{
+      eventId: string;
+      relatedTotal: number;
+      relatedCounts: Record<string, number>;
+    }>
+  >([]);
+  const [eventLifecycleBusyId, setEventLifecycleBusyId] = useState<string | null>(null);
 
   const fetchPlatformMaintenance = useCallback(async () => {
     setPlatformLoading(true);
@@ -490,6 +513,125 @@ export default function AdminPage() {
       setPlatformLoading(false);
     }
   }, []);
+
+  const fetchEventLifecycle = useCallback(async () => {
+    setEventLifecycleLoading(true);
+    setEventLifecycleError(null);
+    try {
+      const res = await adminFetch('/api/admin/event-lifecycle');
+      if (res.status === 401) {
+        setEventLifecycleError('Unauthorized');
+        setDeletedCalendarEvents([]);
+        setOrphanEventData([]);
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as {
+        deletedEvents?: typeof deletedCalendarEvents;
+        orphans?: typeof orphanEventData;
+        error?: string;
+      };
+      if (!res.ok) {
+        setEventLifecycleError(data.error || `HTTP ${res.status}`);
+        setDeletedCalendarEvents([]);
+        setOrphanEventData([]);
+        return;
+      }
+      setDeletedCalendarEvents(data.deletedEvents || []);
+      setOrphanEventData(data.orphans || []);
+    } catch (e) {
+      setEventLifecycleError(e instanceof Error ? e.message : 'Request failed');
+      setDeletedCalendarEvents([]);
+      setOrphanEventData([]);
+    } finally {
+      setEventLifecycleLoading(false);
+    }
+  }, []);
+
+  const restoreDeletedEvent = useCallback(
+    async (id: string) => {
+      setEventLifecycleBusyId(id);
+      setEventLifecycleError(null);
+      try {
+        const res = await adminFetch(`/api/admin/event-lifecycle/${encodeURIComponent(id)}/restore`, {
+          method: 'POST',
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setEventLifecycleError(data.error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchEventLifecycle();
+      } catch (e) {
+        setEventLifecycleError(e instanceof Error ? e.message : 'Restore failed');
+      } finally {
+        setEventLifecycleBusyId(null);
+      }
+    },
+    [fetchEventLifecycle]
+  );
+
+  const purgeDeletedEvent = useCallback(
+    async (id: string, linkedEventId?: string | null) => {
+      const phrase = `PURGE ${id}`;
+      const typed = window.prompt(
+        `Permanently delete calendar row and all related Neon data for this event.\n\nType exactly:\n${phrase}`
+      );
+      if (typed !== phrase) return;
+      setEventLifecycleBusyId(id);
+      setEventLifecycleError(null);
+      try {
+        const res = await adminFetch(`/api/admin/event-lifecycle/${encodeURIComponent(id)}/purge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: phrase, linkedEventId: linkedEventId || undefined }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setEventLifecycleError(data.error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchEventLifecycle();
+      } catch (e) {
+        setEventLifecycleError(e instanceof Error ? e.message : 'Purge failed');
+      } finally {
+        setEventLifecycleBusyId(null);
+      }
+    },
+    [fetchEventLifecycle]
+  );
+
+  const purgeOrphanEvent = useCallback(
+    async (eventId: string) => {
+      const phrase = `PURGE ${eventId}`;
+      const typed = window.prompt(
+        `Permanently delete orphaned Neon rows for event id ${eventId} (no calendar row).\n\nType exactly:\n${phrase}`
+      );
+      if (typed !== phrase) return;
+      setEventLifecycleBusyId(eventId);
+      setEventLifecycleError(null);
+      try {
+        const res = await adminFetch(
+          `/api/admin/event-lifecycle/orphans/${encodeURIComponent(eventId)}/purge`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: phrase }),
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setEventLifecycleError(data.error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchEventLifecycle();
+      } catch (e) {
+        setEventLifecycleError(e instanceof Error ? e.message : 'Purge failed');
+      } finally {
+        setEventLifecycleBusyId(null);
+      }
+    },
+    [fetchEventLifecycle]
+  );
 
   const fetchLogoSettings = useCallback(async () => {
     setLogoSettingsLoading(true);
@@ -1663,7 +1805,8 @@ export default function AdminPage() {
     fetchIntegrationTokens();
     fetchAccessRequests();
     fetchPlatformMaintenance();
-  }, [unlocked, fetchApprovedDomains, fetchIntegrationTokens, fetchAccessRequests, fetchPlatformMaintenance]);
+    fetchEventLifecycle();
+  }, [unlocked, fetchApprovedDomains, fetchIntegrationTokens, fetchAccessRequests, fetchPlatformMaintenance, fetchEventLifecycle]);
 
   const disconnectUser = useCallback(async (eventId: string, userId: string) => {
     if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
@@ -2499,6 +2642,128 @@ export default function AdminPage() {
           ) : (
             <p className="text-slate-400 text-sm">No report yet. Click Refresh dates.</p>
           )}
+        </section>
+
+        <section id="events-cleanup" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-slate-400" />
+                Event cleanup
+              </h2>
+              <p className="text-slate-500 text-sm mt-1 max-w-3xl">
+                Deleting from the event calendar only hides the calendar row. Run of Show, timers, notes, and related
+                Neon data stay until you restore or permanently purge here.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void fetchEventLifecycle()}
+              disabled={eventLifecycleLoading}
+              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {eventLifecycleLoading ? 'Scanning…' : 'Refresh'}
+            </button>
+          </div>
+
+          {eventLifecycleError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-red-900/30 border border-red-800/50 text-red-300 text-sm">
+              {eventLifecycleError}
+            </div>
+          )}
+
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold text-white mb-2">Removed from calendar (restorable)</h3>
+              {eventLifecycleLoading && deletedCalendarEvents.length === 0 ? (
+                <div className="h-16 bg-slate-700/60 rounded-lg animate-pulse" />
+              ) : deletedCalendarEvents.length === 0 ? (
+                <p className="text-slate-500 text-sm">No soft-deleted calendar events.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {deletedCalendarEvents.map((ev) => (
+                    <li
+                      key={ev.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-600/80 bg-slate-900/40 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-white text-sm font-medium truncate">{ev.name}</div>
+                        <div className="text-slate-500 text-xs mt-0.5">
+                          {ev.date ? String(ev.date).slice(0, 10) : '—'}
+                          {ev.deletedAt ? ` · removed ${new Date(ev.deletedAt).toLocaleString()}` : ''}
+                          {typeof ev.relatedTotal === 'number'
+                            ? ` · ${ev.relatedTotal} related row(s)`
+                            : ''}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={eventLifecycleBusyId === ev.id}
+                          onClick={() => void restoreDeletedEvent(ev.id)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          Restore
+                        </button>
+                        <button
+                          type="button"
+                          disabled={eventLifecycleBusyId === ev.id}
+                          onClick={() => void purgeDeletedEvent(ev.id, ev.eventId)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-800/80 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-medium"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Purge
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-white mb-2">Orphaned data (no calendar row)</h3>
+              <p className="text-slate-500 text-xs mb-2">
+                Leftovers from older hard deletes. Safe to purge when you are sure the event is gone for good.
+              </p>
+              {eventLifecycleLoading && orphanEventData.length === 0 ? (
+                <div className="h-16 bg-slate-700/60 rounded-lg animate-pulse" />
+              ) : orphanEventData.length === 0 ? (
+                <p className="text-slate-500 text-sm">No orphaned event data found.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {orphanEventData.map((row) => (
+                    <li
+                      key={row.eventId}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-amber-100 text-sm font-mono truncate">{row.eventId}</div>
+                        <div className="text-slate-500 text-xs mt-0.5">
+                          {row.relatedTotal} row(s)
+                          {row.relatedCounts
+                            ? ` · ${Object.entries(row.relatedCounts)
+                                .map(([t, c]) => `${t}:${c}`)
+                                .join(', ')}`
+                            : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={eventLifecycleBusyId === row.eventId}
+                        onClick={() => void purgeOrphanEvent(row.eventId)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-800/80 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-medium"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Purge orphan
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
         </section>
 
         <section id="timers" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">

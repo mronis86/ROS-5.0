@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
@@ -350,6 +351,16 @@ const PhotoViewPage: React.FC = () => {
   const [activeTimers, setActiveTimers] = useState<{[key: number]: boolean}>({});
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [showNotes, setShowNotes] = useState<boolean>(true);
+  /** Dedicated 16:9 control-room display layout (not a zoomed table). */
+  const [broadcastMode, setBroadcastMode] = useState<boolean>(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      return q.get('broadcast') === '1' || q.get('display') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [broadcastChromeVisible, setBroadcastChromeVisible] = useState(true);
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
     duration: number;
@@ -1097,7 +1108,9 @@ const PhotoViewPage: React.FC = () => {
     const loadActiveTimerState = async () => {
       try {
         console.log('🔄 PhotoView: Loading active timer state on mount...');
-        const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);
+        const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`, {
+          headers: apiJsonHeaders(),
+        });
         
         if (activeTimerResponse.ok) {
           const activeTimerResponseData = await activeTimerResponse.json();
@@ -1401,7 +1414,9 @@ const PhotoViewPage: React.FC = () => {
         }
         // Load current active timer
         try {
-          const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`);
+          const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`, {
+            headers: apiJsonHeaders(),
+          });
           if (activeTimerResponse.ok) {
             const activeTimerResponseData = await activeTimerResponse.json();
             console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerResponseData);
@@ -1957,6 +1972,54 @@ const PhotoViewPage: React.FC = () => {
 
   const previewItems = getPreviewItems();
 
+  const parseSpeakers = (item: ScheduleItem | undefined) => {
+    if (!item?.speakersText) return [] as any[];
+    try {
+      const speakers = JSON.parse(item.speakersText);
+      return Array.isArray(speakers) ? speakers : [];
+    } catch {
+      return [];
+    }
+  };
+
+  useEffect(() => {
+    if (!broadcastMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setBroadcastMode(false);
+        const url = new URL(window.location.href);
+        url.searchParams.delete('broadcast');
+        url.searchParams.delete('display');
+        window.history.replaceState({}, '', url.toString());
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [broadcastMode]);
+
+  useEffect(() => {
+    if (!broadcastMode) return;
+    setBroadcastChromeVisible(true);
+    const t = window.setTimeout(() => setBroadcastChromeVisible(false), 2800);
+    return () => window.clearTimeout(t);
+  }, [broadcastMode]);
+
+  const enterBroadcastMode = useCallback(() => {
+    setBroadcastMode(true);
+    const url = new URL(window.location.href);
+    url.searchParams.set('broadcast', '1');
+    url.searchParams.delete('display');
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
+  const exitBroadcastMode = useCallback(() => {
+    setBroadcastMode(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('broadcast');
+    url.searchParams.delete('display');
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
   // Program type colors
   const programTypeColors: { [key: string]: string } = {
     'Podium Transition': '#8B4513',  // Dark Brown
@@ -2057,11 +2120,283 @@ const PhotoViewPage: React.FC = () => {
     setShowEventSelector(false);
     setError('');
     setIsLoading(true);
+    const broadcastQs = broadcastMode ? '&broadcast=1' : '';
     navigate(
-      `/photo-view?eventId=${encodeURIComponent(selected.id)}&eventName=${encodeURIComponent(selected.name || '')}&eventDate=${encodeURIComponent(selected.date || '')}&eventLocation=${encodeURIComponent(selected.location || '')}`,
+      `/photo-view?eventId=${encodeURIComponent(selected.id)}&eventName=${encodeURIComponent(selected.name || '')}&eventDate=${encodeURIComponent(selected.date || '')}&eventLocation=${encodeURIComponent(selected.location || '')}${broadcastQs}`,
       { replace: true, state: { event: selected } }
     );
   };
+
+  // ─── 16:9 Display stage (control room) ───────────────────────────────────
+  if (broadcastMode) {
+    const currentItem = previewItems[0];
+    const nextItem = previewItems[1];
+    const currentSpeakers = parseSpeakers(currentItem).filter((spk: any) => spk && (spk.fullName || spk.photoLink));
+    const nextSpeakers = parseSpeakers(nextItem).filter((spk: any) => spk && (spk.fullName || spk.photoLink));
+    const cueLabel = currentItem?.customFields?.cue
+      ? formatCueDisplay(currentItem.customFields.cue)
+      : currentItem
+        ? `CUE ${currentItem.id}`
+        : 'NO CUE';
+    const statusRunning =
+      (hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active) ||
+      (timerState === 'running' && activeItemId);
+    const statusLoaded =
+      !!hybridTimerData?.activeTimer || (timerState === 'loaded' && activeItemId);
+    const statusText = statusRunning ? 'RUNNING' : statusLoaded ? 'LOADED' : 'STANDBY';
+    const statusColor = statusRunning
+      ? 'text-emerald-400'
+      : statusLoaded
+        ? 'text-amber-300'
+        : 'text-slate-400';
+    const cleanNotes = currentItem?.notes ? currentItem.notes.replace(/<[^>]*>/g, '').trim() : '';
+    const hasValidNotes =
+      showNotes &&
+      !!cleanNotes &&
+      cleanNotes.length > 0 &&
+      cleanNotes !== 'None' &&
+      cleanNotes !== 'null' &&
+      cleanNotes !== 'undefined';
+
+    return (
+      <>
+        <div
+          className="fixed inset-0 z-[80] bg-black flex items-center justify-center overflow-hidden"
+          onMouseMove={() => {
+            setBroadcastChromeVisible(true);
+            window.clearTimeout((window as any).__pvBroadcastChromeT);
+            (window as any).__pvBroadcastChromeT = window.setTimeout(
+              () => setBroadcastChromeVisible(false),
+              2800
+            );
+          }}
+        >
+          <div
+            className="relative bg-slate-950 text-white shadow-2xl overflow-hidden"
+            style={{
+              aspectRatio: '16 / 9',
+              width: 'min(100vw, calc(100vh * 16 / 9))',
+              height: 'min(100vh, calc(100vw * 9 / 16))',
+            }}
+          >
+            {/* Top bar — compact so faces get more room */}
+            <div className="absolute inset-x-0 top-0 z-10 px-[2%] pt-[0.9%] pb-[0.5%] flex items-start justify-between gap-3 bg-gradient-to-b from-black/75 to-transparent">
+              <div className="min-w-0 flex-1 pr-2">
+                <div className={`text-[clamp(0.55rem,1vw,0.75rem)] font-bold tracking-[0.16em] ${statusColor}`}>
+                  {statusText}
+                </div>
+                <div className="text-[clamp(0.95rem,2.1vw,1.65rem)] font-bold leading-tight truncate">
+                  {cueLabel}
+                  {currentItem?.segmentName ? (
+                    <span className="text-slate-300 font-semibold">
+                      {' '}
+                      · {currentItem.segmentName}
+                    </span>
+                  ) : null}
+                </div>
+                {currentItem?.programType ? (
+                  <div className="mt-0.5 inline-flex items-center gap-1.5 flex-wrap">
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[clamp(0.5rem,0.85vw,0.7rem)] font-semibold text-white"
+                      style={{
+                        backgroundColor: programTypeColors[currentItem.programType] || '#475569',
+                      }}
+                    >
+                      {currentItem.programType}
+                    </span>
+                    {currentItem.shotType ? (
+                      <span className="text-slate-400 text-[clamp(0.5rem,0.85vw,0.7rem)]">
+                        {currentItem.shotType}
+                      </span>
+                    ) : null}
+                    <span className="text-slate-500 text-[clamp(0.5rem,0.85vw,0.7rem)] truncate max-w-[40vw]">
+                      {event?.name}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="text-right shrink-0">
+                <div
+                  className="font-mono font-bold tabular-nums leading-none tracking-tight"
+                  style={{
+                    fontSize: 'clamp(1.35rem, 3.2vw, 2.5rem)',
+                    color: getCountdownColor(),
+                  }}
+                >
+                  {formatTime(getRemainingTime())}
+                </div>
+                <div className="mt-0.5 text-slate-400 text-[clamp(0.55rem,0.9vw,0.75rem)]">
+                  {currentTime.toLocaleTimeString()}
+                </div>
+              </div>
+            </div>
+
+            {/* Progress */}
+            <div className="absolute left-[2%] right-[2%] top-[12%] h-[0.45%] bg-slate-800/90 overflow-hidden rounded-full">
+              <div
+                className="h-full absolute top-0 right-0 transition-all duration-1000"
+                style={{
+                  width: `${getRemainingPercentage()}%`,
+                  background: getProgressBarColor(),
+                }}
+              />
+            </div>
+
+            {/* Speakers + notes */}
+            <div className="absolute left-[2%] right-[2%] top-[14%] bottom-[17%] flex gap-[1.5%] min-h-0">
+              <div className={`flex items-stretch justify-center gap-[1.2%] min-w-0 ${hasValidNotes ? 'flex-[1.35]' : 'flex-1'}`}>
+                {currentSpeakers.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center text-slate-500 text-[clamp(1rem,2vw,1.5rem)]">
+                    No speakers on this cue
+                  </div>
+                ) : (
+                  currentSpeakers.map((speaker: any, idx: number) => {
+                    const nameResult = formatNameForTwoLines(speaker.fullName || 'Unnamed');
+                    const titleOrg = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                    return (
+                      <div
+                        key={`${speaker.slot}-${idx}`}
+                        className="flex-1 min-w-0 max-w-[22%] flex flex-col items-center justify-start"
+                      >
+                        <div className="w-full aspect-[3/4] max-h-[72%] rounded-lg overflow-hidden border border-slate-600 shadow-xl bg-slate-900">
+                          <img
+                            src={speaker.photoLink || '/speaker-placeholder.svg'}
+                            alt={speaker.fullName || 'Speaker'}
+                            className="w-full h-full object-cover"
+                            style={{ objectPosition: 'center top' }}
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = '/speaker-placeholder.svg';
+                            }}
+                          />
+                        </div>
+                        <div
+                          className="mt-2 text-center font-bold leading-tight text-[clamp(0.75rem,1.5vw,1.25rem)]"
+                          dangerouslySetInnerHTML={{ __html: nameResult.html }}
+                        />
+                        {titleOrg ? (
+                          <div className="text-slate-400 text-center text-[clamp(0.55rem,1vw,0.85rem)] truncate max-w-full px-1">
+                            {titleOrg}
+                          </div>
+                        ) : null}
+                        {speaker.location ? (
+                          <div className="mt-1 text-[clamp(0.5rem,0.9vw,0.75rem)] text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded">
+                            {speaker.location}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {hasValidNotes ? (
+                <div className="flex-[0.85] min-w-0 min-h-0 flex flex-col rounded-lg border border-slate-700 bg-slate-900/80 p-[1.2%] overflow-hidden">
+                  <div className="text-slate-400 text-[clamp(0.55rem,0.95vw,0.75rem)] font-bold tracking-widest mb-1 shrink-0">
+                    NOTES
+                  </div>
+                  <div
+                    className="notes-display text-[clamp(0.7rem,1.25vw,1.05rem)] text-slate-100 leading-relaxed overflow-y-auto pr-1"
+                    style={{ whiteSpace: 'pre-line' }}
+                    dangerouslySetInnerHTML={{
+                      __html: (currentItem!.notes || '')
+                        .replace(/\n/g, '<br>')
+                        .replace(/\r\n/g, '<br>')
+                        .replace(/\r/g, '<br>')
+                        .replace(/<(?!\/?(?:br|b|strong|i|em|u|font|span|div|p|h[1-6])\b)[^>]*>/g, ''),
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            {/* Next cue strip */}
+            <div className="absolute inset-x-0 bottom-0 h-[15.5%] px-[2.2%] py-[1%] bg-gradient-to-t from-black via-black/90 to-transparent flex items-center gap-4 border-t border-slate-800">
+              <div className="shrink-0 w-[10%] text-slate-400 text-[clamp(0.55rem,1vw,0.8rem)] font-bold tracking-widest">
+                NEXT
+              </div>
+              {nextItem ? (
+                <>
+                  <div className="shrink-0 min-w-0 max-w-[28%]">
+                    <div className="font-bold text-[clamp(0.85rem,1.8vw,1.35rem)] truncate">
+                      {nextItem.customFields?.cue
+                        ? formatCueDisplay(nextItem.customFields.cue)
+                        : `CUE ${nextItem.id}`}
+                    </div>
+                    <div className="text-slate-400 text-[clamp(0.65rem,1.2vw,0.95rem)] truncate">
+                      {nextItem.segmentName || nextItem.programType || '—'}
+                    </div>
+                  </div>
+                  <div className="flex-1 flex items-center justify-end gap-2 overflow-hidden">
+                    {nextSpeakers.slice(0, 5).map((speaker: any, idx: number) => (
+                      <img
+                        key={`next-${speaker.slot}-${idx}`}
+                        src={speaker.photoLink || '/speaker-placeholder.svg'}
+                        alt={speaker.fullName || ''}
+                        title={speaker.fullName || ''}
+                        className="h-[72%] aspect-[3/4] object-cover rounded border border-slate-600"
+                        style={{ objectPosition: 'center top', maxHeight: '4.5rem' }}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = '/speaker-placeholder.svg';
+                        }}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="text-slate-500 text-[clamp(0.75rem,1.4vw,1.1rem)]">End of schedule</div>
+              )}
+            </div>
+
+            {/* Controls — bottom-left so they never cover the timer */}
+            <div
+              className={`absolute bottom-[17.5%] left-[2%] z-20 flex gap-1.5 transition-opacity duration-300 ${
+                broadcastChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setShowNotes((v) => !v)}
+                className="px-2 py-1 text-[10px] rounded bg-slate-800/90 border border-slate-600 text-slate-200 hover:bg-slate-700"
+              >
+                {showNotes ? 'Hide Notes' : 'Show Notes'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const el = document.documentElement;
+                  if (!document.fullscreenElement) {
+                    void el.requestFullscreen?.();
+                  } else {
+                    void document.exitFullscreen?.();
+                  }
+                }}
+                className="px-2 py-1 text-[10px] rounded bg-slate-800/90 border border-slate-600 text-slate-200 hover:bg-slate-700"
+              >
+                Fullscreen
+              </button>
+              <button
+                type="button"
+                onClick={exitBroadcastMode}
+                className="px-2 py-1 text-[10px] rounded bg-slate-800/90 border border-slate-600 text-slate-200 hover:bg-slate-700"
+                title="Esc"
+              >
+                Exit
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {showDisconnectModal && (
+          <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />
+        )}
+        {showDisconnectNotification && (
+          <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />
+        )}
+      </>
+    );
+  }
 
   return (
     <>
@@ -2154,6 +2489,14 @@ const PhotoViewPage: React.FC = () => {
               }`}
             >
               {showNotes ? 'Hide Notes' : 'Show Notes'}
+            </button>
+            <button
+              type="button"
+              onClick={enterBroadcastMode}
+              className="ml-2 px-2 py-1 text-xs rounded border border-sky-600 bg-sky-900/40 text-sky-200 hover:bg-sky-800/50 transition-colors"
+              title="Open large control-room view"
+            >
+              Large view
             </button>
           </div>
         </div>
@@ -2556,9 +2899,7 @@ const PhotoViewPage: React.FC = () => {
                               const nameResult = formatNameForTwoLines(speakerForSlot.fullName || 'Unnamed');
                               return (
                                 <div 
-                                  className={`font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'} mb-2 leading-tight ${
-                                    nameResult.needsSmallText ? 'text-sm' : 'text-base'
-                                  }`}
+                                  className={`font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'} mb-2 leading-tight ${nameResult.needsSmallText ? 'text-sm' : 'text-base'}`}
                                   dangerouslySetInnerHTML={{ __html: nameResult.html }}
                                 />
                               );

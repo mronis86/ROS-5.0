@@ -37,6 +37,14 @@ const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
+const {
+  ensureCalendarSoftDeleteSchema,
+  softDeleteCalendarEvent,
+  restoreCalendarEvent,
+  listSoftDeletedWithCounts,
+  findOrphanEventData,
+  purgeEventData,
+} = require('./lib/event-lifecycle');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -1462,6 +1470,103 @@ app.post('/api/admin/backup-config/run-now', async (req, res) => {
   }
 });
 
+// Soft-deleted calendar events (restorable) + orphan ROS data from older hard deletes
+app.get('/api/admin/event-lifecycle', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureCalendarSoftDeleteSchema(pool);
+    const [deletedEvents, orphans] = await Promise.all([
+      listSoftDeletedWithCounts(pool),
+      findOrphanEventData(pool),
+    ]);
+    res.json({ deletedEvents, orphans });
+  } catch (err) {
+    console.error('[admin event-lifecycle] error:', err);
+    res.status(500).json({ error: err.message || 'Failed to load event lifecycle data' });
+  }
+});
+
+app.post('/api/admin/event-lifecycle/:id/restore', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureCalendarSoftDeleteSchema(pool);
+    const row = await restoreCalendarEvent(pool, req.params.id);
+    if (!row) {
+      return res.status(404).json({ error: 'Deleted calendar event not found' });
+    }
+    res.json({ ok: true, event: normalizeCalendarEvent(row) });
+  } catch (err) {
+    console.error('[admin event-lifecycle restore] error:', err);
+    res.status(500).json({ error: err.message || 'Failed to restore event' });
+  }
+});
+
+app.post('/api/admin/event-lifecycle/:id/purge', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureCalendarSoftDeleteSchema(pool);
+    const id = String(req.params.id);
+    const confirm = String(req.body?.confirm || '');
+    if (confirm !== `PURGE ${id}`) {
+      return res.status(400).json({
+        error: `Type confirm exactly as: PURGE ${id}`,
+      });
+    }
+
+    // Prefer soft-deleted calendar row metadata for linked legacy eventId
+    const cal = await pool.query(
+      `SELECT id, schedule_data FROM calendar_events WHERE id = $1`,
+      [id]
+    );
+    const linkedIds = [];
+    if (cal.rows[0]) {
+      const sd = cal.rows[0].schedule_data;
+      let parsed = sd;
+      if (typeof sd === 'string') {
+        try {
+          parsed = JSON.parse(sd);
+        } catch {
+          parsed = {};
+        }
+      }
+      if (parsed && parsed.eventId) linkedIds.push(String(parsed.eventId));
+    }
+    if (req.body?.linkedEventId) linkedIds.push(String(req.body.linkedEventId));
+
+    const result = await purgeEventData(pool, {
+      eventId: id,
+      linkedIds,
+      deleteCalendarRow: true,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[admin event-lifecycle purge] error:', err);
+    res.status(500).json({ error: err.message || 'Failed to purge event data' });
+  }
+});
+
+app.post('/api/admin/event-lifecycle/orphans/:eventId/purge', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    const eventId = String(req.params.eventId);
+    const confirm = String(req.body?.confirm || '');
+    if (confirm !== `PURGE ${eventId}`) {
+      return res.status(400).json({
+        error: `Type confirm exactly as: PURGE ${eventId}`,
+      });
+    }
+    const result = await purgeEventData(pool, {
+      eventId,
+      linkedIds: Array.isArray(req.body?.linkedIds) ? req.body.linkedIds : [],
+      deleteCalendarRow: false,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[admin event-lifecycle orphan purge] error:', err);
+    res.status(500).json({ error: err.message || 'Failed to purge orphan data' });
+  }
+});
+
 // Test endpoint to verify Upstash is working
 app.get('/api/test-upstash', async (req, res) => {
   try {
@@ -1713,7 +1818,9 @@ function buildDashboardDayBlocks(eventDate, numberOfDays, settings, scheduleItem
 app.get('/api/calendar-events', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM calendar_events ORDER BY date DESC'
+      `SELECT * FROM calendar_events
+       WHERE deleted_at IS NULL
+       ORDER BY date DESC`
     );
     const rows = filterCalendarEventsForAuth(
       (result.rows || []).map(normalizeCalendarEvent),
@@ -1732,7 +1839,7 @@ app.get('/api/dashboard/summary', async (req, res) => {
       return res.status(403).json({ error: 'Production dashboard is not enabled for your account.' });
     }
     const [calendarResult, rosResult, reviewResult] = await Promise.all([
-      pool.query('SELECT * FROM calendar_events ORDER BY date ASC'),
+      pool.query(`SELECT * FROM calendar_events WHERE deleted_at IS NULL ORDER BY date ASC`),
       pool.query('SELECT event_id, settings, schedule_items, updated_at FROM run_of_show_data'),
       pool.query('SELECT event_id, reviews FROM content_review_data').catch((err) => {
         if (err.code === '42P01') return { rows: [] };
@@ -1822,7 +1929,7 @@ app.get('/api/calendar-events/:id', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this event.' });
     }
     const result = await pool.query(
-      'SELECT * FROM calendar_events WHERE id = $1',
+      `SELECT * FROM calendar_events WHERE id = $1 AND deleted_at IS NULL`,
       [id]
     );
     if (result.rows.length === 0) {
@@ -1862,7 +1969,7 @@ app.put('/api/calendar-events/:id', async (req, res) => {
     const result = await pool.query(
       `UPDATE calendar_events 
        SET name = $1, date = $2, schedule_data = $3, updated_at = NOW()
-       WHERE id = $4
+       WHERE id = $4 AND deleted_at IS NULL
        RETURNING *`,
       [name, date, JSON.stringify(schedule_data), id]
     );
@@ -1879,24 +1986,77 @@ app.put('/api/calendar-events/:id', async (req, res) => {
   }
 });
 
-// Delete calendar event
+// Soft-delete calendar event by default; admins may pass ?permanent=1 to purge fully
 app.delete('/api/calendar-events/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
-    console.log('🗑️ Deleting calendar event:', id);
-    
-    const result = await pool.query(
-      `DELETE FROM calendar_events WHERE id = $1 RETURNING *`,
-      [id]
-    );
-    
-    if (result.rows.length === 0) {
+    const permanent =
+      req.query.permanent === '1' ||
+      req.query.permanent === 'true' ||
+      req.body?.permanent === true;
+
+    await ensureCalendarSoftDeleteSchema(pool);
+
+    if (permanent) {
+      if (!req.auth?.isAdmin) {
+        return res.status(403).json({
+          error: 'Only administrators can permanently delete events and related data.',
+        });
+      }
+
+      console.log('🗑️ Permanently purging calendar event:', id);
+
+      // Prefer active row; fall back to any row (including already soft-deleted)
+      const cal = await pool.query(
+        `SELECT id, schedule_data FROM calendar_events WHERE id = $1`,
+        [id]
+      );
+      if (!cal.rows[0]) {
+        return res.status(404).json({ error: 'Calendar event not found' });
+      }
+
+      const sd = cal.rows[0].schedule_data;
+      let parsed = sd;
+      if (typeof sd === 'string') {
+        try {
+          parsed = JSON.parse(sd);
+        } catch {
+          parsed = {};
+        }
+      }
+      const linkedIds = [];
+      if (parsed && parsed.eventId) linkedIds.push(String(parsed.eventId));
+
+      const result = await purgeEventData(pool, {
+        eventId: id,
+        linkedIds,
+        deleteCalendarRow: true,
+      });
+
+      console.log('✅ Calendar event permanently purged');
+      return res.json({
+        message: 'Calendar event and related data permanently deleted.',
+        softDeleted: false,
+        permanent: true,
+        id: String(id),
+        ...result,
+      });
+    }
+
+    console.log('🗑️ Soft-deleting calendar event:', id);
+
+    const row = await softDeleteCalendarEvent(pool, id);
+
+    if (!row) {
       return res.status(404).json({ error: 'Calendar event not found' });
     }
-    
-    console.log('✅ Calendar event deleted successfully');
-    res.json({ message: 'Calendar event deleted successfully' });
+
+    console.log('✅ Calendar event soft-deleted (ROS data retained)');
+    res.json({
+      message: 'Calendar event removed from calendar. Run of Show data was kept and can be restored by an admin.',
+      softDeleted: true,
+      id: String(row.id),
+    });
   } catch (error) {
     console.error('❌ Error deleting calendar event:', error);
     res.status(500).json({ error: 'Failed to delete calendar event' });
@@ -5975,6 +6135,12 @@ server.listen(PORT, '0.0.0.0', async () => {
   }
   console.log(`💡 Tip: Use 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find your IP address`);
   if (process.env.NEON_DATABASE_URL) {
+    try {
+      await ensureCalendarSoftDeleteSchema(pool);
+      console.log('✅ calendar_events.deleted_at column ready');
+    } catch (err) {
+      console.warn('⚠️ calendar_events soft-delete migration skipped:', err.message || err);
+    }
     try {
       await runUserEventNotesSyncTable(pool);
       console.log('✅ user_event_notes table synced');

@@ -140,13 +140,14 @@ export class DatabaseService {
     }
   }
 
-  static async deleteCalendarEvent(id: string): Promise<boolean> {
+  static async deleteCalendarEvent(id: string, options?: { permanent?: boolean }): Promise<boolean> {
     try {
-      console.log('🔄 Deleting calendar event via API:', id);
-      const success = await apiClient.deleteCalendarEvent(id);
+      console.log('🔄 Deleting calendar event via API:', id, options?.permanent ? '(permanent)' : '(soft)');
+      const success = await apiClient.deleteCalendarEvent(id, options);
       return success;
     } catch (error) {
       console.error('Error deleting calendar event:', error);
+      if (options?.permanent) throw error;
       return this.deleteCalendarFromLocalStorage(id);
     }
   }
