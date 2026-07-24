@@ -8,7 +8,7 @@ import {
   personColumnLabel,
   storeOperatorName,
 } from '../lib/pinNotesOperator';
-import { apiJsonHeaders } from '../lib/sessionAuth';
+import { apiAuthFetch } from '../lib/sessionAuth';
 
 const RESIZE_HANDLE_WIDTH = 6;
 const MIN_COLUMN_FRACTION = 0.08;
@@ -285,10 +285,8 @@ const PinNotesPopoutPage: React.FC = () => {
 
     const loadActiveTimer = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/active-timers/${eventId}`, {
-          headers: apiJsonHeaders(),
-        });
-        if (!res.ok) return;
+        const res = await apiAuthFetch(`${API_BASE}/api/active-timers/${eventId}`);
+        if (!res || !res.ok) return;
         const data = await res.json();
         const list = Array.isArray(data) ? data : data?.value;
         const active = Array.isArray(list) && list.length > 0 ? list[0] : data;

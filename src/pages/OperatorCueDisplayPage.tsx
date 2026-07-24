@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
-import { apiJsonHeaders } from '../lib/sessionAuth';
+import { apiAuthFetch } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import {
   findParentScheduleIndex,
@@ -537,10 +537,8 @@ const OperatorCueDisplayPage: React.FC = () => {
 
     const boot = async () => {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`, {
-          headers: apiJsonHeaders(),
-        });
-        if (!res.ok || dead) return;
+        const res = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);
+        if (!res || !res.ok || dead) return;
         const raw = await res.json();
         const t = Array.isArray(raw) ? raw[0] : raw?.value?.[0] || (raw?.item_id ? raw : null);
         if (!dead) apply(t);

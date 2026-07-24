@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
-import { apiJsonHeaders } from '../lib/sessionAuth';
+import { apiAuthFetch, apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { resolveQuickModeEventId } from '../lib/quickModeEvent';
 
@@ -275,10 +275,8 @@ const QuickModePage: React.FC = () => {
 
     const hydrateFromApi = async () => {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`, {
-          headers: apiJsonHeaders(),
-        });
-        if (!res.ok || cancelled) return;
+        const res = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`);
+        if (!res || !res.ok || cancelled) return;
         const rows = await res.json();
         const row = Array.isArray(rows) ? rows[0] : rows;
         if (row && row.is_active !== false && row.timer_state !== 'stopped') {

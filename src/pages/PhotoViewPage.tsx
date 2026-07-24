@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
-import { apiJsonHeaders } from '../lib/sessionAuth';
+import { apiAuthFetch } from '../lib/sessionAuth';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
@@ -1108,10 +1108,9 @@ const PhotoViewPage: React.FC = () => {
     const loadActiveTimerState = async () => {
       try {
         console.log('🔄 PhotoView: Loading active timer state on mount...');
-        const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`, {
-          headers: apiJsonHeaders(),
-        });
-        
+        const activeTimerResponse = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);
+        if (!activeTimerResponse) return;
+
         if (activeTimerResponse.ok) {
           const activeTimerResponseData = await activeTimerResponse.json();
           console.log('🔄 PhotoView: Loaded active timer on mount:', activeTimerResponseData);
@@ -1414,9 +1413,8 @@ const PhotoViewPage: React.FC = () => {
         }
         // Load current active timer
         try {
-          const activeTimerResponse = await fetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`, {
-            headers: apiJsonHeaders(),
-          });
+          const activeTimerResponse = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`);
+          if (!activeTimerResponse) return;
           if (activeTimerResponse.ok) {
             const activeTimerResponseData = await activeTimerResponse.json();
             console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerResponseData);
