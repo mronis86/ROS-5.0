@@ -2730,9 +2730,8 @@ export default function AdminPage() {
             <div>
               <h3 className="text-sm font-semibold text-white mb-2">Orphaned data (no calendar row)</h3>
               <p className="text-slate-500 text-xs mb-2">
-                Only rows whose event id is not on any calendar_events row (by calendar id or
-                schedule_data eventId). Soft-deleted calendar events are still linked, so they appear
-                under “Removed from calendar” instead.
+                Only Run of Show / related rows with no calendar match by event id and no calendar event with the
+                same name. Live calendar events (and soft-deleted ones) are excluded.
               </p>
               {eventLifecycleLoading && orphanEventData.length === 0 ? (
                 <div className="h-16 bg-slate-700/60 rounded-lg animate-pulse" />
