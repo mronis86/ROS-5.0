@@ -2730,7 +2730,9 @@ export default function AdminPage() {
             <div>
               <h3 className="text-sm font-semibold text-white mb-2">Orphaned data (no calendar row)</h3>
               <p className="text-slate-500 text-xs mb-2">
-                Leftovers from older hard deletes. Name/date come from saved Run of Show data when available.
+                Only rows whose event id is not on any calendar_events row (by calendar id or
+                schedule_data eventId). Soft-deleted calendar events are still linked, so they appear
+                under “Removed from calendar” instead.
               </p>
               {eventLifecycleLoading && orphanEventData.length === 0 ? (
                 <div className="h-16 bg-slate-700/60 rounded-lg animate-pulse" />
