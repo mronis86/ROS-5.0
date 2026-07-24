@@ -1567,6 +1567,76 @@ app.post('/api/admin/event-lifecycle/orphans/:eventId/purge', async (req, res) =
   }
 });
 
+app.post('/api/admin/event-lifecycle/bulk-purge', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureCalendarSoftDeleteSchema(pool);
+    const type = String(req.body?.type || '');
+    const confirm = String(req.body?.confirm || '');
+    const ids = Array.isArray(req.body?.ids)
+      ? [...new Set(req.body.ids.map((id) => String(id || '').trim()).filter(Boolean))]
+      : [];
+
+    if (type !== 'orphans' && type !== 'deleted') {
+      return res.status(400).json({ error: 'type must be "orphans" or "deleted"' });
+    }
+    if (!ids.length) {
+      return res.status(400).json({ error: 'No event ids provided' });
+    }
+    if (ids.length > 200) {
+      return res.status(400).json({ error: 'Bulk purge limited to 200 items at a time' });
+    }
+    if (confirm !== 'PURGE SELECTED') {
+      return res.status(400).json({ error: 'Type confirm exactly as: PURGE SELECTED' });
+    }
+
+    const linkedById =
+      req.body?.linkedById && typeof req.body.linkedById === 'object' ? req.body.linkedById : {};
+    const results = [];
+    for (const id of ids) {
+      const linkedIds = [];
+      const extra = linkedById[id];
+      if (typeof extra === 'string' && extra.trim()) linkedIds.push(extra.trim());
+      else if (Array.isArray(extra)) {
+        for (const v of extra) {
+          if (v != null && String(v).trim()) linkedIds.push(String(v).trim());
+        }
+      }
+
+      if (type === 'deleted') {
+        const cal = await pool.query(
+          `SELECT id, schedule_data FROM calendar_events WHERE id = $1`,
+          [id]
+        );
+        if (cal.rows[0]) {
+          const sd = cal.rows[0].schedule_data;
+          let parsed = sd;
+          if (typeof sd === 'string') {
+            try {
+              parsed = JSON.parse(sd);
+            } catch {
+              parsed = {};
+            }
+          }
+          if (parsed && parsed.eventId) linkedIds.push(String(parsed.eventId));
+        }
+      }
+
+      const result = await purgeEventData(pool, {
+        eventId: id,
+        linkedIds,
+        deleteCalendarRow: type === 'deleted',
+      });
+      results.push({ id, ok: true, ...result });
+    }
+
+    res.json({ ok: true, purged: results.length, results });
+  } catch (err) {
+    console.error('[admin event-lifecycle bulk-purge] error:', err);
+    res.status(500).json({ error: err.message || 'Failed to bulk purge' });
+  }
+});
+
 // Test endpoint to verify Upstash is working
 app.get('/api/test-upstash', async (req, res) => {
   try {

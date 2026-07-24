@@ -493,6 +493,9 @@ export default function AdminPage() {
     }>
   >([]);
   const [eventLifecycleBusyId, setEventLifecycleBusyId] = useState<string | null>(null);
+  const [selectedDeletedIds, setSelectedDeletedIds] = useState<Set<string>>(new Set());
+  const [selectedOrphanIds, setSelectedOrphanIds] = useState<Set<string>>(new Set());
+  const [bulkPurging, setBulkPurging] = useState(false);
 
   const fetchPlatformMaintenance = useCallback(async () => {
     setPlatformLoading(true);
@@ -543,6 +546,8 @@ export default function AdminPage() {
       }
       setDeletedCalendarEvents(data.deletedEvents || []);
       setOrphanEventData(data.orphans || []);
+      setSelectedDeletedIds(new Set());
+      setSelectedOrphanIds(new Set());
     } catch (e) {
       setEventLifecycleError(e instanceof Error ? e.message : 'Request failed');
       setDeletedCalendarEvents([]);
@@ -636,6 +641,65 @@ export default function AdminPage() {
       }
     },
     [fetchEventLifecycle]
+  );
+
+  const toggleDeletedSelected = useCallback((id: string) => {
+    setSelectedDeletedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleOrphanSelected = useCallback((id: string) => {
+    setSelectedOrphanIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const bulkPurgeSelected = useCallback(
+    async (type: 'orphans' | 'deleted') => {
+      const ids =
+        type === 'orphans' ? [...selectedOrphanIds] : [...selectedDeletedIds];
+      if (!ids.length) return;
+      const phrase = 'PURGE SELECTED';
+      const typed = window.prompt(
+        `Permanently delete ${ids.length} ${type === 'orphans' ? 'orphan' : 'soft-deleted'} item(s) and related Neon data.\n\nType exactly:\n${phrase}`
+      );
+      if (typed !== phrase) return;
+
+      const linkedById: Record<string, string> = {};
+      if (type === 'deleted') {
+        for (const ev of deletedCalendarEvents) {
+          if (ids.includes(ev.id) && ev.eventId) linkedById[ev.id] = String(ev.eventId);
+        }
+      }
+
+      setBulkPurging(true);
+      setEventLifecycleError(null);
+      try {
+        const res = await adminFetch('/api/admin/event-lifecycle/bulk-purge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, ids, confirm: phrase, linkedById }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string; purged?: number };
+        if (!res.ok) {
+          setEventLifecycleError(data.error || `HTTP ${res.status}`);
+          return;
+        }
+        await fetchEventLifecycle();
+      } catch (e) {
+        setEventLifecycleError(e instanceof Error ? e.message : 'Bulk purge failed');
+      } finally {
+        setBulkPurging(false);
+      }
+    },
+    [selectedOrphanIds, selectedDeletedIds, deletedCalendarEvents, fetchEventLifecycle]
   );
 
   const fetchLogoSettings = useCallback(async () => {
@@ -2679,7 +2743,40 @@ export default function AdminPage() {
 
           <div className="space-y-6">
             <div>
-              <h3 className="text-sm font-semibold text-white mb-2">Removed from calendar (restorable)</h3>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <h3 className="text-sm font-semibold text-white">Removed from calendar (restorable)</h3>
+                {deletedCalendarEvents.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={
+                          deletedCalendarEvents.length > 0 &&
+                          selectedDeletedIds.size === deletedCalendarEvents.length
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedDeletedIds(new Set(deletedCalendarEvents.map((ev) => ev.id)));
+                          } else {
+                            setSelectedDeletedIds(new Set());
+                          }
+                        }}
+                        className="rounded border-slate-500 bg-slate-700 text-red-500 focus:ring-red-500"
+                      />
+                      Select all
+                    </label>
+                    <button
+                      type="button"
+                      disabled={bulkPurging || selectedDeletedIds.size === 0}
+                      onClick={() => void bulkPurgeSelected('deleted')}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-800/80 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-medium"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Purge selected ({selectedDeletedIds.size})
+                    </button>
+                  </div>
+                )}
+              </div>
               {eventLifecycleLoading && deletedCalendarEvents.length === 0 ? (
                 <div className="h-16 bg-slate-700/60 rounded-lg animate-pulse" />
               ) : deletedCalendarEvents.length === 0 ? (
@@ -2691,20 +2788,29 @@ export default function AdminPage() {
                       key={ev.id}
                       className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-600/80 bg-slate-900/40 px-3 py-2.5"
                     >
-                      <div className="min-w-0">
-                        <div className="text-white text-sm font-medium truncate">{ev.name}</div>
-                        <div className="text-slate-500 text-xs mt-0.5">
-                          {ev.date ? String(ev.date).slice(0, 10) : '—'}
-                          {ev.deletedAt ? ` · removed ${new Date(ev.deletedAt).toLocaleString()}` : ''}
-                          {typeof ev.relatedTotal === 'number'
-                            ? ` · ${ev.relatedTotal} related row(s)`
-                            : ''}
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={selectedDeletedIds.has(ev.id)}
+                          onChange={() => toggleDeletedSelected(ev.id)}
+                          className="mt-1 rounded border-slate-500 bg-slate-700 text-red-500 focus:ring-red-500"
+                          aria-label={`Select ${ev.name}`}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-white text-sm font-medium truncate">{ev.name}</div>
+                          <div className="text-slate-500 text-xs mt-0.5">
+                            {ev.date ? String(ev.date).slice(0, 10) : '—'}
+                            {ev.deletedAt ? ` · removed ${new Date(ev.deletedAt).toLocaleString()}` : ''}
+                            {typeof ev.relatedTotal === 'number'
+                              ? ` · ${ev.relatedTotal} related row(s)`
+                              : ''}
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
-                          disabled={eventLifecycleBusyId === ev.id}
+                          disabled={eventLifecycleBusyId === ev.id || bulkPurging}
                           onClick={() => void restoreDeletedEvent(ev.id)}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium"
                         >
@@ -2713,7 +2819,7 @@ export default function AdminPage() {
                         </button>
                         <button
                           type="button"
-                          disabled={eventLifecycleBusyId === ev.id}
+                          disabled={eventLifecycleBusyId === ev.id || bulkPurging}
                           onClick={() => void purgeDeletedEvent(ev.id, ev.eventId)}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-800/80 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-medium"
                         >
@@ -2728,7 +2834,40 @@ export default function AdminPage() {
             </div>
 
             <div>
-              <h3 className="text-sm font-semibold text-white mb-2">Orphaned data (no calendar row)</h3>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <h3 className="text-sm font-semibold text-white">Orphaned data (no calendar row)</h3>
+                {orphanEventData.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={
+                          orphanEventData.length > 0 &&
+                          selectedOrphanIds.size === orphanEventData.length
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedOrphanIds(new Set(orphanEventData.map((row) => row.eventId)));
+                          } else {
+                            setSelectedOrphanIds(new Set());
+                          }
+                        }}
+                        className="rounded border-slate-500 bg-slate-700 text-red-500 focus:ring-red-500"
+                      />
+                      Select all
+                    </label>
+                    <button
+                      type="button"
+                      disabled={bulkPurging || selectedOrphanIds.size === 0}
+                      onClick={() => void bulkPurgeSelected('orphans')}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-800/80 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-medium"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Purge selected ({selectedOrphanIds.size})
+                    </button>
+                  </div>
+                )}
+              </div>
               <p className="text-slate-500 text-xs mb-2">
                 Only Run of Show / related rows with no calendar match by event id and no calendar event with the
                 same name. Live calendar events (and soft-deleted ones) are excluded.
@@ -2744,35 +2883,44 @@ export default function AdminPage() {
                       key={row.eventId}
                       className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2.5"
                     >
-                      <div className="min-w-0">
-                        <div className="text-amber-50 text-sm font-medium truncate">
-                          {row.name?.trim() || 'Unknown event name'}
-                        </div>
-                        <div className="text-slate-400 text-xs mt-0.5">
-                          {row.date || 'No date'}
-                          {row.location ? ` · ${row.location}` : ''}
-                          {typeof row.scheduleItemCount === 'number'
-                            ? ` · ${row.scheduleItemCount} schedule item(s)`
-                            : ''}
-                          {row.lastUpdatedAt
-                            ? ` · ROS updated ${new Date(row.lastUpdatedAt).toLocaleString()}`
-                            : ''}
-                        </div>
-                        <div className="text-slate-500 text-[11px] font-mono mt-1 truncate" title={row.eventId}>
-                          {row.eventId}
-                        </div>
-                        <div className="text-slate-500 text-xs mt-0.5">
-                          {row.relatedTotal} row(s)
-                          {row.relatedCounts
-                            ? ` · ${Object.entries(row.relatedCounts)
-                                .map(([t, c]) => `${t}:${c}`)
-                                .join(', ')}`
-                            : ''}
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={selectedOrphanIds.has(row.eventId)}
+                          onChange={() => toggleOrphanSelected(row.eventId)}
+                          className="mt-1 rounded border-slate-500 bg-slate-700 text-red-500 focus:ring-red-500"
+                          aria-label={`Select ${row.name || row.eventId}`}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-amber-50 text-sm font-medium truncate">
+                            {row.name?.trim() || 'Unknown event name'}
+                          </div>
+                          <div className="text-slate-400 text-xs mt-0.5">
+                            {row.date || 'No date'}
+                            {row.location ? ` · ${row.location}` : ''}
+                            {typeof row.scheduleItemCount === 'number'
+                              ? ` · ${row.scheduleItemCount} schedule item(s)`
+                              : ''}
+                            {row.lastUpdatedAt
+                              ? ` · ROS updated ${new Date(row.lastUpdatedAt).toLocaleString()}`
+                              : ''}
+                          </div>
+                          <div className="text-slate-500 text-[11px] font-mono mt-1 truncate" title={row.eventId}>
+                            {row.eventId}
+                          </div>
+                          <div className="text-slate-500 text-xs mt-0.5">
+                            {row.relatedTotal} row(s)
+                            {row.relatedCounts
+                              ? ` · ${Object.entries(row.relatedCounts)
+                                  .map(([t, c]) => `${t}:${c}`)
+                                  .join(', ')}`
+                              : ''}
+                          </div>
                         </div>
                       </div>
                       <button
                         type="button"
-                        disabled={eventLifecycleBusyId === row.eventId}
+                        disabled={eventLifecycleBusyId === row.eventId || bulkPurging}
                         onClick={() => void purgeOrphanEvent(row.eventId)}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-800/80 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-medium"
                       >
