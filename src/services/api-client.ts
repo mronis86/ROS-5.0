@@ -45,6 +45,8 @@ interface CacheEntry<T> {
 
 class ApiClient {
   private cache: Map<string, CacheEntry<any>> = new Map();
+  /** After a 401, pause further API calls briefly so expired OBS/tabs don't spam Railway. */
+  private authBackoffUntil = 0;
   
   // Cache TTL settings (in milliseconds)
   private readonly CACHE_TTL = {
@@ -92,6 +94,12 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}, cacheKey?: string, cacheTTL?: number): Promise<T> {
+    if (Date.now() < this.authBackoffUntil) {
+      const err: any = new Error('Authentication required. Sign in again (API auth backoff).');
+      err.status = 401;
+      throw err;
+    }
+
     // Check cache first (only for GET requests)
     if (options.method === 'GET' || !options.method) {
       const cacheKeyToUse = cacheKey || this.getCacheKey(endpoint);
@@ -119,6 +127,10 @@ class ApiClient {
       const response = await fetch(url, defaultOptions);
       
       if (!response.ok) {
+        if (response.status === 401) {
+          // 2 minutes — stops OBS/display 20s polls from emailing ops every few minutes
+          this.authBackoffUntil = Date.now() + 2 * 60 * 1000;
+        }
         let body: any = null;
         try {
           body = await response.json();
@@ -132,6 +144,8 @@ class ApiClient {
         err.data = body;
         throw err;
       }
+
+      this.authBackoffUntil = 0;
       
       const data = await response.json();
       
