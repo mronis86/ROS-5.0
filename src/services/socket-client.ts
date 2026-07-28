@@ -22,6 +22,7 @@ interface SocketCallbacks {
   onShowStartOvertimeUpdate?: (data: any) => void; // NEW! For show start overtime
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
   onShowModeUpdate?: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => void; // Global show mode and track-was-durations
+  onMicAssignmentsUpdate?: (data: { event_id: string; assignments?: Record<string, any>; changes?: any[] }) => void;
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
   onForceDisconnect?: () => void; // Admin forced disconnect – show message and do not reconnect
   onRowLocked?: (data: { eventId: string; rowId: number; userId: string; userName: string }) => void;
@@ -140,6 +141,9 @@ class SocketClient {
           break;
         case 'showModeUpdate': // Global show mode (rehearsal vs in-show)
           this.callbacks.onShowModeUpdate?.(message.data);
+          break;
+        case 'micAssignmentsUpdate':
+          this.callbacks.onMicAssignmentsUpdate?.(message.data);
           break;
         case 'presenceUpdated':
           console.log('📡 SocketClient: presenceUpdated', message.data?.length ?? 0, 'viewers');

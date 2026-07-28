@@ -323,6 +323,31 @@ class ApiClient {
     return result;
   }
 
+  async getMicAssignments(eventId: string): Promise<{ assignments: Record<string, any>; changes: any[] }> {
+    const result = await this.request(
+      `/api/mic-assignments/${eventId}`,
+      {},
+      `micAssignments_${eventId}`,
+      30 * 1000
+    );
+    return {
+      assignments: result?.assignments && typeof result.assignments === 'object' ? result.assignments : {},
+      changes: Array.isArray(result?.changes) ? result.changes : [],
+    };
+  }
+
+  async saveMicAssignments(
+    eventId: string,
+    payload: { assignments: Record<string, any>; changes: any[] }
+  ) {
+    const result = await this.request(`/api/mic-assignments/${eventId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    this.cache.delete(`micAssignments_${eventId}`);
+    return result;
+  }
+
   /** Invalidate cache for Photo page 20s sync - ensures fresh overtime/schedule data every sync */
   invalidateSyncDataCache(eventId: string): void {
     this.cache.delete(`runOfShowData_${eventId}`);

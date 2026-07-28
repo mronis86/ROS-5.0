@@ -484,6 +484,30 @@ export class DatabaseService {
     }
   }
 
+  static async getMicAssignments(
+    eventId: string
+  ): Promise<{ assignments: Record<string, any>; changes: any[] }> {
+    try {
+      return await apiClient.getMicAssignments(eventId);
+    } catch (error) {
+      console.error('❌ Exception getting mic assignments:', error);
+      return { assignments: {}, changes: [] };
+    }
+  }
+
+  static async saveMicAssignments(
+    eventId: string,
+    payload: { assignments: Record<string, any>; changes: any[] }
+  ): Promise<boolean> {
+    try {
+      await apiClient.saveMicAssignments(eventId, payload);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception saving mic assignments:', error);
+      return false;
+    }
+  }
+
   static async saveStartCueSelection(eventId: string, itemId: number): Promise<boolean> {
     try {
       console.log('🔄 Saving START cue selection via API:', { eventId, itemId });

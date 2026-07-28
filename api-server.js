@@ -2197,6 +2197,77 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
   }
 });
 
+// Mic Manager assignments — stored in run_of_show_data.settings (mic_assignments / mic_assignment_changes)
+app.get('/api/mic-assignments/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this event.' });
+    }
+    const result = await pool.query(
+      'SELECT settings FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ assignments: {}, changes: [] });
+    }
+    const settings = result.rows[0].settings || {};
+    const assignments =
+      settings.mic_assignments && typeof settings.mic_assignments === 'object'
+        ? settings.mic_assignments
+        : {};
+    const changes = Array.isArray(settings.mic_assignment_changes)
+      ? settings.mic_assignment_changes
+      : [];
+    res.json({ assignments, changes });
+  } catch (error) {
+    console.error('Error fetching mic assignments:', error);
+    res.status(500).json({ error: 'Failed to fetch mic assignments' });
+  }
+});
+
+app.put('/api/mic-assignments/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this event.' });
+    }
+    const body = req.body || {};
+    if (!body.assignments || typeof body.assignments !== 'object' || Array.isArray(body.assignments)) {
+      return res.status(400).json({ error: 'assignments object is required' });
+    }
+    const changes = Array.isArray(body.changes) ? body.changes.slice(0, 250) : [];
+    const updates = {
+      mic_assignments: body.assignments,
+      mic_assignment_changes: changes,
+    };
+    const result = await pool.query(
+      `UPDATE run_of_show_data
+       SET settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING settings`,
+      [eventId, JSON.stringify(updates)]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    const settings = result.rows[0].settings || {};
+    const payload = {
+      event_id: eventId,
+      assignments: settings.mic_assignments || {},
+      changes: Array.isArray(settings.mic_assignment_changes) ? settings.mic_assignment_changes : [],
+    };
+    broadcastUpdate(eventId, 'micAssignmentsUpdate', payload);
+    res.json({
+      assignments: payload.assignments,
+      changes: payload.changes,
+    });
+  } catch (error) {
+    console.error('Error saving mic assignments:', error);
+    res.status(500).json({ error: 'Failed to save mic assignments' });
+  }
+});
+
 // Run of Show Data endpoints
 app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   try {
