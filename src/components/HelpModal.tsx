@@ -154,7 +154,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
         content: (
           <div className="space-y-3 text-base text-slate-300">
             <p><strong className="text-white">OPERATOR:</strong> Full control — timer adjustments, messages, duration changes, and all editing.</p>
-            <p><strong className="text-white">EDITOR:</strong> Can edit schedule content (notes, speakers, assets) but cannot adjust timer or send messages.</p>
+            <p><strong className="text-white">EDITOR:</strong> Can edit schedule content (notes, speakers, assets) and send stage messages, but cannot adjust the live timer.</p>
             <p><strong className="text-white">VIEWER:</strong> Read-only. Can view schedule and timers but cannot edit or control.</p>
             <p><strong className="text-white">Change Role:</strong> Use the Change Role button in the control panel to switch roles.</p>
           </div>

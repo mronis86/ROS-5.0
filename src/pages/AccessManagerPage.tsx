@@ -121,8 +121,8 @@ export default function AccessManagerPage() {
               Access manager
             </h1>
             <p className="mt-2 text-sm text-slate-400 max-w-2xl">
-              Review and approve user access requests. Choose calendar visibility when approving. Event
-              managers cannot grant administrator privileges.
+              Review and approve user access requests. Choose calendar visibility when approving. You can
+              reject pending requests only — approved users must be managed by an administrator.
             </p>
           </div>
           <Link
@@ -221,7 +221,7 @@ export default function AccessManagerPage() {
                               Approve
                             </button>
                           ) : null}
-                          {row.status !== 'rejected' ? (
+                          {row.status === 'pending' ? (
                             <button
                               type="button"
                               onClick={() => void reject(row.id, row.email)}

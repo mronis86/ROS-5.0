@@ -29,7 +29,7 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
-const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, filterCalendarEventsForAuth } = require('./lib/api-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
@@ -2021,7 +2021,14 @@ app.post('/api/calendar-events', async (req, res) => {
        RETURNING *`,
       [name, date, JSON.stringify(schedule_data)]
     );
-    res.json(normalizeCalendarEvent(result.rows[0]));
+    const created = normalizeCalendarEvent(result.rows[0]);
+    // Restricted users: auto-add events they create to their selected-events list
+    try {
+      await grantCreatedEventToRestrictedUser(pool, req.auth, created?.id);
+    } catch (grantErr) {
+      console.error('Warning: could not grant creator access to new calendar event:', grantErr.message);
+    }
+    res.json(created);
   } catch (error) {
     console.error('Error creating calendar event:', error);
     res.status(500).json({ error: 'Failed to create calendar event' });

@@ -637,11 +637,16 @@ const RunOfShowPage: React.FC = () => {
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [editingNotesItem, setEditingNotesItem] = useState<number | null>(null);
+  /** In-progress notes HTML while the modal is open (survives tab hide / schedule sync). */
+  const [tempNotesHtml, setTempNotesHtml] = useState('');
+  const notesEditorRef = useRef<HTMLDivElement | null>(null);
   const [showSpeakersModal, setShowSpeakersModal] = useState(false);
   const [editingSpeakersItem, setEditingSpeakersItem] = useState<number | null>(null);
   const [tempSpeakersText, setTempSpeakersText] = useState<Speaker[]>([]);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [editingAssetsItem, setEditingAssetsItem] = useState<number | null>(null);
+  /** In-progress assets while the modal is open (survives schedule sync). */
+  const [tempAssets, setTempAssets] = useState<Array<{ id: string; name: string; link: string; showLink: boolean }>>([]);
   const [showViewAssetsModal, setShowViewAssetsModal] = useState(false);
   const [viewingAssetsItem, setViewingAssetsItem] = useState<number | null>(null);
   const [showViewSpeakersModal, setShowViewSpeakersModal] = useState(false);
@@ -1692,7 +1697,22 @@ const RunOfShowPage: React.FC = () => {
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
-    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal;
+    const anyModalOpen =
+      showSpeakersModal ||
+      showNotesModal ||
+      showAssetsModal ||
+      showParticipantsModal ||
+      showBackupModal ||
+      showExcelImportModal ||
+      showAgendaImportModal ||
+      showCSVImportModal ||
+      showGoogleSheetExportModal ||
+      showImportEventModal ||
+      showSpeakerManagerModal ||
+      showAddModal ||
+      showBreakoutRoomModal ||
+      showDelayBlockModal ||
+      showCustomColumnModal;
     const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
 
     if (shouldPause) {
@@ -1709,7 +1729,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showDelayBlockModal, showCustomColumnModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -3134,7 +3154,23 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal) {
+    if (
+      showSpeakersModal ||
+      showNotesModal ||
+      showAssetsModal ||
+      showParticipantsModal ||
+      showBackupModal ||
+      showExcelImportModal ||
+      showAgendaImportModal ||
+      showCSVImportModal ||
+      showGoogleSheetExportModal ||
+      showImportEventModal ||
+      showSpeakerManagerModal ||
+      showAddModal ||
+      showBreakoutRoomModal ||
+      showDelayBlockModal ||
+      showCustomColumnModal
+    ) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -3779,7 +3815,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Insert list function using modern methods
   const insertList = (listType: 'ul' | 'ol') => {
-    const editor = document.getElementById('notes-editor');
+    const editor = notesEditorRef.current || document.getElementById('notes-editor');
     if (!editor) return;
     
     editor.focus();
@@ -3806,11 +3842,12 @@ const RunOfShowPage: React.FC = () => {
     newRange.collapse(true);
     selection.removeAllRanges();
     selection.addRange(newRange);
+    setTempNotesHtml(editor.innerHTML);
   };
 
   // Enhanced formatting function that works with contentEditable
   const applyFormatting = (format: string, value?: string) => {
-    const editor = document.getElementById('notes-editor');
+    const editor = notesEditorRef.current || document.getElementById('notes-editor');
     if (!editor) return;
     
     editor.focus();
@@ -3868,48 +3905,52 @@ const RunOfShowPage: React.FC = () => {
     } catch (error) {
       console.warn('Formatting command not supported:', format);
     }
+    if (format !== 'bullet' && format !== 'list') {
+      setTempNotesHtml(editor.innerHTML);
+    }
   };
   // Save function
   const saveNotes = () => {
-    const editor = document.getElementById('notes-editor');
-    if (editor && editingNotesItem !== null) {
-      const content = editor.innerHTML;
-      
-      if (editingNotesItem === -1) {
-        // Save to modal form
-        setModalForm(prev => ({ ...prev, notes: content }));
-      } else {
-        // Save to existing schedule item
-        const oldValue = schedule.find(item => item.id === editingNotesItem)?.notes || '';
-        const item = schedule.find(item => item.id === editingNotesItem);
-        setSchedule(prev => prev.map(scheduleItem => 
-          scheduleItem.id === editingNotesItem 
-            ? { ...scheduleItem, notes: content }
-            : scheduleItem
-        ));
-        
-        // Log the change
-        if (item) {
-          logChange('FIELD_UPDATE', `Updated notes for "${item.segmentName}"`, {
-            changeType: 'FIELD_CHANGE',
-            itemId: item.id,
-            itemName: item.segmentName,
-            fieldName: 'notes',
-            oldValue: oldValue,
-            newValue: content,
-            details: {
-              fieldType: 'text',
-              characterChange: content.length - oldValue.length
-            }
-          });
-        }
-        
+    if (editingNotesItem === null) return;
+    const editor = notesEditorRef.current || document.getElementById('notes-editor');
+    const live = editor?.innerHTML ?? '';
+    const liveEmpty = !live.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
+    const content = liveEmpty && tempNotesHtml ? tempNotesHtml : live || tempNotesHtml;
+
+    if (editingNotesItem === -1) {
+      // Save to modal form
+      setModalForm((prev) => ({ ...prev, notes: content }));
+    } else {
+      // Save to existing schedule item
+      const oldValue = schedule.find((item) => item.id === editingNotesItem)?.notes || '';
+      const item = schedule.find((row) => row.id === editingNotesItem);
+      setSchedule((prev) =>
+        prev.map((scheduleItem) =>
+          scheduleItem.id === editingNotesItem ? { ...scheduleItem, notes: content } : scheduleItem
+        )
+      );
+
+      // Log the change
+      if (item) {
+        logChange('FIELD_UPDATE', `Updated notes for "${item.segmentName}"`, {
+          changeType: 'FIELD_CHANGE',
+          itemId: item.id,
+          itemName: item.segmentName,
+          fieldName: 'notes',
+          oldValue: oldValue,
+          newValue: content,
+          details: {
+            fieldType: 'text',
+            characterChange: content.length - oldValue.length,
+          },
+        });
       }
-      
-      setShowNotesModal(false);
-      setEditingNotesItem(null);
-      handleModalClosed();
     }
+
+    setShowNotesModal(false);
+    setEditingNotesItem(null);
+    setTempNotesHtml('');
+    handleModalClosed();
   };
 
   // Save speakers function
@@ -3956,118 +3997,81 @@ const RunOfShowPage: React.FC = () => {
 
   // Save assets function
   const saveAssets = () => {
-    if (editingAssetsItem !== null) {
-      const assetsContainer = document.getElementById('assets-list');
-      if (assetsContainer) {
-        const assetItems = assetsContainer.querySelectorAll('.asset-item');
-        const assetsArray: string[] = [];
-        
-        assetItems.forEach(item => {
-          const nameInput = item.querySelector('.asset-name') as HTMLInputElement;
-          const linkInput = item.querySelector('.asset-link') as HTMLInputElement;
-          
-          if (nameInput && linkInput) {
-            const name = nameInput.value.trim();
-            const link = linkInput.value.trim();
-            
-            if (name) {
-              // Store as "Name" or "Name|Link" if link exists
-              assetsArray.push(link ? `${name}|${link}` : name);
-            }
-          }
+    if (editingAssetsItem === null) return;
+
+    const assetsArray = tempAssets
+      .map((asset) => {
+        const name = asset.name.trim();
+        const link = asset.showLink ? asset.link.trim() : '';
+        if (!name) return null;
+        return link ? `${name}|${link}` : name;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+
+    const assetsString = assetsArray.join('||');
+
+    if (editingAssetsItem === -1) {
+      setModalForm((prev) => ({ ...prev, assets: assetsString }));
+    } else {
+      const oldValue = schedule.find((item) => item.id === editingAssetsItem)?.assets || '';
+      const item = schedule.find((row) => row.id === editingAssetsItem);
+      setSchedule((prev) =>
+        prev.map((scheduleItem) =>
+          scheduleItem.id === editingAssetsItem
+            ? { ...scheduleItem, assets: assetsString }
+            : scheduleItem
+        )
+      );
+
+      if (item) {
+        logChange('FIELD_UPDATE', `Updated assets for "${item.segmentName}"`, {
+          changeType: 'FIELD_CHANGE',
+          itemId: item.id,
+          itemName: item.segmentName,
+          fieldName: 'assets',
+          oldValue: oldValue,
+          newValue: assetsString,
+          details: {
+            fieldType: 'assets',
+            assetCount: assetsArray.length,
+            characterChange: assetsString.length - oldValue.length,
+          },
         });
-        
-        const assetsString = assetsArray.join('||');
-        
-        if (editingAssetsItem === -1) {
-          // Save to modal form
-          setModalForm(prev => ({ ...prev, assets: assetsString }));
-        } else {
-          // Save to existing schedule item
-          const oldValue = schedule.find(item => item.id === editingAssetsItem)?.assets || '';
-          const item = schedule.find(item => item.id === editingAssetsItem);
-          setSchedule(prev => prev.map(scheduleItem => 
-            scheduleItem.id === editingAssetsItem 
-              ? { 
-                  ...scheduleItem, 
-                  assets: assetsString
-                }
-              : scheduleItem
-          ));
-          
-          // Log the change
-          if (item) {
-            logChange('FIELD_UPDATE', `Updated assets for "${item.segmentName}"`, {
-              changeType: 'FIELD_CHANGE',
-              itemId: item.id,
-              itemName: item.segmentName,
-              fieldName: 'assets',
-              oldValue: oldValue,
-              newValue: assetsString,
-              details: {
-                fieldType: 'assets',
-                assetCount: assetsArray.length,
-                characterChange: assetsString.length - oldValue.length
-              }
-            });
-          }
-        }
-        
-        setShowAssetsModal(false);
-        setEditingAssetsItem(null);
-        handleModalClosed();
       }
     }
+
+    setShowAssetsModal(false);
+    setEditingAssetsItem(null);
+    handleModalClosed();
   };
 
-  // Add new asset row
   const addAssetRow = () => {
-    const assetsContainer = document.getElementById('assets-list');
-    if (assetsContainer) {
-      const assetItem = document.createElement('div');
-      assetItem.className = 'asset-item p-3 bg-slate-700 rounded-lg space-y-3';
-      assetItem.innerHTML = `
-        <div class="flex gap-3 items-center">
-          <input type="text" class="asset-name flex-1 px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Asset name..." />
-          <button type="button" class="toggle-link px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors text-sm">
-            + Link
-          </button>
-          <button type="button" class="remove-asset px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Remove</button>
-        </div>
-        <div class="asset-link-container hidden">
-          <input type="url" class="asset-link w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Enter asset URL..." />
-        </div>
-      `;
-      
-      // Add toggle link functionality
-      const toggleBtn = assetItem.querySelector('.toggle-link');
-      const linkContainer = assetItem.querySelector('.asset-link-container');
-      const linkInput = assetItem.querySelector('.asset-link') as HTMLInputElement;
-      
-      toggleBtn?.addEventListener('click', () => {
-        if (linkContainer?.classList.contains('hidden')) {
-          linkContainer.classList.remove('hidden');
-          toggleBtn.textContent = '− Link';
-          toggleBtn.classList.remove('bg-blue-600', 'hover:bg-blue-500');
-          toggleBtn.classList.add('bg-slate-600', 'hover:bg-slate-500');
-          linkInput?.focus();
-        } else {
-          linkContainer?.classList.add('hidden');
-          toggleBtn.textContent = '+ Link';
-          toggleBtn.classList.remove('bg-slate-600', 'hover:bg-slate-500');
-          toggleBtn.classList.add('bg-blue-600', 'hover:bg-blue-500');
-          if (linkInput) linkInput.value = '';
+    setTempAssets((prev) => [
+      ...prev,
+      { id: `asset_${Date.now()}_${prev.length}`, name: '', link: '', showLink: false },
+    ]);
+  };
+
+  const removeAssetRow = (assetId: string) => {
+    setTempAssets((prev) => prev.filter((asset) => asset.id !== assetId));
+  };
+
+  const updateAssetField = (assetId: string, field: 'name' | 'link', value: string) => {
+    setTempAssets((prev) =>
+      prev.map((asset) => (asset.id === assetId ? { ...asset, [field]: value } : asset))
+    );
+  };
+
+  const toggleAssetLink = (assetId: string) => {
+    setTempAssets((prev) =>
+      prev.map((asset) => {
+        if (asset.id !== assetId) return asset;
+        if (asset.showLink) {
+          return { ...asset, showLink: false, link: '' };
         }
-      });
-      
-      // Add remove functionality
-      const removeBtn = assetItem.querySelector('.remove-asset');
-      removeBtn?.addEventListener('click', () => {
-        assetItem.remove();
-      });
-      
-      assetsContainer.appendChild(assetItem);
-    }
+        return { ...asset, showLink: true };
+      })
+    );
   };
 
   // Add new speaker
@@ -5327,139 +5331,122 @@ const RunOfShowPage: React.FC = () => {
       .replace(/\n/g, '<br>');
   };
 
-  // Initialize temp content when modal opens
+  // Load notes into temp state + editor once when the modal opens (not on schedule sync).
   useEffect(() => {
-    if (showNotesModal && editingNotesItem !== null) {
-      const editor = document.getElementById('notes-editor');
-      if (editor) {
-        if (editingNotesItem === -1) {
-          // Editing modal form notes
-          editor.innerHTML = notesForEditor(modalForm.notes || '');
-        } else {
-          // Editing existing schedule item notes
-          const item = schedule.find(item => item.id === editingNotesItem);
-          editor.innerHTML = notesForEditor(item?.notes || '');
-        }
-      }
+    if (!showNotesModal || editingNotesItem === null) {
+      return;
     }
-  }, [showNotesModal, editingNotesItem, schedule, modalForm.notes]);
 
-  // Initialize speakers content when modal opens
+    let initial = '';
+    if (editingNotesItem === -1) {
+      initial = notesForEditor(modalForm.notes || '');
+    } else {
+      const item = schedule.find((row) => row.id === editingNotesItem);
+      initial = notesForEditor(item?.notes || '');
+    }
+    setTempNotesHtml(initial);
+
+    // Wait for the contentEditable node to mount, then seed it once.
+    const frame = window.requestAnimationFrame(() => {
+      const editor = notesEditorRef.current || document.getElementById('notes-editor');
+      if (editor) editor.innerHTML = initial;
+    });
+    return () => window.cancelAnimationFrame(frame);
+    // Intentionally omit schedule / modalForm.notes so sync cannot wipe in-progress typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showNotesModal, editingNotesItem]);
+
+  // If the tab was hidden and the browser cleared/reset the editor, restore from temp state.
   useEffect(() => {
-    if (showSpeakersModal && editingSpeakersItem !== null) {
-      if (editingSpeakersItem === -1) {
-        // Editing modal form speakers
-        if (modalForm.speakersText) {
-          try {
-            const speakers = JSON.parse(modalForm.speakersText);
-            setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
-          } catch {
-            setTempSpeakersText([]);
-          }
-        } else {
+    if (!showNotesModal || editingNotesItem === null) return;
+
+    const restoreIfNeeded = () => {
+      if (document.hidden) return;
+      const editor = notesEditorRef.current || document.getElementById('notes-editor');
+      if (!editor) return;
+      // Only restore when the live editor looks empty but we still have draft HTML.
+      const live = editor.innerHTML.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
+      const draft = tempNotesHtml.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
+      if (!live && draft) {
+        editor.innerHTML = tempNotesHtml;
+      }
+    };
+
+    document.addEventListener('visibilitychange', restoreIfNeeded);
+    window.addEventListener('focus', restoreIfNeeded);
+    return () => {
+      document.removeEventListener('visibilitychange', restoreIfNeeded);
+      window.removeEventListener('focus', restoreIfNeeded);
+    };
+  }, [showNotesModal, editingNotesItem, tempNotesHtml]);
+
+  // Load speakers into temp state once when the modal opens (not on schedule sync).
+  useEffect(() => {
+    if (!showSpeakersModal || editingSpeakersItem === null) return;
+
+    if (editingSpeakersItem === -1) {
+      if (modalForm.speakersText) {
+        try {
+          const speakers = JSON.parse(modalForm.speakersText);
+          setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
+        } catch {
           setTempSpeakersText([]);
         }
       } else {
-        // Editing existing schedule item speakers
-        const item = schedule.find(item => item.id === editingSpeakersItem);
-        if (item?.speakersText) {
-          try {
-            // Try to parse existing speakers data
-            const speakers = JSON.parse(item.speakersText);
-            setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
-          } catch {
-            // If parsing fails, start with empty array
-            setTempSpeakersText([]);
-          }
-        } else {
+        setTempSpeakersText([]);
+      }
+    } else {
+      const item = schedule.find((row) => row.id === editingSpeakersItem);
+      if (item?.speakersText) {
+        try {
+          const speakers = JSON.parse(item.speakersText);
+          setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
+        } catch {
           setTempSpeakersText([]);
         }
+      } else {
+        setTempSpeakersText([]);
       }
     }
-  }, [showSpeakersModal, editingSpeakersItem, schedule, modalForm.speakersText]);
+    // Intentionally omit schedule / modalForm.speakersText so sync cannot wipe in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSpeakersModal, editingSpeakersItem]);
 
-  // Initialize assets modal content when modal opens
+  // Load assets into temp state once when the modal opens (not on schedule sync).
   useEffect(() => {
-    if (showAssetsModal && editingAssetsItem !== null) {
-      const assetsContainer = document.getElementById('assets-list');
-      
-      if (assetsContainer) {
-        // Clear existing assets
-        assetsContainer.innerHTML = '';
-        
-        let assetsData = '';
-        if (editingAssetsItem === -1) {
-          // Editing modal form assets
-          assetsData = modalForm.assets || '';
-        } else {
-          // Editing existing schedule item assets
-          const item = schedule.find(item => item.id === editingAssetsItem);
-          assetsData = item?.assets || '';
-        }
-        
-        if (assetsData) {
-          // Parse multiple assets (format: "Name1||Name2|Link2||Name3")
-          const assetsArray = assetsData.split('||');
-          
-          assetsArray.forEach(assetString => {
-            if (assetString.trim()) {
-              const [name, link] = assetString.split('|');
-              const hasLink = link && link.trim() !== '';
-              
-              const assetItem = document.createElement('div');
-              assetItem.className = 'asset-item p-3 bg-slate-700 rounded-lg space-y-3';
-              assetItem.innerHTML = `
-                <div class="flex gap-3 items-center">
-                  <input type="text" class="asset-name flex-1 px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Asset name..." value="${name || ''}" />
-                  <button type="button" class="toggle-link px-3 py-2 text-white rounded transition-colors text-sm ${hasLink ? 'bg-slate-600 hover:bg-slate-500' : 'bg-blue-600 hover:bg-blue-500'}">
-                    ${hasLink ? '− Link' : '+ Link'}
-                  </button>
-                  <button type="button" class="remove-asset px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Remove</button>
-                </div>
-                <div class="asset-link-container ${hasLink ? '' : 'hidden'}">
-                  <input type="url" class="asset-link w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Enter asset URL..." value="${link || ''}" />
-                </div>
-              `;
-              
-              // Add toggle link functionality
-              const toggleBtn = assetItem.querySelector('.toggle-link');
-              const linkContainer = assetItem.querySelector('.asset-link-container');
-              const linkInput = assetItem.querySelector('.asset-link') as HTMLInputElement;
-              
-              toggleBtn?.addEventListener('click', () => {
-                if (linkContainer?.classList.contains('hidden')) {
-                  linkContainer.classList.remove('hidden');
-                  toggleBtn.textContent = '− Link';
-                  toggleBtn.classList.remove('bg-blue-600', 'hover:bg-blue-500');
-                  toggleBtn.classList.add('bg-slate-600', 'hover:bg-slate-500');
-                  linkInput?.focus();
-                } else {
-                  linkContainer?.classList.add('hidden');
-                  toggleBtn.textContent = '+ Link';
-                  toggleBtn.classList.remove('bg-slate-600', 'hover:bg-slate-500');
-                  toggleBtn.classList.add('bg-blue-600', 'hover:bg-blue-500');
-                  if (linkInput) linkInput.value = '';
-                }
-              });
-              
-              // Add remove functionality
-              const removeBtn = assetItem.querySelector('.remove-asset');
-              removeBtn?.addEventListener('click', () => {
-                assetItem.remove();
-              });
-              
-              assetsContainer.appendChild(assetItem);
-            }
-          });
-        }
-        
-        // Always add at least one empty row
-        if (assetsContainer.children.length === 0) {
-          addAssetRow();
-        }
-      }
+    if (!showAssetsModal || editingAssetsItem === null) return;
+
+    let assetsData = '';
+    if (editingAssetsItem === -1) {
+      assetsData = modalForm.assets || '';
+    } else {
+      const item = schedule.find((row) => row.id === editingAssetsItem);
+      assetsData = item?.assets || '';
     }
-  }, [showAssetsModal, editingAssetsItem, schedule, modalForm.assets]);
+
+    const parsed: Array<{ id: string; name: string; link: string; showLink: boolean }> = [];
+    if (assetsData) {
+      assetsData.split('||').forEach((assetString, index) => {
+        if (!assetString.trim()) return;
+        const [name, link] = assetString.split('|');
+        const hasLink = Boolean(link && link.trim());
+        parsed.push({
+          id: `asset_${Date.now()}_${index}`,
+          name: name || '',
+          link: link || '',
+          showLink: hasLink,
+        });
+      });
+    }
+
+    setTempAssets(
+      parsed.length > 0
+        ? parsed
+        : [{ id: `asset_${Date.now()}`, name: '', link: '', showLink: false }]
+    );
+    // Intentionally omit schedule / modalForm.assets so sync cannot wipe in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAssetsModal, editingAssetsItem]);
 
   // Initialize modal when opened
   useEffect(() => {
@@ -9033,7 +9020,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pin-Notes popout: send schedule + current cue + selected columns (and available columns for selector)
   const sendPinNotesUpdate = useCallback(() => {
-    if (!pinNotesWindow || pinNotesWindow.closed || pinNotesColumns.length === 0) return;
+    if (!pinNotesWindow || pinNotesWindow.closed) return;
     const currentId = hybridTimerData?.activeTimer?.item_id ?? activeItemId;
     const availableColumns: { type: 'notes' | 'custom' | 'cue'; id: string; name: string }[] = [
       { type: 'notes', id: 'notes', name: 'Notes' },
@@ -9055,7 +9042,7 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data?.type === 'PIN_NOTES_READY') sendPinNotesUpdate();
-      if (e.data?.type === 'PIN_NOTES_SET_COLUMNS' && Array.isArray(e.data?.columns) && e.data.columns.length > 0) {
+      if (e.data?.type === 'PIN_NOTES_SET_COLUMNS' && Array.isArray(e.data?.columns)) {
         setPinNotesColumns(e.data.columns);
       }
     };
@@ -11028,25 +11015,25 @@ const RunOfShowPage: React.FC = () => {
                 </button>
               </div>
               
-              {/* Messages Button */}
+              {/* Messages Button — EDITOR + OPERATOR */}
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
-                      alert('Only OPERATORs can send messages. Please change your role to OPERATOR.');
+                    if (currentUserRole === 'VIEWER') {
+                      alert('Viewers cannot send messages. Please change your role to EDITOR or OPERATOR.');
                       return;
                     }
                     setShowMessagesModal(true);
                   }}
                   className={`px-4 py-2 text-white text-sm font-medium rounded transition-colors ${
-                    currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                    currentUserRole === 'VIEWER'
                       ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                       : messageEnabled 
                         ? 'bg-purple-600 hover:bg-purple-500 ring-4 ring-inset ring-green-500' 
                         : 'bg-purple-600 hover:bg-purple-500'
                   }`}
-                  disabled={currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
-                  title={currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' ? 'Only OPERATORs can send messages' : 'Send Messages to Full Screen Timer'}
+                  disabled={currentUserRole === 'VIEWER'}
+                  title={currentUserRole === 'VIEWER' ? 'Viewers cannot send messages' : 'Send Messages to Full Screen Timer'}
                 >
                   Messages
                 </button>
@@ -11055,8 +11042,8 @@ const RunOfShowPage: React.FC = () => {
                 {messageEnabled && (
                   <button
                     onClick={async () => {
-                      if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
-                        alert('Only OPERATORs can control messages. Please change your role to OPERATOR.');
+                      if (currentUserRole === 'VIEWER') {
+                        alert('Viewers cannot control messages. Please change your role to EDITOR or OPERATOR.');
                         return;
                       }
                       
@@ -11730,7 +11717,7 @@ const RunOfShowPage: React.FC = () => {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleUserEditing();
+                                handleModalEditing();
                                 setActiveJumpMenu(null);
                                 setBreakoutRoomParentId(item.id);
                                 setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
@@ -13164,6 +13151,7 @@ const RunOfShowPage: React.FC = () => {
                <label className="block text-white text-sm mb-2">Notes:</label>
                <div
                  id="notes-editor"
+                 ref={notesEditorRef}
                  contentEditable
                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white text-base focus:outline-none focus:border-blue-500 overflow-auto"
                  style={{ 
@@ -13173,7 +13161,10 @@ const RunOfShowPage: React.FC = () => {
                  }}
                  data-placeholder="Start typing your notes here..."
                  onInput={(e) => {
-                   // Optional: Add any real-time processing here
+                   setTempNotesHtml((e.currentTarget as HTMLDivElement).innerHTML);
+                 }}
+                 onBlur={(e) => {
+                   setTempNotesHtml((e.currentTarget as HTMLDivElement).innerHTML);
                  }}
                />
              </div>
@@ -13190,6 +13181,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowNotesModal(false);
                    setEditingNotesItem(null);
+                   setTempNotesHtml('');
                    handleModalClosed();
                  }}
                  className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
@@ -13415,7 +13407,48 @@ const RunOfShowPage: React.FC = () => {
                </div>
                
                <div id="assets-list" className="space-y-3">
-                 {/* Assets will be dynamically added here */}
+                 {tempAssets.map((asset) => (
+                   <div key={asset.id} className="asset-item p-3 bg-slate-700 rounded-lg space-y-3">
+                     <div className="flex gap-3 items-center">
+                       <input
+                         type="text"
+                         className="asset-name flex-1 px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                         placeholder="Asset name..."
+                         value={asset.name}
+                         onChange={(e) => updateAssetField(asset.id, 'name', e.target.value)}
+                       />
+                       <button
+                         type="button"
+                         onClick={() => toggleAssetLink(asset.id)}
+                         className={`toggle-link px-3 py-2 text-white rounded transition-colors text-sm ${
+                           asset.showLink
+                             ? 'bg-slate-600 hover:bg-slate-500'
+                             : 'bg-blue-600 hover:bg-blue-500'
+                         }`}
+                       >
+                         {asset.showLink ? '− Link' : '+ Link'}
+                       </button>
+                       <button
+                         type="button"
+                         onClick={() => removeAssetRow(asset.id)}
+                         className="remove-asset px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded transition-colors"
+                       >
+                         Remove
+                       </button>
+                     </div>
+                     {asset.showLink && (
+                       <div className="asset-link-container">
+                         <input
+                           type="url"
+                           className="asset-link w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                           placeholder="Enter asset URL..."
+                           value={asset.link}
+                           onChange={(e) => updateAssetField(asset.id, 'link', e.target.value)}
+                         />
+                       </div>
+                     )}
+                   </div>
+                 ))}
                </div>
              </div>
              
@@ -15224,6 +15257,7 @@ const RunOfShowPage: React.FC = () => {
                       setBreakoutRoomParentId(null);
                       setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
                       setNumberOfBreakoutRooms(1);
+                      handleModalClosed();
                     } else {
                       alert('Please fill in both Location and Breakout Title for all rooms.');
                     }
@@ -15239,6 +15273,7 @@ const RunOfShowPage: React.FC = () => {
                     setBreakoutRoomParentId(null);
                     setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
                     setNumberOfBreakoutRooms(1);
+                    handleModalClosed();
                   }}
                   className="flex-1 px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded transition-colors"
                 >

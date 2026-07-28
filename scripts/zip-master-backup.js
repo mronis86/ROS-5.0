@@ -125,14 +125,14 @@ function shouldSkipOverlay(relPath) {
 }
 
 function copyPathToStaging(src, dest) {
+  const pruneDirNames = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage']);
   const stat = fs.statSync(src);
   if (stat.isDirectory()) {
     rmRecursive(dest);
-    fs.cpSync(src, dest, { recursive: true, filter: (p) => {
-      const base = path.basename(p);
-      if (PRUNE_DIR_NAMES.has(base)) return false;
-      return true;
-    }});
+    fs.cpSync(src, dest, {
+      recursive: true,
+      filter: (p) => !pruneDirNames.has(path.basename(p)),
+    });
   } else {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(src, dest);

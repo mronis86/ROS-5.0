@@ -440,10 +440,7 @@ const PinNotesPopoutPage: React.FC = () => {
   const togglePickerColumn = (col: RosColumnSpec) => {
     setPickerSelected((prev) => {
       const has = prev.some((c) => c.id === col.id && c.type === col.type);
-      if (has) {
-        const next = prev.filter((c) => !(c.id === col.id && c.type === col.type));
-        return next.length > 0 ? next : prev;
-      }
+      if (has) return prev.filter((c) => !(c.id === col.id && c.type === col.type));
       return [...prev, col];
     });
   };
@@ -467,8 +464,14 @@ const PinNotesPopoutPage: React.FC = () => {
     });
   };
 
+  const canApplyColumnPicker =
+    pickerSelected.length > 0 ||
+    pickerSelectedOperators.length > 0 ||
+    (myNotesEnabled && !!operatorName);
+
   const applyColumnPicker = () => {
-    if (pickerSelected.length === 0) return;
+    if (!canApplyColumnPicker) return;
+    setColumns(pickerSelected);
     if (window.opener) {
       window.opener.postMessage({ type: 'PIN_NOTES_SET_COLUMNS', columns: pickerSelected }, '*');
     }
@@ -755,9 +758,20 @@ const PinNotesPopoutPage: React.FC = () => {
         {showColumnPicker && (
           <div className="mb-6 p-4 bg-slate-800 rounded-xl border border-slate-600">
             <p className="text-slate-300 text-sm mb-3">
-              Shared columns from the Run of Show (read-only here). Cue is always shown on the left.
+              Cue stays on the left. Uncheck all Shared columns to show only People notes (and your notes, if enabled).
             </p>
-            <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">Shared columns</p>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-slate-400 text-xs uppercase tracking-wide">Shared columns</p>
+              {pickerSelected.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setPickerSelected([])}
+                  className="text-xs text-slate-400 hover:text-white underline"
+                >
+                  Clear all shared
+                </button>
+              ) : null}
+            </div>
             <div className="flex flex-wrap gap-2 mb-4">
               {(availableColumns.length > 0
                 ? availableColumns
@@ -818,7 +832,7 @@ const PinNotesPopoutPage: React.FC = () => {
               <button
                 type="button"
                 onClick={applyColumnPicker}
-                disabled={pickerSelected.length === 0}
+                disabled={!canApplyColumnPicker}
                 className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg"
               >
                 Apply
@@ -973,10 +987,10 @@ const PinNotesPopoutPage: React.FC = () => {
           </div>
         )}
 
-        {columns.length === 0 && !myNotesEnabled && displayRows.length > 0 && (
+        {columns.length === 0 && !myNotesEnabled && operatorColumns.length === 0 && displayRows.length > 0 && (
           <p className="text-slate-500 mt-3">
-            Only Cue shown. Use &ldquo;Change columns&rdquo; for shared ROS columns, or &ldquo;Set up my notes&rdquo; for
-            your private column.
+            Only Cue shown. Use &ldquo;Change columns&rdquo; for shared ROS columns or People notes, or &ldquo;Set up my
+            notes&rdquo; for your private column.
           </p>
         )}
       </div>
