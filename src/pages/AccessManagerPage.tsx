@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { canAccessAccessManager } from '../services/auth-service';
 import { getApiBaseUrl } from '../services/api-client';
 import { apiJsonHeaders } from '../lib/sessionAuth';
+import AccessEventAccessModal from '../components/AccessEventAccessModal';
 
 type AccessStatus = 'pending' | 'approved' | 'rejected';
 
@@ -41,6 +42,7 @@ export default function AccessManagerPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | AccessStatus>('pending');
   const [search, setSearch] = useState('');
+  const [approveModalUser, setApproveModalUser] = useState<AccessRequestRow | null>(null);
 
   const fetchRequests = useCallback(async () => {
     setListLoading(true);
@@ -77,25 +79,6 @@ export default function AccessManagerPage() {
         (row.full_name || '').toLowerCase().includes(q)
     );
   }, [requests, search]);
-
-  const approve = async (id: string, email: string) => {
-    if (!confirm(`Approve access for ${email}?`)) return;
-    setError(null);
-    try {
-      const res = await accessManagerFetch(`/api/admin/access-requests/${id}/approve`, {
-        method: 'POST',
-        body: JSON.stringify({ make_admin: false }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError((data as { error?: string }).error || `HTTP ${res.status}`);
-        return;
-      }
-      await fetchRequests();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Approve failed');
-    }
-  };
 
   const reject = async (id: string, email: string) => {
     if (!confirm(`Reject access for ${email}?`)) return;
@@ -138,8 +121,8 @@ export default function AccessManagerPage() {
               Access manager
             </h1>
             <p className="mt-2 text-sm text-slate-400 max-w-2xl">
-              Review and approve user access requests. Event managers can authorize users but cannot grant
-              administrator privileges.
+              Review and approve user access requests. Choose calendar visibility when approving. Event
+              managers cannot grant administrator privileges.
             </p>
           </div>
           <Link
@@ -232,7 +215,7 @@ export default function AccessManagerPage() {
                           {row.status !== 'approved' ? (
                             <button
                               type="button"
-                              onClick={() => void approve(row.id, row.email)}
+                              onClick={() => setApproveModalUser(row)}
                               className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-600"
                             >
                               Approve
@@ -257,6 +240,15 @@ export default function AccessManagerPage() {
           )}
         </div>
       </div>
+
+      <AccessEventAccessModal
+        open={approveModalUser != null}
+        mode="approve"
+        user={approveModalUser}
+        fetchFn={accessManagerFetch}
+        onClose={() => setApproveModalUser(null)}
+        onApproved={() => void fetchRequests()}
+      />
     </div>
   );
 }

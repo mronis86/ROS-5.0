@@ -19,6 +19,7 @@ import {
 } from '../lib/appSettings';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
+import AccessEventAccessModal, { type ApproveAccessResult } from '../components/AccessEventAccessModal';
 import {
   approvedDomainInputHint,
   normalizeApprovedDomainInput,
@@ -61,12 +62,6 @@ interface AccessRequestRow {
   portal_url?: string | null;
   event_access_count?: number;
   dashboard_enabled?: boolean;
-}
-
-interface EventAccessCalendarRow {
-  id: string;
-  name: string;
-  date: string;
 }
 
 /** Matches VALID_SCOPES in lib/api-auth.js — keep hints in sync with enforcement there. */
@@ -441,13 +436,11 @@ export default function AdminPage() {
   const [accessUserSearch, setAccessUserSearch] = useState('');
   const [dashboardNeedsMigration, setDashboardNeedsMigration] = useState(false);
   const [copiedPortalUserId, setCopiedPortalUserId] = useState<string | null>(null);
-  const [eventAccessUser, setEventAccessUser] = useState<AccessRequestRow | null>(null);
-  const [eventAccessLoading, setEventAccessLoading] = useState(false);
-  const [eventAccessSaving, setEventAccessSaving] = useState(false);
-  const [eventAccessError, setEventAccessError] = useState<string | null>(null);
-  const [eventAccessEvents, setEventAccessEvents] = useState<EventAccessCalendarRow[]>([]);
-  const [eventAccessSelected, setEventAccessSelected] = useState<Set<string>>(new Set());
-  const [eventAccessSearch, setEventAccessSearch] = useState('');
+  const [accessEventModal, setAccessEventModal] = useState<{
+    mode: 'approve' | 'edit';
+    user: AccessRequestRow;
+    makeAdmin?: boolean;
+  } | null>(null);
   const [accessEmailDraft, setAccessEmailDraft] = useState<{
     email: string;
     fullName: string;
@@ -1222,36 +1215,31 @@ export default function AdminPage() {
     }
   }, [accessStatusFilter]);
 
-  const approveAccessRequest = useCallback(
-    async (id: string, email: string, fullName: string, makeAdmin = false) => {
-      if (!confirm(`Approve access for ${email}?${makeAdmin ? ' (as administrator)' : ''}`)) return;
-      setAccessRequestsError(null);
-      try {
-        const res = await adminFetch(`/api/admin/access-requests/${id}/approve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ make_admin: makeAdmin }),
+  const openApproveAccessModal = useCallback(
+    (row: AccessRequestRow, makeAdmin = false) => {
+      setAccessEventModal({ mode: 'approve', user: row, makeAdmin });
+    },
+    []
+  );
+
+  const openEditEventAccessModal = useCallback((row: AccessRequestRow) => {
+    setAccessEventModal({ mode: 'edit', user: row });
+  }, []);
+
+  const closeAccessEventModal = useCallback(() => {
+    setAccessEventModal(null);
+  }, []);
+
+  const handleAccessApproved = useCallback(
+    (row: AccessRequestRow, makeAdmin: boolean, result: ApproveAccessResult) => {
+      void fetchAccessRequests();
+      if (result.portalUrl) {
+        setAccessEmailDraft({
+          email: row.email,
+          fullName: result.request?.full_name || row.full_name || '',
+          portalUrl: result.portalUrl,
+          isAdmin: makeAdmin || !!result.request?.is_admin,
         });
-        const data = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          portalUrl?: string;
-          request?: { full_name?: string; is_admin?: boolean };
-        };
-        if (!res.ok) {
-          setAccessRequestsError(data.error || `HTTP ${res.status}`);
-          return;
-        }
-        await fetchAccessRequests();
-        if (data.portalUrl) {
-          setAccessEmailDraft({
-            email,
-            fullName: data.request?.full_name || fullName,
-            portalUrl: data.portalUrl,
-            isAdmin: makeAdmin || !!data.request?.is_admin,
-          });
-        }
-      } catch (e) {
-        setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
       }
     },
     [fetchAccessRequests]
@@ -1341,89 +1329,6 @@ export default function AdminPage() {
     [fetchAccessRequests]
   );
 
-  const closeEventAccessModal = useCallback(() => {
-    setEventAccessUser(null);
-    setEventAccessError(null);
-    setEventAccessEvents([]);
-    setEventAccessSelected(new Set());
-    setEventAccessSearch('');
-  }, []);
-
-  const openEventAccessModal = useCallback(async (row: AccessRequestRow) => {
-    setEventAccessUser(row);
-    setEventAccessLoading(true);
-    setEventAccessError(null);
-    setEventAccessSearch('');
-    try {
-      const res = await adminFetch(`/api/admin/access-requests/${row.id}/event-access`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setEventAccessError((data as { error?: string }).error || `HTTP ${res.status}`);
-        return;
-      }
-      const data = (await res.json()) as {
-        event_ids?: string[];
-        events?: EventAccessCalendarRow[];
-        needsMigration?: boolean;
-      };
-      if (data.needsMigration) {
-        setEventAccessError('Run migration 031 on Neon to enable per-user event access.');
-      }
-      const ids = Array.isArray(data.event_ids) ? data.event_ids : [];
-      setEventAccessEvents(Array.isArray(data.events) ? data.events : []);
-      setEventAccessSelected(new Set(ids));
-    } catch (e) {
-      setEventAccessError(e instanceof Error ? e.message : 'Failed to load event access');
-    } finally {
-      setEventAccessLoading(false);
-    }
-  }, []);
-
-  const toggleEventAccessSelection = useCallback((eventId: string) => {
-    setEventAccessSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(eventId)) next.delete(eventId);
-      else next.add(eventId);
-      return next;
-    });
-  }, []);
-
-  const saveEventAccess = useCallback(async () => {
-    if (!eventAccessUser) return;
-    setEventAccessSaving(true);
-    setEventAccessError(null);
-    try {
-      const event_ids = [...eventAccessSelected];
-      const res = await adminFetch(`/api/admin/access-requests/${eventAccessUser.id}/event-access`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_ids }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setEventAccessError((data as { error?: string }).error || `HTTP ${res.status}`);
-        return;
-      }
-      closeEventAccessModal();
-      await fetchAccessRequests();
-    } catch (e) {
-      setEventAccessError(e instanceof Error ? e.message : 'Failed to save event access');
-    } finally {
-      setEventAccessSaving(false);
-    }
-  }, [closeEventAccessModal, eventAccessSelected, eventAccessUser, fetchAccessRequests]);
-
-  const filteredEventAccessEvents = useMemo(() => {
-    const q = eventAccessSearch.trim().toLowerCase();
-    if (!q) return eventAccessEvents;
-    return eventAccessEvents.filter(
-      (event) =>
-        event.name.toLowerCase().includes(q) ||
-        event.id.toLowerCase().includes(q) ||
-        event.date.includes(q)
-    );
-  }, [eventAccessEvents, eventAccessSearch]);
-
   const toggleAccessSort = (key: AccessSortKey) => {
     setAccessSort((prev) =>
       prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }
@@ -1487,7 +1392,7 @@ export default function AdminPage() {
       {r.status !== 'approved' && (
         <button
           type="button"
-          onClick={() => approveAccessRequest(r.id, r.email, r.full_name || '', false)}
+          onClick={() => openApproveAccessModal(r, false)}
           className={`${accessActionBtn} bg-emerald-700 hover:bg-emerald-600 text-white`}
         >
           Approve
@@ -1510,7 +1415,7 @@ export default function AdminPage() {
       {r.status !== 'approved' && (
         <button
           type="button"
-          onClick={() => approveAccessRequest(r.id, r.email, r.full_name || '', true)}
+          onClick={() => openApproveAccessModal(r, true)}
           className={`${accessActionBtn} bg-blue-700 hover:bg-blue-600 text-white`}
         >
           Approve admin
@@ -1541,7 +1446,7 @@ export default function AdminPage() {
       {r.status === 'approved' && (
         <button
           type="button"
-          onClick={() => void openEventAccessModal(r)}
+          onClick={() => openEditEventAccessModal(r)}
           className={`${accessActionBtn} gap-0.5 bg-violet-800 hover:bg-violet-700 text-white`}
           title="Choose which events this user can access"
         >
@@ -3853,124 +3758,24 @@ export default function AdminPage() {
           </p>
         </section>
 
-        {eventAccessUser && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60">
-            <div
-              className="w-full max-w-2xl bg-slate-800 border border-slate-600 rounded-xl shadow-2xl max-h-[90vh] flex flex-col"
-              role="dialog"
-              aria-labelledby="event-access-title"
-            >
-              <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-700 shrink-0">
-                <div>
-                  <h3 id="event-access-title" className="text-lg font-semibold text-white">
-                    Event access
-                  </h3>
-                  <p className="text-slate-400 text-sm mt-1">
-                    {eventAccessUser.full_name || eventAccessUser.email}
-                    {eventAccessUser.is_admin && (
-                      <span className="text-slate-500"> — admins always see all events</span>
-                    )}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={closeEventAccessModal}
-                  className="p-1 text-slate-400 hover:text-white"
-                  aria-label="Close"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
-                {eventAccessError && (
-                  <div className="px-3 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
-                    {eventAccessError}
-                  </div>
-                )}
-                <p className="text-slate-400 text-sm">
-                  Leave nothing checked for access to <span className="text-white">all events</span>. Check specific
-                  events to restrict this user to only those.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    type="search"
-                    value={eventAccessSearch}
-                    onChange={(e) => setEventAccessSearch(e.target.value)}
-                    placeholder="Search events…"
-                    className="flex-1 min-w-[12rem] px-3 py-2 bg-slate-900/60 border border-slate-600 rounded-lg text-sm text-white placeholder:text-slate-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setEventAccessSelected(new Set(eventAccessEvents.map((e) => e.id)))}
-                    disabled={eventAccessLoading || eventAccessEvents.length === 0}
-                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs rounded-lg"
-                  >
-                    Select all
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEventAccessSelected(new Set())}
-                    disabled={eventAccessLoading}
-                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs rounded-lg"
-                  >
-                    Clear (all events)
-                  </button>
-                </div>
-                {eventAccessLoading ? (
-                  <p className="text-slate-400 text-sm">Loading events…</p>
-                ) : filteredEventAccessEvents.length === 0 ? (
-                  <p className="text-slate-400 text-sm">No events match your search.</p>
-                ) : (
-                  <ul className="divide-y divide-slate-700/60 border border-slate-700/80 rounded-lg max-h-80 overflow-y-auto">
-                    {filteredEventAccessEvents.map((event) => {
-                      const checked = eventAccessSelected.has(event.id);
-                      return (
-                        <li key={event.id}>
-                          <label className="flex items-start gap-3 px-3 py-2.5 hover:bg-slate-900/40 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleEventAccessSelection(event.id)}
-                              className="mt-1 rounded border-slate-500 bg-slate-900 text-violet-500 focus:ring-violet-500"
-                            />
-                            <span className="min-w-0">
-                              <span className="block text-white text-sm font-medium truncate">{event.name}</span>
-                              <span className="block text-slate-500 text-xs">
-                                {event.date || 'No date'} · <code className="text-slate-400">{event.id}</code>
-                              </span>
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                <p className="text-xs text-slate-500">
-                  {eventAccessSelected.size === 0
-                    ? 'No restrictions — user can access every event.'
-                    : `${eventAccessSelected.size} event${eventAccessSelected.size === 1 ? '' : 's'} selected.`}
-                </p>
-              </div>
-              <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-700 shrink-0">
-                <button
-                  type="button"
-                  onClick={closeEventAccessModal}
-                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveEventAccess()}
-                  disabled={eventAccessSaving || eventAccessLoading}
-                  className="px-4 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
-                >
-                  {eventAccessSaving ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <AccessEventAccessModal
+          open={accessEventModal != null}
+          mode={accessEventModal?.mode ?? 'edit'}
+          user={accessEventModal?.user ?? null}
+          makeAdmin={accessEventModal?.makeAdmin}
+          fetchFn={adminFetch}
+          onClose={closeAccessEventModal}
+          onApproved={(result) => {
+            if (accessEventModal?.mode === 'approve' && accessEventModal.user) {
+              handleAccessApproved(
+                accessEventModal.user,
+                accessEventModal.makeAdmin === true,
+                result
+              );
+            }
+          }}
+          onSaved={() => void fetchAccessRequests()}
+        />
 
         {accessEmailDraft && approvalEmailDraftContent && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60">
