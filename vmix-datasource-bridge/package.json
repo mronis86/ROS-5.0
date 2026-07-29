@@ -1,0 +1,49 @@
+{
+  "name": "ros-vmix-datasource-bridge",
+  "version": "0.1.0",
+  "description": "Portable ROS → vMix Data Source row selector (follows loaded cues on Railway)",
+  "private": true,
+  "main": "electron/main.js",
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node scripts/row-matcher-test.js",
+    "pack": "electron-builder --dir",
+    "build:portable": "electron-builder --win portable",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.sinor.ros.vmix-datasource",
+    "productName": "ROS vMix DataSource Bridge",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "build/icon.ico",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "ROS-vMix-DataSource-Bridge-${version}-portable.exe"
+    },
+    "portable": {
+      "artifactName": "ROS-vMix-DataSource-Bridge-${version}-portable.exe"
+    }
+  }
+}

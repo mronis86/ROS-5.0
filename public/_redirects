@@ -4,6 +4,7 @@
 /ROS-OSC-Control-portable.zip   /ROS-OSC-Control-portable.zip   200
 /electron-osc-app.zip           /electron-osc-app.zip           200
 /ros-led-spout.zip              /ros-led-spout.zip              200
+/ros-vmix-datasource-bridge.zip /ros-vmix-datasource-bridge.zip 200
 
 # SPA: all other routes to index.html
 /*    /index.html   200

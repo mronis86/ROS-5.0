@@ -62,6 +62,12 @@
   status = 200
   force = true
 
+[[redirects]]
+  from = "/ros-vmix-datasource-bridge.zip"
+  to = "/ros-vmix-datasource-bridge.zip"
+  status = 200
+  force = true
+
 # SPA fallback - all other routes to index.html
 # Do not serve source maps if they ever appear in a build artifact (must be before /* catch-all)
 [[redirects]]

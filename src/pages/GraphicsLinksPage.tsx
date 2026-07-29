@@ -761,8 +761,8 @@ const GraphicsLinksPage: React.FC = () => {
           </button>
         </div>
 
-        {/* Download Grid - Python & Node */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Download Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Python Desktop App */}
           <div className="bg-green-800 rounded-lg p-5 shadow-lg border border-green-600 hover:shadow-xl transition-shadow">
             <h3 className="text-lg font-bold text-white mb-2">🐍 Python Desktop App</h3>
@@ -807,6 +807,31 @@ const GraphicsLinksPage: React.FC = () => {
               📥 Download Local Server
             </a>
             <p className="text-purple-300 text-xs text-center mt-2">~50 KB • Requires Node.js 18+</p>
+          </div>
+
+          {/* vMix DataSource Bridge */}
+          <div className="bg-cyan-900 rounded-lg p-5 shadow-lg border border-cyan-600 hover:shadow-xl transition-shadow">
+            <h3 className="text-lg font-bold text-white mb-2">🎛 vMix DataSource Bridge</h3>
+            <p className="text-cyan-200 text-xs mb-3">
+              Follows the loaded ROS cue and selects the matching row in vMix Data Sources
+            </p>
+
+            <div className="bg-cyan-950/40 rounded p-2 mb-3">
+              <ul className="text-cyan-100 text-xs space-y-0.5">
+                <li>• Cue column or row-index match</li>
+                <li>• Multi Data Source bindings</li>
+                <li>• Double-click START.bat (Node.js)</li>
+              </ul>
+            </div>
+
+            <a
+              href="/ros-vmix-datasource-bridge.zip"
+              download="ros-vmix-datasource-bridge.zip"
+              className="block w-full bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
+            >
+              📥 Download vMix Bridge
+            </a>
+            <p className="text-cyan-300 text-xs text-center mt-2">Source package • Requires Node.js 18+</p>
           </div>
         </div>
       </div>
