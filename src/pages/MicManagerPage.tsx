@@ -9,12 +9,12 @@ import {
   formatSpeakerLocation,
 } from '../showcase/photoShowcaseHelpers';
 import {
-  formatMicAssignmentLabel,
   getMicAssignment,
   MIC_TYPE_OPTIONS,
   MIC_UNIT_MAX,
   micAssignmentKey,
   micNeedsUnit,
+  micTypeLabel,
   normalizeMicUnit,
   parseMicAssignmentsPayload,
   resolveMicAssignment,
@@ -35,6 +35,9 @@ type ScheduleItem = {
   segmentName?: string;
   shotType?: string;
   speakersText?: string;
+  durationHours?: number;
+  durationMinutes?: number;
+  durationSeconds?: number;
   customFields?: { cue?: string; [key: string]: unknown };
 };
 
@@ -49,11 +52,23 @@ const TYPE_COLOR: Record<string, string> = {
   'Remote Only': '#60A5FA',
   'Break F&B/B2B': '#EC4899',
   'Breakout Session': '#20B2AA',
+  'Delay Block': '#7C3AED',
   Podium: '#8B4513',
   Panel: '#404040',
   'PreShow/End': '#8B5CF6',
   KILLED: '#DC2626',
 };
+
+function formatDelayDuration(item: ScheduleItem): string {
+  const h = Math.max(0, Math.floor(Number(item.durationHours) || 0));
+  const m = Math.max(0, Math.floor(Number(item.durationMinutes) || 0));
+  const s = Math.max(0, Math.floor(Number(item.durationSeconds) || 0));
+  const parts: string[] = [];
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  if (s || parts.length === 0) parts.push(`${s}s`);
+  return parts.join(' ');
+}
 
 function formatCueDisplay(cue: unknown): string {
   const raw = String(cue || '').trim();
@@ -117,6 +132,21 @@ const MicManagerPage: React.FC = () => {
   const [assignments, setAssignments] = useState<Record<string, MicAssignment>>({});
   const [saving, setSaving] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('plan');
+  const [speakersOnly, setSpeakersOnly] = useState(() => {
+    try {
+      // Default: All rows. Only Speakers when explicitly saved as '1'.
+      return localStorage.getItem('mic-manager-row-filter') === 'speakers';
+    } catch {
+      return false;
+    }
+  });
+  const [compactView, setCompactView] = useState(() => {
+    try {
+      return localStorage.getItem('mic-manager-compact') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [openMicPicker, setOpenMicPicker] = useState<string | null>(null);
   const micPickerRef = useRef<HTMLDivElement | null>(null);
@@ -366,12 +396,29 @@ const MicManagerPage: React.FC = () => {
     if (viewMode !== 'plan') setOpenMicPicker(null);
   }, [viewMode]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('mic-manager-row-filter', speakersOnly ? 'speakers' : 'all');
+    } catch {
+      /* ignore */
+    }
+  }, [speakersOnly]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mic-manager-compact', compactView ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [compactView]);
+
   const dayItems = useMemo(() => {
-    return schedule.filter(
-      (item) =>
-        (item.day || 1) === selectedDay && speakersWithNames(item.speakersText).length > 0
-    );
-  }, [schedule, selectedDay]);
+    return schedule.filter((item) => {
+      if ((item.day || 1) !== selectedDay) return false;
+      if (!speakersOnly) return true;
+      return speakersWithNames(item.speakersText).length > 0;
+    });
+  }, [schedule, selectedDay, speakersOnly]);
 
   const remainingSeconds = timerProgress.total - timerProgress.elapsed;
   const hasTimer = Boolean(activeItemId && (timerRunning || timerLoaded) && timerProgress.total > 0);
@@ -507,6 +554,46 @@ const MicManagerPage: React.FC = () => {
                     Follow
                   </button>
                 </div>
+
+                <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
+                  <button
+                    type="button"
+                    onClick={() => setSpeakersOnly(false)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${
+                      !speakersOnly ? 'bg-slate-500 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Show every cue on this day"
+                  >
+                    All rows
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpeakersOnly(true)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${
+                      speakersOnly ? 'bg-slate-500 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Only cues that have speakers"
+                  >
+                    Speakers
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCompactView((v) => !v)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md border ${
+                    compactView
+                      ? 'bg-amber-700/80 border-amber-500 text-white'
+                      : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'
+                  }`}
+                  title={
+                    compactView
+                      ? 'Showing compact audio view (no photos)'
+                      : 'Hide photos for a denser audio-board view'
+                  }
+                >
+                  {compactView ? 'Compact on' : 'Compact'}
+                </button>
               </div>
             </div>
 
@@ -579,44 +666,97 @@ const MicManagerPage: React.FC = () => {
           <div className="text-center text-red-300 py-12 bg-slate-800 border border-slate-600">{error}</div>
         ) : dayItems.length === 0 ? (
           <div className="text-center text-gray-400 py-12 bg-slate-800 border border-slate-600">
-            No cues with speakers on this day.
+            {speakersOnly
+              ? 'No cues with speakers on this day. Switch to All rows to see the full schedule.'
+              : 'No cues on this day.'}
           </div>
         ) : (
           dayItems.map((item) => {
-            const slots = speakersForSlots(item.speakersText);
-            const cue = String(item.customFields?.cue || `CUE ${item.id}`);
+            const isDelayBlock = item.programType === 'Delay Block';
+            const cue = String(item.customFields?.cue || (isDelayBlock ? 'DELAY' : `CUE ${item.id}`));
             const ptColor = TYPE_COLOR[item.programType || ''] || '#6B7280';
             const highlight = rowHighlight(item.id);
-            const canEdit = viewMode === 'plan';
             const rowPickerOpen = Boolean(
               openMicPicker && String(openMicPicker).startsWith(`${item.id}:`)
             );
             const rowDimmed = Boolean(openMicPicker && !rowPickerOpen);
 
+            if (isDelayBlock) {
+              return (
+                <div
+                  key={item.id}
+                  id={`mic-row-${item.id}`}
+                  className={`border-2 border-violet-400/70 ${
+                    compactView ? 'mb-1.5' : 'mb-3'
+                  } last:mb-0 rounded-sm overflow-hidden ${
+                    rowDimmed ? 'opacity-30 pointer-events-none' : ''
+                  }`}
+                >
+                  <div
+                    className="grid gap-0"
+                    style={{
+                      minHeight: compactView ? 52 : 64,
+                      gridTemplateColumns: MIC_TABLE_COLS,
+                      backgroundColor: '#2e1065',
+                      backgroundImage:
+                        'repeating-linear-gradient(135deg, rgba(167,139,250,0.18) 0, rgba(167,139,250,0.18) 10px, rgba(46,16,101,0.14) 10px, rgba(46,16,101,0.14) 20px)',
+                    }}
+                  >
+                    <div className="border-r border-violet-400/50 p-2 flex flex-col items-center justify-center">
+                      <div className="text-sm font-bold text-violet-100">{cue}</div>
+                      <div
+                        className="mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold text-white border border-violet-300/50"
+                        style={{ backgroundColor: ptColor }}
+                      >
+                        Delay Block
+                      </div>
+                    </div>
+                    <div
+                      className="flex items-center justify-center px-3 border-r border-violet-400/40"
+                      style={{ gridColumn: '2 / -1' }}
+                    >
+                      <div className="w-full rounded-md border border-violet-300/70 bg-violet-900/70 px-3 py-2 text-center text-sm font-bold tracking-wide text-violet-50">
+                        ⏱ SEGMENT DELAY · {formatDelayDuration(item)} · ALL FOLLOWING START TIMES SHIFTED
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            const slots = speakersForSlots(item.speakersText);
+            const canEdit = viewMode === 'plan';
+
             return (
               <div
                 key={item.id}
                 id={`mic-row-${item.id}`}
-                className={`${highlight.border} mb-3 last:mb-0 rounded-sm transition-opacity duration-150 ${
+                className={`${highlight.border} ${
+                  compactView ? 'mb-1.5' : 'mb-3'
+                } last:mb-0 rounded-sm transition-opacity duration-150 ${
                   rowDimmed ? 'opacity-30 pointer-events-none' : ''
                 }`}
               >
                 <div
                   className={`grid gap-0 ${highlight.bg}`}
                   style={{
-                    minHeight: 188,
+                    minHeight: compactView ? 96 : 210,
                     gridTemplateColumns: MIC_TABLE_COLS,
                   }}
                 >
                   <div
-                    className={`border-r border-slate-600 p-3 flex flex-col justify-center transition-opacity duration-150 ${
+                    className={`border-r border-slate-600 ${compactView ? 'p-2' : 'p-3'} flex flex-col justify-center transition-opacity duration-150 ${
                       rowPickerOpen ? 'opacity-40' : ''
                     }`}
                   >
                     <div className="text-center">
-                      <div className="text-lg font-bold mb-3 text-white">{cue}</div>
+                      <div className={`${compactView ? 'text-base mb-1.5' : 'text-lg mb-3'} font-bold text-white`}>
+                        {cue}
+                      </div>
                       <div
-                        className="inline-block px-2 py-1 rounded text-xs font-medium text-white border shadow-lg"
+                        className={`inline-block px-2 py-1 rounded text-xs font-medium text-white border shadow-lg ${
+                          compactView ? 'text-[10px] px-1.5 py-0.5' : ''
+                        }`}
                         style={{ backgroundColor: ptColor }}
                       >
                         {item.programType || 'Cue'}
@@ -625,16 +765,25 @@ const MicManagerPage: React.FC = () => {
                   </div>
 
                   <div
-                    className={`border-r border-slate-600 p-3 flex flex-col justify-center min-w-0 transition-opacity duration-150 ${
+                    className={`border-r border-slate-600 ${compactView ? 'p-2' : 'p-3'} flex flex-col justify-center min-w-0 transition-opacity duration-150 ${
                       rowPickerOpen ? 'opacity-40' : ''
                     }`}
                   >
-                    <div className="text-gray-400 text-xs mb-1">SEGMENT NAME</div>
-                    <div className="text-lg font-bold leading-tight text-white break-words">
+                    {!compactView && <div className="text-gray-400 text-xs mb-1">SEGMENT NAME</div>}
+                    <div
+                      className={`${compactView ? 'text-sm' : 'text-lg'} font-bold leading-tight text-white break-words`}
+                    >
                       {item.segmentName || 'Untitled'}
                     </div>
-                    <div className="text-gray-400 text-xs mt-3 mb-1">SHOT TYPE</div>
-                    <div className="text-sm font-bold text-white">{item.shotType || '—'}</div>
+                    {!compactView && (
+                      <>
+                        <div className="text-gray-400 text-xs mt-3 mb-1">SHOT TYPE</div>
+                        <div className="text-sm font-bold text-white">{item.shotType || '—'}</div>
+                      </>
+                    )}
+                    {compactView && item.shotType ? (
+                      <div className="text-[11px] text-slate-400 mt-0.5 truncate">{item.shotType}</div>
+                    ) : null}
                   </div>
 
                   {slots.map((speaker, index) => {
@@ -652,33 +801,47 @@ const MicManagerPage: React.FC = () => {
                     return (
                       <div
                         key={slotNumber}
-                        className={`min-w-0 ${slotNumber < 7 ? 'border-r border-slate-600' : ''} p-2 flex flex-col transition-opacity duration-150 ${
+                        className={`min-w-0 ${slotNumber < 7 ? 'border-r border-slate-600' : ''} ${
+                          compactView ? 'p-1.5' : 'p-2'
+                        } flex flex-col transition-opacity duration-150 ${
                           slotDimmed ? 'opacity-30 pointer-events-none' : ''
                         } ${isPickerOpen ? 'relative z-20' : ''}`}
                       >
                         {speaker && (speaker.fullName || speaker.photoLink) ? (
                           <div className="h-full flex flex-col items-center text-center">
-                            <img
-                              src={speaker.photoLink || '/speaker-placeholder.svg'}
-                              alt={speaker.fullName || `Speaker ${slotNumber}`}
-                              className="w-20 h-28 rounded-lg object-cover border-2 border-slate-400 shadow-lg mb-1.5"
-                              style={{ objectFit: 'cover', objectPosition: 'center top' }}
-                              onError={(e) => {
-                                e.currentTarget.onerror = null;
-                                e.currentTarget.src = '/speaker-placeholder.svg';
-                              }}
-                            />
+                            {!compactView ? (
+                              <div className="relative mb-1.5 w-20 h-28 rounded-lg overflow-hidden border-2 border-slate-400 shadow-lg shrink-0">
+                                <img
+                                  src={speaker.photoLink || '/speaker-placeholder.svg'}
+                                  alt={speaker.fullName || `Speaker ${slotNumber}`}
+                                  className="h-full w-full object-cover"
+                                  style={{ objectFit: 'cover', objectPosition: 'center top' }}
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null;
+                                    e.currentTarget.src = '/speaker-placeholder.svg';
+                                  }}
+                                />
+                                <div className="absolute inset-x-0 bottom-0 bg-black/80 px-1 py-1 text-[11px] font-semibold leading-tight text-white truncate">
+                                  {formatSpeakerLocation(speaker.location)}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="mb-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-700 text-gray-300 truncate max-w-full">
+                                {formatSpeakerLocation(speaker.location)}
+                              </div>
+                            )}
                             <div
-                              className={`font-bold text-white mb-1 leading-tight ${
-                                nameResult.needsSmallText ? 'text-xs' : 'text-sm'
+                              className={`font-bold text-white ${compactView ? 'mb-1' : 'mb-1.5'} leading-tight ${
+                                compactView
+                                  ? 'text-[11px]'
+                                  : nameResult.needsSmallText
+                                    ? 'text-xs'
+                                    : 'text-sm'
                               }`}
                               dangerouslySetInnerHTML={{
                                 __html: nameResult.html || speaker.fullName || `Slot ${slotNumber}`,
                               }}
                             />
-                            <div className="text-xs font-medium px-2 py-0.5 rounded mb-1.5 bg-slate-700 text-gray-300">
-                              {formatSpeakerLocation(speaker.location)}
-                            </div>
 
                             <div
                               className="mt-auto w-full relative"
@@ -690,7 +853,9 @@ const MicManagerPage: React.FC = () => {
                                 onClick={() =>
                                   setOpenMicPicker((cur) => (cur === pickerKey ? null : pickerKey))
                                 }
-                                className={`w-full rounded border px-1 py-1.5 text-[11px] font-semibold leading-tight transition-colors ${
+                                className={`w-full rounded-md border transition-colors ${
+                                  compactView ? 'px-1 py-1.5' : 'px-1.5 py-2.5'
+                                } ${
                                   !canEdit
                                     ? 'opacity-70 cursor-not-allowed border-slate-600 bg-slate-800 text-white'
                                     : 'border-slate-500 bg-slate-800 text-white hover:bg-slate-700'
@@ -703,7 +868,34 @@ const MicManagerPage: React.FC = () => {
                                     : 'Switch to Plan to edit mics'
                                 }
                               >
-                                <span className="block break-words">{formatMicAssignmentLabel(assignment)}</span>
+                                {assignment.mic && assignment.mic !== 'none' ? (
+                                  <>
+                                    <span
+                                      className={`block font-bold leading-tight break-words ${
+                                        compactView ? 'text-xs' : 'text-sm'
+                                      }`}
+                                    >
+                                      {micTypeLabel(assignment.mic)}
+                                    </span>
+                                    {micNeedsUnit(assignment.mic) ? (
+                                      <span
+                                        className={`mt-0.5 block font-semibold leading-tight ${
+                                          compactView ? 'text-[10px]' : 'text-xs'
+                                        } ${unitMissing ? 'text-amber-200' : 'text-slate-300'}`}
+                                      >
+                                        {assignment.unit == null ? 'Unit #?' : `Unit #${assignment.unit}`}
+                                      </span>
+                                    ) : null}
+                                  </>
+                                ) : (
+                                  <span
+                                    className={`block font-bold leading-tight text-slate-400 ${
+                                      compactView ? 'text-xs' : 'text-sm'
+                                    }`}
+                                  >
+                                    None
+                                  </span>
+                                )}
                               </button>
 
                               {isPickerOpen && canEdit ? (

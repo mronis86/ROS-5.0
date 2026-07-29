@@ -6,36 +6,21 @@ It does **not** replace your XML/CSV feeds. vMix still pulls table data from Rai
 
 ## Requirements
 
-- Windows (portable `.exe` via electron-builder)
+- Windows 10/11 x64 (**portable `.exe`** — no Node.js or npm on show machines)
 - vMix with Web Controller / API enabled (default `http://127.0.0.1:8088`)
 - Railway ROS API (`https://ros-50-production.up.railway.app`)
 - Integration token with **`read`** scope (Admin → Integration tokens), when `REQUIRE_API_AUTH` is enabled
 
-## Setup
+## Setup (show laptop)
 
 1. Point a vMix Data Source at your ROS **schedule** XML or CSV feed (same event), e.g. Railway `/api/schedule.xml?eventId=…` or the Netlify live HTML/XML pages.
 2. Create an integration token with `read` in Admin.
-3. Run this app:
-   - Double-click **`START.bat`** in `vmix-datasource-bridge\` (recommended), or
-   - `launcher\start-ros-vmix-datasource.bat`, or
-   - `npm start`, or
-   - the portable `.exe` after `build-portable.bat`
+3. Download **vMix DataSource Bridge** from Graphics Links, unzip, and double-click  
+   `ROS-vMix-DataSource-Bridge-*-portable.exe`.
 4. Enter API URL + token, pick the event, test vMix, choose Data Source name(s).
 5. In the **Sources** tab, add one binding per Data Source (and per Excel/Google **sheet** if needed). Use **Add sheet (same source)** to target another worksheet without re-picking the workbook.
 6. Choose match mode per binding (Cue column or Row index). Disable a binding with the **On** checkbox without deleting it.
 7. Click **Start**. Load a cue in ROS — the **Live** tab shows each source’s selected index.
-
-## Launchers (Windows)
-
-| File | Purpose |
-|------|---------|
-| `START.bat` | Start the Electron app (installs deps on first run) |
-| `launcher\start-ros-vmix-datasource.bat` | Same start script |
-| `launcher\create-desktop-shortcut.bat` | Desktop shortcut with app icon (pin to taskbar/Start) |
-| `install-dependencies.bat` | `npm install` only |
-| `build-portable.bat` | Build `dist\ROS-vMix-DataSource-Bridge-*-portable.exe` |
-
-The window and portable `.exe` use `build\icon.ico`. For a desktop icon like Offline Show, run **`launcher\create-desktop-shortcut.bat`** once.
 
 ## Match modes
 
@@ -46,7 +31,7 @@ The window and portable `.exe` use `build\icon.ico`. For a desktop icon like Off
 
 Optional **day filter** on a binding limits which schedule rows are considered (must match how the feed is filtered).
 
-## Dev
+## Dev (source, needs Node)
 
 ```bash
 cd vmix-datasource-bridge
@@ -54,11 +39,11 @@ npm install
 npm start
 ```
 
-Or double-click `START.bat`.
+Or double-click `START.bat` (runs `npm install` on first launch — only for developers).
 
 Config is stored under `%LOCALAPPDATA%\ros-vmix-datasource\`.
 
-## Portable build
+## Portable build (for Graphics download zip)
 
 ```bash
 cd vmix-datasource-bridge
@@ -68,7 +53,14 @@ npm run build:portable
 
 Or double-click `build-portable.bat`.
 
-Output: `dist/ROS-vMix-DataSource-Bridge-0.1.0-portable.exe`
+Then from repo root:
+
+```bash
+npm run zip:vmix-datasource-bridge
+```
+
+Output exe: `dist/ROS-vMix-DataSource-Bridge-0.1.0-portable.exe`  
+Public zip: `public/ros-vmix-datasource-bridge.zip`
 
 ## Notes
 

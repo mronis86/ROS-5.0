@@ -11,6 +11,7 @@ import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
+import { canSelectOperatorRole } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
@@ -69,6 +70,17 @@ interface CustomColumn {
   id: string;
 }
 
+type SessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
+
+function resolveSessionRole(
+  role: string | null | undefined,
+  user: { is_admin?: boolean; is_event_manager?: boolean } | null | undefined
+): SessionRole {
+  if (!role || !['VIEWER', 'EDITOR', 'OPERATOR'].includes(role)) return 'VIEWER';
+  if (role === 'OPERATOR' && !canSelectOperatorRole(user)) return 'VIEWER';
+  return role as SessionRole;
+}
+
 const RunOfShowPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -77,8 +89,8 @@ const RunOfShowPage: React.FC = () => {
   
   // Authentication state
   const { user, loading: authLoading } = useAuth();
-  const [currentUserRole, setCurrentUserRole] = useState<'VIEWER' | 'EDITOR' | 'OPERATOR'>('VIEWER');
-  const currentUserRoleRef = useRef<'VIEWER' | 'EDITOR' | 'OPERATOR'>(currentUserRole);
+  const [currentUserRole, setCurrentUserRole] = useState<SessionRole>('VIEWER');
+  const currentUserRoleRef = useRef<SessionRole>(currentUserRole);
 
   useEffect(() => {
     currentUserRoleRef.current = currentUserRole;
@@ -1741,11 +1753,35 @@ const RunOfShowPage: React.FC = () => {
     }
 
     if (user && event?.id) {
+      const applyResolvedRole = (rawRole: string, source: string, persist: boolean) => {
+        const resolved = resolveSessionRole(rawRole, user);
+        if (rawRole === 'OPERATOR' && resolved !== 'OPERATOR') {
+          console.log('⛔ Operator role blocked for non–Event Manager/Admin; using', resolved);
+        }
+        setCurrentUserRole(resolved);
+        localStorage.setItem(`userRole_${event.id}`, resolved);
+        if (persist) {
+          DatabaseService.saveUserSession(
+            event.id,
+            user.id,
+            user.full_name || user.email || 'Unknown',
+            resolved
+          ).then((success) => {
+            if (success) {
+              console.log(`✅ Role saved (${source}):`, resolved);
+            } else {
+              console.log(`⚠️ Failed to save role to API (${source}), localStorage only`);
+            }
+          });
+        }
+        console.log(`✅ Using role from ${source}:`, resolved);
+        return resolved;
+      };
+
       // Set role immediately from navigation state when launching from EventListPage (role modal).
       // Ensures presence sends correct role on socket connect before async API resolves.
       if (userRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(userRole)) {
-        setCurrentUserRole(userRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-        console.log('✅ Using role from navigation state (immediate):', userRole);
+        applyResolvedRole(userRole, 'navigation state (immediate)', false);
       }
 
       // First priority: check API for the most recent role (this will have the latest changes)
@@ -1756,12 +1792,7 @@ const RunOfShowPage: React.FC = () => {
           console.log('📋 User session from API:', userSession);
           
           if (userSession && userSession.event_id === event.id && userSession.role) {
-            setCurrentUserRole(userSession.role as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-            console.log('✅ Loaded role from localStorage:', userSession.role);
-            
-            // Also update localStorage to keep it in sync
-            localStorage.setItem(`userRole_${event.id}`, userSession.role);
-            console.log('💾 Updated localStorage with role:', userSession.role);
+            applyResolvedRole(userSession.role, 'API/localStorage', true);
             return true;
           } else {
             console.log('❌ No valid role found in localStorage:', { 
@@ -1789,27 +1820,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Second priority: role from navigation state (from Graphics page or other navigation)
         if (userRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(userRole)) {
-          setCurrentUserRole(userRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-          
-          // Save user session to database
-          DatabaseService.saveUserSession(
-            event.id,
-            user.id,
-            user.full_name || user.email || 'Unknown',
-            userRole
-          ).then(success => {
-            if (success) {
-              console.log('✅ Role saved to API from navigation state:', userRole);
-            } else {
-              console.log('⚠️ Failed to save role to API, using localStorage only');
-            }
-          });
-          
-          // Also save to localStorage for immediate access
-          localStorage.setItem(`userRole_${event.id}`, userRole);
-          console.log('💾 Saved role to localStorage:', userRole);
-          
-          console.log('✅ Using role from navigation state (no API role found):', userRole);
+          applyResolvedRole(userRole, 'navigation state', true);
           return;
         }
         
@@ -1817,22 +1828,7 @@ const RunOfShowPage: React.FC = () => {
         const savedRole = localStorage.getItem(`userRole_${event.id}`);
         console.log('🔍 Checking localStorage for role:', { eventId: event.id, savedRole });
         if (savedRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(savedRole)) {
-          setCurrentUserRole(savedRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-          console.log('✅ Using role from localStorage fallback:', savedRole);
-          
-          // Try to save this role to API for future use
-          DatabaseService.saveUserSession(
-            event.id,
-            user.id,
-            user.full_name || user.email || 'Unknown',
-            savedRole
-          ).then(success => {
-            if (success) {
-              console.log('✅ Role synced to API from localStorage:', savedRole);
-            } else {
-              console.log('⚠️ Failed to sync role to API, keeping localStorage only');
-            }
-          });
+          applyResolvedRole(savedRole, 'localStorage fallback', true);
           return;
         }
         
@@ -1849,23 +1845,7 @@ const RunOfShowPage: React.FC = () => {
           console.log('🔍 Found latest role in localStorage:', { key: latestRoleKey, role: latestRole });
           
           if (latestRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(latestRole)) {
-            setCurrentUserRole(latestRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-            console.log('✅ Using latest role from localStorage:', latestRole);
-            
-            // Save this role for the current event
-            localStorage.setItem(`userRole_${event.id}`, latestRole);
-            DatabaseService.saveUserSession(
-              event.id,
-              user.id,
-              user.full_name || user.email || 'Unknown',
-              latestRole
-            ).then(success => {
-              if (success) {
-                console.log('✅ Role synced to API from latest localStorage:', latestRole);
-              } else {
-                console.log('⚠️ Failed to sync role to API, keeping localStorage only');
-              }
-            });
+            applyResolvedRole(latestRole, 'latest localStorage', true);
             return;
           }
         }
@@ -1880,6 +1860,22 @@ const RunOfShowPage: React.FC = () => {
       setCurrentUserRole('VIEWER');
     }
   }, [user, event?.id, authLoading, userRole, navigate]);
+
+  // If a non–Event Manager/Admin somehow has OPERATOR, demote immediately
+  useEffect(() => {
+    if (!user || currentUserRole !== 'OPERATOR') return;
+    if (canSelectOperatorRole(user)) return;
+    setCurrentUserRole('VIEWER');
+    if (event?.id) {
+      localStorage.setItem(`userRole_${event.id}`, 'VIEWER');
+      DatabaseService.saveUserSession(
+        event.id,
+        user.id,
+        user.full_name || user.email || 'Unknown',
+        'VIEWER'
+      );
+    }
+  }, [user, currentUserRole, event?.id]);
 
   // Load change log data and sync status
   useEffect(() => {
@@ -9380,28 +9376,29 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showRoleChangeModal}
         onClose={() => setShowRoleChangeModal(false)}
         onRoleSelected={(role) => {
-          setCurrentUserRole(role as 'VIEWER' | 'EDITOR' | 'OPERATOR');
+          const resolved = resolveSessionRole(role, user);
+          setCurrentUserRole(resolved);
           
           // Save role to both API and localStorage
           if (event?.id && user?.id) {
             try {
               const username = user.full_name || user.email || 'Unknown';
-              DatabaseService.saveUserSession(event.id, user.id, username, role).then(success => {
+              DatabaseService.saveUserSession(event.id, user.id, username, resolved).then(success => {
                 if (success) {
-                  console.log('✅ Role saved to API from RunOfShowPage:', role);
+                  console.log('✅ Role saved to API from RunOfShowPage:', resolved);
                 } else {
                   console.log('⚠️ Failed to save role to API, using localStorage only');
                 }
               });
               
               // Also save to localStorage for immediate access
-              localStorage.setItem(`userRole_${event.id}`, role);
-              console.log('💾 Saved role to localStorage from RunOfShowPage:', role);
+              localStorage.setItem(`userRole_${event.id}`, resolved);
+              console.log('💾 Saved role to localStorage from RunOfShowPage:', resolved);
             } catch (error) {
               console.error('❌ Failed to save role to API from RunOfShowPage:', error);
               // Still save to localStorage as fallback
-              localStorage.setItem(`userRole_${event.id}`, role);
-              console.log('💾 Saved role to localStorage as fallback:', role);
+              localStorage.setItem(`userRole_${event.id}`, resolved);
+              console.log('💾 Saved role to localStorage as fallback:', resolved);
             }
           }
           setShowRoleChangeModal(false);
@@ -10756,7 +10753,7 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {((hybridSecondaryTimer?.is_running && hybridSecondaryTimer?.is_active !== false) ||
                     (secondaryTimer && secondaryTimer.timerState === 'running')) && (
-                      <div className="flex flex-col items-center mt-0.5 gap-0.5">
+                      <div className="mt-0.5">
                         {(() => {
                           const subCueData: any = hybridSecondaryTimer;
                           const itemId = subCueData?.item_id != null
@@ -10783,17 +10780,16 @@ const RunOfShowPage: React.FC = () => {
                             : subCueData && isResolumeArmed(subCueData)
                               ? 'text-purple-300'
                               : 'text-orange-400';
-                          const statusLine = isSubCueResolumeRunning(subCueData)
-                            ? `RUNNING · RESOLUME - ${formattedCue}`
+                          const time = formatSubCueTime(remaining);
+                          // Same single-line pattern as the main timer above (status - cue - time)
+                          const line = isSubCueResolumeRunning(subCueData)
+                            ? `RUNNING · RESOLUME - ${formattedCue} - ${time}`
                             : subCueData && isResolumeArmed(subCueData)
-                              ? `LOADED · RESOLUME (armed) - ${formattedCue}`
-                              : `${formattedCue} -`;
+                              ? `LOADED · RESOLUME (armed) - ${formattedCue} - ${time}`
+                              : `${formattedCue} - ${time}`;
 
                           return (
-                            <>
-                              <div className={`text-lg font-bold ${colorClass}`}>{statusLine}</div>
-                              <div className={`text-lg font-bold ${colorClass}`}>{formatSubCueTime(remaining)}</div>
-                            </>
+                            <div className={`text-lg font-bold whitespace-nowrap ${colorClass}`}>{line}</div>
                           );
                         })()}
                       </div>
@@ -14506,10 +14502,16 @@ const RunOfShowPage: React.FC = () => {
       {/* Pin-Notes popout: choose one or more columns, then open movable window */}
       {showPinNotesColumnModal && (
         <PinNotesColumnModal
+          eventId={event?.id}
           customColumns={customColumns}
           onClose={() => setShowPinNotesColumnModal(false)}
-          onOpen={(selected) => {
-            setPinNotesColumns(selected);
+          onOpen={(config) => {
+            setPinNotesColumns(config.columns);
+            try {
+              sessionStorage.setItem('ros_pin_notes_launch', JSON.stringify(config));
+            } catch {
+              /* ignore */
+            }
             const popoutUrl = `${window.location.origin}/pin-notes-popout?eventId=${event?.id || ''}`;
             const win = window.open(
               popoutUrl,

@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService, RunOfShowData } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { Event } from '../types/Event';
+import { useAuth } from '../contexts/AuthContext';
+import { canSelectOperatorRole } from '../services/auth-service';
 
 /** Mirrored from `RunOfShowPage.tsx` — keep visuals consistent with desktop ROS. */
 const PROGRAM_TYPES = [
@@ -219,18 +221,25 @@ const stripHtml = (value: string) =>
 type RosSessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
 
 /** Same rules as `RunOfShowPage` / `ScheduleRow`: navigation state, then `userRole_${eventId}` like desktop. */
-function resolveSessionRole(userRole: string | undefined, eventId: string | undefined): RosSessionRole {
+function resolveSessionRole(
+  userRole: string | undefined,
+  eventId: string | undefined,
+  user: { is_admin?: boolean; is_event_manager?: boolean } | null | undefined
+): RosSessionRole {
+  let role: RosSessionRole = 'VIEWER';
   const raw = (userRole || '').toString().trim().toUpperCase();
-  if (raw === 'VIEWER' || raw === 'EDITOR' || raw === 'OPERATOR') return raw;
-  if (eventId) {
+  if (raw === 'VIEWER' || raw === 'EDITOR' || raw === 'OPERATOR') {
+    role = raw;
+  } else if (eventId) {
     try {
       const saved = localStorage.getItem(`userRole_${eventId}`);
-      if (saved === 'VIEWER' || saved === 'EDITOR' || saved === 'OPERATOR') return saved;
+      if (saved === 'VIEWER' || saved === 'EDITOR' || saved === 'OPERATOR') role = saved;
     } catch {
       /* ignore */
     }
   }
-  return 'VIEWER';
+  if (role === 'OPERATOR' && !canSelectOperatorRole(user)) return 'VIEWER';
+  return role;
 }
 
 /** Seven speaker slots — compact labels (mirrors Content Review read mode). */
@@ -502,12 +511,13 @@ function mergeRunningSubFromRow(
 const RunOfShowMobilePage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const event = (location.state as { event?: Event; userRole?: string } | undefined)?.event;
   const userRole = (location.state as { event?: Event; userRole?: string } | undefined)?.userRole;
 
   const sessionRole = useMemo(
-    () => resolveSessionRole(userRole, event?.id),
-    [userRole, event?.id]
+    () => resolveSessionRole(userRole, event?.id, user),
+    [userRole, event?.id, user]
   );
   const isViewer = sessionRole === 'VIEWER';
   const isEditor = sessionRole === 'EDITOR';

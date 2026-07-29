@@ -11285,7 +11285,7 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {((hybridSecondaryTimer?.is_running && hybridSecondaryTimer?.is_active !== false) ||
                     (secondaryTimer && secondaryTimer.timerState === 'running')) && (
-                      <div className="flex flex-col items-center mt-0.5 gap-0.5">
+                      <div className="mt-0.5">
                         {(() => {
                           const subCueData: any = hybridSecondaryTimer;
                           const itemId = subCueData?.item_id != null
@@ -11312,17 +11312,16 @@ const RunOfShowPage: React.FC = () => {
                             : subCueData && isResolumeArmed(subCueData)
                               ? 'text-purple-300'
                               : 'text-orange-400';
-                          const statusLine = isSubCueResolumeRunning(subCueData)
-                            ? `RUNNING · RESOLUME - ${formattedCue}`
+                          const time = formatSubCueTime(remaining);
+                          // Same single-line pattern as the main timer above (status - cue - time)
+                          const line = isSubCueResolumeRunning(subCueData)
+                            ? `RUNNING · RESOLUME - ${formattedCue} - ${time}`
                             : subCueData && isResolumeArmed(subCueData)
-                              ? `LOADED · RESOLUME (armed) - ${formattedCue}`
-                              : `${formattedCue} -`;
+                              ? `LOADED · RESOLUME (armed) - ${formattedCue} - ${time}`
+                              : `${formattedCue} - ${time}`;
 
                           return (
-                            <>
-                              <div className={`text-lg font-bold ${colorClass}`}>{statusLine}</div>
-                              <div className={`text-lg font-bold ${colorClass}`}>{formatSubCueTime(remaining)}</div>
-                            </>
+                            <div className={`text-lg font-bold whitespace-nowrap ${colorClass}`}>{line}</div>
                           );
                         })()}
                       </div>

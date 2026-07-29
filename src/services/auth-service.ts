@@ -51,6 +51,11 @@ export function canAccessAccessManager(user: User | null | undefined): boolean {
   return user.is_event_manager === true;
 }
 
+/** Run-of-show Operator session role: admins and event managers only. */
+export function canSelectOperatorRole(user: User | null | undefined): boolean {
+  return canAccessAccessManager(user);
+}
+
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;

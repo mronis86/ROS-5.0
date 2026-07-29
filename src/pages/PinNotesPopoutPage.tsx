@@ -8,6 +8,11 @@ import {
   personColumnLabel,
   storeOperatorName,
 } from '../lib/pinNotesOperator';
+import {
+  PIN_NOTES_LAUNCH_KEY,
+  type PinNotesLaunchConfig,
+  type PinNotesOperatorColumn,
+} from '../components/PinNotesColumnModal';
 import { apiAuthFetch } from '../lib/sessionAuth';
 
 const RESIZE_HANDLE_WIDTH = 6;
@@ -156,6 +161,44 @@ const PinNotesPopoutPage: React.FC = () => {
       /* ignore */
     }
   }, []);
+
+  // Apply column / people / my-notes choices from the ROS launch modal (once).
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PIN_NOTES_LAUNCH_KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(PIN_NOTES_LAUNCH_KEY);
+      const cfg = JSON.parse(raw) as PinNotesLaunchConfig;
+      if (Array.isArray(cfg.columns)) {
+        setColumns(cfg.columns.filter((c) => c && c.type !== 'cue'));
+        setPickerSelected(cfg.columns.filter((c) => c && c.type !== 'cue'));
+      }
+      if (Array.isArray(cfg.operatorColumns)) {
+        const opCols: OperatorNotesColumnSpec[] = (cfg.operatorColumns as PinNotesOperatorColumn[])
+          .filter((c) => c && c.userId)
+          .map((c) => ({
+            type: 'operator-notes',
+            id: c.id || c.userId,
+            userId: c.userId,
+            name: c.name || personColumnLabel(c.userId),
+          }));
+        setOperatorColumns(opCols);
+        setPickerSelectedOperators(opCols);
+      }
+      if (cfg.enableMyNotes && cfg.myNotesName?.trim()) {
+        const trimmed = cfg.myNotesName.trim();
+        storeOperatorName(trimmed);
+        const opId = operatorUserId(trimmed);
+        operatorUserIdRef.current = opId;
+        setOperatorName(trimmed);
+        setMyNotesEnabled(true);
+        const evId = eventIdRef.current || eventIdFromUrl;
+        if (evId) void loadPersonalNotes(evId, opId);
+      }
+    } catch {
+      /* ignore bad launch payload */
+    }
+  }, [eventIdFromUrl, loadPersonalNotes]);
 
   const refreshSavedOperators = useCallback(async (evId: string) => {
     try {
