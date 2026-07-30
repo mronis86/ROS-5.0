@@ -451,16 +451,21 @@ export class DatabaseService {
     }
   }
 
-  static async getShowSettings(eventId: string): Promise<{ showMode: 'rehearsal' | 'in-show'; trackWasDurations: boolean }> {
+  static async getShowSettings(eventId: string): Promise<{
+    showMode: 'rehearsal' | 'in-show';
+    trackWasDurations: boolean;
+    rehearsalBaseline: any | null;
+  }> {
     try {
       const result = await apiClient.getShowMode(eventId);
       return {
         showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
-        trackWasDurations: result?.trackWasDurations === true
+        trackWasDurations: result?.trackWasDurations === true,
+        rehearsalBaseline: result?.rehearsalBaseline ?? null,
       };
     } catch (error) {
       console.error('❌ Exception getting show settings:', error);
-      return { showMode: 'rehearsal', trackWasDurations: false };
+      return { showMode: 'rehearsal', trackWasDurations: false, rehearsalBaseline: null };
     }
   }
 
@@ -470,6 +475,24 @@ export class DatabaseService {
       return true;
     } catch (error) {
       console.error('❌ Exception saving show mode:', error);
+      return false;
+    }
+  }
+
+  static async saveShowModeWithBaseline(
+    eventId: string,
+    payload: {
+      showMode?: 'rehearsal' | 'in-show';
+      trackWasDurations?: boolean;
+      rehearsalBaseline?: any;
+      clearRehearsalBaseline?: boolean;
+    }
+  ): Promise<boolean> {
+    try {
+      await apiClient.saveShowModeWithBaseline(eventId, payload);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception saving show mode/baseline:', error);
       return false;
     }
   }

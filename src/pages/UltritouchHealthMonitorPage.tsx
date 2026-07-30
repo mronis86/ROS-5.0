@@ -866,8 +866,8 @@ const UltritouchHealthMonitorPage: React.FC<{ panel?: UltritouchPanelSize }> = (
             />
             <AppBrandTitle
               titleClassName={`font-bold text-white leading-none truncate ${is2u ? 'text-sm' : 'text-base'}`}
-              taglineClassName={`uppercase tracking-[0.08em] text-slate-500 leading-none mt-0.5 ${
-                is2u ? 'text-[8px]' : 'text-[9px]'
+              taglineClassName={`uppercase tracking-[0.04em] text-slate-400 leading-none -mt-0.5 ${
+                is2u ? 'text-[9px]' : 'text-[10px]'
               }`}
               showTagline
             />

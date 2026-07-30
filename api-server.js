@@ -2149,14 +2149,18 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       [eventId]
     );
     if (result.rows.length === 0) {
-      return res.json({ showMode: 'rehearsal', trackWasDurations: false });
+      return res.json({ showMode: 'rehearsal', trackWasDurations: false, rehearsalBaseline: null });
     }
     const settings = result.rows[0].settings || {};
     const showMode = (settings.show_mode === 'in-show' || settings.show_mode === 'rehearsal')
       ? settings.show_mode
       : 'rehearsal';
     const trackWasDurations = settings.track_was_durations === true;
-    res.json({ showMode, trackWasDurations });
+    const rehearsalBaseline =
+      settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
+        ? settings.rehearsal_baseline
+        : null;
+    res.json({ showMode, trackWasDurations, rehearsalBaseline });
   } catch (error) {
     console.error('Error fetching show mode:', error);
     res.status(500).json({ error: 'Failed to fetch show mode' });
@@ -2166,7 +2170,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
 app.patch('/api/show-mode/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { showMode, trackWasDurations } = req.body;
+    const { showMode, trackWasDurations, rehearsalBaseline, clearRehearsalBaseline } = req.body;
     const updates = {};
     if (showMode === 'rehearsal' || showMode === 'in-show') {
       updates.show_mode = showMode;
@@ -2174,8 +2178,15 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (typeof trackWasDurations === 'boolean') {
       updates.track_was_durations = trackWasDurations;
     }
+    if (clearRehearsalBaseline === true) {
+      updates.rehearsal_baseline = null;
+    } else if (rehearsalBaseline && typeof rehearsalBaseline === 'object') {
+      updates.rehearsal_baseline = rehearsalBaseline;
+    }
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'Provide showMode and/or trackWasDurations' });
+      return res.status(400).json({
+        error: 'Provide showMode, trackWasDurations, and/or rehearsalBaseline',
+      });
     }
     const result = await pool.query(
       `UPDATE run_of_show_data 
@@ -2192,12 +2203,23 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       ? settings.show_mode
       : 'rehearsal';
     const currentTrackWasDurations = settings.track_was_durations === true;
+    const currentBaseline =
+      settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
+        ? settings.rehearsal_baseline
+        : null;
     // CRITICAL: Only include showMode in broadcast when we actually updated it.
     // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
     const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
     if (showMode === 'rehearsal' || showMode === 'in-show') payload.showMode = currentShowMode;
+    if (rehearsalBaseline || clearRehearsalBaseline === true) {
+      payload.rehearsalBaseline = currentBaseline;
+    }
     broadcastUpdate(eventId, 'showModeUpdate', payload);
-    res.json({ showMode: currentShowMode, trackWasDurations: currentTrackWasDurations });
+    res.json({
+      showMode: currentShowMode,
+      trackWasDurations: currentTrackWasDurations,
+      rehearsalBaseline: currentBaseline,
+    });
   } catch (error) {
     console.error('Error updating show mode:', error);
     res.status(500).json({ error: 'Failed to update show mode' });
@@ -2940,6 +2962,9 @@ app.post('/api/run-of-show-data', async (req, res) => {
       if (incomingSettings?.original_durations === undefined && current.original_durations && typeof current.original_durations === 'object') {
         settingsToSave = { ...settingsToSave, original_durations: current.original_durations };
       }
+      if (incomingSettings?.rehearsal_baseline === undefined && current.rehearsal_baseline && typeof current.rehearsal_baseline === 'object') {
+        settingsToSave = { ...settingsToSave, rehearsal_baseline: current.rehearsal_baseline };
+      }
     }
 
     // Optimistic concurrency: if client sent a version, it must match the DB
@@ -3206,6 +3231,7 @@ async function listUserEventNoteOperators(eventId) {
             MAX(updated_at) AS updated_at
      FROM user_event_notes
      WHERE event_id = $1
+       AND TRIM(COALESCE(content, '')) <> ''
      GROUP BY user_id
      ORDER BY MAX(user_name) NULLS LAST, user_id`,
     [eventId]
@@ -3263,6 +3289,22 @@ app.put('/api/user-event-notes', async (req, res) => {
     }
     const key = column_key || 'personal';
     const text = content != null ? String(content) : '';
+
+    // Empty content removes the row so deleted/cleared notes don't keep people in the operator list.
+    if (!text.trim()) {
+      await pool.query(
+        `DELETE FROM user_event_notes
+         WHERE event_id = $1 AND user_id = $2 AND schedule_item_id = $3 AND column_key = $4`,
+        [event_id, user_id, schedule_item_id, key]
+      );
+      return res.json({
+        schedule_item_id,
+        column_key: key,
+        content: '',
+        deleted: true,
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO user_event_notes
          (event_id, user_id, user_name, schedule_item_id, column_key, content, updated_at)
@@ -3279,6 +3321,31 @@ app.put('/api/user-event-notes', async (req, res) => {
   } catch (error) {
     console.error('Error saving user event note:', error);
     res.status(500).json({ error: 'Failed to save user event note' });
+  }
+});
+
+// Delete all personal notes for one person on an event (Notes popout manage)
+app.delete('/api/user-event-notes/:eventId/:userId', async (req, res) => {
+  try {
+    const { eventId, userId } = req.params;
+    if (!eventId || !userId) {
+      return res.status(400).json({ error: 'eventId and userId are required' });
+    }
+    const decodedUserId = decodeURIComponent(userId);
+    const result = await pool.query(
+      `DELETE FROM user_event_notes
+       WHERE event_id = $1 AND user_id = $2`,
+      [eventId, decodedUserId]
+    );
+    res.json({
+      ok: true,
+      deleted: result.rowCount || 0,
+      event_id: eventId,
+      user_id: decodedUserId,
+    });
+  } catch (error) {
+    console.error('Error deleting user event notes:', error);
+    res.status(500).json({ error: 'Failed to delete user event notes' });
   }
 });
 

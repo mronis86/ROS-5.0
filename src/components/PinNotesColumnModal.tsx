@@ -46,35 +46,59 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
   const [savedOperators, setSavedOperators] = useState<UserEventNoteOperator[]>([]);
   const [operatorsError, setOperatorsError] = useState<string | null>(null);
   const [loadingOperators, setLoadingOperators] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [manageError, setManageError] = useState<string | null>(null);
+
+  const operatorLabel = (op: UserEventNoteOperator) =>
+    personColumnLabel(
+      op.user_name?.trim() || op.user_id.replace(/^operator:/, '').replace(/-/g, ' ')
+    );
+
+  const refreshOperators = async () => {
+    if (!eventId) return;
+    setLoadingOperators(true);
+    try {
+      const data = await apiClient.listUserEventNoteOperators(eventId);
+      setSavedOperators(data.operators || []);
+      setOperatorsError(null);
+    } catch (error) {
+      setSavedOperators([]);
+      const message = error instanceof Error ? error.message : '';
+      setOperatorsError(
+        message.includes('404')
+          ? 'Saved people notes are not available from the API yet.'
+          : 'Could not load saved people notes.'
+      );
+    } finally {
+      setLoadingOperators(false);
+    }
+  };
 
   useEffect(() => {
     if (!eventId) return;
-    let cancelled = false;
-    setLoadingOperators(true);
-    apiClient
-      .listUserEventNoteOperators(eventId)
-      .then((data) => {
-        if (cancelled) return;
-        setSavedOperators(data.operators || []);
-        setOperatorsError(null);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setSavedOperators([]);
-        const message = error instanceof Error ? error.message : '';
-        setOperatorsError(
-          message.includes('404')
-            ? 'Saved people notes are not available from the API yet.'
-            : 'Could not load saved people notes.'
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingOperators(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void refreshOperators();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when event changes
   }, [eventId]);
+
+  const deleteOperatorNotes = async (op: UserEventNoteOperator) => {
+    if (!eventId) return;
+    const label = operatorLabel(op);
+    const ok = window.confirm(
+      `Delete all notes saved under "${label}" for this event?\n\nThis cannot be undone.`
+    );
+    if (!ok) return;
+    setDeletingUserId(op.user_id);
+    setManageError(null);
+    try {
+      await apiClient.deleteUserEventNotes(eventId, op.user_id);
+      setSelectedOperators((prev) => prev.filter((c) => c.userId !== op.user_id));
+      await refreshOperators();
+    } catch {
+      setManageError(`Could not delete notes for ${label}. Redeploy the Railway API, then try again.`);
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
 
   const toggle = (col: PinNotesColumn) => {
     setSelected((prev) => {
@@ -86,11 +110,6 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
 
   const isSelected = (col: PinNotesColumn) =>
     selected.some((c) => c.id === col.id && c.type === col.type);
-
-  const operatorLabel = (op: UserEventNoteOperator) =>
-    personColumnLabel(
-      op.user_name?.trim() || op.user_id.replace(/^operator:/, '').replace(/-/g, ' ')
-    );
 
   const toggleOperator = (op: UserEventNoteOperator) => {
     const label = operatorLabel(op);
@@ -195,29 +214,45 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
               yours.
             </p>
           ) : (
-            <div className="space-y-2 max-h-40 overflow-y-auto">
+            <div className="space-y-2 max-h-48 overflow-y-auto">
               {savedOperators.map((op) => {
                 const checked = selectedOperators.some((c) => c.userId === op.user_id);
+                const busy = deletingUserId === op.user_id;
                 return (
-                  <label
+                  <div
                     key={op.user_id}
-                    className="flex items-center gap-3 px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
+                    className="flex items-center gap-2 px-3 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
                   >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleOperator(op)}
-                      className="w-5 h-5 rounded border-slate-500"
-                    />
-                    <span className="text-white font-medium">{operatorLabel(op)}</span>
-                    <span className="text-slate-400 text-xs ml-auto">
-                      {op.note_count} note{op.note_count === 1 ? '' : 's'}
-                    </span>
-                  </label>
+                    <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleOperator(op)}
+                        className="w-5 h-5 rounded border-slate-500 flex-shrink-0"
+                      />
+                      <span className="text-white font-medium truncate">{operatorLabel(op)}</span>
+                      <span className="text-slate-400 text-xs flex-shrink-0">
+                        {op.note_count} note{op.note_count === 1 ? '' : 's'}
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void deleteOperatorNotes(op)}
+                      disabled={busy}
+                      className="px-2 py-1 text-xs text-red-300 hover:text-white hover:bg-red-700/80 border border-red-800/60 rounded disabled:opacity-50 flex-shrink-0"
+                      title={`Delete all notes for ${operatorLabel(op)}`}
+                    >
+                      {busy ? '…' : 'Delete'}
+                    </button>
+                  </div>
                 );
               })}
             </div>
           )}
+          {manageError ? <p className="text-red-300 text-sm mt-2">{manageError}</p> : null}
+          <p className="text-slate-500 text-xs mt-2">
+            Delete removes that person&apos;s saved notes for this event only.
+          </p>
         </div>
 
         <div className="mb-6 p-4 bg-slate-900/60 border border-slate-600 rounded-lg">

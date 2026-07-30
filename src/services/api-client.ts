@@ -297,11 +297,18 @@ class ApiClient {
     return this.request(`/api/show-start-overtime/${eventId}`, {}, `showStartOvertime_${eventId}`, this.CACHE_TTL.completedCues);
   }
 
-  async getShowMode(eventId: string): Promise<{ showMode: 'rehearsal' | 'in-show'; trackWasDurations: boolean }> {
+  async getShowMode(eventId: string): Promise<{
+    showMode: 'rehearsal' | 'in-show';
+    trackWasDurations: boolean;
+    rehearsalBaseline: any | null;
+  }> {
     const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
     return {
       showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
-      trackWasDurations: result?.trackWasDurations === true
+      trackWasDurations: result?.trackWasDurations === true,
+      rehearsalBaseline: result?.rehearsalBaseline && typeof result.rehearsalBaseline === 'object'
+        ? result.rehearsalBaseline
+        : null,
     };
   }
 
@@ -309,6 +316,23 @@ class ApiClient {
     const result = await this.request(`/api/show-mode/${eventId}`, {
       method: 'PATCH',
       body: JSON.stringify({ showMode }),
+    });
+    this.cache.delete(`showMode_${eventId}`);
+    return result;
+  }
+
+  async saveShowModeWithBaseline(
+    eventId: string,
+    payload: {
+      showMode?: 'rehearsal' | 'in-show';
+      trackWasDurations?: boolean;
+      rehearsalBaseline?: any;
+      clearRehearsalBaseline?: boolean;
+    }
+  ) {
+    const result = await this.request(`/api/show-mode/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
     });
     this.cache.delete(`showMode_${eventId}`);
     return result;
@@ -503,12 +527,23 @@ class ApiClient {
     column_key?: string;
     content: string;
   }) {
-    const result = await this.request<UserEventNoteRow>('/api/user-event-notes', {
+    const result = await this.request<UserEventNoteRow & { deleted?: boolean }>('/api/user-event-notes', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
     this.cache.delete(`userEventNotes_${data.event_id}_${data.user_id}`);
     this.cache.delete(`userEventNoteOperators_${data.event_id}`);
+    return result;
+  }
+
+  /** Delete all personal notes for one operator on an event. */
+  async deleteUserEventNotes(eventId: string, userId: string) {
+    const result = await this.request<{ ok: boolean; deleted: number; event_id: string; user_id: string }>(
+      `/api/user-event-notes/${encodeURIComponent(eventId)}/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' }
+    );
+    this.cache.delete(`userEventNotes_${eventId}_${userId}`);
+    this.cache.delete(`userEventNoteOperators_${eventId}`);
     return result;
   }
 

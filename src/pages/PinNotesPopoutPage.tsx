@@ -90,6 +90,8 @@ const PinNotesPopoutPage: React.FC = () => {
   const [nameDraft, setNameDraft] = useState('');
   const [columnFractions, setColumnFractions] = useState<Record<string, number>>({});
   const [zoomLevel, setZoomLevel] = useState<number>(getStoredZoom);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [manageError, setManageError] = useState<string | null>(null);
 
   const eventIdRef = useRef<string>(eventIdFromUrl);
   const operatorUserIdRef = useRef<string | null>(
@@ -540,6 +542,36 @@ const PinNotesPopoutPage: React.FC = () => {
     if (evId) loadPersonalNotes(evId, op.user_id);
   };
 
+  const deleteSavedOperatorNotes = async (op: UserEventNoteOperator) => {
+    const evId = eventIdRef.current || eventIdFromUrl;
+    if (!evId) return;
+    const label = operatorDisplayName(op);
+    const ok = window.confirm(
+      `Delete all notes saved under "${label}" for this event?\n\nThis cannot be undone.`
+    );
+    if (!ok) return;
+    setDeletingUserId(op.user_id);
+    setManageError(null);
+    try {
+      await apiClient.deleteUserEventNotes(evId, op.user_id);
+      setPickerSelectedOperators((prev) => prev.filter((c) => c.userId !== op.user_id));
+      setOperatorColumns((prev) => prev.filter((c) => c.userId !== op.user_id));
+      setOperatorNotesByUser((prev) => {
+        const next = { ...prev };
+        delete next[op.user_id];
+        return next;
+      });
+      if (operatorUserIdRef.current === op.user_id || currentOpId === op.user_id) {
+        setPersonalNotes({});
+      }
+      await refreshSavedOperators(evId);
+    } catch {
+      setManageError(`Could not delete notes for ${label}. Redeploy the Railway API, then try again.`);
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
+
   const getColFraction = useCallback(
     (col: DisplayColumn) => {
       const f = columnFractions[colKey(col)];
@@ -761,20 +793,41 @@ const PinNotesPopoutPage: React.FC = () => {
               {savedOperators.length > 0 && (
                 <div className="mb-4">
                   <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">
-                    Load notes saved for this event
+                    Load or manage notes saved for this event
                   </p>
-                  <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
-                    {savedOperators.map((op) => (
-                      <button
-                        key={op.user_id}
-                        type="button"
-                        onClick={() => recallSavedOperator(op)}
-                        className="text-left px-3 py-2 bg-slate-700 hover:bg-emerald-800/60 border border-slate-600 hover:border-emerald-600 rounded-lg transition-colors"
-                      >
-                        <span className="text-white font-medium">{operatorDisplayName(op)}</span>
-                      </button>
-                    ))}
+                  <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+                    {savedOperators.map((op) => {
+                      const busy = deletingUserId === op.user_id;
+                      return (
+                        <div
+                          key={op.user_id}
+                          className="flex items-center gap-2 px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => recallSavedOperator(op)}
+                            className="flex-1 text-left px-2 py-1.5 hover:bg-emerald-800/60 rounded-md transition-colors min-w-0"
+                          >
+                            <span className="text-white font-medium truncate block">
+                              {operatorDisplayName(op)}
+                            </span>
+                            <span className="text-slate-400 text-xs">
+                              {op.note_count} note{op.note_count === 1 ? '' : 's'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteSavedOperatorNotes(op)}
+                            disabled={busy}
+                            className="px-2 py-1 text-xs text-red-300 hover:text-white hover:bg-red-700/80 border border-red-800/60 rounded disabled:opacity-50 flex-shrink-0"
+                          >
+                            {busy ? '…' : 'Delete'}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
+                  {manageError ? <p className="text-red-300 text-sm mt-2">{manageError}</p> : null}
                 </div>
               )}
               <div className="flex gap-2 justify-end">
@@ -846,23 +899,41 @@ const PinNotesPopoutPage: React.FC = () => {
                 for you and others to load as a column.
               </p>
             ) : (
-              <div className="flex flex-wrap gap-2 mb-4">
-                {savedOperators.map((op) => (
-                    <label
+              <div className="space-y-2 mb-4 max-h-52 overflow-y-auto">
+                {savedOperators.map((op) => {
+                  const busy = deletingUserId === op.user_id;
+                  return (
+                    <div
                       key={op.user_id}
-                      className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
+                      className="flex items-center gap-2 px-2 py-1.5 bg-slate-700 rounded-lg"
                     >
-                      <input
-                        type="checkbox"
-                        checked={pickerSelectedOperators.some((c) => c.userId === op.user_id)}
-                        onChange={() => togglePickerOperator(op)}
-                        className="w-4 h-4 rounded border-slate-500"
-                      />
-                      <span className="text-white text-sm">{operatorDisplayName(op)}</span>
-                    </label>
-                  ))}
+                      <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer px-1 py-1">
+                        <input
+                          type="checkbox"
+                          checked={pickerSelectedOperators.some((c) => c.userId === op.user_id)}
+                          onChange={() => togglePickerOperator(op)}
+                          className="w-4 h-4 rounded border-slate-500 flex-shrink-0"
+                        />
+                        <span className="text-white text-sm truncate">{operatorDisplayName(op)}</span>
+                        <span className="text-slate-400 text-xs flex-shrink-0">
+                          {op.note_count}
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => void deleteSavedOperatorNotes(op)}
+                        disabled={busy}
+                        className="px-2 py-1 text-xs text-red-300 hover:text-white hover:bg-red-700/80 border border-red-800/60 rounded disabled:opacity-50 flex-shrink-0"
+                        title={`Delete all notes for ${operatorDisplayName(op)}`}
+                      >
+                        {busy ? '…' : 'Delete'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
+            {manageError ? <p className="text-red-300 text-sm mb-3">{manageError}</p> : null}
 
             <div className="flex gap-2">
               <button

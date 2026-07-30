@@ -23,6 +23,7 @@ import AgendaImportModal from '../components/AgendaImportModal';
 import ImportCSVModal from '../components/ImportCSVModal';
 import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
+import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
 import {
@@ -30,6 +31,13 @@ import {
   isIndentedScheduleItem,
 } from '../lib/scheduleStartTime';
 import { verifyClearLogPassword } from '../lib/adminAuth';
+import {
+  baselineToOriginalDurations,
+  buildRehearsalBaseline,
+  diffScheduleAgainstBaseline,
+  parseRehearsalBaseline,
+  type RehearsalBaseline,
+} from '../lib/rehearsalBaseline';
 
 // Speaker interface/type definition
 interface Speaker {
@@ -111,6 +119,9 @@ const RunOfShowPage: React.FC = () => {
   const [changeLog, setChangeLog] = useState<LocalChange[]>([]);
   const [masterChangeLog, setMasterChangeLog] = useState<any[]>([]);
   const [showMasterChangeLog, setShowMasterChangeLog] = useState(false);
+  const [changeLogTab, setChangeLogTab] = useState<'local' | 'master' | 'vs-rehearsal'>('local');
+  const [rehearsalBaseline, setRehearsalBaseline] = useState<RehearsalBaseline | null>(null);
+  const [recapturingBaseline, setRecapturingBaseline] = useState(false);
 
   // Debounced change tracking
   const [pendingChanges, setPendingChanges] = useState<Map<string, any>>(new Map());
@@ -694,17 +705,24 @@ const RunOfShowPage: React.FC = () => {
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   const originalDurationsSetForEventRef = useRef<string | null>(null);
   useEffect(() => { originalDurationsSetForEventRef.current = null; }, [event?.id]);
-  // Reset capture lock and clear originals when leaving in-show or unchecking track,
-  // so we re-capture current durations when re-entering (e.g. after rehearsal edits)
+  // Reset duration "was" capture when leaving in-show or unchecking track.
+  // Rehearsal baseline is kept across brief Rehearsal flips.
   useEffect(() => {
     if (showMode !== 'in-show' || !trackWasDurations) {
       originalDurationsSetForEventRef.current = null;
-      setOriginalDurations({});
+      if (showMode !== 'in-show') {
+        setOriginalDurations({});
+      }
     }
   }, [showMode, trackWasDurations]);
   useEffect(() => {
     if (showMode !== 'in-show' || !trackWasDurations || !event?.id || !schedule.length) return;
     if (originalDurationsSetForEventRef.current === event.id) return;
+    if (rehearsalBaseline?.items && Object.keys(rehearsalBaseline.items).length > 0) {
+      setOriginalDurations(baselineToOriginalDurations(rehearsalBaseline));
+      originalDurationsSetForEventRef.current = event.id;
+      return;
+    }
     const next: Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }> = {};
     schedule.forEach((s: ScheduleItem) => {
       next[s.id] = {
@@ -715,15 +733,21 @@ const RunOfShowPage: React.FC = () => {
     });
     setOriginalDurations(prev => Object.keys(next).length ? { ...prev, ...next } : prev);
     originalDurationsSetForEventRef.current = event.id;
-  }, [showMode, trackWasDurations, event?.id, schedule]);
+  }, [showMode, trackWasDurations, event?.id, schedule, rehearsalBaseline]);
   
   useEffect(() => {
     if (!event?.id) return;
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
+      setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
     });
   }, [event?.id]);
+
+  const showVsRehearsalDiffs = useMemo(
+    () => diffScheduleAgainstBaseline(schedule, rehearsalBaseline),
+    [schedule, rehearsalBaseline]
+  );
   
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
@@ -6372,6 +6396,7 @@ const RunOfShowPage: React.FC = () => {
             const s = await DatabaseService.getShowSettings(event.id);
             setShowMode(s.showMode);
             setTrackWasDurations(s.trackWasDurations);
+            setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
           } catch (e) {
             console.warn('Initial sync: could not refetch show mode', e);
           }
@@ -6418,10 +6443,18 @@ const RunOfShowPage: React.FC = () => {
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
         }
       },
-      onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
+      onShowModeUpdate: (data: {
+        event_id: string;
+        showMode?: 'rehearsal' | 'in-show';
+        trackWasDurations?: boolean;
+        rehearsalBaseline?: any;
+      }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          if (data.rehearsalBaseline !== undefined) {
+            setRehearsalBaseline(parseRehearsalBaseline(data.rehearsalBaseline));
+          }
         }
       },
       onShowStartOvertimeReset: (data: { event_id: string }) => {
@@ -9411,10 +9444,39 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showInShowConfirmModal}
         onClose={() => setShowInShowConfirmModal(false)}
         onConfirm={() => {
-          DatabaseService.saveShowMode(event!.id, 'in-show').then(() => setShowMode('in-show'));
+          void (async () => {
+            if (!event?.id) return;
+            const existing = rehearsalBaseline;
+            const baseline = existing || buildRehearsalBaseline(schedule);
+            const isNewBaseline = !existing;
+            await DatabaseService.saveShowModeWithBaseline(event.id, {
+              showMode: 'in-show',
+              rehearsalBaseline: baseline,
+            });
+            setShowMode('in-show');
+            setRehearsalBaseline(baseline);
+            logChange(
+              'SHOW_MODE_CHANGE',
+              isNewBaseline
+                ? `Entered In-Show — frozen rehearsal baseline (${baseline.itemCount} rows)`
+                : `Entered In-Show — keeping existing rehearsal baseline from ${new Date(baseline.capturedAt).toLocaleString()}`,
+              {
+                fieldName: 'showMode',
+                oldValue: 'rehearsal',
+                newValue: 'in-show',
+                baselineCapturedAt: baseline.capturedAt,
+                baselineItemCount: baseline.itemCount,
+                newBaseline: isNewBaseline,
+              }
+            );
+          })();
         }}
         title="Enter Live Show Tracking Mode?"
-        message="Overtime will be tracked and the Start column will show live adjustments. Only switch when you are ready for the live show."
+        message={
+          rehearsalBaseline
+            ? `Overtime will be tracked and the Start column will show live adjustments. Your rehearsal baseline from ${new Date(rehearsalBaseline.capturedAt).toLocaleString()} will be kept for Show vs rehearsal. Only switch when you are ready for the live show.`
+            : 'Overtime will be tracked and the Start column will show live adjustments. The current schedule will be frozen as the rehearsal baseline for Show vs rehearsal. Only switch when you are ready for the live show.'
+        }
         confirmLabel="Enter In-Show"
         cancelLabel="Cancel"
         confirmClassName="bg-green-600 hover:bg-green-500"
@@ -9425,10 +9487,24 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showRehearsalConfirmModal}
         onClose={() => setShowRehearsalConfirmModal(false)}
         onConfirm={() => {
-          DatabaseService.saveShowMode(event!.id, 'rehearsal').then(() => setShowMode('rehearsal'));
+          void (async () => {
+            if (!event?.id) return;
+            await DatabaseService.saveShowMode(event.id, 'rehearsal');
+            setShowMode('rehearsal');
+            logChange(
+              'SHOW_MODE_CHANGE',
+              'Switched back to Rehearsal — overtime tracking paused (baseline kept)',
+              {
+                fieldName: 'showMode',
+                oldValue: 'in-show',
+                newValue: 'rehearsal',
+                baselineKept: !!rehearsalBaseline,
+              }
+            );
+          })();
         }}
         title="Switch back to Rehearsal mode?"
-        message="Overtime will no longer be tracked and the Start column will show scheduled times only. Continue?"
+        message="Overtime will no longer be tracked and the Start column will show scheduled times only. Your rehearsal baseline is kept for Show vs rehearsal. Continue?"
         confirmLabel="Switch to Rehearsal"
         cancelLabel="Stay In-Show"
         confirmClassName="bg-amber-600 hover:bg-amber-500"
@@ -9720,13 +9796,13 @@ const RunOfShowPage: React.FC = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-slate-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 flex-wrap">
               <h2 className="text-2xl font-bold text-white">Change Log</h2>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <button
-                    onClick={() => setShowMasterChangeLog(false)}
+                    onClick={() => { setChangeLogTab('local'); setShowMasterChangeLog(false); }}
                     className={`px-3 py-1 rounded text-sm transition-colors ${
-                      !showMasterChangeLog 
+                      changeLogTab === 'local'
                         ? 'bg-blue-600 text-white' 
                         : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
                     }`}
@@ -9734,19 +9810,30 @@ const RunOfShowPage: React.FC = () => {
                     Local ({changeLog.length})
                   </button>
                   <button
-                    onClick={() => setShowMasterChangeLog(true)}
+                    onClick={() => { setChangeLogTab('master'); setShowMasterChangeLog(true); }}
                     className={`px-3 py-1 rounded text-sm transition-colors ${
-                      showMasterChangeLog 
+                      changeLogTab === 'master'
                         ? 'bg-blue-600 text-white' 
                         : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
                     }`}
                   >
                     Master ({masterChangeLog.length})
                   </button>
+                  <button
+                    onClick={() => { setChangeLogTab('vs-rehearsal'); setShowMasterChangeLog(false); }}
+                    className={`px-3 py-1 rounded text-sm transition-colors ${
+                      changeLogTab === 'vs-rehearsal'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
+                    }`}
+                    title="Compare live schedule to the frozen rehearsal baseline"
+                  >
+                    Show vs rehearsal ({showVsRehearsalDiffs.length})
+                  </button>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {!showMasterChangeLog && (
+                {!showMasterChangeLog && changeLogTab === 'local' && (
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
@@ -9777,7 +9864,7 @@ const RunOfShowPage: React.FC = () => {
                     </button>
                   </div>
                 )}
-                {showMasterChangeLog && (
+                {showMasterChangeLog && changeLogTab === 'master' && (
                   <button
                     onClick={async () => {
                       console.log('🔄 Manual reload button clicked...');
@@ -9803,7 +9890,49 @@ const RunOfShowPage: React.FC = () => {
             </div>
             
             <div className="flex-1 overflow-y-auto">
-              {showMasterChangeLog ? (
+              {changeLogTab === 'vs-rehearsal' ? (
+                <ShowVsRehearsalPanel
+                  baseline={rehearsalBaseline}
+                  diffs={showVsRehearsalDiffs}
+                  canRecapture={currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR'}
+                  recapturing={recapturingBaseline}
+                  onRecapture={() => {
+                    void (async () => {
+                      if (!event?.id) return;
+                      const ok = window.confirm(
+                        'Replace the rehearsal baseline with the current schedule?\n\nShow vs rehearsal will then start from this moment.'
+                      );
+                      if (!ok) return;
+                      setRecapturingBaseline(true);
+                      try {
+                        const baseline = buildRehearsalBaseline(schedule);
+                        await DatabaseService.saveShowModeWithBaseline(event.id, {
+                          rehearsalBaseline: baseline,
+                        });
+                        setRehearsalBaseline(baseline);
+                        // Only refresh "was durations" originals if that UI is already enabled
+                        if (trackWasDurations) {
+                          setOriginalDurations(baselineToOriginalDurations(baseline));
+                          originalDurationsSetForEventRef.current = event.id;
+                        }
+                        logChange(
+                          'SHOW_MODE_CHANGE',
+                          `Recaptured rehearsal baseline (${baseline.itemCount} rows)`,
+                          {
+                            fieldName: 'rehearsalBaseline',
+                            oldValue: rehearsalBaseline?.capturedAt || '(none)',
+                            newValue: baseline.capturedAt,
+                            baselineItemCount: baseline.itemCount,
+                            newBaseline: true,
+                          }
+                        );
+                      } finally {
+                        setRecapturingBaseline(false);
+                      }
+                    })();
+                  }}
+                />
+              ) : showMasterChangeLog ? (
                 // Master Change Log (from Supabase) - Clean Format
                 masterChangeLog.length === 0 ? (
                   <p className="text-gray-400 text-center py-8">No master changes found</p>
@@ -9832,6 +9961,7 @@ const RunOfShowPage: React.FC = () => {
                               change.action === 'MOVE_ITEM' ? 'bg-yellow-600' :
                               change.action === 'COLUMN_ADD' ? 'bg-purple-600' :
                               change.action === 'COLUMN_REMOVE' ? 'bg-orange-600' :
+                              change.action === 'SHOW_MODE_CHANGE' ? 'bg-emerald-600' :
                               'bg-blue-600'
                             }`}>
                               {change.action}

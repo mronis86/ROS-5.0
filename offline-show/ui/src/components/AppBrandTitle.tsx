@@ -13,7 +13,7 @@ type AppBrandTitleProps = {
 
 const AppBrandTitle: React.FC<AppBrandTitleProps> = ({
   titleClassName = 'text-xl font-bold text-white leading-tight',
-  taglineClassName = 'text-[10px] uppercase tracking-[0.12em] text-slate-400 leading-tight',
+  taglineClassName = 'text-[10px] uppercase tracking-[0.04em] text-slate-400 leading-none -mt-0.5',
   showTagline = true,
 }) => {
   const [variant, setVariant] = useState<LogoVariant>(() => getLogoVariant());
@@ -32,7 +32,7 @@ const AppBrandTitle: React.FC<AppBrandTitleProps> = ({
     <div className="min-w-0 leading-none">
       <h1 className={titleClassName}>{variant.appTitle}</h1>
       {showTagline && variant.appTagline ? (
-        <p className={`mt-px ${taglineClassName}`}>{variant.appTagline}</p>
+        <p className={taglineClassName}>{variant.appTagline}</p>
       ) : null}
     </div>
   );

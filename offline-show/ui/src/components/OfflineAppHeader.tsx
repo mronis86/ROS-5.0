@@ -15,7 +15,7 @@ const OfflineAppHeader: React.FC = () => {
             <AppLogo size="sm" />
             <AppBrandTitle
               titleClassName="text-base font-bold text-white leading-none"
-              taglineClassName="text-[9px] uppercase tracking-[0.06em] text-slate-500 leading-none"
+              taglineClassName="text-[10px] uppercase tracking-[0.04em] text-slate-400 leading-none -mt-0.5"
             />
           </div>
         </div>
