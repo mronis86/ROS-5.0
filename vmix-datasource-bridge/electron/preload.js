@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('rosVmixBridge', {
   stopBridge: () => ipcRenderer.invoke('bridge:stop'),
   resync: () => ipcRenderer.invoke('bridge:resync'),
   getStatus: () => ipcRenderer.invoke('bridge:status'),
+  reportCue: (itemId, data) => ipcRenderer.invoke('bridge:cue', { itemId, data }),
+  reportSocketStatus: (status) => ipcRenderer.send('bridge:socketStatus', status),
   onStatus: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('bridge:status', handler);

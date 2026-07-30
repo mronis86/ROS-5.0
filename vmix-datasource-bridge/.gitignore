@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-transfer/
+dist-ready-*/
 *.log
 .DS_Store
 *.lnk

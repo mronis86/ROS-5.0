@@ -1,5 +1,3 @@
-const { io } = require('socket.io-client');
-const { createCueFollower } = require('./cue-follower');
 const { normalizeBaseUrl } = require('./auth-session');
 const {
   getRunOfShowData,
@@ -12,13 +10,16 @@ const { resolveRowIndex } = require('./row-matcher');
 
 /**
  * Orchestrates Railway cue follow → row match → vMix DataSourceSelectRow.
+ *
+ * Cue detection matches Companion: REST poll /api/active-timers (Chromium net.fetch).
+ * Optional live Socket.IO runs in the *renderer* (browser stack, same as the web app)
+ * and forwards cues here via IPC — Node socket.io in main is avoided (XHR poll / TLS issues).
  */
 class BridgeController {
   constructor({ onStatus } = {}) {
     this.onStatus = onStatus || (() => {});
     this.running = false;
     this.config = null;
-    this.follower = null;
     this.pollTimer = null;
     this.scheduleItems = [];
     this.lastItemId = null;
@@ -30,7 +31,10 @@ class BridgeController {
     return {
       running: false,
       railway: { ok: false, message: 'Not started' },
-      socket: { ok: false, message: 'Not connected' },
+      socket: {
+        ok: false,
+        message: 'Renderer Socket.IO idle — REST poll is primary (same as Companion)',
+      },
       vmix: { ok: false, message: 'Not tested' },
       cue: null,
       matches: [],
@@ -54,6 +58,15 @@ class BridgeController {
       message: `Schedule loaded (${this.scheduleItems.length} items)`,
       eventId,
     };
+  }
+
+  setSocketStatus(partial) {
+    this.status.socket = {
+      ...(this.status.socket || {}),
+      ...(partial || {}),
+    };
+    this.resyncPollInterval();
+    this.emit();
   }
 
   async applyCue(itemId, timerRow = {}) {
@@ -85,14 +98,15 @@ class BridgeController {
     for (const binding of bindings) {
       if (!binding?.dataSourceName) {
         matches.push({
-          bindingId: binding?.id,
+          bindingId: binding.id,
+          label: binding.label || undefined,
           ok: false,
-          message: 'Data Source name not set',
+          message: 'Data Source name is empty',
         });
         continue;
       }
 
-      const resolved = resolveRowIndex(binding.matchMode === 'rowIndex' ? 'rowIndex' : 'cueColumn', {
+      const resolved = resolveRowIndex(binding.matchMode || 'cueColumn', {
         scheduleItems: this.scheduleItems,
         itemId: id,
         timerRow,
@@ -164,6 +178,11 @@ class BridgeController {
     }
 
     this.status.matches = matches;
+    this.status.railway = {
+      ...(this.status.railway || {}),
+      ok: true,
+      message: this.status.railway?.message || 'OK',
+    };
     this.emit();
   }
 
@@ -181,7 +200,6 @@ class BridgeController {
       const itemId = row.item_id != null ? parseInt(String(row.item_id), 10) : NaN;
       if (!Number.isFinite(itemId)) return;
       if (itemId === this.lastItemId && this.status.matches?.some((m) => m.ok)) {
-        // Still update cue panel lightly
         this.status.cue = {
           itemId,
           cueIs: row.cue_is || null,
@@ -210,6 +228,10 @@ class BridgeController {
     this.lastSelectKey = '';
     this.status = this.emptyStatus();
     this.status.running = true;
+    this.status.socket = {
+      ok: false,
+      message: 'Waiting for renderer Socket.IO (optional) — REST poll active',
+    };
 
     if (!this.config.eventId) {
       this.running = false;
@@ -244,29 +266,31 @@ class BridgeController {
       return { ok: false, message: err.message || 'Failed to load schedule' };
     }
 
-    const socketUrl = normalizeBaseUrl(this.config.apiBaseUrl);
-    this.follower = createCueFollower({
-      ioClient: io,
-      url: socketUrl,
-      eventId: this.config.eventId,
-      onPlayCue: (itemId, data) => {
-        void this.applyCue(itemId, data || {});
-      },
-      onClear: () => {
-        // Keep last selected row (plan: do not clear on stop)
-        this.emit();
-      },
-      onStatus: (s) => {
-        this.status.socket = s;
-        this.emit();
-      },
-    });
-
-    const pollMs = Math.max(2, Number(this.config.pollSeconds) || 5) * 1000;
-    this.pollTimer = setInterval(() => void this.pollOnce(), pollMs);
+    this.resyncPollInterval();
     await this.pollOnce();
     this.emit();
-    return { ok: true, message: 'Bridge running' };
+    return {
+      ok: true,
+      message: 'Bridge running (REST poll + optional browser Socket.IO)',
+      socketFollow: {
+        apiBaseUrl: normalizeBaseUrl(this.config.apiBaseUrl),
+        eventId: this.config.eventId,
+        apiToken: this.config.apiToken || '',
+      },
+    };
+  }
+
+  resyncPollInterval() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    if (!this.running || !this.config) return;
+    const socketOk = this.status?.socket?.ok === true;
+    const configured = Math.min(60, Math.max(1, Number(this.config.pollSeconds) || 1));
+    // User poll interval is authoritative. With live Socket.IO, poll is only a slower safety net.
+    const seconds = socketOk ? Math.max(configured, 5) : configured;
+    this.pollTimer = setInterval(() => void this.pollOnce(), seconds * 1000);
   }
 
   async stop() {
@@ -275,14 +299,10 @@ class BridgeController {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-    if (this.follower) {
-      this.follower.dispose();
-      this.follower = null;
-    }
     this.status.running = false;
     this.status.socket = { ok: false, message: 'Stopped' };
     this.emit();
-    return { ok: true };
+    return { ok: true, stopSocketFollow: true };
   }
 
   async resync() {

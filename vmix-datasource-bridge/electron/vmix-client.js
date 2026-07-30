@@ -109,11 +109,17 @@ async function testConnection(host, port) {
   try {
     const xml = await fetchApiXml(host, port);
     const catalog = parseDataSourceCatalog(xml);
+    const message =
+      catalog.length > 0
+        ? `Connected to vMix — ${catalog.length} Data Source(s) found in API`
+        : 'Connected to vMix. Data Sources are usually not listed in the API — type the exact name from vMix Data Sources Manager.';
     return {
       ok: true,
-      message: `Connected to vMix — ${catalog.length} Data Source(s)`,
+      message,
       dataSourceNames: catalog.map((e) => e.name),
       catalog,
+      xmlLength: xml.length,
+      apiListsDataSources: catalog.length > 0,
     };
   } catch (err) {
     return { ok: false, message: err.message || 'vMix connection failed' };
@@ -121,8 +127,28 @@ async function testConnection(host, port) {
 }
 
 /**
+ * Build DataSourceSelectRow Value strings.
+ * Official docs: Name,Table,Index (empty Table for XML/CSV → Name,,Index).
+ * vMix UTC Functions.xml uses Value={2},{1} → Name,Index when no sheet.
+ */
+function buildSelectValueCandidates(dataSourceName, tableName, zeroBasedIndex) {
+  const name = String(dataSourceName || '').trim();
+  const table = String(tableName || '').trim();
+  const index = Math.floor(zeroBasedIndex);
+  const candidates = [];
+  if (table) {
+    candidates.push(`${name},${table},${index}`);
+  } else {
+    // Prefer UTC-style 2-part for XML/CSV (no empty middle segment)
+    candidates.push(`${name},${index}`);
+    candidates.push(`${name},,${index}`);
+  }
+  return [...new Set(candidates)];
+}
+
+/**
  * Select a row in a Data Source.
- * Value: DataSourceName,TableOrSheetOrEmpty,ZeroBasedIndex
+ * Tries Name,Sheet,Index when a sheet is set; otherwise Name,Index then Name,,Index.
  */
 async function selectRow(host, port, dataSourceName, tableName, zeroBasedIndex) {
   const name = String(dataSourceName || '').trim();
@@ -130,19 +156,38 @@ async function selectRow(host, port, dataSourceName, tableName, zeroBasedIndex) 
   if (!Number.isFinite(zeroBasedIndex) || zeroBasedIndex < 0) {
     throw new Error(`Invalid row index: ${zeroBasedIndex}`);
   }
-  const table = String(tableName || '').trim();
-  const value = `${name},${table},${Math.floor(zeroBasedIndex)}`;
   const base = buildBaseUrl(host, port);
-  const url = `${base}?Function=DataSourceSelectRow&Value=${encodeURIComponent(value)}`;
-  const res = await fetch(url);
-  const body = await res.text().catch(() => '');
-  if (!res.ok) {
-    const err = new Error(`DataSourceSelectRow failed HTTP ${res.status}`);
-    err.url = url;
-    err.body = body;
-    throw err;
+  const candidates = buildSelectValueCandidates(name, tableName, zeroBasedIndex);
+  let lastErr = null;
+
+  for (const value of candidates) {
+    const url = `${base}?Function=DataSourceSelectRow&Value=${encodeURIComponent(value)}`;
+    try {
+      const res = await fetch(url);
+      const body = await res.text().catch(() => '');
+      if (!res.ok) {
+        lastErr = new Error(`DataSourceSelectRow failed HTTP ${res.status}`);
+        lastErr.url = url;
+        lastErr.body = body;
+        lastErr.value = value;
+        continue;
+      }
+      return {
+        ok: true,
+        url,
+        value,
+        index: Math.floor(zeroBasedIndex),
+        body: body.slice(0, 200),
+        tried: candidates,
+      };
+    } catch (err) {
+      lastErr = err;
+      lastErr.url = url;
+      lastErr.value = value;
+    }
   }
-  return { ok: true, url, value, index: Math.floor(zeroBasedIndex), body: body.slice(0, 200) };
+
+  throw lastErr || new Error('DataSourceSelectRow failed');
 }
 
 module.exports = {
@@ -150,6 +195,7 @@ module.exports = {
   fetchApiXml,
   parseDataSourceNames,
   parseDataSourceCatalog,
+  buildSelectValueCandidates,
   listDataSources,
   testConnection,
   selectRow,

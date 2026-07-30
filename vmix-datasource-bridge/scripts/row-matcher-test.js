@@ -57,4 +57,8 @@ const book = catalog.find((c) => c.name === 'ShowBook');
 assert.ok(book);
 assert.deepStrictEqual(book.tables, ['Day2', 'Sheet1', 'Speakers']);
 
+const { buildSelectValueCandidates } = require('../electron/vmix-client');
+assert.deepStrictEqual(buildSelectValueCandidates('Schedule', '', 3), ['Schedule,3', 'Schedule,,3']);
+assert.deepStrictEqual(buildSelectValueCandidates('Book', 'Sheet1', 2), ['Book,Sheet1,2']);
+
 console.log('row-matcher + vmix catalog tests OK');

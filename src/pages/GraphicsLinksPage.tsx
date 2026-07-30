@@ -820,7 +820,7 @@ const GraphicsLinksPage: React.FC = () => {
               <ul className="text-cyan-100 text-xs space-y-0.5">
                 <li>• Cue column or row-index match</li>
                 <li>• Multi Data Source bindings</li>
-                <li>• Portable .exe — no Node.js / npm</li>
+                <li>• Prebuilt START.bat — no npm on show PC</li>
               </ul>
             </div>
 
@@ -831,7 +831,7 @@ const GraphicsLinksPage: React.FC = () => {
             >
               📥 Download vMix Bridge
             </a>
-            <p className="text-cyan-300 text-xs text-center mt-2">Portable Windows .exe • Unzip &amp; run</p>
+            <p className="text-cyan-300 text-xs text-center mt-2">~97 MB · Unzip &amp; START.bat · no Node install</p>
           </div>
         </div>
       </div>

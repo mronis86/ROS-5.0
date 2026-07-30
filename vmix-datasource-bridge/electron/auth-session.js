@@ -5,7 +5,21 @@ function normalizeBaseUrl(url) {
   if (!/^https?:\/\//i.test(s)) {
     s = /localhost|127\.0\.0\.1/i.test(s) ? `http://${s}` : `https://${s}`;
   }
-  return s.replace(/\/$/, '');
+  // Strip trailing slash and accidental /api suffix (avoids /api/api/...)
+  s = s.replace(/\/+$/, '');
+  s = s.replace(/\/api$/i, '');
+  return s;
+}
+
+/** Integration tokens are ros_itok_… — strip pasted "Bearer ", quotes, whitespace. */
+function normalizeApiToken(token) {
+  let t = String(token || '').trim();
+  if (!t) return '';
+  t = t.replace(/^Bearer\s+/i, '').trim();
+  t = t.replace(/^["']|["']$/g, '').trim();
+  // Collapse accidental newlines from rich-text paste
+  t = t.replace(/\s+/g, '');
+  return t;
 }
 
 function getApiOrigin(apiBaseUrl) {
@@ -23,7 +37,7 @@ function getApiOrigin(apiBaseUrl) {
 function installApiAuth(sessionInstance, apiBaseUrl, apiToken) {
   const state = {
     apiOrigin: getApiOrigin(apiBaseUrl),
-    token: String(apiToken || '').trim(),
+    token: normalizeApiToken(apiToken),
   };
 
   if (!sessionInstance.__rosVmixAuthInstalled) {
@@ -47,4 +61,9 @@ function installApiAuth(sessionInstance, apiBaseUrl, apiToken) {
   return !!state.token && !!state.apiOrigin;
 }
 
-module.exports = { installApiAuth, normalizeBaseUrl, getApiOrigin };
+module.exports = {
+  installApiAuth,
+  normalizeBaseUrl,
+  normalizeApiToken,
+  getApiOrigin,
+};

@@ -11,6 +11,7 @@
       <div class="brand">
         <h1>ROS vMix DataSource Bridge</h1>
         <span id="run-pill" class="pill stopped">Stopped</span>
+        <span id="auto-stop-pill" class="pill timer" hidden></span>
       </div>
       <div class="top-actions">
         <button type="button" id="btn-start" class="primary">Start</button>
@@ -33,8 +34,8 @@
           <div>
             <h2>Data Sources</h2>
             <p class="hint">
-              Add one row per Data Source <em>and</em> sheet you want to keep in sync.
-              Excel / Google Sheets need the sheet name; XML/CSV can leave sheet blank.
+              One binding per vMix Data Source (and sheet). Type the exact name from vMix.
+              Choose <strong>Cue match</strong> or <strong>Row index</strong> below — see the hint under each toggle.
             </p>
           </div>
           <div class="row tight-row">
@@ -44,7 +45,10 @@
           </div>
         </div>
 
-        <p id="vmix-ds-list" class="catalog-banner muted">Click <strong>Refresh from vMix</strong> to load Data Sources and sheets.</p>
+        <p id="vmix-ds-list" class="catalog-banner muted">
+          Type the exact Data Source name from vMix Data Sources Manager. Refresh only helps if your vMix version lists them in the API.
+        </p>
+        <datalist id="vmix-ds-datalist"></datalist>
 
         <div id="bindings" class="bindings-list"></div>
       </section>
@@ -56,17 +60,23 @@
             <h2>Railway</h2>
             <label>
               API base URL
-              <input id="apiBaseUrl" type="text" spellcheck="false" />
+              <span class="hint">e.g. https://ros-50-production.up.railway.app — no trailing /api</span>
+              <input id="apiBaseUrl" type="text" spellcheck="false" placeholder="https://ros-50-production.up.railway.app" />
             </label>
             <label>
               API token
-              <span class="hint">Admin → Integration tokens · scope <code>read</code></span>
-              <input id="apiToken" type="password" autocomplete="off" spellcheck="false" />
+              <span class="hint">Admin → Integration tokens · full token starting with <code>ros_itok_</code> · scope <code>read</code></span>
+              <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="ros_itok_…" />
             </label>
             <div class="row">
               <button type="button" id="btn-validate-api">Test API</button>
               <button type="button" id="btn-load-events">Load events</button>
+              <button type="button" id="btn-test-socket" class="secondary">Test Socket.IO</button>
             </div>
+            <p class="hint">
+              Cue follow uses REST polling (same as Companion). Socket.IO is optional and runs in the
+              browser engine — use Test Socket.IO to diagnose. Node/main-process sockets are not used.
+            </p>
             <label>
               Event
               <select id="eventSelect">
@@ -95,11 +105,25 @@
               <button type="button" id="btn-test-vmix">Test vMix</button>
               <button type="button" id="btn-refresh-ds-2" class="secondary">Refresh sources</button>
             </div>
+          </div>
+
+          <div class="card">
+            <h2>Cue poll &amp; auto-stop</h2>
             <label>
-              Poll fallback (seconds)
-              <input id="pollSeconds" type="number" min="2" max="60" />
+              Poll interval (seconds)
+              <input id="pollSeconds" type="number" min="1" max="60" step="1" />
             </label>
-            <p class="hint">Socket.IO follows cues live; polling is a backup if a message is missed.</p>
+            <div class="row tight-row poll-presets" id="poll-presets">
+              <button type="button" data-poll="1">1s</button>
+              <button type="button" data-poll="2">2s</button>
+              <button type="button" data-poll="5">5s</button>
+              <button type="button" data-poll="10">10s</button>
+            </div>
+            <p class="hint">
+              How often to check Railway <code>active-timers</code> (hits Neon each time).
+              <strong>1s</strong> = most responsive · higher = lower monthly cost.
+              Optional browser Socket.IO can still push cues faster when the network allows it.
+            </p>
           </div>
         </div>
       </section>
@@ -122,6 +146,49 @@
     </main>
 
     <p id="toast" class="toast" hidden></p>
+
+    <div id="auto-stop-modal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-labelledby="auto-stop-title">
+        <h3 id="auto-stop-title">Auto-stop timer</h3>
+        <p class="hint">
+          Stops cue polling automatically so Neon / Railway cost doesn’t keep running if you forget Stop.
+        </p>
+        <div class="auto-stop-pickers">
+          <label>
+            Hours
+            <select id="auto-stop-hours"></select>
+          </label>
+          <label>
+            Minutes
+            <select id="auto-stop-minutes">
+              <option value="0">0</option>
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="15">15</option>
+              <option value="20">20</option>
+              <option value="25">25</option>
+              <option value="30">30</option>
+              <option value="45">45</option>
+            </select>
+          </label>
+        </div>
+        <div class="row modal-actions">
+          <button type="button" id="btn-auto-stop-never" class="secondary">Never auto-stop</button>
+          <button type="button" id="btn-auto-stop-confirm" class="primary">Start with timer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="auto-stop-notice" class="banner-notice" hidden>
+      <div>
+        <strong>Auto-stopped</strong>
+        <span id="auto-stop-notice-text">Polling stopped after the timer ended.</span>
+      </div>
+      <button type="button" id="btn-auto-stop-restart" class="primary">Start again</button>
+    </div>
+
+    <script src="vendor/socket.io.min.js"></script>
+    <script src="cue-socket.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

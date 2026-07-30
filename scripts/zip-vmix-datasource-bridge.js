@@ -1,78 +1,103 @@
 /**
- * Zip the built portable EXE into public/ros-vmix-datasource-bridge.zip
- * for Graphics Links download.
- *
- * Requires a prior local build:
- *   cd vmix-datasource-bridge && npm run build:portable
- *
- * Output: single-folder zip with the .exe + short README (no Node.js / npm on target PCs).
+ * Zip a prebuilt Windows app (win-unpacked / dist-transfer) for show PCs.
+ * Prefer dist-transfer/win-unpacked, else dist/win-unpacked.
+ * No npm install on the target machine (avoids corporate SSL failures).
  */
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
 
 const projectRoot = path.resolve(__dirname, '..');
-const distDir = path.join(projectRoot, 'vmix-datasource-bridge', 'dist');
-const zipPath = path.join(projectRoot, 'public', 'ros-vmix-datasource-bridge.zip');
+const bridgeRoot = path.join(projectRoot, 'vmix-datasource-bridge');
 
-function findPortableExe() {
-  if (!fs.existsSync(distDir)) return null;
-  const match = fs
-    .readdirSync(distDir)
-    .find((name) => /^ROS-vMix-DataSource-Bridge-.*-portable\.exe$/i.test(name));
-  return match ? path.join(distDir, match) : null;
+function findUnpacked() {
+  const readyDirs = fs
+    .readdirSync(bridgeRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && /^dist-ready-/.test(d.name))
+    .map((d) => ({
+      name: d.name,
+      mtime: fs.statSync(path.join(bridgeRoot, d.name)).mtimeMs,
+      path: path.join(bridgeRoot, d.name, 'win-unpacked'),
+    }))
+    .filter((d) => fs.existsSync(d.path))
+    .sort((a, b) => b.mtime - a.mtime);
+  if (readyDirs[0]) return readyDirs[0].path;
+
+  const candidates = [
+    path.join(bridgeRoot, 'dist-transfer', 'win-unpacked'),
+    path.join(bridgeRoot, 'dist', 'win-unpacked'),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
-const exePath = findPortableExe();
-if (!exePath) {
+const unpackedDir = findUnpacked();
+const zipPath = path.join(projectRoot, 'public', 'ros-vmix-datasource-bridge.zip');
+const prefix = 'ros-vmix-datasource-bridge';
+
+if (!unpackedDir) {
   console.warn(
-    'scripts/zip-vmix-datasource-bridge.js: portable exe not found.\n' +
-      '  Run: cd vmix-datasource-bridge && npm run build:portable\n' +
-      '  Skipping zip (keeping existing public/ros-vmix-datasource-bridge.zip if present).'
+    'scripts/zip-vmix-datasource-bridge.js: no win-unpacked found.\n' +
+      '  Run: cd vmix-datasource-bridge && npx electron-builder --win dir --x64\n' +
+      '  Skipping zip.'
   );
   process.exit(0);
 }
 
+const exeName =
+  fs.readdirSync(unpackedDir).find((n) => n.toLowerCase().endsWith('.exe') && !/elevate/i.test(n)) ||
+  'ROS vMix DataSource Bridge.exe';
+
 const publicDir = path.dirname(zipPath);
-if (!fs.existsSync(publicDir)) {
-  fs.mkdirSync(publicDir, { recursive: true });
-}
+if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 
-const readmeText = `ROS vMix DataSource Bridge (portable)
+const startBat = `@echo off
+setlocal
+cd /d "%~dp0"
+echo Starting ROS vMix DataSource Bridge...
+echo No npm install needed.
+start "" "%~dp0${exeName}"
+endlocal
+`;
 
-No Node.js or npm install required.
+const readme = `ROS vMix DataSource Bridge (prebuilt)
 
-1. Unzip this folder anywhere (Desktop, USB, etc.).
-2. Double-click ROS-vMix-DataSource-Bridge-*-portable.exe
-3. Enter Railway API URL + integration token (read scope).
-4. Pick event, test vMix, add Data Source bindings, click Start.
+No Node.js / npm install required on the show PC.
 
-Requirements:
-- Windows 10/11 (x64)
-- vMix with Web Controller enabled (default http://127.0.0.1:8088)
-- Network access to your ROS Railway API
+1. Unzip anywhere.
+2. Double-click START.bat
+3. Type the exact Data Source name from vMix Data Sources Manager.
+4. Sheet blank for XML/CSV; set sheet for Excel/Google Sheets.
 
-Config is stored under %LOCALAPPDATA%\\ros-vmix-datasource\\
+Corporate networks that block Electron downloads should use this package.
 `;
 
 const output = fs.createWriteStream(zipPath);
 const archive = archiver('zip', { zlib: { level: 9 } });
-
 archive.on('error', (err) => {
-  console.error('zip-vmix-datasource-bridge error:', err);
+  console.error(err);
   process.exit(1);
 });
-
 archive.pipe(output);
-archive.file(exePath, {
-  name: `ros-vmix-datasource-bridge/${path.basename(exePath)}`,
+archive.glob('**/*', {
+  cwd: unpackedDir,
+  ignore: [
+    'locales/**',
+    'LICENSES.chromium.html',
+    'vk_swiftshader.dll',
+    'vk_swiftshader_icd.json',
+    'vulkan-1.dll',
+  ],
+  prefix,
 });
-archive.append(readmeText, {
-  name: 'ros-vmix-datasource-bridge/README.txt',
-});
+const enUs = path.join(unpackedDir, 'locales', 'en-US.pak');
+if (fs.existsSync(enUs)) {
+  archive.file(enUs, { name: `${prefix}/locales/en-US.pak` });
+}
+archive.append(startBat, { name: `${prefix}/START.bat` });
+archive.append(readme, { name: `${prefix}/README.txt` });
 archive.finalize();
 
 output.on('close', () => {
   const mb = (archive.pointer() / (1024 * 1024)).toFixed(2);
-  console.log(`Created public/ros-vmix-datasource-bridge.zip (${mb} MB) from ${path.basename(exePath)}`);
+  console.log(`Created ${zipPath} (${mb} MB) from ${unpackedDir}`);
 });

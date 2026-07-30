@@ -1,6 +1,6 @@
 {
   "name": "ros-vmix-datasource-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Portable ROS → vMix Data Source row selector (follows loaded cues on Railway)",
   "private": true,
   "main": "electron/main.js",
@@ -22,7 +22,7 @@
     "appId": "com.sinor.ros.vmix-datasource",
     "productName": "ROS vMix DataSource Bridge",
     "directories": {
-      "output": "dist",
+      "output": "dist-ready-220139",
       "buildResources": "build"
     },
     "files": [
@@ -37,7 +37,9 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "ROS-vMix-DataSource-Bridge-${version}-portable.exe"

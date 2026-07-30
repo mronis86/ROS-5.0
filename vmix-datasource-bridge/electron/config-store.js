@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
-const { normalizeBaseUrl } = require('./auth-session');
+const { normalizeBaseUrl, normalizeApiToken } = require('./auth-session');
 
 const DEFAULT_BINDING = {
   id: 'default',
@@ -20,7 +20,11 @@ const DEFAULTS = {
   eventId: '',
   vmixHost: '127.0.0.1',
   vmixPort: 8088,
-  pollSeconds: 5,
+  pollSeconds: 1,
+  /** Last auto-stop choice shown in the Start modal (cost guard). */
+  autoStopHours: 2,
+  autoStopMinutes: 0,
+  autoStopNever: false,
   bindings: [{ ...DEFAULT_BINDING }],
 };
 
@@ -55,9 +59,15 @@ function loadConfig() {
 function saveConfig(partial) {
   const next = { ...loadConfig(), ...partial };
   if (next.apiBaseUrl) next.apiBaseUrl = normalizeBaseUrl(next.apiBaseUrl);
+  if (next.apiToken != null) next.apiToken = normalizeApiToken(next.apiToken);
   if (next.vmixHost) next.vmixHost = String(next.vmixHost).trim();
   next.vmixPort = Math.max(1, parseInt(String(next.vmixPort || 8088), 10) || 8088);
-  next.pollSeconds = Math.max(2, parseInt(String(next.pollSeconds || 5), 10) || 5);
+  next.pollSeconds = Math.min(60, Math.max(1, parseInt(String(next.pollSeconds || 1), 10) || 1));
+  next.autoStopHours = Math.min(24, Math.max(0, parseInt(String(next.autoStopHours ?? 2), 10) || 0));
+  next.autoStopMinutes = [0, 5, 10, 15, 20, 25, 30, 45].includes(Number(next.autoStopMinutes))
+    ? Number(next.autoStopMinutes)
+    : 0;
+  next.autoStopNever = next.autoStopNever === true;
   next.bindings = next.bindings.map((b, i) => ({
     ...DEFAULT_BINDING,
     ...b,

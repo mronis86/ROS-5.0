@@ -132,3 +132,14 @@ ipcMain.handle('bridge:stop', async () => bridge.stop());
 ipcMain.handle('bridge:resync', async () => bridge.resync());
 
 ipcMain.handle('bridge:status', () => bridge.getStatus());
+
+ipcMain.handle('bridge:cue', async (_event, payload) => {
+  const itemId = payload?.itemId;
+  const data = payload?.data || {};
+  await bridge.applyCue(itemId, data);
+  return { ok: true };
+});
+
+ipcMain.on('bridge:socketStatus', (_event, status) => {
+  bridge.setSocketStatus(status || {});
+});

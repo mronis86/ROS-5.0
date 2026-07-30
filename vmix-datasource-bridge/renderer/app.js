@@ -12,6 +12,12 @@ const els = {
   vmixDsList: document.getElementById('vmix-ds-list'),
   toast: document.getElementById('toast'),
   runPill: document.getElementById('run-pill'),
+  autoStopPill: document.getElementById('auto-stop-pill'),
+  autoStopModal: document.getElementById('auto-stop-modal'),
+  autoStopHours: document.getElementById('auto-stop-hours'),
+  autoStopMinutes: document.getElementById('auto-stop-minutes'),
+  autoStopNotice: document.getElementById('auto-stop-notice'),
+  autoStopNoticeText: document.getElementById('auto-stop-notice-text'),
   stRailway: document.getElementById('st-railway'),
   stSocket: document.getElementById('st-socket'),
   stVmix: document.getElementById('st-vmix'),
@@ -23,6 +29,14 @@ const els = {
 /** @type {{ name: string, tables: string[] }[]} */
 let catalog = [];
 let bindingState = [];
+
+/** @type {{ hours: number, minutes: number, never: boolean }} */
+let autoStopPrefs = { hours: 2, minutes: 0, never: false };
+
+let autoStopTimer = null;
+let autoStopEndsAt = null;
+let autoStopTick = null;
+let autoStopDurationLabel = '';
 
 function showToast(message, isError = false) {
   els.toast.hidden = false;
@@ -47,6 +61,109 @@ function escapeAttr(s) {
   return escapeHtml(s).replace(/'/g, '&#39;');
 }
 
+function clampPoll(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return 1;
+  return Math.min(60, Math.max(1, v));
+}
+
+function formatDuration(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function formatAutoStopLabel(hours, minutes) {
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  return parts.join(' ') || '0m';
+}
+
+function clearAutoStopTimer() {
+  if (autoStopTimer) {
+    clearTimeout(autoStopTimer);
+    autoStopTimer = null;
+  }
+  if (autoStopTick) {
+    clearInterval(autoStopTick);
+    autoStopTick = null;
+  }
+  autoStopEndsAt = null;
+  autoStopDurationLabel = '';
+  if (els.autoStopPill) {
+    els.autoStopPill.hidden = true;
+    els.autoStopPill.textContent = '';
+  }
+}
+
+function updateAutoStopPill() {
+  if (!els.autoStopPill || !autoStopEndsAt) return;
+  const left = autoStopEndsAt - Date.now();
+  if (left <= 0) {
+    els.autoStopPill.textContent = 'Stopping…';
+    return;
+  }
+  els.autoStopPill.hidden = false;
+  els.autoStopPill.textContent = `Auto-stop ${formatDuration(left)}`;
+}
+
+async function performStop({ auto = false } = {}) {
+  const label = autoStopDurationLabel;
+  clearAutoStopTimer();
+  window.rosCueSocket?.stopCueSocket?.();
+  await api.stopBridge();
+  if (auto) {
+    els.autoStopNoticeText.textContent = label
+      ? `Polling stopped after ${label} to limit Neon / Railway cost.`
+      : 'Polling stopped after the auto-stop timer ended.';
+    els.autoStopNotice.hidden = false;
+    showToast('Auto-stopped — hit Start again when you need it', false);
+  }
+}
+
+function scheduleAutoStop(hours, minutes) {
+  clearAutoStopTimer();
+  const ms = (Math.max(0, hours) * 60 + Math.max(0, minutes)) * 60 * 1000;
+  if (ms <= 0) return;
+  autoStopDurationLabel = formatAutoStopLabel(hours, minutes);
+  autoStopEndsAt = Date.now() + ms;
+  updateAutoStopPill();
+  autoStopTick = setInterval(updateAutoStopPill, 1000);
+  autoStopTimer = setTimeout(() => {
+    void performStop({ auto: true });
+  }, ms);
+}
+
+function initAutoStopHourOptions() {
+  els.autoStopHours.innerHTML = Array.from({ length: 25 }, (_, i) => {
+    return `<option value="${i}">${i}</option>`;
+  }).join('');
+}
+
+function openAutoStopModal() {
+  let hours = Number(autoStopPrefs.hours) || 0;
+  let minutes = Number(autoStopPrefs.minutes) || 0;
+  if (hours === 0 && minutes === 0) hours = 2;
+  els.autoStopHours.value = String(hours);
+  els.autoStopMinutes.value = String(minutes);
+  els.autoStopModal.hidden = false;
+}
+
+function closeAutoStopModal() {
+  els.autoStopModal.hidden = true;
+}
+
+function syncPollPresetButtons() {
+  const current = clampPoll(els.pollSeconds.value);
+  document.querySelectorAll('#poll-presets [data-poll]').forEach((btn) => {
+    btn.classList.toggle('active', Number(btn.getAttribute('data-poll')) === current);
+  });
+}
+
 function newBinding(partial = {}) {
   return {
     id: partial.id || `b${Date.now()}${Math.floor(Math.random() * 1000)}`,
@@ -67,7 +184,10 @@ function readForm() {
     eventId: els.eventId.value.trim(),
     vmixHost: els.vmixHost.value.trim() || '127.0.0.1',
     vmixPort: Number(els.vmixPort.value) || 8088,
-    pollSeconds: Number(els.pollSeconds.value) || 5,
+    pollSeconds: clampPoll(els.pollSeconds.value),
+    autoStopHours: autoStopPrefs.hours,
+    autoStopMinutes: autoStopPrefs.minutes,
+    autoStopNever: autoStopPrefs.never === true,
     bindings: bindingState.map((b, i) => ({
       id: b.id || `b${i + 1}`,
       enabled: b.enabled !== false,
@@ -90,7 +210,15 @@ function fillForm(config) {
   els.eventId.value = config.eventId || '';
   els.vmixHost.value = config.vmixHost || '127.0.0.1';
   els.vmixPort.value = config.vmixPort || 8088;
-  els.pollSeconds.value = config.pollSeconds || 5;
+  els.pollSeconds.value = clampPoll(config.pollSeconds ?? 1);
+  autoStopPrefs = {
+    hours: Math.min(24, Math.max(0, Number(config.autoStopHours) || 0)),
+    minutes: [0, 5, 10, 15, 20, 25, 30, 45].includes(Number(config.autoStopMinutes))
+      ? Number(config.autoStopMinutes)
+      : 0,
+    never: config.autoStopNever === true,
+  };
+  syncPollPresetButtons();
   bindingState =
     Array.isArray(config.bindings) && config.bindings.length
       ? config.bindings.map((b) => newBinding(b))
@@ -103,19 +231,9 @@ function tablesFor(dsName) {
   return entry?.tables || [];
 }
 
-function dsOptions(selected) {
-  const names = catalog.length ? catalog.map((c) => c.name) : selected ? [selected] : [];
-  const opts = ['<option value="">— choose Data Source —</option>'];
-  for (const name of names) {
-    const sel = name === selected ? ' selected' : '';
-    const sheets = tablesFor(name);
-    const suffix = sheets.length ? ` (${sheets.length} sheet${sheets.length === 1 ? '' : 's'})` : '';
-    opts.push(`<option value="${escapeAttr(name)}"${sel}>${escapeHtml(name)}${escapeHtml(suffix)}</option>`);
-  }
-  if (selected && !names.includes(selected)) {
-    opts.push(`<option value="${escapeAttr(selected)}" selected>${escapeHtml(selected)}</option>`);
-  }
-  return opts.join('');
+/** Datalist suggestions when vMix happens to expose sources in API XML. */
+function dsDatalistOptions() {
+  return catalog.map((c) => `<option value="${escapeAttr(c.name)}"></option>`).join('');
 }
 
 function sheetOptions(dsName, selected) {
@@ -135,25 +253,29 @@ function sheetOptions(dsName, selected) {
 }
 
 function updateCatalogBanner() {
+  const list = document.getElementById('vmix-ds-datalist');
+  if (list) list.innerHTML = dsDatalistOptions();
+
   if (!catalog.length) {
     els.vmixDsList.innerHTML =
-      'No catalog yet — open <strong>Connections</strong>, test vMix, or click <strong>Refresh from vMix</strong>.';
+      'vMix usually <strong>does not list</strong> Data Sources in its web API. Type the <strong>exact name</strong> from ' +
+      '<em>Settings → Data Sources</em> (or the Data Sources Manager buttons). Sheet names are optional for XML/CSV.';
     return;
   }
   const bits = catalog.map((c) => {
     const sheets = c.tables.length ? ` → ${c.tables.join(', ')}` : '';
     return `<strong>${escapeHtml(c.name)}</strong>${escapeHtml(sheets)}`;
   });
-  els.vmixDsList.innerHTML = `Loaded ${catalog.length} Data Source(s): ${bits.join(' · ')}`;
+  els.vmixDsList.innerHTML = `API listed ${catalog.length} Data Source(s): ${bits.join(' · ')}`;
 }
 
 function applyCatalog(nextCatalog, namesFallback) {
-  if (Array.isArray(nextCatalog) && nextCatalog.length) {
+  if (Array.isArray(nextCatalog)) {
     catalog = nextCatalog.map((c) => ({
       name: c.name,
       tables: Array.isArray(c.tables) ? c.tables : [],
     }));
-  } else if (Array.isArray(namesFallback) && namesFallback.length) {
+  } else if (Array.isArray(namesFallback)) {
     catalog = namesFallback.map((name) => ({ name, tables: [] }));
   }
   updateCatalogBanner();
@@ -174,7 +296,6 @@ function renderBindings() {
       const isCustomSheet =
         b._sheetPick === '__custom__' || (!!b.tableName && !tables.includes(b.tableName));
       const sheetSelectValue = isCustomSheet ? '__custom__' : b.tableName || '';
-      const showCustomInput = sheetSelectValue === '__custom__';
 
       return `
       <article class="binding ${enabled ? '' : 'disabled'}" data-index="${i}">
@@ -199,29 +320,44 @@ function renderBindings() {
 
         <div class="grid3">
           <label>
-            Data Source
-            <select data-field="dataSourceName">${dsOptions(b.dataSourceName)}</select>
+            Data Source name
+            <span class="hint">(exact name from vMix Data Sources Manager)</span>
+            <input
+              data-field="dataSourceName"
+              type="text"
+              list="vmix-ds-datalist"
+              value="${escapeAttr(b.dataSourceName || '')}"
+              placeholder="e.g. Schedule / Speakers / Excel Workbook"
+              spellcheck="false"
+            />
           </label>
           <label>
             Sheet / table
             <select data-field="_sheetPick">${sheetOptions(b.dataSourceName, sheetSelectValue)}</select>
           </label>
-          <label ${showCustomInput ? '' : 'hidden'}>
-            Custom sheet name
-            <input data-field="tableName" type="text" value="${escapeAttr(b.tableName || '')}" placeholder="Sheet1" />
+          <label>
+            Sheet name (type if needed)
+            <input data-field="tableName" type="text" value="${escapeAttr(b.tableName || '')}" placeholder="blank for XML/CSV · Sheet1 for Excel" spellcheck="false" />
           </label>
         </div>
 
         <div class="mode-seg" data-mode-index="${i}">
-          <button type="button" data-mode="cueColumn" class="${b.matchMode !== 'rowIndex' ? 'active' : ''}">Cue column</button>
+          <button type="button" data-mode="cueColumn" class="${b.matchMode !== 'rowIndex' ? 'active' : ''}">Cue match</button>
           <button type="button" data-mode="rowIndex" class="${b.matchMode === 'rowIndex' ? 'active' : ''}">Row index</button>
         </div>
+        <p class="hint mode-hint">
+          ${
+            b.matchMode === 'rowIndex'
+              ? '<strong>Row index:</strong> picks vMix row <em>N</em> where N is this cue’s position in the ROS schedule list (0 = first row). The Data Source row order must match schedule order exactly.'
+              : '<strong>Cue match:</strong> finds the schedule item whose cue text matches the loaded/running cue (e.g. <code>CUE 12</code> ≈ <code>12</code>), then selects that same index in vMix. Best when your sheet/XML has a cue column aligned with ROS.'
+          }
+        </p>
 
         <details class="advanced">
           <summary>Advanced</summary>
           <div class="grid2">
             <label>
-              Cue column hint
+              Cue field name
               <input data-field="cueColumn" type="text" value="${escapeAttr(b.cueColumn || 'cue')}" />
             </label>
             <label>
@@ -229,7 +365,7 @@ function renderBindings() {
               <input data-field="dayFilter" type="number" min="1" value="${escapeAttr(b.dayFilter ?? '')}" placeholder="all days" />
             </label>
           </div>
-          <p class="hint">Cue column mode matches ROS schedule cue text. Row index uses schedule order — must match the sheet/XML row order.</p>
+          <p class="hint">Only needed for multi-day shows or non-standard cue field keys.</p>
         </details>
       </article>`;
     })
@@ -239,7 +375,7 @@ function renderBindings() {
     const index = Number(node.dataset.index);
 
     node.querySelectorAll('[data-field]').forEach((input) => {
-      const apply = () => {
+      const apply = (event) => {
         const field = input.getAttribute('data-field');
         if (field === 'enabled') {
           bindingState[index].enabled = input.checked;
@@ -258,13 +394,14 @@ function renderBindings() {
         }
         if (field === 'dataSourceName') {
           bindingState[index].dataSourceName = input.value;
-          // Reset sheet when source changes if old sheet not in new source
-          const tables = tablesFor(input.value);
-          if (bindingState[index].tableName && !tables.includes(bindingState[index].tableName)) {
-            bindingState[index].tableName = '';
-            bindingState[index]._sheetPick = '';
+          if (event.type === 'change') {
+            const tables = tablesFor(input.value);
+            if (bindingState[index].tableName && !tables.includes(bindingState[index].tableName)) {
+              bindingState[index].tableName = '';
+              bindingState[index]._sheetPick = '';
+              renderBindings();
+            }
           }
-          renderBindings();
           return;
         }
         bindingState[index][field] = input.value;
@@ -372,10 +509,54 @@ async function refreshDataSources() {
     return;
   }
   applyCatalog(result.catalog, result.names);
-  showToast(`Found ${catalog.length} Data Source(s)`);
+  if (catalog.length) {
+    showToast(`Found ${catalog.length} Data Source(s) in API`);
+  } else {
+    showToast(
+      'vMix connected, but Data Sources are not in the API. Type the exact name from Data Sources Manager.',
+      false
+    );
+  }
+}
+
+async function startBridgeWithOptions({ never, hours, minutes }) {
+  autoStopPrefs = {
+    hours: never ? autoStopPrefs.hours : hours,
+    minutes: never ? autoStopPrefs.minutes : minutes,
+    never: !!never,
+  };
+  if (!never && hours === 0 && minutes === 0) {
+    showToast('Pick a time greater than 0, or choose Never auto-stop', true);
+    return;
+  }
+
+  els.autoStopNotice.hidden = true;
+  await api.saveConfig(readForm());
+  const form = readForm();
+  const result = await api.startBridge(form);
+  showToast(result.message || (result.ok ? 'Started' : 'Start failed'), !result.ok);
+  if (!result.ok) return;
+
+  closeAutoStopModal();
+  setTab('live');
+  const follow = result.socketFollow || {
+    apiBaseUrl: form.apiBaseUrl,
+    eventId: form.eventId,
+    apiToken: form.apiToken,
+  };
+  window.rosCueSocket?.startCueSocket?.(follow);
+
+  if (never) {
+    clearAutoStopTimer();
+    els.autoStopPill.hidden = false;
+    els.autoStopPill.textContent = 'No auto-stop';
+  } else {
+    scheduleAutoStop(hours, minutes);
+  }
 }
 
 async function init() {
+  initAutoStopHourOptions();
   const config = await api.loadConfig();
   fillForm(config);
   updateCatalogBanner();
@@ -417,8 +598,32 @@ async function init() {
     if (els.eventSelect.value) els.eventId.value = els.eventSelect.value;
   });
 
+  els.pollSeconds.addEventListener('change', () => {
+    els.pollSeconds.value = String(clampPoll(els.pollSeconds.value));
+    syncPollPresetButtons();
+  });
+  els.pollSeconds.addEventListener('input', syncPollPresetButtons);
+
+  document.querySelectorAll('#poll-presets [data-poll]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      els.pollSeconds.value = btn.getAttribute('data-poll');
+      syncPollPresetButtons();
+    });
+  });
+
   document.getElementById('btn-validate-api').addEventListener('click', async () => {
     const result = await api.validateApi(readForm());
+    showToast(result.message || (result.ok ? 'OK' : 'Failed'), !result.ok);
+  });
+
+  document.getElementById('btn-test-socket')?.addEventListener('click', async () => {
+    const form = readForm();
+    if (!window.rosCueSocket?.testCueSocket) {
+      showToast('Socket test unavailable', true);
+      return;
+    }
+    showToast('Testing browser Socket.IO…');
+    const result = await window.rosCueSocket.testCueSocket(form);
     showToast(result.message || (result.ok ? 'OK' : 'Failed'), !result.ok);
   });
 
@@ -456,15 +661,40 @@ async function init() {
     showToast('Settings saved');
   });
 
-  document.getElementById('btn-start').addEventListener('click', async () => {
-    await api.saveConfig(readForm());
-    const result = await api.startBridge(readForm());
-    showToast(result.message || (result.ok ? 'Started' : 'Start failed'), !result.ok);
-    if (result.ok) setTab('live');
+  document.getElementById('btn-start').addEventListener('click', () => {
+    openAutoStopModal();
+  });
+
+  document.getElementById('btn-auto-stop-confirm').addEventListener('click', () => {
+    const hours = Number(els.autoStopHours.value) || 0;
+    const minutes = Number(els.autoStopMinutes.value) || 0;
+    void startBridgeWithOptions({ never: false, hours, minutes });
+  });
+
+  document.getElementById('btn-auto-stop-never').addEventListener('click', () => {
+    void startBridgeWithOptions({
+      never: true,
+      hours: autoStopPrefs.hours,
+      minutes: autoStopPrefs.minutes,
+    });
+  });
+
+  document.getElementById('btn-auto-stop-restart').addEventListener('click', () => {
+    els.autoStopNotice.hidden = true;
+    openAutoStopModal();
+  });
+
+  els.autoStopModal.addEventListener('click', (e) => {
+    if (e.target === els.autoStopModal) closeAutoStopModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !els.autoStopModal.hidden) closeAutoStopModal();
   });
 
   document.getElementById('btn-stop').addEventListener('click', async () => {
-    await api.stopBridge();
+    els.autoStopNotice.hidden = true;
+    await performStop({ auto: false });
     showToast('Stopped');
   });
 
