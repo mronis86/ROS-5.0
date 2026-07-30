@@ -547,6 +547,58 @@ class ApiClient {
     return result;
   }
 
+  // Complaint Line (Event Manager / Admin notes for post-show reports)
+  async getComplaintLineNotes(eventId: string) {
+    return this.request<{ notes: ComplaintLineNoteRow[] }>(
+      `/api/complaint-line/${encodeURIComponent(eventId)}`,
+      {},
+      `complaintLine_${eventId}`,
+      15 * 1000
+    );
+  }
+
+  async createComplaintLineNote(data: {
+    event_id: string;
+    user_id: string;
+    user_name?: string;
+    category?: string;
+    content: string;
+  }) {
+    const result = await this.request<ComplaintLineNoteRow>('/api/complaint-line', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    this.cache.delete(`complaintLine_${data.event_id}`);
+    return result;
+  }
+
+  async updateComplaintLineNote(
+    id: string,
+    data: { content?: string; category?: string },
+    eventId?: string
+  ) {
+    const result = await this.request<ComplaintLineNoteRow>(
+      `/api/complaint-line/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }
+    );
+    if (eventId) this.cache.delete(`complaintLine_${eventId}`);
+    if (result?.event_id) this.cache.delete(`complaintLine_${result.event_id}`);
+    return result;
+  }
+
+  async deleteComplaintLineNote(id: string, eventId?: string) {
+    const result = await this.request<{ ok: boolean; deleted: number; id: string; event_id: string }>(
+      `/api/complaint-line/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+    if (eventId) this.cache.delete(`complaintLine_${eventId}`);
+    if (result?.event_id) this.cache.delete(`complaintLine_${result.event_id}`);
+    return result;
+  }
+
   async clearLedOutput(eventId: string) {
     return this.request<{ ok: boolean }>('/api/led-output/clear', {
       method: 'POST',
@@ -566,6 +618,17 @@ export interface UserEventNoteOperator {
   user_id: string;
   user_name: string | null;
   note_count: number;
+  updated_at?: string;
+}
+
+export interface ComplaintLineNoteRow {
+  id: string;
+  event_id: string;
+  user_id: string;
+  user_name?: string | null;
+  category: string;
+  content: string;
+  created_at: string;
   updated_at?: string;
 }
 

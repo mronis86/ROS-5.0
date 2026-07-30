@@ -22,6 +22,7 @@ import ScheduleXMLPage from './pages/ScheduleXMLPage';
 import CustomColumnsXMLPage from './pages/CustomColumnsXMLPage';
 import GraphicsLinksPage from './pages/GraphicsLinksPage';
 import ReportsPage from './pages/ReportsPage';
+import PostShowReportPage from './pages/PostShowReportPage';
 import ContentReviewPage from './pages/ContentReviewPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
@@ -66,6 +67,8 @@ function AppContent() {
   const isResetPassword = location.pathname === '/reset-password';
   const isAccessPortal = location.pathname === '/access';
   const isLedOutput = location.pathname === '/led-output';
+  const isReports =
+    location.pathname === '/reports' || location.pathname === '/post-show-report';
   const isUltritouchHealth =
     location.pathname === '/ultritouch-health' ||
     location.pathname === '/ultritouch-health-monitor' ||
@@ -103,13 +106,14 @@ function AppContent() {
     isLedOutput ||
     isUltritouchHealth ||
     isClock ||
-    isAdmin;
+    isAdmin ||
+    isReports;
 
   return (
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && !isUltritouchHealth && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isLedOutput && !isUltritouchHealth && !isReports && <AppHeader />}
       
       {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isNetlifyXML && !isLocalXML && !isAdmin && (
         <AuthGuard>
@@ -125,6 +129,7 @@ function AppContent() {
             <Route path="/graphics-links" element={<GraphicsLinksPage />} />
             <Route path="/led-layouts" element={<LedLayoutsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/post-show-report" element={<PostShowReportPage />} />
             <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />

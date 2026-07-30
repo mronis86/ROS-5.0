@@ -1012,6 +1012,26 @@ async function runUserEventNotesSyncTable(db) {
   `);
 }
 
+async function runComplaintLineSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.complaint_line_notes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      user_name TEXT,
+      category TEXT NOT NULL DEFAULT 'complaint'
+        CHECK (category IN ('complaint', 'technical', 'client', 'other')),
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_complaint_line_event_created
+      ON public.complaint_line_notes (event_id, created_at DESC)
+  `);
+}
+
 // Full sync: create table if missing with all columns, or add any missing columns. Safe to run anytime.
 async function runBackupConfigSyncTable(db) {
   await db.query(`
@@ -3346,6 +3366,119 @@ app.delete('/api/user-event-notes/:eventId/:userId', async (req, res) => {
   } catch (error) {
     console.error('Error deleting user event notes:', error);
     res.status(500).json({ error: 'Failed to delete user event notes' });
+  }
+});
+
+const COMPLAINT_LINE_CATEGORIES = new Set(['complaint', 'technical', 'client', 'other']);
+
+function normalizeComplaintCategory(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return COMPLAINT_LINE_CATEGORIES.has(key) ? key : 'complaint';
+}
+
+// Complaint Line — Event Manager / Admin notes for post-show reports
+app.get('/api/complaint-line/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    const result = await pool.query(
+      `SELECT id, event_id, user_id, user_name, category, content, created_at, updated_at
+       FROM complaint_line_notes
+       WHERE event_id = $1
+       ORDER BY created_at ASC`,
+      [eventId]
+    );
+    res.json({ notes: result.rows });
+  } catch (error) {
+    console.error('Error fetching complaint line notes:', error);
+    res.status(500).json({ error: 'Failed to fetch complaint line notes' });
+  }
+});
+
+app.post('/api/complaint-line', async (req, res) => {
+  try {
+    const { event_id, user_id, user_name, category, content } = req.body || {};
+    const text = content != null ? String(content).trim() : '';
+    if (!event_id || !user_id || !text) {
+      return res.status(400).json({ error: 'event_id, user_id, and content are required' });
+    }
+    const cat = normalizeComplaintCategory(category);
+    const result = await pool.query(
+      `INSERT INTO complaint_line_notes
+         (event_id, user_id, user_name, category, content, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       RETURNING id, event_id, user_id, user_name, category, content, created_at, updated_at`,
+      [event_id, user_id, user_name || null, cat, text]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating complaint line note:', error);
+    res.status(500).json({ error: 'Failed to create complaint line note' });
+  }
+});
+
+app.patch('/api/complaint-line/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content, category } = req.body || {};
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
+    const updates = [];
+    const params = [];
+    if (content != null) {
+      const text = String(content).trim();
+      if (!text) {
+        return res.status(400).json({ error: 'content cannot be empty' });
+      }
+      params.push(text);
+      updates.push(`content = $${params.length}`);
+    }
+    if (category != null) {
+      params.push(normalizeComplaintCategory(category));
+      updates.push(`category = $${params.length}`);
+    }
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'content or category is required' });
+    }
+    updates.push('updated_at = NOW()');
+    params.push(id);
+    const result = await pool.query(
+      `UPDATE complaint_line_notes
+       SET ${updates.join(', ')}
+       WHERE id = $${params.length}
+       RETURNING id, event_id, user_id, user_name, category, content, created_at, updated_at`,
+      params
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating complaint line note:', error);
+    res.status(500).json({ error: 'Failed to update complaint line note' });
+  }
+});
+
+app.delete('/api/complaint-line/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
+    const result = await pool.query(
+      `DELETE FROM complaint_line_notes WHERE id = $1 RETURNING id, event_id`,
+      [id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+    res.json({ ok: true, deleted: 1, id: result.rows[0].id, event_id: result.rows[0].event_id });
+  } catch (error) {
+    console.error('Error deleting complaint line note:', error);
+    res.status(500).json({ error: 'Failed to delete complaint line note' });
   }
 });
 
@@ -6361,6 +6494,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ user_event_notes table synced');
     } catch (err) {
       console.warn('⚠️ user_event_notes sync skipped:', err.message || err);
+    }
+    try {
+      await runComplaintLineSyncTable(pool);
+      console.log('✅ complaint_line_notes table synced');
+    } catch (err) {
+      console.warn('⚠️ complaint_line_notes sync skipped:', err.message || err);
     }
     try {
       await pool.query(

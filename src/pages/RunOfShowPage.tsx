@@ -11,13 +11,15 @@ import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
-import { canSelectOperatorRole } from '../services/auth-service';
+import { canAccessAccessManager, canSelectOperatorRole } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal from '../components/DisplayModal';
 import PinNotesColumnModal from '../components/PinNotesColumnModal';
+import ComplaintLineModal from '../components/ComplaintLineModal';
+import ComplaintLineFab from '../components/ComplaintLineFab';
 import ExcelImportModal from '../components/ExcelImportModal';
 import AgendaImportModal from '../components/AgendaImportModal';
 import ImportCSVModal from '../components/ImportCSVModal';
@@ -783,11 +785,13 @@ const RunOfShowPage: React.FC = () => {
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
   const [showOperatorActionsSubmenu, setShowOperatorActionsSubmenu] = useState(false);
+  const [showReportsSubmenu, setShowReportsSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
   const [pinNotesWindow, setPinNotesWindow] = useState<Window | null>(null);
   const [pinNotesColumns, setPinNotesColumns] = useState<{ type: 'notes' | 'custom' | 'cue'; id: string; name: string }[]>([]);
   const [showPinNotesColumnModal, setShowPinNotesColumnModal] = useState(false);
+  const [showComplaintLineModal, setShowComplaintLineModal] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [messageEnabled, setMessageEnabled] = useState(false);
@@ -1900,6 +1904,19 @@ const RunOfShowPage: React.FC = () => {
       );
     }
   }, [user, currentUserRole, event?.id]);
+
+  // Complaint Line: Ctrl/Cmd+Shift+X (Event Managers / Admins)
+  useEffect(() => {
+    if (!event?.id || !user || !canAccessAccessManager(user)) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== 'x') return;
+      e.preventDefault();
+      setShowComplaintLineModal(true);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [event?.id, user]);
 
   // Load change log data and sync status
   useEffect(() => {
@@ -9880,6 +9897,19 @@ const RunOfShowPage: React.FC = () => {
                     🔄 Reload
                   </button>
                 )}
+                {canAccessAccessManager(user) && event?.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = `/post-show-report?eventId=${event.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                      window.open(url, '_blank');
+                    }}
+                    className="px-3 py-1 bg-rose-700 hover:bg-rose-600 text-white text-sm rounded transition-colors"
+                    title="Open post-show report (Complaint Line + Show vs rehearsal)"
+                  >
+                    Post-show report
+                  </button>
+                )}
               <button
                 onClick={() => setShowChangeLog(false)}
                 className="text-gray-400 hover:text-white text-2xl"
@@ -10405,7 +10435,7 @@ const RunOfShowPage: React.FC = () => {
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowMenuDropdown(!showMenuDropdown);
-                    if (showMenuDropdown) { setShowImportExportSubmenu(false); setShowOperatorActionsSubmenu(false); }
+                    if (showMenuDropdown) { setShowImportExportSubmenu(false); setShowOperatorActionsSubmenu(false); setShowReportsSubmenu(false); }
                   }}
                   className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
                   title="Menu"
@@ -10496,7 +10526,11 @@ const RunOfShowPage: React.FC = () => {
                       {/* Operator Actions - flyout submenu */}
                       <div className="relative">
                         <button
-                          onClick={() => setShowOperatorActionsSubmenu(!showOperatorActionsSubmenu)}
+                          onClick={() => {
+                            setShowOperatorActionsSubmenu(!showOperatorActionsSubmenu);
+                            setShowImportExportSubmenu(false);
+                            setShowReportsSubmenu(false);
+                          }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
                         >
                           <span className="flex items-center gap-3">
@@ -10574,6 +10608,22 @@ const RunOfShowPage: React.FC = () => {
                               </svg>
                               Notes Popout
                             </button>
+                            {canAccessAccessManager(user) && (
+                              <button
+                                onClick={() => {
+                                  setShowMenuDropdown(false);
+                                  setShowOperatorActionsSubmenu(false);
+                                  setShowComplaintLineModal(true);
+                                }}
+                                className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                                title="Quick-capture notes for the post-show report (Ctrl/Cmd+Shift+X)"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                                </svg>
+                                Complaint Line
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 setShowMenuDropdown(false);
@@ -10608,7 +10658,11 @@ const RunOfShowPage: React.FC = () => {
                       {/* Import & Export - flyout submenu to the right */}
                       <div className="border-t border-slate-600 my-1 pt-1 relative">
                         <button
-                          onClick={() => setShowImportExportSubmenu(!showImportExportSubmenu)}
+                          onClick={() => {
+                            setShowImportExportSubmenu(!showImportExportSubmenu);
+                            setShowOperatorActionsSubmenu(false);
+                            setShowReportsSubmenu(false);
+                          }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
                         >
                           <span className="flex items-center gap-3">
@@ -10722,19 +10776,61 @@ const RunOfShowPage: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          const reportsUrl = `/reports?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
-                          window.open(reportsUrl, '_blank');
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Reports and Printing
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => {
+                            setShowReportsSubmenu(!showReportsSubmenu);
+                            setShowImportExportSubmenu(false);
+                            setShowOperatorActionsSubmenu(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
+                        >
+                          <span className="flex items-center gap-3">
+                            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Reports and Printing
+                          </span>
+                          <svg className={`w-4 h-4 flex-shrink-0 transition-transform ${showReportsSubmenu ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {showReportsSubmenu && (
+                          <div className="absolute left-full top-0 ml-1 min-w-[12rem] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowReportsSubmenu(false);
+                                const reportsUrl = `/reports?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(reportsUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              Schedule reports
+                            </button>
+                            {canAccessAccessManager(user) && (
+                              <button
+                                onClick={() => {
+                                  setShowMenuDropdown(false);
+                                  setShowReportsSubmenu(false);
+                                  const url = `/post-show-report?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                  window.open(url, '_blank');
+                                }}
+                                className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                                title="Complaint Line notes + Show vs rehearsal"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                Post-show report
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -14653,6 +14749,19 @@ const RunOfShowPage: React.FC = () => {
           }}
         />
       )}
+
+      {canAccessAccessManager(user) && event?.id && user?.id ? (
+        <>
+          <ComplaintLineFab onOpen={() => setShowComplaintLineModal(true)} />
+          <ComplaintLineModal
+            isOpen={showComplaintLineModal}
+            onClose={() => setShowComplaintLineModal(false)}
+            eventId={event.id}
+            userId={user.id}
+            userName={user.full_name || user.email}
+          />
+        </>
+      ) : null}
 
       {/* Backup Modal */}
       {showBackupModal && (
