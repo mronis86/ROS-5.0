@@ -57,6 +57,7 @@ interface AccessRequestRow {
   notes?: string | null;
   is_admin?: boolean;
   is_event_manager?: boolean;
+  is_catering?: boolean;
   neon_user_id?: string | null;
   password_set_at?: string | null;
   portal_url?: string | null;
@@ -1272,7 +1273,7 @@ export default function AdminPage() {
     async (
       id: string,
       email: string,
-      patch: { status?: AccessStatus; is_admin?: boolean; is_event_manager?: boolean; dashboard_enabled?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
+      patch: { status?: AccessStatus; is_admin?: boolean; is_event_manager?: boolean; is_catering?: boolean; dashboard_enabled?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
     ) => {
       setAccessRequestsError(null);
       try {
@@ -1486,6 +1487,21 @@ export default function AdminPage() {
           className={`${accessActionBtn} bg-amber-800 hover:bg-amber-700 text-white`}
         >
           {r.is_event_manager ? 'Revoke event mgr' : 'Event manager'}
+        </button>
+      )}
+      {!r.is_admin && r.status === 'approved' && (
+        <button
+          type="button"
+          onClick={() =>
+            void updateAccessUser(r.id, r.email, {
+              is_catering: !(r.is_catering === true),
+              notify_user: false,
+            })
+          }
+          className={`${accessActionBtn} ${r.is_catering ? 'bg-orange-800 hover:bg-orange-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
+          title="Catering users land on the catering event list (assign events via Event access)"
+        >
+          {r.is_catering ? 'Revoke catering' : 'Catering'}
         </button>
       )}
       {r.status === 'approved' && (
@@ -3132,7 +3148,13 @@ export default function AdminPage() {
                           </span>
                         </td>
                         <td className={`${accessTableCellClass} text-slate-300`}>
-                          {r.is_admin ? 'Admin' : r.is_event_manager ? 'Event manager' : 'User'}
+                          {r.is_admin
+                            ? 'Admin'
+                            : r.is_event_manager
+                              ? 'Event manager'
+                              : r.is_catering
+                                ? 'Catering'
+                                : 'User'}
                         </td>
                         <td className={`${accessTableCellClass} text-slate-400`}>
                           {r.status === 'approved' ? (

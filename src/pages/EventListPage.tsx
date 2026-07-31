@@ -4,7 +4,7 @@ import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS,
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
-import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager } from '../services/auth-service';
+import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, isCateringOnlyUser } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import { useNarrowViewport } from '../hooks/useNarrowViewport';
@@ -76,6 +76,13 @@ const EventListPage: React.FC = () => {
   useEffect(() => {
     localStorage.removeItem('forceLocalServer');
   }, []);
+
+  // Catering-only accounts land on the catering home, not the full Event List
+  useEffect(() => {
+    if (isCateringOnlyUser(user)) {
+      navigate('/catering', { replace: true });
+    }
+  }, [user, navigate]);
 
   // Load events from Supabase and localStorage on component mount
   useEffect(() => {

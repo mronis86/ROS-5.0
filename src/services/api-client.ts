@@ -599,6 +599,59 @@ class ApiClient {
     return result;
   }
 
+  // Catering notes (shared board for catering role)
+  async getCateringNotes(eventId: string) {
+    return this.request<{ notes: CateringNoteRow[] }>(
+      `/api/catering-notes/${encodeURIComponent(eventId)}`,
+      {},
+      `cateringNotes_${eventId}`,
+      15 * 1000
+    );
+  }
+
+  async createCateringNote(data: {
+    event_id: string;
+    user_id: string;
+    user_name?: string;
+    category?: string;
+    content: string;
+    schedule_item_id?: number | null;
+  }) {
+    const result = await this.request<CateringNoteRow>('/api/catering-notes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    this.cache.delete(`cateringNotes_${data.event_id}`);
+    return result;
+  }
+
+  async updateCateringNote(
+    id: string,
+    data: { content?: string; category?: string; schedule_item_id?: number | null },
+    eventId?: string
+  ) {
+    const result = await this.request<CateringNoteRow>(
+      `/api/catering-notes/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }
+    );
+    if (eventId) this.cache.delete(`cateringNotes_${eventId}`);
+    if (result?.event_id) this.cache.delete(`cateringNotes_${result.event_id}`);
+    return result;
+  }
+
+  async deleteCateringNote(id: string, eventId?: string) {
+    const result = await this.request<{ ok: boolean; deleted: number; id: string; event_id: string }>(
+      `/api/catering-notes/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+    if (eventId) this.cache.delete(`cateringNotes_${eventId}`);
+    if (result?.event_id) this.cache.delete(`cateringNotes_${result.event_id}`);
+    return result;
+  }
+
   async clearLedOutput(eventId: string) {
     return this.request<{ ok: boolean }>('/api/led-output/clear', {
       method: 'POST',
@@ -628,6 +681,18 @@ export interface ComplaintLineNoteRow {
   user_name?: string | null;
   category: string;
   content: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CateringNoteRow {
+  id: string;
+  event_id: string;
+  user_id: string;
+  user_name?: string | null;
+  category: string;
+  content: string;
+  schedule_item_id?: number | null;
   created_at: string;
   updated_at?: string;
 }

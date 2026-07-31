@@ -1032,6 +1032,44 @@ async function runComplaintLineSyncTable(db) {
   `);
 }
 
+async function runCateringNotesSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.catering_notes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      user_name TEXT,
+      category TEXT NOT NULL DEFAULT 'general'
+        CHECK (category IN ('general', 'break', 'plating', 'meal', 'other')),
+      content TEXT NOT NULL,
+      schedule_item_id BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_catering_notes_event_created
+      ON public.catering_notes (event_id, created_at DESC)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_catering_notes_item
+      ON public.catering_notes (event_id, schedule_item_id)
+      WHERE schedule_item_id IS NOT NULL
+  `);
+}
+
+async function runCateringRoleColumnSync(db) {
+  await db.query(`
+    ALTER TABLE public.api_user_access
+      ADD COLUMN IF NOT EXISTS is_catering BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_api_user_access_catering
+      ON public.api_user_access (is_catering)
+      WHERE is_catering = TRUE
+  `);
+}
+
 // Full sync: create table if missing with all columns, or add any missing columns. Safe to run anytime.
 async function runBackupConfigSyncTable(db) {
   await db.query(`
@@ -3479,6 +3517,170 @@ app.delete('/api/complaint-line/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting complaint line note:', error);
     res.status(500).json({ error: 'Failed to delete complaint line note' });
+  }
+});
+
+const CATERING_NOTE_CATEGORIES = new Set(['general', 'break', 'plating', 'meal', 'other']);
+
+function normalizeCateringNoteCategory(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return CATERING_NOTE_CATEGORIES.has(key) ? key : 'general';
+}
+
+function canWriteCateringNotes(auth) {
+  // Admin + Event Managers write; catering users are read-only.
+  if (!auth) return false;
+  return !!(auth.isAdmin || auth.isEventManager);
+}
+
+// Catering notes — shared board for catering role / EM / Admin
+app.get('/api/catering-notes/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    if (req.auth && !userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const result = await pool.query(
+      `SELECT id, event_id, user_id, user_name, category, content, schedule_item_id, created_at, updated_at
+       FROM catering_notes
+       WHERE event_id = $1
+       ORDER BY created_at ASC`,
+      [eventId]
+    );
+    res.json({ notes: result.rows });
+  } catch (error) {
+    console.error('Error fetching catering notes:', error);
+    res.status(500).json({ error: 'Failed to fetch catering notes' });
+  }
+});
+
+app.post('/api/catering-notes', async (req, res) => {
+  try {
+    const { event_id, user_id, user_name, category, content, schedule_item_id } = req.body || {};
+    const text = content != null ? String(content).trim() : '';
+    if (!event_id || !user_id || !text) {
+      return res.status(400).json({ error: 'event_id, user_id, and content are required' });
+    }
+    if (!canWriteCateringNotes(req.auth)) {
+      return res.status(403).json({
+        error: 'Only administrators and event managers can add or edit catering notes.',
+      });
+    }
+    if (req.auth && !userCanAccessEvent(req.auth, event_id)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const cat = normalizeCateringNoteCategory(category);
+    const itemId =
+      schedule_item_id == null || schedule_item_id === ''
+        ? null
+        : Number(schedule_item_id);
+    const result = await pool.query(
+      `INSERT INTO catering_notes
+         (event_id, user_id, user_name, category, content, schedule_item_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING id, event_id, user_id, user_name, category, content, schedule_item_id, created_at, updated_at`,
+      [event_id, user_id, user_name || null, cat, text, Number.isFinite(itemId) ? itemId : null]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating catering note:', error);
+    res.status(500).json({ error: 'Failed to create catering note' });
+  }
+});
+
+app.patch('/api/catering-notes/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content, category, schedule_item_id } = req.body || {};
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
+    if (!canWriteCateringNotes(req.auth)) {
+      return res.status(403).json({
+        error: 'Only administrators and event managers can add or edit catering notes.',
+      });
+    }
+    const updates = [];
+    const params = [];
+    if (content != null) {
+      const text = String(content).trim();
+      if (!text) {
+        return res.status(400).json({ error: 'content cannot be empty' });
+      }
+      params.push(text);
+      updates.push(`content = $${params.length}`);
+    }
+    if (category != null) {
+      params.push(normalizeCateringNoteCategory(category));
+      updates.push(`category = $${params.length}`);
+    }
+    if (schedule_item_id !== undefined) {
+      const itemId =
+        schedule_item_id == null || schedule_item_id === ''
+          ? null
+          : Number(schedule_item_id);
+      params.push(Number.isFinite(itemId) ? itemId : null);
+      updates.push(`schedule_item_id = $${params.length}`);
+    }
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'content, category, or schedule_item_id is required' });
+    }
+    updates.push('updated_at = NOW()');
+    params.push(id);
+    const result = await pool.query(
+      `UPDATE catering_notes
+       SET ${updates.join(', ')}
+       WHERE id = $${params.length}
+       RETURNING id, event_id, user_id, user_name, category, content, schedule_item_id, created_at, updated_at`,
+      params
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+    if (req.auth && !userCanAccessEvent(req.auth, result.rows[0].event_id)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating catering note:', error);
+    res.status(500).json({ error: 'Failed to update catering note' });
+  }
+});
+
+app.delete('/api/catering-notes/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
+    if (!canWriteCateringNotes(req.auth)) {
+      return res.status(403).json({
+        error: 'Only administrators and event managers can add or edit catering notes.',
+      });
+    }
+    const existing = await pool.query(
+      `SELECT id, event_id FROM catering_notes WHERE id = $1`,
+      [id]
+    );
+    if (!existing.rows[0]) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+    if (req.auth && !userCanAccessEvent(req.auth, existing.rows[0].event_id)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    await pool.query(`DELETE FROM catering_notes WHERE id = $1`, [id]);
+    res.json({
+      ok: true,
+      deleted: 1,
+      id: existing.rows[0].id,
+      event_id: existing.rows[0].event_id,
+    });
+  } catch (error) {
+    console.error('Error deleting catering note:', error);
+    res.status(500).json({ error: 'Failed to delete catering note' });
   }
 });
 
@@ -6500,6 +6702,18 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ complaint_line_notes table synced');
     } catch (err) {
       console.warn('⚠️ complaint_line_notes sync skipped:', err.message || err);
+    }
+    try {
+      await runCateringNotesSyncTable(pool);
+      console.log('✅ catering_notes table synced');
+    } catch (err) {
+      console.warn('⚠️ catering_notes sync skipped:', err.message || err);
+    }
+    try {
+      await runCateringRoleColumnSync(pool);
+      console.log('✅ api_user_access.is_catering column ready');
+    } catch (err) {
+      console.warn('⚠️ is_catering column sync skipped:', err.message || err);
     }
     try {
       await pool.query(

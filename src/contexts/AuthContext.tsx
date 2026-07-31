@@ -24,6 +24,7 @@ interface AuthContextType {
     status: import('../services/auth-service').AccessStatus;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_catering?: boolean;
     dashboard_enabled?: boolean;
   }) => void;
   signOut: () => Promise<void>;

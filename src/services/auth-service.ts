@@ -31,6 +31,7 @@ interface User {
   role: string;
   is_admin?: boolean;
   is_event_manager?: boolean;
+  is_catering?: boolean;
   dashboard_enabled?: boolean;
   accessStatus?: AccessStatus;
 }
@@ -49,6 +50,23 @@ export function canAccessAccessManager(user: User | null | undefined): boolean {
   if (!user) return false;
   if (user.is_admin) return true;
   return user.is_event_manager === true;
+}
+
+/** Catering UI: catering role, Event Managers, or Admins. */
+export function canAccessCatering(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin || user.is_event_manager) return true;
+  return user.is_catering === true;
+}
+
+/**
+ * Catering-only accounts: signed-in catering users who are not admin/EM.
+ * Used to route them to /catering instead of the full Event List / ROS.
+ */
+export function isCateringOnlyUser(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin || user.is_event_manager) return false;
+  return user.is_catering === true;
 }
 
 /** Run-of-show Operator session role: admins and event managers only. */
@@ -180,6 +198,7 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_catering?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -224,6 +243,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
+      is_catering: data.is_catering,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -240,6 +260,7 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_catering?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -307,6 +328,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
+      is_catering: data.is_catering,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -323,6 +345,7 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_catering?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
   }> {
@@ -340,6 +363,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
+      is_catering: data.is_catering,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -379,6 +403,7 @@ class AuthService {
               role: 'VIEWER',
               is_admin: access.is_admin,
               is_event_manager: access.is_event_manager,
+              is_catering: access.is_catering,
               dashboard_enabled: access.dashboard_enabled,
               accessStatus: access.status,
             };
@@ -491,6 +516,7 @@ class AuthService {
           role: 'VIEWER',
           is_admin: exchange.is_admin,
           is_event_manager: exchange.is_event_manager,
+          is_catering: exchange.is_catering,
           dashboard_enabled: exchange.dashboard_enabled,
           accessStatus: exchange.status,
         };
@@ -602,6 +628,7 @@ class AuthService {
     status: AccessStatus;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_catering?: boolean;
     dashboard_enabled?: boolean;
   }) {
     setApiAccessToken(session.token);
@@ -612,6 +639,7 @@ class AuthService {
       role: 'VIEWER',
       is_admin: session.is_admin,
       is_event_manager: session.is_event_manager,
+      is_catering: session.is_catering,
       dashboard_enabled: session.dashboard_enabled ?? session.is_admin,
       accessStatus: session.status,
     };
@@ -745,6 +773,7 @@ class AuthService {
           this.authState.user.accessStatus = exchange.status;
           this.authState.user.is_admin = exchange.is_admin;
           this.authState.user.is_event_manager = exchange.is_event_manager;
+          this.authState.user.is_catering = exchange.is_catering;
           this.authState.user.dashboard_enabled = exchange.dashboard_enabled;
           this.persistUserSession(this.authState.user, exchange.status);
         }
@@ -758,6 +787,7 @@ class AuthService {
       this.authState.user.accessStatus = access.status;
       this.authState.user.is_admin = access.is_admin;
       this.authState.user.is_event_manager = access.is_event_manager;
+      this.authState.user.is_catering = access.is_catering;
       this.authState.user.dashboard_enabled = access.dashboard_enabled;
       this.persistUserSession(this.authState.user, access.status);
     }

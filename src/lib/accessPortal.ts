@@ -21,6 +21,7 @@ export interface CompleteAccountSetupResult {
   status?: AccessStatus;
   is_admin?: boolean;
   is_event_manager?: boolean;
+  is_catering?: boolean;
   dashboard_enabled?: boolean;
   error?: string;
 }
@@ -65,6 +66,7 @@ export async function completeAccountSetup(
     status: data.status,
     is_admin: data.is_admin,
     is_event_manager: data.is_event_manager,
+    is_catering: data.is_catering,
     dashboard_enabled: data.dashboard_enabled,
   };
 }

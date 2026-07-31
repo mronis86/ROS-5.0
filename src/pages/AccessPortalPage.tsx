@@ -14,6 +14,7 @@ import {
   passwordPolicyError,
 } from '../lib/passwordPolicy';
 import { useAuth } from '../contexts/AuthContext';
+import { isCateringOnlyUser } from '../services/auth-service';
 import ReportIssueButton from '../components/ReportIssueButton';
 
 const AccessPortalPage: React.FC = () => {
@@ -91,9 +92,23 @@ const AccessPortalPage: React.FC = () => {
         status: result.status || 'approved',
         is_admin: result.is_admin,
         is_event_manager: result.is_event_manager,
+        is_catering: result.is_catering,
         dashboard_enabled: result.dashboard_enabled,
       });
-      navigate('/', { replace: true });
+      navigate(
+        isCateringOnlyUser({
+          id: result.neon_user_id || '',
+          email: result.email || portal?.email || '',
+          full_name: result.full_name || portal?.full_name || '',
+          role: 'VIEWER',
+          is_admin: result.is_admin,
+          is_event_manager: result.is_event_manager,
+          is_catering: result.is_catering,
+        })
+          ? '/catering'
+          : '/',
+        { replace: true }
+      );
     } catch (err) {
       console.error('[AccessPortal] account setup failed after API success:', err);
       setSubmitError('An unexpected error occurred.');

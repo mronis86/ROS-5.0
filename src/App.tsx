@@ -23,6 +23,8 @@ import CustomColumnsXMLPage from './pages/CustomColumnsXMLPage';
 import GraphicsLinksPage from './pages/GraphicsLinksPage';
 import ReportsPage from './pages/ReportsPage';
 import PostShowReportPage from './pages/PostShowReportPage';
+import CateringEventListPage from './pages/CateringEventListPage';
+import CateringEventPage from './pages/CateringEventPage';
 import ContentReviewPage from './pages/ContentReviewPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
@@ -130,6 +132,8 @@ function AppContent() {
             <Route path="/led-layouts" element={<LedLayoutsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/post-show-report" element={<PostShowReportPage />} />
+            <Route path="/catering" element={<CateringEventListPage />} />
+            <Route path="/catering/event" element={<CateringEventPage />} />
             <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />
