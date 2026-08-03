@@ -28,6 +28,9 @@ export interface ScheduleRowProps {
   calculateStartTime?: (index: number) => string | number;
   setEditingNotesItem?: Function;
   setShowNotesModal?: Function;
+  setEditingVoItemId?: Function;
+  setShowVoModal?: Function;
+  setTempVoCues?: Function;
   setViewingAssetsItem?: Function;
   setShowViewAssetsModal?: Function;
   setViewingSpeakersItem?: Function;
@@ -85,6 +88,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   calculateStartTime,
   setEditingNotesItem,
   setShowNotesModal,
+  setEditingVoItemId,
+  setShowVoModal,
+  setTempVoCues,
   setViewingAssetsItem,
   setShowViewAssetsModal,
   setViewingSpeakersItem,
@@ -706,12 +712,28 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           </div>
         </div>
       )}
-      {/* Notes column (after PPT/QA) */}
+      {/* Notes column (after PPT/QA) — VO/BGM text is written into Notes; no chips */}
       {visibleColumns.notes && (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
+          className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 transition-all duration-300 ease-in-out"
           style={{ width: columnWidths.notes }}
         >
+          {!isLockedByOther && currentUserRole !== 'VIEWER' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleModalEditing?.();
+                setTempVoCues?.(Array.isArray(item.voCues) ? item.voCues.map((v: any) => ({ ...v })) : []);
+                setEditingVoItemId?.(item.id);
+                setShowVoModal?.(true);
+              }}
+              className="self-start inline-flex items-center rounded border border-dashed border-slate-500/70 px-2 py-0.5 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-100 transition-colors"
+              title="Add VO or Background Music into Notes"
+            >
+              + VO / BGM
+            </button>
+          )}
           <div
             onClick={() => {
               if (isLockedByOther) {
@@ -984,7 +1006,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
             style={{ 
               width: (customColumnWidths && customColumnWidths[column.id]) || 256,
-              height: getRowHeight ? getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns) : undefined
+              height: getRowHeight ? getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0) : undefined
             }}
           >
             <textarea
@@ -1023,8 +1045,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               disabled={isLockedByOther}
               className={`w-full px-3 py-2 border rounded text-base resize-none ${cellFill}`}
               style={{
-                height: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)` as any : undefined,
-                maxHeight: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns)} - 2rem)` as any : undefined,
+                height: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0)} - 2rem)` as any : undefined,
+                maxHeight: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0)} - 2rem)` as any : undefined,
                 overflow: 'hidden',
                 lineHeight: '1.6',
                 wordWrap: 'break-word',

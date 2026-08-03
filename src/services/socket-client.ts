@@ -5,6 +5,7 @@ import { getApiBaseUrl } from './api-client';
 interface SocketCallbacks {
   onRunOfShowDataUpdated?: (data: any) => void;
   onCompletedCuesUpdated?: (data: any) => void;
+  onIndentedCuesUpdated?: (data: any) => void;
   onTimerUpdated?: (data: any) => void;
   onTimerStopped?: (data: any) => void;
   onTimersStopped?: (data: any) => void;
@@ -94,6 +95,9 @@ class SocketClient {
           break;
         case 'completedCuesUpdated':
           this.callbacks.onCompletedCuesUpdated?.(message.data);
+          break;
+        case 'indentedCuesUpdated':
+          this.callbacks.onIndentedCuesUpdated?.(message.data);
           break;
         case 'timerUpdated':
           console.log('📡 SocketClient: Received timerUpdated event:', message.data);

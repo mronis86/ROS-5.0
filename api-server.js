@@ -3800,10 +3800,7 @@ app.get('/api/indented-cues/:eventId', async (req, res) => {
       'SELECT * FROM indented_cues WHERE event_id = $1',
       [eventId]
     );
-    
-    // Broadcast indented cues update via WebSocket for real-time sync
-    broadcastUpdate(eventId, 'indentedCuesUpdated', result.rows);
-    
+
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching indented cues:', error);
