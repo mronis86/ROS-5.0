@@ -693,7 +693,6 @@ const CateringEventPage: React.FC = () => {
           sortedNotes.map((note) => {
             const linkedId = noteItemId(note);
             const isActiveCue = activeId != null && linkedId != null && linkedId === activeId;
-            const linked = linkedId != null ? scheduleById.get(linkedId) : undefined;
             return (
               <li
                 key={note.id}
@@ -735,17 +734,11 @@ const CateringEventPage: React.FC = () => {
                   ) : null}
                 </div>
 
-                {linked?.segmentName ? (
-                  <div className="text-xs text-slate-400 mb-2 truncate" title={linked.segmentName}>
-                    {linked.segmentName}
-                  </div>
-                ) : null}
-
-                <p className="text-sm text-slate-100 whitespace-pre-wrap leading-relaxed mb-3">
+                <p className="text-base sm:text-lg text-slate-100 whitespace-pre-wrap leading-relaxed mb-2">
                   {note.content}
                 </p>
 
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+                <div className="text-[11px] text-slate-500">
                   <span className="text-slate-400">{note.user_name || 'Unknown'}</span>
                 </div>
               </li>
