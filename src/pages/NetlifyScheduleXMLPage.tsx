@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { DayFeedCopyLinks, listDaysFromSchedule } from '../components/DayFeedCopyLinks';
 
 interface ScheduleItem {
   id: string;
   segmentName: string;
   startTime: string;
+  day?: number;
 }
 
 const NetlifyScheduleXMLPage: React.FC = () => {
@@ -16,6 +18,7 @@ const NetlifyScheduleXMLPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'xml' | 'csv' | 'instructions'>('xml');
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1]);
 
   // Railway API URL (always use Railway for Netlify deployment)
   const RAILWAY_API_URL = 'https://ros-50-production.up.railway.app/api';
@@ -136,6 +139,9 @@ const NetlifyScheduleXMLPage: React.FC = () => {
       // Generate XML and CSV
       setXmlData(generateXML(scheduleData));
       setCsvData(generateCSV(scheduleData));
+      setScheduleDays(
+        listDaysFromSchedule(scheduleItems, runOfShowData.settings?.numberOfDays)
+      );
       setLastUpdated(new Date());
       setIsLoading(false);
     } catch (err) {
@@ -370,6 +376,16 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                             Higher egress cost
                           </p>
                         </div>
+
+                        <DayFeedCopyLinks
+                          days={scheduleDays}
+                          feedLabel="Schedule"
+                          liveXmlUrl={`${RAILWAY_API_URL}/schedule.xml?eventId=${eventId}`}
+                          liveCsvUrl={`${RAILWAY_API_URL}/schedule.csv?eventId=${eventId}`}
+                          cacheXmlUrl={`${RAILWAY_API_URL}/cache/schedule.xml?eventId=${eventId}`}
+                          cacheCsvUrl={`${RAILWAY_API_URL}/cache/schedule.csv?eventId=${eventId}`}
+                          copyToClipboard={copyToClipboard}
+                        />
                         
                         <div className="mt-6 pt-6 border-t border-purple-500/30">
                           <h4 className="font-semibold text-purple-300 mb-3 text-base flex items-center gap-2">

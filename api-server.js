@@ -358,6 +358,7 @@ function buildScheduleXml(eventId, scheduleItems) {
         (item, index) => `
     <item>
       <row>${index + 1}</row>
+      <day>${Number(item.day) || 1}</day>
       <cue><![CDATA[${forCdata(item.customFields?.cue || '')}]]></cue>
       <program><![CDATA[${forCdata(item.programType || '')}]]></program>
       <segment_name><![CDATA[${forCdata(item.segmentName || '')}]]></segment_name>
@@ -395,6 +396,7 @@ function buildCustomColumnsXml(eventId, scheduleItems, customColumns) {
         return `
     <item>
       <row>${index + 1}</row>
+      <day>${Number(item.day) || 1}</day>
       ${safeKeys
         .map(
           ({ key, tag }) =>
@@ -413,11 +415,82 @@ function escapeCsvField(str) {
   return `"${String(str || '').replace(/"/g, '""')}"`;
 }
 
+/** Optional ?day=N for multi-day events. null = all days. */
+function parseDayQuery(queryDay) {
+  if (queryDay == null || queryDay === '') return { ok: true, day: null };
+  const n = parseInt(String(queryDay), 10);
+  if (!Number.isFinite(n) || n < 1) {
+    return { ok: false, day: null, error: 'day must be a positive integer (e.g. day=1)' };
+  }
+  return { ok: true, day: n };
+}
+
+function filterScheduleItemsByDay(scheduleItems, day) {
+  const list = Array.isArray(scheduleItems) ? scheduleItems : [];
+  if (day == null) return list;
+  return list.filter((item) => Number(item.day || 1) === day);
+}
+
+function listScheduleDays(scheduleItems) {
+  const days = new Set();
+  for (const item of scheduleItems || []) {
+    const d = Number(item.day || 1);
+    if (Number.isFinite(d) && d >= 1) days.add(d);
+  }
+  if (days.size === 0) days.add(1);
+  return [...days].sort((a, b) => a - b);
+}
+
+function feedCacheKey(kind, eventId, day) {
+  return day == null ? `${kind}-${eventId}` : `${kind}-${eventId}-d${day}`;
+}
+
+async function cacheScheduleFeedsForEvent(eventId, scheduleItems, customColumns = {}) {
+  const days = listScheduleDays(scheduleItems);
+  const allXml = buildScheduleXml(eventId, scheduleItems);
+  const allCsv = buildScheduleCsv(scheduleItems);
+  await setUpstashCache(feedCacheKey('schedule-xml', eventId, null), allXml, 3600);
+  await setUpstashCache(feedCacheKey('schedule-csv', eventId, null), allCsv, 3600);
+
+  for (const day of days) {
+    const dayItems = filterScheduleItemsByDay(scheduleItems, day);
+    await setUpstashCache(
+      feedCacheKey('schedule-xml', eventId, day),
+      buildScheduleXml(eventId, dayItems),
+      3600
+    );
+    await setUpstashCache(
+      feedCacheKey('schedule-csv', eventId, day),
+      buildScheduleCsv(dayItems),
+      3600
+    );
+  }
+
+  const customColumnsXml = buildCustomColumnsXml(eventId, scheduleItems, customColumns);
+  if (customColumnsXml) {
+    const customColumnsCsv = buildCustomColumnsCsv(scheduleItems, customColumns);
+    await setUpstashCache(feedCacheKey('custom-columns-xml', eventId, null), customColumnsXml, 3600);
+    await setUpstashCache(feedCacheKey('custom-columns-csv', eventId, null), customColumnsCsv, 3600);
+    for (const day of days) {
+      const dayItems = filterScheduleItemsByDay(scheduleItems, day);
+      const dayXml = buildCustomColumnsXml(eventId, dayItems, customColumns);
+      if (dayXml) {
+        await setUpstashCache(feedCacheKey('custom-columns-xml', eventId, day), dayXml, 3600);
+        await setUpstashCache(
+          feedCacheKey('custom-columns-csv', eventId, day),
+          buildCustomColumnsCsv(dayItems, customColumns),
+          3600
+        );
+      }
+    }
+  }
+}
+
 function buildScheduleCsv(scheduleItems) {
   let csv =
-    'Row,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA\n';
+    'Row,Day,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA\n';
   (scheduleItems || []).forEach((item, index) => {
-    csv += `${index + 1},${escapeCsvField(item.customFields?.cue || '')},${escapeCsvField(item.programType || '')},${escapeCsvField(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsvField(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'}\n`;
+    csv += `${index + 1},${Number(item.day) || 1},${escapeCsvField(item.customFields?.cue || '')},${escapeCsvField(item.programType || '')},${escapeCsvField(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsvField(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'}\n`;
   });
   return csv;
 }
@@ -425,12 +498,12 @@ function buildScheduleCsv(scheduleItems) {
 function buildCustomColumnsCsv(scheduleItems, customColumns) {
   const columnKeys = Object.keys(customColumns || {});
   if (columnKeys.length === 0) {
-    return 'Row\n';
+    return 'Row,Day\n';
   }
-  let csv = 'Row,' + columnKeys.map((key) => `"${key}"`).join(',') + '\n';
+  let csv = 'Row,Day,' + columnKeys.map((key) => `"${key}"`).join(',') + '\n';
   (scheduleItems || []).forEach((item, index) => {
     const customFields = item.customFields || {};
-    csv += `${index + 1}`;
+    csv += `${index + 1},${Number(item.day) || 1}`;
     columnKeys.forEach((key) => {
       csv += `,${escapeCsvField(customFields[key] || '')}`;
     });
@@ -529,22 +602,8 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
     await setUpstashCache(`lower-thirds-xml-${eventId}`, fullXML, 3600);
     await setUpstashCache(`lower-thirds-csv-${eventId}`, csv, 3600);
     
-    // Schedule XML & CSV
-    const scheduleXml = buildScheduleXml(eventId, scheduleItems);
-    const scheduleCsv = buildScheduleCsv(scheduleItems);
-    
-    await setUpstashCache(`schedule-xml-${eventId}`, scheduleXml, 3600);
-    await setUpstashCache(`schedule-csv-${eventId}`, scheduleCsv, 3600);
-    
-    // Custom Columns XML & CSV
-    const customColumns = runOfShowData.custom_columns || {};
-    const customColumnsXml = buildCustomColumnsXml(eventId, scheduleItems, customColumns);
-    
-    if (customColumnsXml) {
-      const customColumnsCsv = buildCustomColumnsCsv(scheduleItems, customColumns);
-      await setUpstashCache(`custom-columns-xml-${eventId}`, customColumnsXml, 3600);
-      await setUpstashCache(`custom-columns-csv-${eventId}`, customColumnsCsv, 3600);
-    }
+    // Schedule + Custom Columns XML/CSV (all days + per-day for multi-day vMix feeds)
+    await cacheScheduleFeedsForEvent(eventId, scheduleItems, runOfShowData.custom_columns || {});
     
     console.log('✅ Upstash cache regenerated for event (Lower Thirds + Schedule + Custom Columns):', eventId);
   } catch (error) {
@@ -2559,11 +2618,16 @@ app.get('/api/cache/lower-thirds.csv', async (req, res) => {
 app.get('/api/cache/schedule.xml', async (req, res) => {
   try {
     const eventId = req.query.eventId;
-    console.log('🔄 CACHE REQUEST: Schedule XML for event:', eventId);
+    const dayParsed = parseDayQuery(req.query.day);
+    console.log('🔄 CACHE REQUEST: Schedule XML for event:', eventId, 'day:', dayParsed.day);
     
     if (!eventId) {
       res.set('Content-Type', 'application/xml');
       return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send(`<?xml version="1.0" encoding="UTF-8"?><error>${escapeXmlText(dayParsed.error)}</error>`);
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
@@ -2572,7 +2636,7 @@ app.get('/api/cache/schedule.xml', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(getUpstashCacheUrl(`schedule-xml-${eventId}`), {
+    const response = await fetch(getUpstashCacheUrl(feedCacheKey('schedule-xml', eventId, dayParsed.day)), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -2602,11 +2666,16 @@ app.get('/api/cache/schedule.xml', async (req, res) => {
 app.get('/api/cache/schedule.csv', async (req, res) => {
   try {
     const eventId = req.query.eventId;
-    console.log('🔄 CACHE REQUEST: Schedule CSV for event:', eventId);
+    const dayParsed = parseDayQuery(req.query.day);
+    console.log('🔄 CACHE REQUEST: Schedule CSV for event:', eventId, 'day:', dayParsed.day);
     
     if (!eventId) {
       res.set('Content-Type', 'text/csv');
       return res.status(400).send('Error,Event ID is required');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send(`Error,${dayParsed.error}`);
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
@@ -2615,7 +2684,7 @@ app.get('/api/cache/schedule.csv', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(getUpstashCacheUrl(`schedule-csv-${eventId}`), {
+    const response = await fetch(getUpstashCacheUrl(feedCacheKey('schedule-csv', eventId, dayParsed.day)), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -2645,11 +2714,16 @@ app.get('/api/cache/schedule.csv', async (req, res) => {
 app.get('/api/cache/custom-columns.xml', async (req, res) => {
   try {
     const eventId = req.query.eventId;
-    console.log('🔄 CACHE REQUEST: Custom Columns XML for event:', eventId);
+    const dayParsed = parseDayQuery(req.query.day);
+    console.log('🔄 CACHE REQUEST: Custom Columns XML for event:', eventId, 'day:', dayParsed.day);
     
     if (!eventId) {
       res.set('Content-Type', 'application/xml');
       return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send(`<?xml version="1.0" encoding="UTF-8"?><error>${escapeXmlText(dayParsed.error)}</error>`);
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
@@ -2658,7 +2732,7 @@ app.get('/api/cache/custom-columns.xml', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(getUpstashCacheUrl(`custom-columns-xml-${eventId}`), {
+    const response = await fetch(getUpstashCacheUrl(feedCacheKey('custom-columns-xml', eventId, dayParsed.day)), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -2688,11 +2762,16 @@ app.get('/api/cache/custom-columns.xml', async (req, res) => {
 app.get('/api/cache/custom-columns.csv', async (req, res) => {
   try {
     const eventId = req.query.eventId;
-    console.log('🔄 CACHE REQUEST: Custom Columns CSV for event:', eventId);
+    const dayParsed = parseDayQuery(req.query.day);
+    console.log('🔄 CACHE REQUEST: Custom Columns CSV for event:', eventId, 'day:', dayParsed.day);
     
     if (!eventId) {
       res.set('Content-Type', 'text/csv');
       return res.status(400).send('Error,Event ID is required');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send(`Error,${dayParsed.error}`);
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
@@ -2701,7 +2780,7 @@ app.get('/api/cache/custom-columns.csv', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    const response = await fetch(getUpstashCacheUrl(`custom-columns-csv-${eventId}`), {
+    const response = await fetch(getUpstashCacheUrl(feedCacheKey('custom-columns-csv', eventId, dayParsed.day)), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -2810,18 +2889,24 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
 app.get('/api/schedule.xml', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    const dayParsed = parseDayQuery(req.query.day);
     if (!eventId) {
       res.set('Content-Type', 'application/xml');
       return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send(`<?xml version="1.0" encoding="UTF-8"?><error>${escapeXmlText(dayParsed.error)}</error>`);
     }
 
     const result = await pool.query(
       'SELECT * FROM run_of_show_data WHERE event_id = $1',
       [eventId]
     );
-    const scheduleItems = result.rows[0]?.schedule_items || [];
+    const allItems = result.rows[0]?.schedule_items || [];
+    const scheduleItems = filterScheduleItemsByDay(allItems, dayParsed.day);
     const fullXML = buildScheduleXml(eventId, scheduleItems);
-    await setUpstashCache(`schedule-xml-${eventId}`, fullXML, 3600);
+    await setUpstashCache(feedCacheKey('schedule-xml', eventId, dayParsed.day), fullXML, 3600);
 
     res.set({
       'Content-Type': 'application/xml; charset=utf-8',
@@ -2840,18 +2925,24 @@ app.get('/api/schedule.xml', async (req, res) => {
 app.get('/api/schedule.csv', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    const dayParsed = parseDayQuery(req.query.day);
     if (!eventId) {
       res.set('Content-Type', 'text/csv');
       return res.status(400).send('Error,Event ID is required');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send(`Error,${dayParsed.error}`);
     }
 
     const result = await pool.query(
       'SELECT * FROM run_of_show_data WHERE event_id = $1',
       [eventId]
     );
-    const scheduleItems = result.rows[0]?.schedule_items || [];
+    const allItems = result.rows[0]?.schedule_items || [];
+    const scheduleItems = filterScheduleItemsByDay(allItems, dayParsed.day);
     const csv = buildScheduleCsv(scheduleItems);
-    await setUpstashCache(`schedule-csv-${eventId}`, csv, 3600);
+    await setUpstashCache(feedCacheKey('schedule-csv', eventId, dayParsed.day), csv, 3600);
 
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',
@@ -2871,9 +2962,14 @@ app.get('/api/schedule.csv', async (req, res) => {
 app.get('/api/custom-columns.xml', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    const dayParsed = parseDayQuery(req.query.day);
     if (!eventId) {
       res.set('Content-Type', 'application/xml');
       return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send(`<?xml version="1.0" encoding="UTF-8"?><error>${escapeXmlText(dayParsed.error)}</error>`);
     }
 
     const result = await pool.query(
@@ -2881,7 +2977,8 @@ app.get('/api/custom-columns.xml', async (req, res) => {
       [eventId]
     );
     const row = result.rows[0];
-    const scheduleItems = row?.schedule_items || [];
+    const allItems = row?.schedule_items || [];
+    const scheduleItems = filterScheduleItemsByDay(allItems, dayParsed.day);
     const customColumns = row?.custom_columns || {};
     const fullXML =
       buildCustomColumnsXml(eventId, scheduleItems, customColumns) ||
@@ -2894,7 +2991,7 @@ app.get('/api/custom-columns.xml', async (req, res) => {
 </data>`;
 
     if (Object.keys(customColumns).length > 0) {
-      await setUpstashCache(`custom-columns-xml-${eventId}`, fullXML, 3600);
+      await setUpstashCache(feedCacheKey('custom-columns-xml', eventId, dayParsed.day), fullXML, 3600);
     }
 
     res.set({
@@ -2914,9 +3011,14 @@ app.get('/api/custom-columns.xml', async (req, res) => {
 app.get('/api/custom-columns.csv', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    const dayParsed = parseDayQuery(req.query.day);
     if (!eventId) {
       res.set('Content-Type', 'text/csv');
       return res.status(400).send('Error,Event ID is required');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send(`Error,${dayParsed.error}`);
     }
 
     const result = await pool.query(
@@ -2924,12 +3026,13 @@ app.get('/api/custom-columns.csv', async (req, res) => {
       [eventId]
     );
     const row = result.rows[0];
-    const scheduleItems = row?.schedule_items || [];
+    const allItems = row?.schedule_items || [];
+    const scheduleItems = filterScheduleItemsByDay(allItems, dayParsed.day);
     const customColumns = row?.custom_columns || {};
     const csv = buildCustomColumnsCsv(scheduleItems, customColumns);
 
     if (Object.keys(customColumns).length > 0) {
-      await setUpstashCache(`custom-columns-csv-${eventId}`, csv, 3600);
+      await setUpstashCache(feedCacheKey('custom-columns-csv', eventId, dayParsed.day), csv, 3600);
     }
 
     res.set({

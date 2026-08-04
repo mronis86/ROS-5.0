@@ -1,4 +1,12 @@
 const api = window.rosVmixBridge;
+if (!api) {
+  document.body.innerHTML =
+    '<div style="padding:2rem;font-family:Segoe UI,sans-serif;background:#0b1220;color:#e8eef7;min-height:100vh">' +
+    '<h1>Bridge UI failed to start</h1>' +
+    '<p>Preload bridge API is missing. Close the app and relaunch from START.bat inside the unzipped <code>ros-vmix-datasource-bridge</code> folder (keep <code>resources\\app.asar</code> next to the exe).</p>' +
+    '</div>';
+  throw new Error('rosVmixBridge preload API missing');
+}
 
 const els = {
   apiBaseUrl: document.getElementById('apiBaseUrl'),

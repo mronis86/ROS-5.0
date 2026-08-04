@@ -43,6 +43,7 @@ netlify-20*/
 # cloudflare dated deploy folders (build artifacts - use create-cloudflare-dated.bat)
 cloudflare-*-V2/
 cloudflare-20*/
+.cloudflare-r2-public-url
 
 # Large zip files
 *.zip

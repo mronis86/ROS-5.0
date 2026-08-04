@@ -2177,13 +2177,13 @@ const PhotoViewPage: React.FC = () => {
               height: 'min(100vh, calc(100vw * 9 / 16))',
             }}
           >
-            {/* Top bar — compact so faces get more room */}
-            <div className="absolute inset-x-0 top-0 z-10 px-[2%] pt-[0.9%] pb-[0.5%] flex items-start justify-between gap-3 bg-gradient-to-b from-black/75 to-transparent">
+            {/* Top bar — mirrors normal Photo View: event left, LOADED + timer right */}
+            <div className="absolute inset-x-0 top-0 z-10 px-[2%] pt-[1%] pb-[0.6%] flex items-start justify-between gap-4 bg-gradient-to-b from-black/80 to-transparent">
               <div className="min-w-0 flex-1 pr-2">
-                <div className={`text-[clamp(0.55rem,1vw,0.75rem)] font-bold tracking-[0.16em] ${statusColor}`}>
-                  {statusText}
-                </div>
-                <div className="text-[clamp(0.95rem,2.1vw,1.65rem)] font-bold leading-tight truncate">
+                <h1 className="text-[clamp(0.75rem,1.5vw,1.1rem)] font-bold leading-tight truncate text-slate-200">
+                  {event?.name || 'Current Event'}
+                </h1>
+                <div className="mt-1 text-[clamp(0.85rem,1.8vw,1.35rem)] font-bold leading-tight truncate text-white">
                   {cueLabel}
                   {currentItem?.segmentName ? (
                     <span className="text-slate-300 font-semibold">
@@ -2192,38 +2192,81 @@ const PhotoViewPage: React.FC = () => {
                     </span>
                   ) : null}
                 </div>
-                {currentItem?.programType ? (
-                  <div className="mt-0.5 inline-flex items-center gap-1.5 flex-wrap">
+                <div className="mt-1 flex items-center gap-2 flex-wrap">
+                  {currentItem?.programType ? (
                     <span
-                      className="px-1.5 py-0.5 rounded text-[clamp(0.5rem,0.85vw,0.7rem)] font-semibold text-white"
+                      className="px-2 py-0.5 rounded text-[clamp(0.7rem,1.25vw,1rem)] font-semibold text-white"
                       style={{
                         backgroundColor: programTypeColors[currentItem.programType] || '#475569',
                       }}
                     >
                       {currentItem.programType}
                     </span>
-                    {currentItem.shotType ? (
-                      <span className="text-slate-400 text-[clamp(0.5rem,0.85vw,0.7rem)]">
-                        {currentItem.shotType}
-                      </span>
-                    ) : null}
-                    <span className="text-slate-500 text-[clamp(0.5rem,0.85vw,0.7rem)] truncate max-w-[40vw]">
-                      {event?.name}
+                  ) : null}
+                  {currentItem?.shotType ? (
+                    <span className="text-slate-400 text-[clamp(0.55rem,0.95vw,0.8rem)]">
+                      {currentItem.shotType}
                     </span>
-                  </div>
-                ) : null}
-              </div>
-              <div className="text-right shrink-0">
-                <div
-                  className="font-mono font-bold tabular-nums leading-none tracking-tight"
-                  style={{
-                    fontSize: 'clamp(1.35rem, 3.2vw, 2.5rem)',
-                    color: getCountdownColor(),
-                  }}
-                >
-                  {formatTime(getRemainingTime())}
+                  ) : null}
                 </div>
-                <div className="mt-0.5 text-slate-400 text-[clamp(0.55rem,0.9vw,0.75rem)]">
+              </div>
+
+              <div className="shrink-0 flex flex-col items-end">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="text-right">
+                    {hybridTimerData?.activeTimer ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <div
+                          className={`text-[clamp(0.85rem,1.5vw,1.2rem)] font-bold leading-none ${
+                            hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                              ? isResolumeSyncPulseActive
+                                ? 'text-yellow-300'
+                                : isResolumeSynced(hybridTimerData.activeTimer)
+                                  ? 'text-purple-400'
+                                  : 'text-green-400'
+                              : isResolumeArmed(hybridTimerData.activeTimer)
+                                ? 'text-purple-300'
+                                : 'text-yellow-400'
+                          }`}
+                        >
+                          {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                            ? isResolumeSynced(hybridTimerData.activeTimer)
+                              ? 'RUNNING · RESOLUME'
+                              : 'RUNNING'
+                            : isResolumeArmed(hybridTimerData.activeTimer)
+                              ? 'LOADED · RESOLUME (armed)'
+                              : 'LOADED'}
+                        </div>
+                        {isResolumeArmed(hybridTimerData.activeTimer) && (
+                          <div className="text-[clamp(0.5rem,0.8vw,0.7rem)] text-purple-300/90">
+                            Waiting for Resolume playback…
+                          </div>
+                        )}
+                        {isResolumeSynced(hybridTimerData.activeTimer) &&
+                          hybridTimerData.activeTimer.is_running &&
+                          hybridTimerData.activeTimer.is_active && (
+                            <div className="text-[clamp(0.5rem,0.8vw,0.7rem)] text-purple-300/90">
+                              Countdown synced to Resolume clip
+                            </div>
+                          )}
+                      </div>
+                    ) : (
+                      <div className={`text-[clamp(0.85rem,1.5vw,1.2rem)] font-bold leading-none ${statusColor}`}>
+                        {statusText}
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    className="font-mono font-bold tabular-nums leading-none tracking-tight bg-slate-800 px-[0.6em] py-[0.3em] rounded-lg border border-slate-600"
+                    style={{
+                      fontSize: 'clamp(1.2rem, 2.8vw, 2.2rem)',
+                      color: getCountdownColor(),
+                    }}
+                  >
+                    {formatTime(getRemainingTime())}
+                  </div>
+                </div>
+                <div className="mt-0.5 text-slate-400 text-[clamp(0.75rem,1.25vw,1.05rem)]">
                   {currentTime.toLocaleTimeString()}
                 </div>
               </div>

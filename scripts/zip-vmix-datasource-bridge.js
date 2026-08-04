@@ -1,7 +1,10 @@
 /**
- * Zip a prebuilt Windows app (win-unpacked / dist-transfer) for show PCs.
- * Prefer dist-transfer/win-unpacked, else dist/win-unpacked.
+ * Zip a prebuilt Windows app (win-unpacked / dist-ready) for show PCs.
+ * Prefer newest dist-ready folder win-unpacked, else dist-transfer / dist.
  * No npm install on the target machine (avoids corporate SSL failures).
+ *
+ * Important: all Electron files must live under ros-vmix-datasource-bridge/
+ * next to START.bat so the bat can find the .exe and resources/app.asar.
  */
 const path = require('path');
 const fs = require('fs');
@@ -55,6 +58,18 @@ setlocal
 cd /d "%~dp0"
 echo Starting ROS vMix DataSource Bridge...
 echo No npm install needed.
+if not exist "%~dp0${exeName}" (
+  echo ERROR: Missing "${exeName}" next to this START.bat
+  echo Unzip the full ros-vmix-datasource-bridge folder and run START.bat from inside it.
+  pause
+  exit /b 1
+)
+if not exist "%~dp0resources\\app.asar" (
+  echo ERROR: Missing resources\\app.asar - zip is incomplete.
+  echo Re-download ros-vmix-datasource-bridge.zip and unzip the whole folder.
+  pause
+  exit /b 1
+)
 start "" "%~dp0${exeName}"
 endlocal
 `;
@@ -63,10 +78,14 @@ const readme = `ROS vMix DataSource Bridge (prebuilt)
 
 No Node.js / npm install required on the show PC.
 
-1. Unzip anywhere.
-2. Double-click START.bat
-3. Type the exact Data Source name from vMix Data Sources Manager.
-4. Sheet blank for XML/CSV; set sheet for Excel/Google Sheets.
+1. Unzip the zip - keep the ros-vmix-datasource-bridge folder intact.
+2. Open that folder and double-click START.bat
+   (or run "ROS vMix DataSource Bridge.exe" from the same folder).
+3. Go to the Connections tab to set Railway API URL + token + event.
+4. On Sources, type the exact Data Source name from vMix.
+5. Sheet blank for XML/CSV; set sheet for Excel/Google Sheets.
+
+Do not move the .exe out of this folder without resources\\app.asar beside it.
 
 Corporate networks that block Electron downloads should use this package.
 `;
@@ -78,17 +97,24 @@ archive.on('error', (err) => {
   process.exit(1);
 });
 archive.pipe(output);
-archive.glob('**/*', {
-  cwd: unpackedDir,
-  ignore: [
-    'locales/**',
-    'LICENSES.chromium.html',
-    'vk_swiftshader.dll',
-    'vk_swiftshader_icd.json',
-    'vulkan-1.dll',
-  ],
-  prefix,
-});
+
+// Put entire win-unpacked tree under ros-vmix-datasource-bridge/ (exe + resources + dlls).
+// prefix MUST be the 3rd glob argument — putting it in options silently drops it.
+archive.glob(
+  '**/*',
+  {
+    cwd: unpackedDir,
+    ignore: [
+      'locales/**',
+      'LICENSES.chromium.html',
+      'vk_swiftshader.dll',
+      'vk_swiftshader_icd.json',
+      'vulkan-1.dll',
+    ],
+  },
+  { prefix }
+);
+
 const enUs = path.join(unpackedDir, 'locales', 'en-US.pak');
 if (fs.existsSync(enUs)) {
   archive.file(enUs, { name: `${prefix}/locales/en-US.pak` });

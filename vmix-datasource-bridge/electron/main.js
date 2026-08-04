@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, session, powerSaveBlocker, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -16,6 +16,12 @@ const chromiumCacheDir = path.join(userDataRoot, 'chromium-cache');
 fs.mkdirSync(chromiumCacheDir, { recursive: true });
 app.setPath('userData', userDataRoot);
 app.commandLine.appendSwitch('disk-cache-dir', chromiumCacheDir);
+
+// OneDrive / some GPUs leave Electron windows blank without this.
+const runningFromOneDrive = __dirname.toLowerCase().includes('onedrive');
+if (runningFromOneDrive || process.env.ROS_VMIX_DISABLE_GPU === '1' || process.platform === 'win32') {
+  app.disableHardwareAcceleration();
+}
 
 let mainWindow = null;
 let powerSaveId = null;
@@ -50,7 +56,26 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  const indexHtml = path.join(__dirname, '..', 'renderer', 'index.html');
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('[vmix-bridge] did-fail-load', { errorCode, errorDescription, validatedURL, indexHtml });
+    dialog.showErrorBox(
+      'ROS vMix DataSource Bridge',
+      `UI failed to load (${errorCode}): ${errorDescription}\n\nExpected:\n${indexHtml}\n\nIf you unzipped a download, keep the whole ros-vmix-datasource-bridge folder together (exe + resources).`
+    );
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[vmix-bridge] render-process-gone', details);
+  });
+
+  if (!fs.existsSync(indexHtml) && !indexHtml.includes('app.asar')) {
+    dialog.showErrorBox(
+      'ROS vMix DataSource Bridge',
+      `Missing UI file:\n${indexHtml}\n\nReinstall or re-unzip the bridge package.`
+    );
+  }
+
+  mainWindow.loadFile(indexHtml);
   mainWindow.on('closed', () => {
     mainWindow = null;
   });

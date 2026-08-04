@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import { DayFeedCopyLinks, listDaysFromSchedule } from '../components/DayFeedCopyLinks';
 
 interface ScheduleItem {
   id: string;
@@ -40,6 +41,7 @@ const ScheduleXMLPage: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'preview' | 'instructions'>('preview');
   const [refreshInterval, setRefreshInterval] = useState(10); // seconds
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1]);
 
   const calculateStartTime = (scheduleItems: any[], currentItem: any, masterStartTime: string): string => {
     if (!masterStartTime) return '';
@@ -180,6 +182,7 @@ const ScheduleXMLPage: React.FC = () => {
       console.log('📊 Processed schedule items:', scheduleItemsData.length);
 
       setScheduleItems(scheduleItemsData);
+      setScheduleDays(listDaysFromSchedule(items, data.settings?.numberOfDays));
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching schedule data:', err);
@@ -243,6 +246,7 @@ const ScheduleXMLPage: React.FC = () => {
           });
 
           setScheduleItems(scheduleItemsData);
+          setScheduleDays(listDaysFromSchedule(items, data.settings?.numberOfDays));
           setLastUpdated(new Date());
           console.log('✅ Schedule XML: Data updated via WebSocket');
         }
@@ -539,6 +543,15 @@ const ScheduleXMLPage: React.FC = () => {
                         </button>
                       </div>
                     </div>
+                    <DayFeedCopyLinks
+                      days={scheduleDays}
+                      feedLabel="Schedule"
+                      liveXmlUrl={`https://ros-50-production.up.railway.app/api/schedule.xml?eventId=${eventId}`}
+                      liveCsvUrl={`https://ros-50-production.up.railway.app/api/schedule.csv?eventId=${eventId}`}
+                      cacheXmlUrl={`https://ros-50-production.up.railway.app/api/cache/schedule.xml?eventId=${eventId}`}
+                      cacheCsvUrl={`https://ros-50-production.up.railway.app/api/cache/schedule.csv?eventId=${eventId}`}
+                      copyToClipboard={copyToClipboard}
+                    />
                     <div>
                       <h4 className="font-semibold text-blue-300 mb-2">3. VMIX Setup:</h4>
                       <ul className="list-disc list-inside space-y-1 text-gray-300">

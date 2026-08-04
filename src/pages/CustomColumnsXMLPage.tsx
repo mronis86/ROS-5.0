@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import { DayFeedCopyLinks, listDaysFromSchedule } from '../components/DayFeedCopyLinks';
 
 interface CustomColumnItem {
   id: string;
@@ -86,6 +87,7 @@ const CustomColumnsXMLPage: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'preview' | 'instructions'>('preview');
   const [refreshInterval, setRefreshInterval] = useState(10); // seconds
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1]);
 
   const fetchCustomColumns = async () => {
     try {
@@ -135,6 +137,7 @@ const CustomColumnsXMLPage: React.FC = () => {
       console.log('📊 Processed custom column items:', customColumnsData.length);
 
       setCustomColumns(customColumnsData);
+      setScheduleDays(listDaysFromSchedule(scheduleItems, (data as any).settings?.numberOfDays));
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching custom columns:', err);
@@ -553,6 +556,15 @@ const CustomColumnsXMLPage: React.FC = () => {
                   </div>
                 </div>
 
+                <DayFeedCopyLinks
+                  days={scheduleDays}
+                  feedLabel="Custom Columns"
+                  liveXmlUrl={`https://ros-50-production.up.railway.app/api/custom-columns.xml?eventId=${eventId || ''}`}
+                  liveCsvUrl={`https://ros-50-production.up.railway.app/api/custom-columns.csv?eventId=${eventId || ''}`}
+                  cacheXmlUrl={`https://ros-50-production.up.railway.app/api/cache/custom-columns.xml?eventId=${eventId || ''}`}
+                  cacheCsvUrl={`https://ros-50-production.up.railway.app/api/cache/custom-columns.csv?eventId=${eventId || ''}`}
+                  copyToClipboard={copyToClipboard}
+                />
 
                 <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-4">
                   <h4 className="text-md font-semibold mb-2 text-yellow-300">Environment:</h4>
