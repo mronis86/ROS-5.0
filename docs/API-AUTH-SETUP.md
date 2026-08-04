@@ -132,7 +132,7 @@ If `VITE_NEON_AUTH_URL` is unset, the app falls back to **legacy email/password*
 
 ## 4. Integration tokens (Companion / vMix)
 
-Admin → **Integration API tokens** — scopes `read,control` for Companion.
+Admin → **Integration API tokens** — scopes `read,control` for Companion (covers cue load, timer start/stop, and duration +1/−1/+5/−5 via `/api/active-timers/.../duration`).
 
 When `REQUIRE_API_AUTH` is enabled, paste token into Companion **API Token** field.
 
