@@ -626,9 +626,13 @@ const ContentReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  /** Multi-select for bulk status updates (independent of the detail-panel cue). */
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<number>>(() => new Set());
+  const [selectedDay, setSelectedDay] = useState(1);
   const cueButtonRefs = useRef<Map<number, HTMLButtonElement | null>>(new Map());
 
   const eventId = event?.id || eventIdParam || '';
+  const numberOfDays = Math.max(1, Number(event?.numberOfDays) || 1);
 
   const goBackFromContentReview = useCallback(() => {
     if (eventId) {
@@ -736,6 +740,12 @@ const ContentReviewPage: React.FC = () => {
   const followModeRef = useRef<ContentReviewFollowMode>('solo');
   const scheduleRef = useRef<ScheduleItem[]>([]);
   const applyRemoteSelectionRef = useRef(false);
+  /** When true, the next cueReviews→persist effect is skipped (remote socket apply). */
+  const suppressReviewPersistRef = useRef(false);
+  const cueReviewsRef = useRef<CueReviewMap>({});
+  const applyRemoteReviewsRef = useRef<(data: { event_id?: string; reviews?: Record<string, unknown> }) => void>(
+    () => undefined
+  );
   const scheduleLenRef = useRef(0);
 
   const driverId = user?.id ?? 'guest';
@@ -845,6 +855,11 @@ const ContentReviewPage: React.FC = () => {
 
   useEffect(() => {
     if (!eventId || !contentReviewHydrated) return;
+    // Skip persist when cueReviews was just applied from a socket broadcast (avoid echo saves).
+    if (suppressReviewPersistRef.current) {
+      suppressReviewPersistRef.current = false;
+      return;
+    }
     const t = window.setTimeout(() => {
       void DatabaseService.saveContentReviewData(eventId, {
         reviews: cueReviews as Record<string, unknown>,
@@ -903,8 +918,30 @@ const ContentReviewPage: React.FC = () => {
   }, [followMode]);
 
   useEffect(() => {
+    cueReviewsRef.current = cueReviews;
+  }, [cueReviews]);
+
+  applyRemoteReviewsRef.current = (data) => {
+    if (!data) return;
     if (!eventId) return;
-    socketClient.connect(eventId, {});
+    if (data.event_id != null && String(data.event_id) !== String(eventId)) return;
+    if (!contentReviewHydratedRef.current) return;
+    const next = normalizeCueReviewMap(data.reviews);
+    try {
+      if (JSON.stringify(cueReviewsRef.current) === JSON.stringify(next)) return;
+    } catch {
+      /* compare failed — still apply */
+    }
+    suppressReviewPersistRef.current = true;
+    setCueReviews(next);
+  };
+
+  useEffect(() => {
+    if (!eventId) return;
+
+    socketClient.connect(eventId, {
+      onContentReviewDataUpdated: (data) => applyRemoteReviewsRef.current(data),
+    });
     const socket = socketClient.getSocket();
     const onConnect = () => {
       if (followModeRef.current === 'follow') socketClient.emitContentReviewRequestState();
@@ -1275,6 +1312,19 @@ const ContentReviewPage: React.FC = () => {
       setCustomColumns(Array.isArray(data.custom_columns) ? (data.custom_columns as CustomColumn[]) : []);
       setIndented(buildIndentedMap(indentedRows));
 
+      const settingsDays = Number((data as any)?.settings?.numberOfDays) || 0;
+      const maxItemDay = items.reduce((max, it) => Math.max(max, Number(it.day) || 1), 1);
+      const resolvedDays = Math.max(1, settingsDays, maxItemDay);
+      const settingsName = String((data as any)?.settings?.eventName || '').trim();
+      setEvent((prev) => ({
+        ...prev,
+        id: eventId || prev.id,
+        name: settingsName || prev.name || eventNameParam || 'Event',
+        numberOfDays: resolvedDays,
+      }));
+      setSelectedDay((prev) => (prev >= 1 && prev <= resolvedDays ? prev : 1));
+      setBulkSelectedIds(new Set());
+
       const localReviews = readLocalCueReviews();
       const apiReviews = reviewData?.reviews ? normalizeCueReviewMap(reviewData.reviews) : {};
       const hasApiReviews = Object.keys(apiReviews).length > 0;
@@ -1315,6 +1365,7 @@ const ContentReviewPage: React.FC = () => {
     }
   }, [
     eventId,
+    eventNameParam,
     readLocalCueReviews,
     activeReviewStageStorageKey,
     streamFromQuery,
@@ -1331,17 +1382,22 @@ const ContentReviewPage: React.FC = () => {
     return raw || `Row ${it.id}`;
   }, []);
 
-  /** Roots in schedule order, each with its subtree (same order as ROS). */
+  const daySchedule = useMemo(
+    () => (numberOfDays > 1 ? schedule.filter((it) => (it.day || 1) === selectedDay) : schedule),
+    [schedule, selectedDay, numberOfDays]
+  );
+
+  /** Roots in schedule order for the active day, each with its subtree (same order as ROS). */
   const cueGroups = useMemo(() => {
     const byRoot = new Map<number, ScheduleItem[]>();
-    for (const it of schedule) {
+    for (const it of daySchedule) {
       const r = rootIdFor(it.id, indented);
       if (!byRoot.has(r)) byRoot.set(r, []);
       byRoot.get(r)!.push(it);
     }
     const rootsInOrder: number[] = [];
     const seen = new Set<number>();
-    for (const it of schedule) {
+    for (const it of daySchedule) {
       const r = rootIdFor(it.id, indented);
       if (!seen.has(r)) {
         seen.add(r);
@@ -1349,17 +1405,36 @@ const ContentReviewPage: React.FC = () => {
       }
     }
     return rootsInOrder.map((rootId) => ({ rootId, items: byRoot.get(rootId) ?? [] }));
-  }, [schedule, indented]);
+  }, [daySchedule, indented]);
+
+  const visibleCueIds = useMemo(
+    () => daySchedule.map((it) => it.id),
+    [daySchedule]
+  );
 
   useEffect(() => {
-    if (!schedule.length) {
-      setSelectedId(null);
+    if (!daySchedule.length) {
+      if (!schedule.length) setSelectedId(null);
       return;
     }
-    if (selectedId == null || !schedule.some((r) => r.id === selectedId)) {
-      setSelectedId(schedule[0].id);
+    if (selectedId == null || !daySchedule.some((r) => r.id === selectedId)) {
+      setSelectedId(daySchedule[0].id);
     }
-  }, [schedule, selectedId]);
+  }, [daySchedule, schedule.length, selectedId]);
+
+  useEffect(() => {
+    setBulkSelectedIds((prev) => {
+      if (!prev.size) return prev;
+      const visible = new Set(visibleCueIds);
+      let changed = false;
+      const next = new Set<number>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [visibleCueIds]);
 
   useEffect(() => {
     if (selectedId == null) return;
@@ -1402,6 +1477,69 @@ const ContentReviewPage: React.FC = () => {
       });
     },
     [driverName]
+  );
+
+  const setCueReviewStatusesBulk = useCallback(
+    (itemIds: number[], stage: ReviewStage, status: ReviewStatus) => {
+      if (!itemIds.length) return;
+      const now = new Date().toISOString();
+      setCueReviews((prev) => {
+        let next = prev;
+        let changed = false;
+        for (const itemId of itemIds) {
+          const before = next[itemId] ?? emptyCueReviewEntry();
+          if (stage === 'ros' && status === 'approved' && !canApproveRosStage(before)) {
+            continue;
+          }
+          const stageBefore = getStageReview(before, stage);
+          if (!changed) {
+            next = { ...prev };
+            changed = true;
+          }
+          next[itemId] = {
+            ...before,
+            [stage]: {
+              status,
+              note: stageBefore.note,
+              updatedAt: now,
+              updatedBy: driverName
+            }
+          };
+        }
+        return changed ? next : prev;
+      });
+    },
+    [driverName]
+  );
+
+  const toggleBulkSelected = useCallback((itemId: number) => {
+    setBulkSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }, []);
+
+  const selectAllVisibleCues = useCallback(() => {
+    setBulkSelectedIds(new Set(visibleCueIds));
+  }, [visibleCueIds]);
+
+  const clearBulkSelection = useCallback(() => {
+    setBulkSelectedIds(new Set());
+  }, []);
+
+  const bulkSelectedCount = bulkSelectedIds.size;
+  const allVisibleSelected =
+    visibleCueIds.length > 0 && visibleCueIds.every((id) => bulkSelectedIds.has(id));
+
+  const applyBulkStatus = useCallback(
+    (status: ReviewStatus) => {
+      const ids = Array.from(bulkSelectedIds);
+      if (!ids.length) return;
+      setCueReviewStatusesBulk(ids, activeReviewStage, status);
+    },
+    [bulkSelectedIds, activeReviewStage, setCueReviewStatusesBulk]
   );
 
   const setCueReviewNote = useCallback(
@@ -2132,11 +2270,84 @@ const ContentReviewPage: React.FC = () => {
       ) : (
         <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
           {/* Column 1: cue rail — scrolls independently */}
-          <aside className="flex min-h-0 w-[11.5rem] shrink-0 flex-col border-r border-slate-700 bg-slate-950 md:w-[13.5rem]">
-            <div className="shrink-0 border-b border-slate-800 px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-              Cues
+          <aside className="flex min-h-0 w-[13rem] shrink-0 flex-col border-r border-slate-700 bg-slate-950 md:w-[15rem]">
+            <div className="shrink-0 space-y-1.5 border-b border-slate-800 px-2 py-2">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cues</span>
+                {numberOfDays > 1 ? (
+                  <label className="flex items-center gap-1 text-[10px] text-slate-400">
+                    <span className="sr-only">Day</span>
+                    <select
+                      value={selectedDay}
+                      onChange={(e) => setSelectedDay(Number(e.target.value))}
+                      className="max-w-[5.5rem] rounded border border-slate-600 bg-slate-900 px-1 py-0.5 text-[10px] font-semibold text-slate-200"
+                      aria-label="Filter cues by day"
+                    >
+                      {Array.from({ length: numberOfDays }, (_, i) => i + 1).map((d) => (
+                        <option key={d} value={d}>
+                          Day {d}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+              {followMode !== 'follow' && visibleCueIds.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => (allVisibleSelected ? clearBulkSelection() : selectAllVisibleCues())}
+                    className="rounded border border-slate-600 bg-slate-900 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-300 hover:border-slate-500 hover:text-white"
+                  >
+                    {allVisibleSelected ? 'Clear' : 'Select all'}
+                  </button>
+                  {bulkSelectedCount > 0 ? (
+                    <span className="text-[9px] font-medium text-slate-400">{bulkSelectedCount} sel.</span>
+                  ) : null}
+                </div>
+              ) : null}
+              {followMode !== 'follow' && bulkSelectedCount > 0 ? (
+                <div className="flex flex-col gap-1 rounded border border-emerald-800/50 bg-emerald-950/25 p-1">
+                  <div className="text-[8px] font-semibold uppercase tracking-wide text-emerald-200/90">
+                    Bulk · {REVIEW_STAGES.find((s) => s.id === activeReviewStage)?.label}
+                  </div>
+                  <div className="flex flex-wrap gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => applyBulkStatus('approved')}
+                      className="rounded border border-emerald-600 bg-emerald-800 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-700"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyBulkStatus('needs_update')}
+                      className="rounded border border-amber-600 bg-amber-800 px-1.5 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-700"
+                    >
+                      Needs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyBulkStatus('pending')}
+                      className="rounded border border-sky-600 bg-sky-800 px-1.5 py-0.5 text-[9px] font-semibold text-sky-50 hover:bg-sky-700"
+                    >
+                      Review
+                    </button>
+                  </div>
+                  {activeReviewStage === 'ros' ? (
+                    <p className="text-[8px] leading-snug text-amber-200/80">
+                      ROS approve skips cues that are not Creative-approved.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain py-1 pl-1 pr-0.5">
+              {cueGroups.length === 0 ? (
+                <p className="px-2 py-3 text-[11px] text-slate-500">
+                  {numberOfDays > 1 ? `No cues on Day ${selectedDay}.` : 'No cues.'}
+                </p>
+              ) : null}
               {cueGroups.map(({ rootId, items }) => (
                 <div
                   key={rootId}
@@ -2153,83 +2364,103 @@ const ContentReviewPage: React.FC = () => {
                     const creativeMeta = reviewStatusMeta(getStageReview(cueEntry, 'creative').status);
                     const rosMeta = reviewStatusMeta(getStageReview(cueEntry, 'ros').status);
                     const fullyApproved = isFullyApproved(cueEntry);
+                    const bulkOn = bulkSelectedIds.has(it.id);
                     return (
-                      <button
+                      <div
                         key={it.id}
-                        type="button"
-                        disabled={followMode === 'follow'}
-                        ref={(el) => {
-                          if (el) cueButtonRefs.current.set(it.id, el);
-                          else cueButtonRefs.current.delete(it.id);
-                        }}
-                        onClick={() => setSelectedId(it.id)}
-                        title={followMode === 'follow' ? 'Turn off Follow to select cues' : undefined}
-                        className={`mb-0.5 flex w-full rounded-md border text-left transition-all disabled:cursor-not-allowed ${
+                        className={`mb-0.5 flex w-full items-stretch gap-0.5 rounded-md border transition-all ${
                           followMode === 'follow'
-                            ? 'border-transparent'
+                            ? 'border-transparent opacity-55'
                             : active
                               ? reviewMeta.cueRailActiveClass
                               : reviewMeta.cueRailIdleClass
                         }`}
                         style={{
                           textDecoration: killed ? 'line-through' : undefined,
-                          opacity: followMode === 'follow' ? 0.55 : killed ? 0.75 : 1
+                          opacity: followMode === 'follow' ? 0.55 : killed ? 0.75 : undefined
                         }}
                       >
-                        <div
-                          className="w-1 shrink-0 self-stretch rounded-l-md"
-                          style={{ backgroundColor: bar }}
-                          aria-hidden
-                        />
-                        <div
-                          className="min-w-0 flex-1 py-1.5 pl-1 pr-0.5"
-                          style={{
-                            paddingLeft: isSub ? `${4 + Math.min(depthFor(it.id, indented), 4) * 8}px` : '4px'
+                        {followMode !== 'follow' ? (
+                          <label
+                            className="flex shrink-0 cursor-pointer items-start pt-2 pl-1"
+                            title="Select for bulk approve"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={bulkOn}
+                              onChange={() => toggleBulkSelected(it.id)}
+                              className="h-3 w-3 rounded border-slate-500 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                              aria-label={`Select cue ${formatCueDisplay(cueLabel(it))} for bulk review`}
+                            />
+                          </label>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={followMode === 'follow'}
+                          ref={(el) => {
+                            if (el) cueButtonRefs.current.set(it.id, el);
+                            else cueButtonRefs.current.delete(it.id);
                           }}
+                          onClick={() => setSelectedId(it.id)}
+                          title={followMode === 'follow' ? 'Turn off Follow to select cues' : undefined}
+                          className="flex min-w-0 flex-1 rounded-md text-left disabled:cursor-not-allowed"
                         >
                           <div
-                            className={`truncate text-[11px] font-bold leading-tight md:text-xs ${reviewMeta.cueLabelClass}`}
+                            className="w-1 shrink-0 self-stretch rounded-l-md"
+                            style={{ backgroundColor: bar }}
+                            aria-hidden
+                          />
+                          <div
+                            className="min-w-0 flex-1 py-1.5 pl-1 pr-0.5"
+                            style={{
+                              paddingLeft: isSub ? `${4 + Math.min(depthFor(it.id, indented), 4) * 8}px` : '4px'
+                            }}
                           >
-                            {isSub ? <span className="text-cyan-400/90">↳ </span> : null}
-                            {formatCueDisplay(cueLabel(it))}
-                          </div>
-                          <div className="truncate text-[10px] text-slate-400 md:text-[11px]">
-                            {it.segmentName || '—'}
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-0.5">
-                            {fullyApproved ? (
-                              <span
-                                className={`inline-flex rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${reviewMeta.railClass}`}
-                              >
-                                Both OK
-                              </span>
-                            ) : (
-                              <>
+                            <div
+                              className={`truncate text-[11px] font-bold leading-tight md:text-xs ${reviewMeta.cueLabelClass}`}
+                            >
+                              {isSub ? <span className="text-cyan-400/90">↳ </span> : null}
+                              {formatCueDisplay(cueLabel(it))}
+                            </div>
+                            <div className="truncate text-[10px] text-slate-400 md:text-[11px]">
+                              {it.segmentName || '—'}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-0.5">
+                              {fullyApproved ? (
                                 <span
-                                  className={`inline-flex rounded border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide ${
-                                    activeReviewStage === 'creative'
-                                      ? creativeMeta.railClass
-                                      : 'border-slate-600/80 bg-slate-800/80 text-slate-400'
-                                  }`}
-                                  title="Creative Content"
+                                  className={`inline-flex rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${reviewMeta.railClass}`}
                                 >
-                                  CC: {creativeMeta.label === 'Approved' ? 'OK' : creativeMeta.label === 'Needs update' ? '!' : '…'}
+                                  Both OK
                                 </span>
-                                <span
-                                  className={`inline-flex rounded border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide ${
-                                    activeReviewStage === 'ros'
-                                      ? rosMeta.railClass
-                                      : 'border-slate-600/80 bg-slate-800/80 text-slate-400'
-                                  }`}
-                                  title="ROS Show"
-                                >
-                                  ROS: {rosMeta.label === 'Approved' ? 'OK' : rosMeta.label === 'Needs update' ? '!' : '…'}
-                                </span>
-                              </>
-                            )}
+                              ) : (
+                                <>
+                                  <span
+                                    className={`inline-flex rounded border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide ${
+                                      activeReviewStage === 'creative'
+                                        ? creativeMeta.railClass
+                                        : 'border-slate-600/80 bg-slate-800/80 text-slate-400'
+                                    }`}
+                                    title="Creative Content"
+                                  >
+                                    CC: {creativeMeta.label === 'Approved' ? 'OK' : creativeMeta.label === 'Needs update' ? '!' : '…'}
+                                  </span>
+                                  <span
+                                    className={`inline-flex rounded border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide ${
+                                      activeReviewStage === 'ros'
+                                        ? rosMeta.railClass
+                                        : 'border-slate-600/80 bg-slate-800/80 text-slate-400'
+                                    }`}
+                                    title="ROS Show"
+                                  >
+                                    ROS: {rosMeta.label === 'Approved' ? 'OK' : rosMeta.label === 'Needs update' ? '!' : '…'}
+                                  </span>
+                                </>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </button>
+                        </button>
+                      </div>
                     );
                   })}
                 </div>

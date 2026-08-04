@@ -40,6 +40,9 @@ ROS-5.0-Netlify-Complete-*/
 # netlify dated deploy folders (build artifacts - use create-netlify-dated.bat to regenerate)
 netlify-*-V2/
 netlify-20*/
+# cloudflare dated deploy folders (build artifacts - use create-cloudflare-dated.bat)
+cloudflare-*-V2/
+cloudflare-20*/
 
 # Large zip files
 *.zip

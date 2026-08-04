@@ -34,6 +34,15 @@ interface SocketCallbacks {
   onRowLocked?: (data: { eventId: string; rowId: number; userId: string; userName: string }) => void;
   onRowUnlocked?: (data: { eventId: string; rowId: number }) => void;
   onRowLocksSnapshot?: (data: { eventId: string; locks: { rowId: number; userId: string; userName: string }[] }) => void;
+  onContentReviewDataUpdated?: (data: {
+    event_id?: string;
+    reviews?: Record<string, unknown>;
+    stream_url?: string | null;
+    creative_pdf_url?: string | null;
+    active_stage?: 'creative' | 'ros';
+    side_rail_width_px?: number | null;
+    updated_at?: string;
+  }) => void;
 }
 
 class SocketClient {
@@ -47,14 +56,8 @@ class SocketClient {
   connect(eventId: string, callbacks: SocketCallbacks) {
     if (this.socket && this.eventId === eventId) {
       console.log('Socket.IO already connected for this event. Merging callbacks.');
-      // Merge new callbacks with existing ones, but don't overwrite existing callbacks
-      // This allows multiple pages to share the same socket without conflicts
-      this.callbacks = { 
-        ...this.callbacks, 
-        ...Object.fromEntries(
-          Object.entries(callbacks).filter(([key]) => !this.callbacks[key as keyof SocketCallbacks])
-        )
-      };
+      // Prefer newer callbacks so remounted pages (e.g. Content Review) keep live handlers.
+      this.callbacks = { ...this.callbacks, ...callbacks };
       return;
     }
 
@@ -166,6 +169,9 @@ class SocketClient {
           break;
         case 'rowLocksSnapshot':
           this.callbacks.onRowLocksSnapshot?.(message.data);
+          break;
+        case 'contentReviewDataUpdated':
+          this.callbacks.onContentReviewDataUpdated?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);

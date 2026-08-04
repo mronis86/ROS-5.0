@@ -64,9 +64,25 @@ const socketCorsOrigins = [
     .map((s) => s.trim())
     .filter(Boolean),
 ];
+function isAllowedSocketOrigin(origin) {
+  if (!origin) return false;
+  if (socketCorsOrigins.includes(origin)) return true;
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    // Allow dual hosting: Netlify + Cloudflare Pages (including preview URLs)
+    if (host.endsWith('.netlify.app') || host.endsWith('.pages.dev')) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
 const io = new Server(server, {
   cors: {
-    origin: isProduction ? socketCorsOrigins : true, // allow any origin when not in production (local + LAN)
+    origin: isProduction
+      ? (origin, callback) => {
+          callback(null, isAllowedSocketOrigin(origin));
+        }
+      : true, // allow any origin when not in production (local + LAN)
     methods: ['GET', 'POST'],
   },
 });
