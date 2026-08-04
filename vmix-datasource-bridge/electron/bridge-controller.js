@@ -4,12 +4,16 @@ const {
   getActiveTimer,
   listCalendarEvents,
   validateApi,
+  httpFetch,
 } = require('./railway-client');
 const vmix = require('./vmix-client');
 const { resolveRowIndex } = require('./row-matcher');
+const { parseFeed, withDayQuery } = require('./feed-parser');
+
+const FEED_CACHE_MS = 15_000;
 
 /**
- * Orchestrates Railway cue follow → row match → vMix DataSourceSelectRow.
+ * Orchestrates Railway cue follow → feed/schedule row match → vMix DataSourceSelectRow.
  *
  * Cue detection matches Companion: REST poll /api/active-timers (Chromium net.fetch).
  * Optional live Socket.IO runs in the *renderer* (browser stack, same as the web app)
@@ -22,6 +26,8 @@ class BridgeController {
     this.config = null;
     this.pollTimer = null;
     this.scheduleItems = [];
+    /** @type {Map<string, { fetchedAt: number, parsed: object, url: string, error?: string }>} */
+    this.feedCache = new Map();
     this.lastItemId = null;
     this.lastSelectKey = '';
     this.status = this.emptyStatus();
@@ -58,6 +64,60 @@ class BridgeController {
       message: `Schedule loaded (${this.scheduleItems.length} items)`,
       eventId,
     };
+  }
+
+  feedCacheKey(binding) {
+    return `${binding.id || binding.dataSourceName}|${binding.feedUrl || ''}|${binding.dayFilter ?? ''}`;
+  }
+
+  async loadFeedForBinding(binding, { force = false } = {}) {
+    const baseUrl = String(binding.feedUrl || '').trim();
+    if (!baseUrl) return null;
+
+    const url = withDayQuery(baseUrl, binding.dayFilter);
+    const key = this.feedCacheKey(binding);
+    const cached = this.feedCache.get(key);
+    if (
+      !force &&
+      cached &&
+      cached.url === url &&
+      cached.parsed &&
+      Date.now() - cached.fetchedAt < FEED_CACHE_MS
+    ) {
+      return cached;
+    }
+
+    const headers = { Accept: 'text/csv, application/xml, text/xml, text/plain, */*' };
+    const token = this.config?.apiToken;
+    if (token) headers.Authorization = `Bearer ${String(token).trim()}`;
+
+    try {
+      const res = await httpFetch(url, { headers });
+      const text = await res.text();
+      if (!res.ok) {
+        const entry = {
+          fetchedAt: Date.now(),
+          parsed: null,
+          url,
+          error: `Feed HTTP ${res.status}`,
+        };
+        this.feedCache.set(key, entry);
+        return entry;
+      }
+      const parsed = parseFeed(text, url);
+      const entry = { fetchedAt: Date.now(), parsed, url, error: undefined };
+      this.feedCache.set(key, entry);
+      return entry;
+    } catch (err) {
+      const entry = {
+        fetchedAt: Date.now(),
+        parsed: null,
+        url,
+        error: err.message || 'Feed fetch failed',
+      };
+      this.feedCache.set(key, entry);
+      return entry;
+    }
   }
 
   setSocketStatus(partial) {
@@ -106,12 +166,45 @@ class BridgeController {
         continue;
       }
 
+      let parsedFeed = null;
+      let feedMeta = null;
+      if (String(binding.feedUrl || '').trim()) {
+        feedMeta = await this.loadFeedForBinding(binding);
+        if (feedMeta?.error) {
+          matches.push({
+            bindingId: binding.id,
+            label: binding.label || undefined,
+            dataSourceName: binding.dataSourceName,
+            tableName: binding.tableName || '',
+            ok: false,
+            mode: binding.matchMode,
+            message: `Feed error: ${feedMeta.error} (${feedMeta.url})`,
+          });
+          continue;
+        }
+        parsedFeed = feedMeta?.parsed || null;
+        if (!parsedFeed?.rows?.length) {
+          matches.push({
+            bindingId: binding.id,
+            label: binding.label || undefined,
+            dataSourceName: binding.dataSourceName,
+            tableName: binding.tableName || '',
+            ok: false,
+            mode: binding.matchMode,
+            message: `Feed parsed 0 rows — check URL / day filter (${feedMeta?.url || binding.feedUrl})`,
+          });
+          continue;
+        }
+      }
+
       const resolved = resolveRowIndex(binding.matchMode || 'cueColumn', {
         scheduleItems: this.scheduleItems,
         itemId: id,
         timerRow,
         dayFilter: binding.dayFilter,
         cueColumn: binding.cueColumn,
+        parsedFeed,
+        vmixUsesHeaderRow: binding.vmixUsesHeaderRow !== false,
       });
 
       if (!resolved.ok) {
@@ -123,6 +216,7 @@ class BridgeController {
           ok: false,
           mode: binding.matchMode,
           message: resolved.message,
+          source: resolved.source,
         });
         continue;
       }
@@ -154,6 +248,8 @@ class BridgeController {
           mode: resolved.mode,
           index: resolved.index,
           cueValue: resolved.cueValue,
+          source: resolved.source,
+          feedRowNumber: resolved.feedRowNumber,
           message: resolved.message,
           vmixUrl: result.url,
         });
@@ -226,6 +322,7 @@ class BridgeController {
     this.running = true;
     this.lastItemId = null;
     this.lastSelectKey = '';
+    this.feedCache.clear();
     this.status = this.emptyStatus();
     this.status.running = true;
     this.status.socket = {
@@ -264,6 +361,14 @@ class BridgeController {
       this.status.railway = { ok: false, message: err.message || 'Failed to load schedule' };
       this.emit();
       return { ok: false, message: err.message || 'Failed to load schedule' };
+    }
+
+    // Warm feed caches (errors surface on first cue apply)
+    const bindings = (Array.isArray(this.config.bindings) ? this.config.bindings : []).filter(
+      (b) => b && b.enabled !== false && String(b.feedUrl || '').trim()
+    );
+    for (const binding of bindings) {
+      await this.loadFeedForBinding(binding, { force: true });
     }
 
     this.resyncPollInterval();
@@ -311,6 +416,13 @@ class BridgeController {
     }
     try {
       await this.refreshSchedule();
+      this.feedCache.clear();
+      const bindings = (Array.isArray(this.config.bindings) ? this.config.bindings : []).filter(
+        (b) => b && b.enabled !== false && String(b.feedUrl || '').trim()
+      );
+      for (const binding of bindings) {
+        await this.loadFeedForBinding(binding, { force: true });
+      }
       this.lastItemId = null;
       this.lastSelectKey = '';
       await this.pollOnce();

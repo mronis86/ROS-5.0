@@ -179,9 +179,11 @@ function newBinding(partial = {}) {
     label: partial.label || '',
     dataSourceName: partial.dataSourceName || '',
     tableName: partial.tableName || '',
+    feedUrl: partial.feedUrl || '',
     matchMode: partial.matchMode === 'rowIndex' ? 'rowIndex' : 'cueColumn',
     cueColumn: partial.cueColumn || 'cue',
     dayFilter: partial.dayFilter == null ? '' : partial.dayFilter,
+    vmixUsesHeaderRow: partial.vmixUsesHeaderRow !== false,
   };
 }
 
@@ -202,12 +204,14 @@ function readForm() {
       label: String(b.label || '').trim(),
       dataSourceName: String(b.dataSourceName || '').trim(),
       tableName: String(b.tableName || '').trim(),
+      feedUrl: String(b.feedUrl || '').trim(),
       matchMode: b.matchMode === 'rowIndex' ? 'rowIndex' : 'cueColumn',
       cueColumn: String(b.cueColumn || 'cue').trim() || 'cue',
       dayFilter:
         b.dayFilter === '' || b.dayFilter == null || Number.isNaN(Number(b.dayFilter))
           ? null
           : Number(b.dayFilter),
+      vmixUsesHeaderRow: b.vmixUsesHeaderRow !== false,
     })),
   };
 }
@@ -349,6 +353,18 @@ function renderBindings() {
           </label>
         </div>
 
+        <label>
+          Feed URL
+          <span class="hint">(same CSV/XML URL you pasted into vMix — Schedule, Lower Thirds, or Custom Columns)</span>
+          <input
+            data-field="feedUrl"
+            type="url"
+            value="${escapeAttr(b.feedUrl || '')}"
+            placeholder="https://…/api/schedule.csv?eventId=…"
+            spellcheck="false"
+          />
+        </label>
+
         <div class="mode-seg" data-mode-index="${i}">
           <button type="button" data-mode="cueColumn" class="${b.matchMode !== 'rowIndex' ? 'active' : ''}">Cue match</button>
           <button type="button" data-mode="rowIndex" class="${b.matchMode === 'rowIndex' ? 'active' : ''}">Row index</button>
@@ -356,8 +372,8 @@ function renderBindings() {
         <p class="hint mode-hint">
           ${
             b.matchMode === 'rowIndex'
-              ? '<strong>Row index:</strong> picks vMix row <em>N</em> where N is this cue’s position in the ROS schedule list (0 = first row). The Data Source row order must match schedule order exactly.'
-              : '<strong>Cue match:</strong> finds the schedule item whose cue text matches the loaded/running cue (e.g. <code>CUE 12</code> ≈ <code>12</code>), then selects that same index in vMix. Best when your sheet/XML has a cue column aligned with ROS.'
+              ? '<strong>Row index:</strong> reads the feed’s <code>Row</code> column and selects the vMix row whose Row number matches this cue’s position in that feed (1-based). Use a Day N feed URL <em>and</em> the same Day filter below for multi-day shows.'
+              : '<strong>Cue match:</strong> reads the feed’s <code>Cue</code> column (CSV/XML) and selects the vMix row whose Cue matches the loaded/running cue (e.g. <code>CUE 12</code> ≈ <code>12</code>). Does not assume vMix column mapping — matching is done on the feed file itself.'
           }
         </p>
 
@@ -373,7 +389,15 @@ function renderBindings() {
               <input data-field="dayFilter" type="number" min="1" value="${escapeAttr(b.dayFilter ?? '')}" placeholder="all days" />
             </label>
           </div>
-          <p class="hint">Only needed for multi-day shows or non-standard cue field keys.</p>
+          <label class="enable" style="margin-top:0.5rem">
+            <input data-field="vmixUsesHeaderRow" type="checkbox" ${b.vmixUsesHeaderRow !== false ? 'checked' : ''} />
+            vMix “Use first row as column names” is ON (CSV)
+          </label>
+          <p class="hint">
+            Day filter appends <code>?day=N</code> when fetching the feed (and filters by Day column if present).
+            Uncheck the header option only if that box is <em>unticked</em> in vMix — otherwise index 0 will land on the header line.
+            XML feeds ignore the header option.
+          </p>
         </details>
       </article>`;
     })
@@ -388,6 +412,10 @@ function renderBindings() {
         if (field === 'enabled') {
           bindingState[index].enabled = input.checked;
           node.classList.toggle('disabled', !input.checked);
+          return;
+        }
+        if (field === 'vmixUsesHeaderRow') {
+          bindingState[index].vmixUsesHeaderRow = input.checked;
           return;
         }
         if (field === '_sheetPick') {
@@ -594,6 +622,8 @@ async function init() {
         matchMode: last.matchMode,
         cueColumn: last.cueColumn,
         dayFilter: last.dayFilter,
+        feedUrl: last.feedUrl,
+        vmixUsesHeaderRow: last.vmixUsesHeaderRow,
         label: last.label ? `${last.label} (sheet)` : `${last.dataSourceName} sheet`,
         tableName: '',
         _sheetPick: '__custom__',

@@ -22,10 +22,20 @@ It does **not** replace your XML/CSV feeds. vMix still pulls table data from Rai
 
 ## Match modes
 
+Paste the **same CSV/XML Feed URL** that vMix Data Sources uses. The bridge fetches and parses that file (it does **not** read cells out of vMix’s API).
+
 | Mode | Behavior |
 |------|----------|
-| Cue column | Normalize cue text (`CUE 12` ≈ `12`), find matching schedule item |
-| Row index | Schedule order index in the feed |
+| Cue match | Find the feed row whose **Cue** column matches the loaded/running cue (`CUE 12` ≈ `12`), then `DataSourceSelectRow` that index |
+| Row index | Find the feed row whose **Row** column equals this cue’s 1-based position in that feed (after day filter) |
+
+### Multi-day
+
+Use a `?day=N` feed URL in vMix **and** set the bridge **Day filter** to the same N (the bridge also appends `day` when fetching). Row numbers restart at 1 for that day.
+
+### CSV headers vs vMix
+
+ROS CSV files include a header line (`Row,Day,Cue,…`). Matching always uses the file content. For the selected **index**, tick Advanced → **vMix “Use first row as column names” is ON** when that option is enabled in vMix (default). Untick it only if vMix treats the header as data row 0. XML feeds have no header row.
 
 ## Dev
 

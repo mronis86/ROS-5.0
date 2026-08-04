@@ -9,9 +9,18 @@ const DEFAULT_BINDING = {
   label: '',
   dataSourceName: '',
   tableName: '',
+  /** Same CSV/XML URL pasted into vMix Data Sources (supports ?day=N). */
+  feedUrl: '',
   matchMode: 'cueColumn',
   cueColumn: 'cue',
   dayFilter: null,
+  /**
+   * vMix Excel/CSV option "Use first row as column names".
+   * When true (default), DataSourceSelectRow 0 = first data row.
+   * When false, row 0 is the header line — we offset accordingly.
+   * XML feeds ignore this (no header row).
+   */
+  vmixUsesHeaderRow: true,
 };
 
 const DEFAULTS = {
@@ -77,11 +86,13 @@ function saveConfig(partial) {
     dataSourceName: String(b.dataSourceName || '').trim(),
     tableName: String(b.tableName || '').trim(),
     matchMode: b.matchMode === 'rowIndex' ? 'rowIndex' : 'cueColumn',
+    feedUrl: String(b.feedUrl || '').trim(),
     cueColumn: String(b.cueColumn || 'cue').trim() || 'cue',
     dayFilter:
       b.dayFilter === '' || b.dayFilter == null || Number.isNaN(Number(b.dayFilter))
         ? null
         : Number(b.dayFilter),
+    vmixUsesHeaderRow: b.vmixUsesHeaderRow !== false,
   }));
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');

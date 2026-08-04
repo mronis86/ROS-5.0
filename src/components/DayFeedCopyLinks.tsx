@@ -67,7 +67,8 @@ export const DayFeedCopyLinks: React.FC<{
       <h3 className="font-semibold text-amber-200 mb-1">Multi-day {feedLabel} URLs</h3>
       <p className="text-xs text-amber-100/90 mb-3">
         For multi-day shows, copy a <strong>Day N</strong> URL into vMix Data Sources so that table
-        only has that day&apos;s rows (rows restart at 1). Set the vMix bridge day filter to the same day.
+        only has that day&apos;s rows (rows restart at 1). Paste the same URL as the bridge{' '}
+        <strong>Feed URL</strong> and set the bridge day filter to the same day.
         Single-day shows can keep using the full URLs below.
       </p>
       <div className="space-y-2">
