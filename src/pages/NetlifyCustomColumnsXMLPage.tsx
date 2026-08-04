@@ -261,6 +261,16 @@ const NetlifyCustomColumnsXMLPage: React.FC = () => {
                     </p>
                   </div>
 
+                  <DayFeedCopyLinks
+                    days={scheduleDays}
+                    feedLabel="Custom Columns"
+                    liveXmlUrl={`${RAILWAY_API_URL}/custom-columns.xml?eventId=${eventId}`}
+                    liveCsvUrl={`${RAILWAY_API_URL}/custom-columns.csv?eventId=${eventId}`}
+                    cacheXmlUrl={`${RAILWAY_API_URL}/cache/custom-columns.xml?eventId=${eventId}`}
+                    cacheCsvUrl={`${RAILWAY_API_URL}/cache/custom-columns.csv?eventId=${eventId}`}
+                    copyToClipboard={copyToClipboard}
+                  />
+
                   <div className="space-y-4">
                     <div className="bg-orange-900/30 border border-orange-500/50 rounded p-4">
                       <h3 className="font-semibold text-orange-300 mb-2">🚧 Netlify Functions (IN DEVELOPMENT)</h3>
@@ -349,16 +359,6 @@ const NetlifyCustomColumnsXMLPage: React.FC = () => {
                             Higher egress cost
                           </p>
                         </div>
-
-                        <DayFeedCopyLinks
-                          days={scheduleDays}
-                          feedLabel="Custom Columns"
-                          liveXmlUrl={`${RAILWAY_API_URL}/custom-columns.xml?eventId=${eventId}`}
-                          liveCsvUrl={`${RAILWAY_API_URL}/custom-columns.csv?eventId=${eventId}`}
-                          cacheXmlUrl={`${RAILWAY_API_URL}/cache/custom-columns.xml?eventId=${eventId}`}
-                          cacheCsvUrl={`${RAILWAY_API_URL}/cache/custom-columns.csv?eventId=${eventId}`}
-                          copyToClipboard={copyToClipboard}
-                        />
                         
                         <div className="mt-6 pt-6 border-t border-purple-500/30">
                           <h4 className="font-semibold text-purple-300 mb-3 text-base flex items-center gap-2">

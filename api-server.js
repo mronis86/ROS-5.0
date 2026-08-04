@@ -346,6 +346,43 @@ function buildLowerThirdsXml(eventId, scheduleItems) {
   return xmlHeader + xmlContent;
 }
 
+function buildLowerThirdsCsv(scheduleItems) {
+  let csv =
+    'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
+
+  (scheduleItems || []).forEach((item, index) => {
+    const speakers = new Array(21).fill('');
+    if (item.speakersText) {
+      try {
+        const speakersArray =
+          typeof item.speakersText === 'string' ? JSON.parse(item.speakersText) : item.speakersText;
+        if (Array.isArray(speakersArray)) {
+          speakersArray.forEach((speaker) => {
+            const slot = speaker.slot || 1;
+            if (slot >= 1 && slot <= 7) {
+              const baseIdx = (slot - 1) * 3;
+              speakers[baseIdx] = speaker.fullName || speaker.name || '';
+              speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join('\n');
+              speakers[baseIdx + 2] = speaker.photoLink || '';
+            }
+          });
+        }
+      } catch (e) {
+        console.error('Error parsing speakers:', e);
+      }
+    }
+    const cue = item.customFields?.cue || '';
+    const program = item.programType || '';
+    const segmentName = item.segmentName || '';
+    csv += `${index + 1},${escapeCsvField(cue)},${escapeCsvField(program)},${escapeCsvField(segmentName)}`;
+    for (let i = 0; i < 21; i++) {
+      csv += `,${escapeCsvField(speakers[i])}`;
+    }
+    csv += '\n';
+  });
+  return csv;
+}
+
 function buildScheduleXml(eventId, scheduleItems) {
   const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
   const xmlContent = `
@@ -452,6 +489,17 @@ async function cacheScheduleFeedsForEvent(eventId, scheduleItems, customColumns 
   await setUpstashCache(feedCacheKey('schedule-xml', eventId, null), allXml, 3600);
   await setUpstashCache(feedCacheKey('schedule-csv', eventId, null), allCsv, 3600);
 
+  await setUpstashCache(
+    feedCacheKey('lower-thirds-xml', eventId, null),
+    buildLowerThirdsXml(eventId, scheduleItems),
+    3600
+  );
+  await setUpstashCache(
+    feedCacheKey('lower-thirds-csv', eventId, null),
+    buildLowerThirdsCsv(scheduleItems),
+    3600
+  );
+
   for (const day of days) {
     const dayItems = filterScheduleItemsByDay(scheduleItems, day);
     await setUpstashCache(
@@ -462,6 +510,16 @@ async function cacheScheduleFeedsForEvent(eventId, scheduleItems, customColumns 
     await setUpstashCache(
       feedCacheKey('schedule-csv', eventId, day),
       buildScheduleCsv(dayItems),
+      3600
+    );
+    await setUpstashCache(
+      feedCacheKey('lower-thirds-xml', eventId, day),
+      buildLowerThirdsXml(eventId, dayItems),
+      3600
+    );
+    await setUpstashCache(
+      feedCacheKey('lower-thirds-csv', eventId, day),
+      buildLowerThirdsCsv(dayItems),
       3600
     );
   }
@@ -557,52 +615,7 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
   try {
     const scheduleItems = runOfShowData.schedule_items || [];
 
-    // Lower Thirds XML — same builder as live /api/lower-thirds.xml (CDATA-safe)
-    const fullXML = buildLowerThirdsXml(eventId, scheduleItems);
-    
-    // Generate CSV
-    let csv = 'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
-    
-    scheduleItems.forEach((item, index) => {
-      const speakers = new Array(21).fill('');
-      if (item.speakersText) {
-        try {
-          const speakersArray = typeof item.speakersText === 'string' 
-            ? JSON.parse(item.speakersText) 
-            : item.speakersText;
-          if (Array.isArray(speakersArray)) {
-            speakersArray.forEach((speaker) => {
-              const slot = speaker.slot || 1;
-              if (slot >= 1 && slot <= 7) {
-                const baseIdx = (slot - 1) * 3;
-                speakers[baseIdx] = speaker.fullName || speaker.name || '';
-                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join('\n');
-                speakers[baseIdx + 2] = speaker.photoLink || '';
-              }
-            });
-          }
-        } catch (e) {
-          console.error('Error parsing speakers:', e);
-        }
-      }
-      
-      const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
-      const cue = item.customFields?.cue || '';
-      const program = item.programType || '';
-      const segmentName = item.segmentName || '';
-      
-      csv += `${index + 1},${escapeCsv(cue)},${escapeCsv(program)},${escapeCsv(segmentName)}`;
-      for (let i = 0; i < 21; i++) {
-        csv += `,${escapeCsv(speakers[i])}`;
-      }
-      csv += '\n';
-    });
-    
-    // Update Lower Thirds in Upstash
-    await setUpstashCache(`lower-thirds-xml-${eventId}`, fullXML, 3600);
-    await setUpstashCache(`lower-thirds-csv-${eventId}`, csv, 3600);
-    
-    // Schedule + Custom Columns XML/CSV (all days + per-day for multi-day vMix feeds)
+    // Lower Thirds + Schedule + Custom Columns (all days + per-day)
     await cacheScheduleFeedsForEvent(eventId, scheduleItems, runOfShowData.custom_columns || {});
     
     console.log('✅ Upstash cache regenerated for event (Lower Thirds + Schedule + Custom Columns):', eventId);
@@ -2486,10 +2499,15 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
 app.get('/api/lower-thirds.xml', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    const dayParsed = parseDayQuery(req.query.day);
     
     if (!eventId) {
       res.set('Content-Type', 'application/xml');
       return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send(`<?xml version="1.0" encoding="UTF-8"?><error>${escapeXmlText(dayParsed.error)}</error>`);
     }
 
     const result = await pool.query(
@@ -2498,11 +2516,11 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
     );
 
     const runOfShowData = result.rows[0];
-    const scheduleItems = runOfShowData?.schedule_items || [];
+    const allItems = runOfShowData?.schedule_items || [];
+    const scheduleItems = filterScheduleItemsByDay(allItems, dayParsed.day);
     const fullXML = buildLowerThirdsXml(eventId, scheduleItems);
 
-    // Cache to Upstash for fast access by Singular.Live, vMix, etc.
-    await setUpstashCache(`lower-thirds-xml-${eventId}`, fullXML, 3600);
+    await setUpstashCache(feedCacheKey('lower-thirds-xml', eventId, dayParsed.day), fullXML, 3600);
     
     res.set({
       'Content-Type': 'application/xml; charset=utf-8',
@@ -2528,11 +2546,16 @@ app.get('/api/lower-thirds.xml', async (req, res) => {
 app.get('/api/cache/lower-thirds.xml', async (req, res) => {
   try {
     const eventId = req.query.eventId;
-    console.log('🔄 CACHE REQUEST: Lower Thirds XML for event:', eventId);
+    const dayParsed = parseDayQuery(req.query.day);
+    console.log('🔄 CACHE REQUEST: Lower Thirds XML for event:', eventId, 'day:', dayParsed.day);
     
     if (!eventId) {
       res.set('Content-Type', 'application/xml');
       return res.status(400).send('<?xml version="1.0" encoding="UTF-8"?><error>Event ID is required</error>');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'application/xml');
+      return res.status(400).send(`<?xml version="1.0" encoding="UTF-8"?><error>${escapeXmlText(dayParsed.error)}</error>`);
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
@@ -2541,8 +2564,7 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    // Get from Upstash cache
-    const response = await fetch(getUpstashCacheUrl(`lower-thirds-xml-${eventId}`), {
+    const response = await fetch(getUpstashCacheUrl(feedCacheKey('lower-thirds-xml', eventId, dayParsed.day)), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -2557,7 +2579,6 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
       }
     }
     
-    // If not in cache, return error (data will be cached on next update)
     console.log('❌ CACHE MISS: Data not in Upstash yet');
     res.set('Content-Type', 'application/xml');
     res.status(404).send('<?xml version="1.0" encoding="UTF-8"?><error>Data not yet cached. Please update your schedule first.</error>');
@@ -2573,11 +2594,16 @@ app.get('/api/cache/lower-thirds.xml', async (req, res) => {
 app.get('/api/cache/lower-thirds.csv', async (req, res) => {
   try {
     const eventId = req.query.eventId;
-    console.log('🔄 CACHE REQUEST: Lower Thirds CSV for event:', eventId);
+    const dayParsed = parseDayQuery(req.query.day);
+    console.log('🔄 CACHE REQUEST: Lower Thirds CSV for event:', eventId, 'day:', dayParsed.day);
     
     if (!eventId) {
       res.set('Content-Type', 'text/csv');
       return res.status(400).send('Error,Event ID is required');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send(`Error,${dayParsed.error}`);
     }
     
     if (!UPSTASH_URL || !UPSTASH_TOKEN) {
@@ -2586,8 +2612,7 @@ app.get('/api/cache/lower-thirds.csv', async (req, res) => {
     }
     
     console.log('📦 Reading from Upstash cache (NOT Neon database)');
-    // Get from Upstash cache
-    const response = await fetch(getUpstashCacheUrl(`lower-thirds-csv-${eventId}`), {
+    const response = await fetch(getUpstashCacheUrl(feedCacheKey('lower-thirds-csv', eventId, dayParsed.day)), {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
     });
@@ -2810,10 +2835,15 @@ app.get('/api/cache/custom-columns.csv', async (req, res) => {
 app.get('/api/lower-thirds.csv', async (req, res) => {
   try {
     const eventId = req.query.eventId;
+    const dayParsed = parseDayQuery(req.query.day);
     
     if (!eventId) {
       res.set('Content-Type', 'text/csv');
       return res.status(400).send('Error,Event ID is required');
+    }
+    if (!dayParsed.ok) {
+      res.set('Content-Type', 'text/csv');
+      return res.status(400).send(`Error,${dayParsed.error}`);
     }
 
     const result = await pool.query(
@@ -2828,48 +2858,10 @@ app.get('/api/lower-thirds.csv', async (req, res) => {
       return res.send('Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n');
     }
 
-    const scheduleItems = runOfShowData.schedule_items;
-    let csv = 'Row,Cue,Program,Segment Name,Speaker 1 Name,Speaker 1 Title/Org,Speaker 1 Photo,Speaker 2 Name,Speaker 2 Title/Org,Speaker 2 Photo,Speaker 3 Name,Speaker 3 Title/Org,Speaker 3 Photo,Speaker 4 Name,Speaker 4 Title/Org,Speaker 4 Photo,Speaker 5 Name,Speaker 5 Title/Org,Speaker 5 Photo,Speaker 6 Name,Speaker 6 Title/Org,Speaker 6 Photo,Speaker 7 Name,Speaker 7 Title/Org,Speaker 7 Photo\n';
+    const scheduleItems = filterScheduleItemsByDay(runOfShowData.schedule_items, dayParsed.day);
+    const csv = buildLowerThirdsCsv(scheduleItems);
 
-    scheduleItems.forEach((item, index) => {
-      const speakers = new Array(21).fill('');
-      
-      if (item.speakersText) {
-        try {
-          const speakersArray = typeof item.speakersText === 'string' 
-            ? JSON.parse(item.speakersText) 
-            : item.speakersText;
-          
-          if (Array.isArray(speakersArray)) {
-            speakersArray.forEach((speaker) => {
-              const slot = speaker.slot || 1;
-              if (slot >= 1 && slot <= 7) {
-                const baseIdx = (slot - 1) * 3;
-                speakers[baseIdx] = speaker.fullName || speaker.name || '';
-                speakers[baseIdx + 1] = [speaker.title, speaker.org].filter(Boolean).join('\n');
-                speakers[baseIdx + 2] = speaker.photoLink || '';
-              }
-            });
-          }
-        } catch (e) {
-          console.error('Error parsing speakers:', e);
-        }
-      }
-
-      const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
-      const cue = item.customFields?.cue || '';
-      const program = item.programType || '';
-      const segmentName = item.segmentName || '';
-      
-      csv += `${index + 1},${escapeCsv(cue)},${escapeCsv(program)},${escapeCsv(segmentName)}`;
-      for (let i = 0; i < 21; i++) {
-        csv += `,${escapeCsv(speakers[i])}`;
-      }
-      csv += '\n';
-    });
-
-    // Cache to Upstash for fast access
-    await setUpstashCache(`lower-thirds-csv-${eventId}`, csv, 3600);
+    await setUpstashCache(feedCacheKey('lower-thirds-csv', eventId, dayParsed.day), csv, 3600);
     
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',

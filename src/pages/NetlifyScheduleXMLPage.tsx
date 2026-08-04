@@ -288,6 +288,16 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                     </p>
                   </div>
 
+                  <DayFeedCopyLinks
+                    days={scheduleDays}
+                    feedLabel="Schedule"
+                    liveXmlUrl={`${RAILWAY_API_URL}/schedule.xml?eventId=${eventId}`}
+                    liveCsvUrl={`${RAILWAY_API_URL}/schedule.csv?eventId=${eventId}`}
+                    cacheXmlUrl={`${RAILWAY_API_URL}/cache/schedule.xml?eventId=${eventId}`}
+                    cacheCsvUrl={`${RAILWAY_API_URL}/cache/schedule.csv?eventId=${eventId}`}
+                    copyToClipboard={copyToClipboard}
+                  />
+
                   <div className="space-y-4">
                     <div className="bg-orange-900/30 border border-orange-500/50 rounded p-4">
                       <h3 className="font-semibold text-orange-300 mb-2">🚧 Netlify Functions (IN DEVELOPMENT)</h3>
@@ -376,16 +386,6 @@ const NetlifyScheduleXMLPage: React.FC = () => {
                             Higher egress cost
                           </p>
                         </div>
-
-                        <DayFeedCopyLinks
-                          days={scheduleDays}
-                          feedLabel="Schedule"
-                          liveXmlUrl={`${RAILWAY_API_URL}/schedule.xml?eventId=${eventId}`}
-                          liveCsvUrl={`${RAILWAY_API_URL}/schedule.csv?eventId=${eventId}`}
-                          cacheXmlUrl={`${RAILWAY_API_URL}/cache/schedule.xml?eventId=${eventId}`}
-                          cacheCsvUrl={`${RAILWAY_API_URL}/cache/schedule.csv?eventId=${eventId}`}
-                          copyToClipboard={copyToClipboard}
-                        />
                         
                         <div className="mt-6 pt-6 border-t border-purple-500/30">
                           <h4 className="font-semibold text-purple-300 mb-3 text-base flex items-center gap-2">

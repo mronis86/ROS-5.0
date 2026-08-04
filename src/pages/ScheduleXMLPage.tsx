@@ -515,6 +515,15 @@ const ScheduleXMLPage: React.FC = () => {
                 <div>
                   <h3 className="text-lg font-bold mb-4 text-blue-400">VMIX Integration Instructions</h3>
                   <div className="space-y-4 text-sm">
+                    <DayFeedCopyLinks
+                      days={scheduleDays}
+                      feedLabel="Schedule"
+                      liveXmlUrl={`https://ros-50-production.up.railway.app/api/schedule.xml?eventId=${eventId}`}
+                      liveCsvUrl={`https://ros-50-production.up.railway.app/api/schedule.csv?eventId=${eventId}`}
+                      cacheXmlUrl={`https://ros-50-production.up.railway.app/api/cache/schedule.xml?eventId=${eventId}`}
+                      cacheCsvUrl={`https://ros-50-production.up.railway.app/api/cache/schedule.csv?eventId=${eventId}`}
+                      copyToClipboard={copyToClipboard}
+                    />
                     <div>
                       <h4 className="font-semibold text-blue-300 mb-2">1. XML Data Source URL:</h4>
                       <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
@@ -543,15 +552,6 @@ const ScheduleXMLPage: React.FC = () => {
                         </button>
                       </div>
                     </div>
-                    <DayFeedCopyLinks
-                      days={scheduleDays}
-                      feedLabel="Schedule"
-                      liveXmlUrl={`https://ros-50-production.up.railway.app/api/schedule.xml?eventId=${eventId}`}
-                      liveCsvUrl={`https://ros-50-production.up.railway.app/api/schedule.csv?eventId=${eventId}`}
-                      cacheXmlUrl={`https://ros-50-production.up.railway.app/api/cache/schedule.xml?eventId=${eventId}`}
-                      cacheCsvUrl={`https://ros-50-production.up.railway.app/api/cache/schedule.csv?eventId=${eventId}`}
-                      copyToClipboard={copyToClipboard}
-                    />
                     <div>
                       <h4 className="font-semibold text-blue-300 mb-2">3. VMIX Setup:</h4>
                       <ul className="list-disc list-inside space-y-1 text-gray-300">

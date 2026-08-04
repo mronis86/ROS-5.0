@@ -661,9 +661,6 @@ const GraphicsLinksPage: React.FC = () => {
                 >
                   📊 XML/CSV Feed Page (Local)
                 </button>
-                <p className="text-xs text-amber-200/90 bg-amber-900/20 border border-amber-500/30 rounded px-3 py-2">
-                  Multi-day show? Open the Railway feed page → Instructions → copy a <strong>Day 1 / Day 2</strong> CSV or XML URL for vMix. Match the same day in the vMix bridge day filter.
-                </p>
                 <button
                   onClick={() => {
                     const url = `/google-sheets-vmix?eventId=${event.id}`;
@@ -698,9 +695,6 @@ const GraphicsLinksPage: React.FC = () => {
                 >
                   📊 XML/CSV Feed Page (Local)
                 </button>
-                <p className="text-xs text-amber-200/90 bg-amber-900/20 border border-amber-500/30 rounded px-3 py-2">
-                  Multi-day? Use Day N copy links on the Railway feed Instructions tab (same as Schedule).
-                </p>
                 <button
                   onClick={() => {
                     const url = `/google-sheets-vmix?eventId=${event.id}`;

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { DayFeedCopyLinks, listDaysFromSchedule } from '../components/DayFeedCopyLinks';
 
 interface LowerThird {
   id: string;
@@ -23,6 +24,7 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'xml' | 'csv' | 'instructions'>('xml');
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1]);
 
   // Railway API URL (always use Railway for Netlify deployment)
   const RAILWAY_API_URL = 'https://ros-50-production.up.railway.app/api';
@@ -180,6 +182,9 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
       // Generate XML and CSV
       setXmlData(generateXML(lowerThirdsData));
       setCsvData(generateCSV(lowerThirdsData));
+      setScheduleDays(
+        listDaysFromSchedule(scheduleItems, runOfShowData.settings?.numberOfDays)
+      );
       setLastUpdated(new Date());
       setIsLoading(false);
     } catch (err) {
@@ -325,6 +330,16 @@ const NetlifyLowerThirdsXMLPage: React.FC = () => {
                       Use these URLs in VMIX to display live lower thirds data from Railway API.
                     </p>
                   </div>
+
+                  <DayFeedCopyLinks
+                    days={scheduleDays}
+                    feedLabel="Lower Thirds"
+                    liveXmlUrl={`${RAILWAY_API_URL}/lower-thirds.xml?eventId=${eventId}`}
+                    liveCsvUrl={`${RAILWAY_API_URL}/lower-thirds.csv?eventId=${eventId}`}
+                    cacheXmlUrl={`${RAILWAY_API_URL}/cache/lower-thirds.xml?eventId=${eventId}`}
+                    cacheCsvUrl={`${RAILWAY_API_URL}/cache/lower-thirds.csv?eventId=${eventId}`}
+                    copyToClipboard={copyToClipboard}
+                  />
 
                   <div className="space-y-4">
                     <div className="bg-orange-900/30 border border-orange-500/50 rounded p-4">

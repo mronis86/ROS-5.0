@@ -526,6 +526,16 @@ const CustomColumnsXMLPage: React.FC = () => {
               <h3 className="text-lg font-bold mb-4 text-blue-400">VMIX Integration Instructions</h3>
               
               <div className="space-y-6">
+                <DayFeedCopyLinks
+                  days={scheduleDays}
+                  feedLabel="Custom Columns"
+                  liveXmlUrl={`https://ros-50-production.up.railway.app/api/custom-columns.xml?eventId=${eventId || ''}`}
+                  liveCsvUrl={`https://ros-50-production.up.railway.app/api/custom-columns.csv?eventId=${eventId || ''}`}
+                  cacheXmlUrl={`https://ros-50-production.up.railway.app/api/cache/custom-columns.xml?eventId=${eventId || ''}`}
+                  cacheCsvUrl={`https://ros-50-production.up.railway.app/api/cache/custom-columns.csv?eventId=${eventId || ''}`}
+                  copyToClipboard={copyToClipboard}
+                />
+
                 <div>
                   <h4 className="text-md font-semibold mb-2 text-blue-300">XML Data Source URL:</h4>
                   <div className="bg-gray-800 rounded p-3 flex items-center space-x-2">
@@ -555,16 +565,6 @@ const CustomColumnsXMLPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-
-                <DayFeedCopyLinks
-                  days={scheduleDays}
-                  feedLabel="Custom Columns"
-                  liveXmlUrl={`https://ros-50-production.up.railway.app/api/custom-columns.xml?eventId=${eventId || ''}`}
-                  liveCsvUrl={`https://ros-50-production.up.railway.app/api/custom-columns.csv?eventId=${eventId || ''}`}
-                  cacheXmlUrl={`https://ros-50-production.up.railway.app/api/cache/custom-columns.xml?eventId=${eventId || ''}`}
-                  cacheCsvUrl={`https://ros-50-production.up.railway.app/api/cache/custom-columns.csv?eventId=${eventId || ''}`}
-                  copyToClipboard={copyToClipboard}
-                />
 
                 <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-4">
                   <h4 className="text-md font-semibold mb-2 text-yellow-300">Environment:</h4>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import { DayFeedCopyLinks, listDaysFromSchedule } from '../components/DayFeedCopyLinks';
 
 interface Speaker {
   slot: number;
@@ -13,6 +14,7 @@ interface Speaker {
 
 interface ScheduleItem {
   id: number;
+  day?: number;
   segmentName: string;
   programType: string;
   speakersText?: string;
@@ -47,6 +49,7 @@ const LowerThirdsXMLPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'preview' | 'instructions'>('preview');
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1]);
 
   // Helper functions for URL detection and copying
   const isNetlify = () => {
@@ -205,6 +208,7 @@ const LowerThirdsXMLPage: React.FC = () => {
       });
 
       setLowerThirds(lowerThirdsData);
+      setScheduleDays(listDaysFromSchedule(scheduleItems as any, (data as any).settings?.numberOfDays));
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching lower thirds:', err);
@@ -567,6 +571,15 @@ const LowerThirdsXMLPage: React.FC = () => {
               <div>
                 <h3 className="text-lg font-bold mb-4 text-blue-400">VMIX Integration Instructions</h3>
                 <div className="space-y-4 text-sm">
+                  <DayFeedCopyLinks
+                    days={scheduleDays}
+                    feedLabel="Lower Thirds"
+                    liveXmlUrl={`https://ros-50-production.up.railway.app/api/lower-thirds.xml?eventId=${eventId}`}
+                    liveCsvUrl={`https://ros-50-production.up.railway.app/api/lower-thirds.csv?eventId=${eventId}`}
+                    cacheXmlUrl={`https://ros-50-production.up.railway.app/api/cache/lower-thirds.xml?eventId=${eventId}`}
+                    cacheCsvUrl={`https://ros-50-production.up.railway.app/api/cache/lower-thirds.csv?eventId=${eventId}`}
+                    copyToClipboard={copyToClipboard}
+                  />
                   <div>
                     <h4 className="font-semibold text-blue-300 mb-2">1. XML Data Source URL:</h4>
                     <div className="bg-gray-800 p-3 rounded border flex items-center justify-between">
