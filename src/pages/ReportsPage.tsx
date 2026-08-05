@@ -515,15 +515,47 @@ const ReportsPage: React.FC = () => {
       'Video': '#F59E0B',              // Bright Yellow/Orange
       'Panel+Remote': '#1E40AF',       // Dark blue (remote panel)
       'Remote Only': '#60A5FA',        // Light Blue
-      'Break F&B/B2B': '#EC4899',              // Bright Pink
-      'Breakout Session': '#20B2AA',           // Seafoam
-      'Delay Block': '#7C3AED',                 // Violet
+      // Breaks / delay: keep far from PreShow purple so print rows don't look the same
+      'Break F&B/B2B': '#DB2777',      // Magenta / rose
+      'Breakout Session': '#0D9488',   // Teal (darker than seafoam)
+      'Delay Block': '#B45309',        // Amber / hold (not purple, not break pink)
       'TBD': '#6B7280',                // Medium Gray
       'KILLED': '#DC2626',             // Bright Red
       'Podium': '#FFFFFF',             // White (no highlighting)
       'Panel': '#FFFFFF',              // White (no highlighting)
     };
     return colors[programType] || '#D3D3D3'; // Light gray default
+  };
+
+  /** Blend a hex color toward white so full-row print highlights stay readable. */
+  const muteColorForPrintRow = (hex: string, tint = 0.22): string => {
+    const raw = String(hex || '').replace('#', '').trim();
+    if (raw.length !== 6 && raw.length !== 3) return '#F3F4F6';
+    const full =
+      raw.length === 3
+        ? raw.split('').map((c) => c + c).join('')
+        : raw;
+    const r = parseInt(full.slice(0, 2), 16);
+    const g = parseInt(full.slice(2, 4), 16);
+    const b = parseInt(full.slice(4, 6), 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return '#F3F4F6';
+    const mix = (c: number) => Math.round(255 * (1 - tint) + c * tint);
+    const toHex = (n: number) => n.toString(16).padStart(2, '0');
+    return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
+  };
+
+  const hexLuminance = (hex: string): number => {
+    const raw = String(hex || '').replace('#', '').trim();
+    const full =
+      raw.length === 3
+        ? raw.split('').map((c) => c + c).join('')
+        : raw;
+    if (full.length !== 6) return 0.5;
+    const r = parseInt(full.slice(0, 2), 16) / 255;
+    const g = parseInt(full.slice(2, 4), 16) / 255;
+    const b = parseInt(full.slice(4, 6), 16) / 255;
+    if ([r, g, b].some((n) => Number.isNaN(n))) return 0.5;
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   };
 
   // Program type labels for condensed report color legend (same order as Run of Show program type dropdown)
@@ -544,17 +576,21 @@ const ReportsPage: React.FC = () => {
     { label: 'KILLED', key: 'KILLED' },
   ];
 
-  // Get row background color (white for types that only highlight CUE badge; others = full row highlight)
-  const getRowBackgroundColor = (programType: string) => {
-    if (programType === 'Panel Transition' || programType === 'Podium Transition' ||
-        programType === 'Panel' || programType === 'Podium' ||
-        programType === 'Panel+Remote' || programType === 'Full-Stage/Ted-Talk') {
-      return '#FFFFFF'; // White background; CUE column has colored badge
-    }
-    return getProgramTypeColor(programType);
-  };
+  // Types that only color the CUE badge (row stays white)
+  const isCueBadgeOnlyProgramType = (programType: string) =>
+    programType === 'Panel Transition' ||
+    programType === 'Podium Transition' ||
+    programType === 'Panel' ||
+    programType === 'Podium' ||
+    programType === 'Panel+Remote' ||
+    programType === 'Full-Stage/Ted-Talk';
 
-  // Color used in the legend and in the CUE badge for each type (identifying color)
+  const isDelayOrBreakProgramType = (programType: string) =>
+    programType === 'Delay Block' ||
+    programType === 'Break F&B/B2B' ||
+    programType === 'Breakout Session';
+
+  // Color used in the legend and in the CUE badge for each type (true chip color)
   const getLegendOrBadgeColor = (programType: string) => {
     const badgeColors: Record<string, string> = {
       'Panel': '#404040',
@@ -566,6 +602,41 @@ const ReportsPage: React.FC = () => {
       'Sub Cue': '#9CA3AF',
     };
     return badgeColors[programType] ?? getProgramTypeColor(programType);
+  };
+
+  const getChipTextColor = (programType: string) => {
+    const bg = getLegendOrBadgeColor(programType);
+    if (programType === 'Sub Cue') return '#111';
+    return hexLuminance(bg) > 0.55 ? '#111' : '#fff';
+  };
+
+  // Get row background color (white for badge-only types; muted tint for full-row types)
+  const getRowBackgroundColor = (programType: string) => {
+    if (isCueBadgeOnlyProgramType(programType)) {
+      return '#FFFFFF';
+    }
+    const base = getLegendOrBadgeColor(programType);
+    if (base === '#FFFFFF' || base === '#F3F4F6') return '#F9FAFB';
+    // Slightly stronger tint for delay/breaks so the wash is still readable but distinct
+    const tint = isDelayOrBreakProgramType(programType) ? 0.18 : 0.22;
+    return muteColorForPrintRow(base, tint);
+  };
+
+  const getCondensedRowClass = (programType: string) => {
+    if (programType === 'Delay Block') return 'row-delay';
+    if (programType === 'Break F&B/B2B' || programType === 'Breakout Session') return 'row-break';
+    if (!isCueBadgeOnlyProgramType(programType)) return 'row-full-tint';
+    return '';
+  };
+
+  const renderCueChip = (programType: string, cueDisplay: string) => {
+    const bg = getLegendOrBadgeColor(programType || '');
+    const fg = getChipTextColor(programType || '');
+    const border =
+      programType === 'Sub Cue' || bg === '#FFFFFF' || bg === '#F3F4F6'
+        ? 'border: 1px solid #111;'
+        : 'border: 1px solid transparent;';
+    return `<span class="cue-chip" style="background-color: ${bg}; color: ${fg}; ${border}">${cueDisplay}</span>`;
   };
 
   // Extract top-level <li>...</li> only (so nested lists don't break numbering/order)
@@ -2039,6 +2110,37 @@ const ReportsPage: React.FC = () => {
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
+            .cue-chip {
+              display: inline-block;
+              padding: 2px 6px;
+              border-radius: 4px;
+              font-weight: bold;
+              font-size: 11px;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            /* Delay: amber wash + amber/purple stripe accents */
+            tr.row-delay td:first-child {
+              box-shadow: inset 5px 0 0 #B45309;
+            }
+            tr.row-delay {
+              background-image: repeating-linear-gradient(
+                -45deg,
+                transparent,
+                transparent 4px,
+                rgba(180, 83, 9, 0.08) 4px,
+                rgba(180, 83, 9, 0.08) 8px,
+                rgba(139, 92, 246, 0.12) 8px,
+                rgba(139, 92, 246, 0.12) 12px
+              ) !important;
+            }
+            /* Breaks: rose/teal wash + dashed left bar so they don't read as PreShow */
+            tr.row-break td:first-child {
+              box-shadow: inset 5px 0 0 #DB2777;
+            }
+            tr.row-break.breakout td:first-child {
+              box-shadow: inset 5px 0 0 #0D9488;
+            }
             table { 
               width: 100%; 
               border-collapse: collapse; 
@@ -2109,13 +2211,16 @@ const ReportsPage: React.FC = () => {
           </div>
           
           <div class="color-legend">
-            <p class="color-legend-title"><strong>Color coding</strong> — CUE label/badge color or row background (matches table below):</p>
+            <p class="color-legend-title"><strong>Color coding</strong> — CUE chips use full program colors; tinted rows use a light wash. Delay = amber bar + stripes; Breaks = rose/teal bar:</p>
             <div class="color-legend-rows">
               ${condensedColorLegend.map(({ label, key }) => {
                 const legendColor = getLegendOrBadgeColor(key);
-                const isLight = legendColor === '#FFFFFF' || legendColor === '#F3F4F6' || legendColor === '#D3D3D3' || legendColor === '#F59E0B';
-                const textColor = isLight ? '#333' : '#fff';
-                return `<div class="color-legend-row" style="background-color: ${legendColor}; color: ${textColor}; border: 1px solid #999;">${label}</div>`;
+                const textColor = getChipTextColor(key);
+                const border =
+                  key === 'Sub Cue' || legendColor === '#FFFFFF' || legendColor === '#F3F4F6'
+                    ? 'border: 1px solid #111;'
+                    : 'border: 1px solid #999;';
+                return `<div class="color-legend-row" style="background-color: ${legendColor}; color: ${textColor}; ${border}">${label}</div>`;
               }).join('')}
             </div>
           </div>
@@ -2140,7 +2245,6 @@ const ReportsPage: React.FC = () => {
         const originalIndex = schedule.findIndex(s => s.id === item.id);
         const startTime = calculateStartTime(originalIndex);
         const duration = `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
-        const programColor = getProgramTypeColor(item.programType || '');
         
         // Parse speakers if they exist
         let speakersText = '';
@@ -2194,19 +2298,12 @@ const ReportsPage: React.FC = () => {
         }
         
         const cueDisplay = formatCueDisplay(item.customFields?.cue);
-        const cueBadge = item.programType === 'Sub Cue'
-          ? `<span style="background-color: #9CA3AF; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
-          : (item.programType === 'Podium' || item.programType === 'Podium Transition')
-            ? `<span style="background-color: #8B4513; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
-            : (item.programType === 'Panel' || item.programType === 'Panel Transition')
-              ? `<span style="background-color: #404040; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
-              : item.programType === 'Panel+Remote'
-                ? `<span style="background-color: ${programColor}; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
-                : item.programType === 'Full-Stage/Ted-Talk'
-                  ? `<span style="background-color: #EA580C; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${cueDisplay}</span>`
-                  : cueDisplay;
+        const cueBadge = renderCueChip(item.programType || '', cueDisplay);
+        const rowClass = getCondensedRowClass(item.programType || '');
+        const breakoutClass =
+          item.programType === 'Breakout Session' ? ' breakout' : '';
         content += `
-          <tr style="background-color: ${getRowBackgroundColor(item.programType)};">
+          <tr class="${rowClass}${breakoutClass}" style="background-color: ${getRowBackgroundColor(item.programType)}; color: #111;">
             <td>${cueBadge}</td>
             <td>${startTime}</td>
             <td>${duration}</td>

@@ -6295,6 +6295,185 @@ io.on('connection', (socket) => {
 // BACKUP API ENDPOINTS
 // ===========================================
 
+/** Inactive auto-backup owners lose the lease after this (others can enable Auto). */
+const AUTO_BACKUP_LEASE_TTL_MS = 12 * 60 * 1000;
+
+async function ensureAutoBackupLeaseTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.auto_backup_lease (
+      event_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      user_name TEXT,
+      interval_minutes INTEGER NOT NULL DEFAULT 10,
+      heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+function isAutoBackupLeaseFresh(heartbeatAt) {
+  if (!heartbeatAt) return false;
+  const t = new Date(heartbeatAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < AUTO_BACKUP_LEASE_TTL_MS;
+}
+
+function mapAutoBackupLeaseRow(row) {
+  if (!row) return null;
+  const active = isAutoBackupLeaseFresh(row.heartbeat_at);
+  return {
+    eventId: row.event_id,
+    userId: row.user_id,
+    userName: row.user_name || 'Someone',
+    intervalMinutes: Number(row.interval_minutes) || 10,
+    heartbeatAt: row.heartbeat_at ? new Date(row.heartbeat_at).toISOString() : null,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    active,
+  };
+}
+
+function emitAutoBackupLeaseUpdate(eventId, lease) {
+  try {
+    io.to(`event:${eventId}`).emit('update', {
+      type: 'autoBackupLeaseUpdate',
+      data: { event_id: eventId, lease },
+    });
+  } catch (err) {
+    console.warn('⚠️ Failed to emit autoBackupLeaseUpdate:', err?.message || err);
+  }
+}
+
+// Get current auto-backup lease for an event (null / inactive if expired)
+app.get('/api/auto-backup-lease/:eventId', async (req, res) => {
+  try {
+    await ensureAutoBackupLeaseTable();
+    const eventId = String(req.params.eventId || '');
+    const result = await pool.query(
+      'SELECT * FROM auto_backup_lease WHERE event_id = $1 LIMIT 1',
+      [eventId]
+    );
+    const lease = mapAutoBackupLeaseRow(result.rows[0]);
+    res.json({ lease: lease && lease.active ? lease : null });
+  } catch (error) {
+    console.error('❌ Get auto-backup lease failed:', error);
+    res.status(500).json({ error: 'Failed to get auto-backup lease' });
+  }
+});
+
+// Claim (or refresh) exclusive auto-backup ownership for this event
+app.post('/api/auto-backup-lease/:eventId/claim', async (req, res) => {
+  try {
+    await ensureAutoBackupLeaseTable();
+    const eventId = String(req.params.eventId || '');
+    const { userId, userName, intervalMinutes } = req.body || {};
+    if (!eventId || !userId) {
+      return res.status(400).json({ error: 'eventId and userId are required' });
+    }
+    const mins = Math.max(
+      1,
+      Math.min(120, Number(intervalMinutes) || 10)
+    );
+    const name = String(userName || 'Someone').slice(0, 200);
+
+    const existing = await pool.query(
+      'SELECT * FROM auto_backup_lease WHERE event_id = $1 LIMIT 1',
+      [eventId]
+    );
+    const row = existing.rows[0];
+    if (row && isAutoBackupLeaseFresh(row.heartbeat_at) && String(row.user_id) !== String(userId)) {
+      return res.status(409).json({
+        error: 'Auto backup is already enabled by another user',
+        lease: mapAutoBackupLeaseRow(row),
+      });
+    }
+
+    const upsert = await pool.query(
+      `INSERT INTO auto_backup_lease (event_id, user_id, user_name, interval_minutes, heartbeat_at, created_at)
+       VALUES ($1, $2, $3, $4, NOW(), NOW())
+       ON CONFLICT (event_id) DO UPDATE SET
+         user_id = EXCLUDED.user_id,
+         user_name = EXCLUDED.user_name,
+         interval_minutes = EXCLUDED.interval_minutes,
+         heartbeat_at = NOW()
+       RETURNING *`,
+      [eventId, String(userId), name, mins]
+    );
+    const lease = mapAutoBackupLeaseRow(upsert.rows[0]);
+    emitAutoBackupLeaseUpdate(eventId, lease);
+    res.json({ ok: true, lease });
+  } catch (error) {
+    console.error('❌ Claim auto-backup lease failed:', error);
+    res.status(500).json({ error: 'Failed to claim auto-backup lease' });
+  }
+});
+
+// Heartbeat while Auto is on (keeps yellow ownership alive for others)
+app.post('/api/auto-backup-lease/:eventId/heartbeat', async (req, res) => {
+  try {
+    await ensureAutoBackupLeaseTable();
+    const eventId = String(req.params.eventId || '');
+    const { userId, intervalMinutes } = req.body || {};
+    if (!eventId || !userId) {
+      return res.status(400).json({ error: 'eventId and userId are required' });
+    }
+
+    const existing = await pool.query(
+      'SELECT * FROM auto_backup_lease WHERE event_id = $1 LIMIT 1',
+      [eventId]
+    );
+    const row = existing.rows[0];
+    if (!row || String(row.user_id) !== String(userId)) {
+      return res.status(409).json({
+        error: 'You do not hold the auto-backup lease',
+        lease: mapAutoBackupLeaseRow(row),
+      });
+    }
+
+    const mins =
+      intervalMinutes != null
+        ? Math.max(1, Math.min(120, Number(intervalMinutes) || 10))
+        : Number(row.interval_minutes) || 10;
+
+    const updated = await pool.query(
+      `UPDATE auto_backup_lease
+       SET heartbeat_at = NOW(), interval_minutes = $2
+       WHERE event_id = $1 AND user_id = $3
+       RETURNING *`,
+      [eventId, mins, String(userId)]
+    );
+    const lease = mapAutoBackupLeaseRow(updated.rows[0]);
+    emitAutoBackupLeaseUpdate(eventId, lease);
+    res.json({ ok: true, lease });
+  } catch (error) {
+    console.error('❌ Heartbeat auto-backup lease failed:', error);
+    res.status(500).json({ error: 'Failed to heartbeat auto-backup lease' });
+  }
+});
+
+// Release lease (owner turns Auto off or leaves)
+app.delete('/api/auto-backup-lease/:eventId', async (req, res) => {
+  try {
+    await ensureAutoBackupLeaseTable();
+    const eventId = String(req.params.eventId || '');
+    const userId = String(req.query.userId || req.body?.userId || '');
+    if (!eventId || !userId) {
+      return res.status(400).json({ error: 'eventId and userId are required' });
+    }
+
+    const deleted = await pool.query(
+      'DELETE FROM auto_backup_lease WHERE event_id = $1 AND user_id = $2 RETURNING *',
+      [eventId, userId]
+    );
+    if (deleted.rowCount > 0) {
+      emitAutoBackupLeaseUpdate(eventId, null);
+    }
+    res.json({ ok: true, released: deleted.rowCount > 0 });
+  } catch (error) {
+    console.error('❌ Release auto-backup lease failed:', error);
+    res.status(500).json({ error: 'Failed to release auto-backup lease' });
+  }
+});
+
 // Test backup table access
 app.get('/api/backups/test', async (req, res) => {
   try {

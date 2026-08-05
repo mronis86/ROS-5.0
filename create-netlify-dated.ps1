@@ -86,6 +86,33 @@ Get-ChildItem -Path $DistDir -Force | ForEach-Object {
     }
 }
 
+# Drop source trees and unused legacy zips that still live under public/ → dist
+foreach ($dirName in @('electron-osc-app', 'portable-electron', 'node_modules', '.git')) {
+    Get-ChildItem $UploadDir -Directory -Recurse -Filter $dirName -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Write-Host "Removing $($_.FullName.Substring($UploadDir.Length + 1))"
+            Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+}
+$UnusedDeployZips = @(
+    'OSC_GUI_App_Enhanced.zip',
+    'OSC_GUI_App_Enhanced_Updated.zip',
+    'OSC_WebSocket_App.zip',
+    'osc-gui-app.zip',
+    'osc-server-package.zip',
+    'LiveGraphicsGenerator-Python.zip',
+    'ROS-Local-Server.zip',
+    'ROS-Local-Server-Python.zip',
+    'companion-module-runofshow.zip'
+)
+foreach ($name in $UnusedDeployZips) {
+    $p = Join-Path $UploadDir $name
+    if (Test-Path $p) {
+        Remove-Item $p -Force
+        Write-Host "Removed unused zip: $name"
+    }
+}
+
 function Copy-DeployZip($fileName) {
     $src = Join-Path $publicDir $fileName
     if (Test-Path $src) {

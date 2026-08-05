@@ -321,4 +321,86 @@ export class NeonBackupService {
       throw new Error(`Failed to get backup stats: ${error.message}`);
     }
   }
+
+  static async getAutoBackupLease(eventId: string): Promise<AutoBackupLease | null> {
+    const response = await fetch(`${API_BASE_URL}/api/auto-backup-lease/${eventId}`, {
+      method: 'GET',
+      headers: apiJsonHeaders(),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return data.lease || null;
+  }
+
+  static async claimAutoBackupLease(
+    eventId: string,
+    userId: string,
+    userName: string,
+    intervalMinutes: number
+  ): Promise<{ ok: true; lease: AutoBackupLease } | { ok: false; lease: AutoBackupLease | null; error: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/auto-backup-lease/${eventId}/claim`, {
+      method: 'POST',
+      headers: apiJsonHeaders(),
+      body: JSON.stringify({ userId, userName, intervalMinutes }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        lease: data.lease || null,
+        error: data.error || `HTTP ${response.status}`,
+      };
+    }
+    return { ok: true, lease: data.lease };
+  }
+
+  static async heartbeatAutoBackupLease(
+    eventId: string,
+    userId: string,
+    intervalMinutes?: number
+  ): Promise<{ ok: true; lease: AutoBackupLease } | { ok: false; lease: AutoBackupLease | null; error: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/auto-backup-lease/${eventId}/heartbeat`, {
+      method: 'POST',
+      headers: apiJsonHeaders(),
+      body: JSON.stringify({ userId, intervalMinutes }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        lease: data.lease || null,
+        error: data.error || `HTTP ${response.status}`,
+      };
+    }
+    return { ok: true, lease: data.lease };
+  }
+
+  static async releaseAutoBackupLease(eventId: string, userId: string): Promise<boolean> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/auto-backup-lease/${eventId}?userId=${encodeURIComponent(userId)}`,
+      {
+        method: 'DELETE',
+        headers: apiJsonHeaders(),
+      }
+    );
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return Boolean(data.released);
+  }
+}
+
+export interface AutoBackupLease {
+  eventId: string;
+  userId: string;
+  userName: string;
+  intervalMinutes: number;
+  heartbeatAt?: string | null;
+  createdAt?: string | null;
+  active?: boolean;
 }

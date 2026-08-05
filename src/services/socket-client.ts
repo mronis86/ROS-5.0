@@ -22,6 +22,17 @@ interface SocketCallbacks {
   onOvertimeReset?: (data: any) => void; // NEW! For overtime reset
   onShowStartOvertimeUpdate?: (data: any) => void; // NEW! For show start overtime
   onShowStartOvertimeReset?: (data: any) => void; // Clear show-start offset for event
+  onAutoBackupLeaseUpdate?: (data: {
+    event_id: string;
+    lease: {
+      eventId: string;
+      userId: string;
+      userName: string;
+      intervalMinutes: number;
+      heartbeatAt?: string | null;
+      active?: boolean;
+    } | null;
+  }) => void;
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
   onShowModeUpdate?: (data: {
     event_id: string;
@@ -165,6 +176,9 @@ class SocketClient {
         case 'presenceUpdated':
           console.log('📡 SocketClient: presenceUpdated', message.data?.length ?? 0, 'viewers');
           this.callbacks.onPresenceUpdated?.(message.data || []);
+          break;
+        case 'autoBackupLeaseUpdate':
+          this.callbacks.onAutoBackupLeaseUpdate?.(message.data);
           break;
         case 'rowLocked':
           this.callbacks.onRowLocked?.(message.data);

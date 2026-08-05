@@ -100,3 +100,6 @@ _archive/
 **/* - Copy.tsx
 **/* - Copy.ts
 docs/CLEAN-REPO-NOTES.md
+
+# Local Netlify folder
+.netlify

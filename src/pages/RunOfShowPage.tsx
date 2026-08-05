@@ -4,7 +4,8 @@ import { Event, LOCATION_OPTIONS } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
-import { NeonBackupService, BackupData } from '../services/neon-backup-service';
+import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon-backup-service';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
@@ -965,7 +966,84 @@ const RunOfShowPage: React.FC = () => {
   const [autoBackupIntervalMinutes, setAutoBackupIntervalMinutes] = useState<number>(10);
   const [lastAutoBackupAt, setLastAutoBackupAt] = useState<string | null>(null);
   const [autoBackupStatus, setAutoBackupStatus] = useState<string>('');
+  const [autoBackupHeldByOther, setAutoBackupHeldByOther] = useState<{
+    userId: string;
+    userName: string;
+    intervalMinutes: number;
+  } | null>(null);
   const autoBackupInFlightRef = useRef(false);
+  const autoBackupEnabledRef = useRef(false);
+  useEffect(() => {
+    autoBackupEnabledRef.current = autoBackupEnabled;
+  }, [autoBackupEnabled]);
+
+  const applyAutoBackupLease = useCallback(
+    (lease: AutoBackupLease | null) => {
+      if (!user?.id) return;
+      if (lease?.active && String(lease.userId) !== String(user.id)) {
+        setAutoBackupHeldByOther({
+          userId: lease.userId,
+          userName: lease.userName || 'Someone',
+          intervalMinutes: lease.intervalMinutes || 10,
+        });
+        setAutoBackupEnabled(false);
+        return;
+      }
+      setAutoBackupHeldByOther(null);
+      if (lease?.active && String(lease.userId) === String(user.id)) {
+        if (
+          AUTO_BACKUP_INTERVALS.includes(
+            lease.intervalMinutes as (typeof AUTO_BACKUP_INTERVALS)[number]
+          )
+        ) {
+          setAutoBackupIntervalMinutes(lease.intervalMinutes);
+        }
+        setAutoBackupEnabled(true);
+      }
+    },
+    [user?.id]
+  );
+
+  const enableAutoBackup = useCallback(async () => {
+    if (!event?.id || !user?.id || currentUserRole === 'VIEWER') return;
+    const result = await NeonBackupService.claimAutoBackupLease(
+      event.id,
+      user.id,
+      user.full_name || user.email || 'Someone',
+      autoBackupIntervalMinutes
+    );
+    if (result.ok) {
+      applyAutoBackupLease(result.lease);
+      setAutoBackupStatus(`Auto every ${autoBackupIntervalMinutes} min`);
+    } else {
+      applyAutoBackupLease(result.lease);
+      setAutoBackupStatus(result.error || 'Auto already enabled by someone else');
+    }
+  }, [
+    event?.id,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    currentUserRole,
+    autoBackupIntervalMinutes,
+    applyAutoBackupLease,
+  ]);
+
+  const disableAutoBackup = useCallback(async () => {
+    if (!event?.id || !user?.id) {
+      setAutoBackupEnabled(false);
+      return;
+    }
+    setAutoBackupEnabled(false);
+    try {
+      await NeonBackupService.releaseAutoBackupLease(event.id, user.id);
+      setAutoBackupHeldByOther(null);
+      setAutoBackupStatus('');
+    } catch (err) {
+      console.warn('Failed to release auto-backup lease:', err);
+    }
+  }, [event?.id, user?.id]);
+
   const [showRestorePreview, setShowRestorePreview] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<BackupData | null>(null);
   const [isPageVisible, setIsPageVisible] = useState(true);
@@ -1151,7 +1229,7 @@ const RunOfShowPage: React.FC = () => {
   const COMPLETED_ROW_CLASS =
     'bg-purple-950/90 ring-2 ring-inset ring-purple-400/45';
   const DELAY_BLOCK_ROW_CLASS =
-    'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
+    'bg-amber-950/90 ring-2 ring-inset ring-amber-500/80';
 
   const isItemDimmed = (itemId: number) =>
     isItemCompleted(itemId) || stoppedItems.has(itemId);
@@ -1189,9 +1267,10 @@ const RunOfShowPage: React.FC = () => {
     ...getRowDimStyle(item),
     ...(item.programType === 'Delay Block'
       ? {
-          backgroundColor: '#2e1065',
+          // Amber base with purple stripe accents (hold look, not solid PreShow purple)
+          backgroundColor: '#3b1d0f',
           backgroundImage:
-            'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
+            'repeating-linear-gradient(135deg, rgba(245,158,11,0.22) 0, rgba(245,158,11,0.22) 8px, rgba(139,92,246,0.28) 8px, rgba(139,92,246,0.28) 16px, rgba(69,26,3,0.2) 16px, rgba(69,26,3,0.2) 24px)',
         }
       : {}),
     ...extra,
@@ -3741,9 +3820,9 @@ const RunOfShowPage: React.FC = () => {
     'Video': '#F59E0B',              // Bright Yellow/Orange
     'Panel+Remote': '#1E40AF',       // Darker Blue
     'Remote Only': '#60A5FA',        // Light Blue
-    'Break F&B/B2B': '#EC4899',              // Bright Pink
-    'Breakout Session': '#20B2AA',           // Seafoam
-    'Delay Block': '#7C3AED',                 // Violet
+    'Break F&B/B2B': '#DB2777',              // Magenta / rose (not purple)
+    'Breakout Session': '#0D9488',           // Teal
+    'Delay Block': '#B45309',                 // Amber / hold (distinct from PreShow purple)
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
     'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
@@ -6713,6 +6792,10 @@ const RunOfShowPage: React.FC = () => {
         console.log(`👁️ Presence: received presenceUpdated, viewers=${normalized.length}`, normalized);
         setViewers(normalized);
       },
+      onAutoBackupLeaseUpdate: (data) => {
+        if (!data || String(data.event_id) !== String(event.id)) return;
+        applyAutoBackupLease(data.lease || null);
+      },
       onRowLocked: (data) => {
         if (!data || String(data.eventId) !== String(event.id)) return;
         const rowId = Number(data.rowId);
@@ -6920,7 +7003,7 @@ const RunOfShowPage: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       setViewers([]);
     };
-  }, [event?.id, user, loadFromAPI]);
+  }, [event?.id, user, loadFromAPI, applyAutoBackupLease]);
 
   // Re-send presence when currentUserRole changes (so Viewers modal shows correct role)
   useEffect(() => {
@@ -7341,29 +7424,73 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [isPageVisible, hasChanges]);
 
-  // Load / persist per-event auto-backup preferences
+  // Load / persist per-event auto-backup preferences + sync exclusive lease
   useEffect(() => {
     if (!event?.id) return;
+    let cancelled = false;
+    let preferredInterval = autoBackupIntervalMinutes;
     try {
       const raw = localStorage.getItem(`autoBackupConfig_${event.id}`);
-      if (!raw) {
-        setAutoBackupEnabled(false);
-        setAutoBackupIntervalMinutes(10);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const mins = Number(parsed.intervalMinutes);
+        if (AUTO_BACKUP_INTERVALS.includes(mins as (typeof AUTO_BACKUP_INTERVALS)[number])) {
+          preferredInterval = mins;
+          setAutoBackupIntervalMinutes(mins);
+        }
+        setLastAutoBackupAt(typeof parsed.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt : null);
+      } else {
         setLastAutoBackupAt(null);
-        return;
       }
-      const parsed = JSON.parse(raw);
-      setAutoBackupEnabled(parsed.enabled === true);
-      const mins = Number(parsed.intervalMinutes);
-      setAutoBackupIntervalMinutes(
-        AUTO_BACKUP_INTERVALS.includes(mins as (typeof AUTO_BACKUP_INTERVALS)[number]) ? mins : 10
-      );
-      setLastAutoBackupAt(typeof parsed.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt : null);
     } catch {
-      setAutoBackupEnabled(false);
-      setAutoBackupIntervalMinutes(10);
+      /* ignore */
     }
-  }, [event?.id]);
+
+    (async () => {
+      try {
+        const lease = await NeonBackupService.getAutoBackupLease(event.id);
+        if (cancelled) return;
+        applyAutoBackupLease(lease);
+
+        // Re-claim if this browser had Auto on and nobody else holds it
+        let wantEnabled = false;
+        try {
+          const raw = localStorage.getItem(`autoBackupConfig_${event.id}`);
+          wantEnabled = raw ? JSON.parse(raw).enabled === true : false;
+        } catch {
+          wantEnabled = false;
+        }
+        if (
+          wantEnabled &&
+          !lease &&
+          user?.id &&
+          currentUserRole !== 'VIEWER'
+        ) {
+          const result = await NeonBackupService.claimAutoBackupLease(
+            event.id,
+            user.id,
+            user.full_name || user.email || 'Someone',
+            preferredInterval
+          );
+          if (cancelled) return;
+          if (result.ok) {
+            applyAutoBackupLease(result.lease);
+          } else {
+            applyAutoBackupLease(result.lease);
+            setAutoBackupEnabled(false);
+          }
+        } else if (!lease || String(lease.userId) !== String(user?.id)) {
+          setAutoBackupEnabled(false);
+        }
+      } catch (err) {
+        console.warn('Auto-backup lease sync failed:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, user?.id, currentUserRole, applyAutoBackupLease]);
 
   useEffect(() => {
     if (!event?.id) return;
@@ -7376,6 +7503,85 @@ const RunOfShowPage: React.FC = () => {
       })
     );
   }, [event?.id, autoBackupEnabled, autoBackupIntervalMinutes, lastAutoBackupAt]);
+
+  // Heartbeat while we own Auto (lease expires after ~12 min without it)
+  useEffect(() => {
+    if (!event?.id || !user?.id || !autoBackupEnabled || currentUserRole === 'VIEWER') {
+      return;
+    }
+    const beat = () => {
+      // Don't keep the lease forever if this tab is hidden / user walked away
+      if (document.hidden) return;
+      void NeonBackupService.heartbeatAutoBackupLease(
+        event.id,
+        user.id,
+        autoBackupIntervalMinutes
+      ).then((result) => {
+        if (!result.ok) {
+          applyAutoBackupLease(result.lease);
+          setAutoBackupEnabled(false);
+          setAutoBackupStatus(result.error || 'Lost auto-backup ownership');
+        }
+      });
+    };
+    beat();
+    const id = window.setInterval(beat, 60_000);
+    const onVis = () => {
+      if (!document.hidden) beat();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [
+    event?.id,
+    user?.id,
+    autoBackupEnabled,
+    autoBackupIntervalMinutes,
+    currentUserRole,
+    applyAutoBackupLease,
+  ]);
+
+  // Poll lease so yellow → grey after inactivity even if socket misses
+  useEffect(() => {
+    if (!event?.id || !user?.id) return;
+    const poll = () => {
+      void NeonBackupService.getAutoBackupLease(event.id)
+        .then((lease) => {
+          if (autoBackupEnabledRef.current && lease && String(lease.userId) === String(user.id)) {
+            return; // we own it; heartbeat handles freshness
+          }
+          if (!autoBackupEnabledRef.current) {
+            applyAutoBackupLease(lease);
+          } else if (lease && String(lease.userId) !== String(user.id)) {
+            applyAutoBackupLease(lease);
+          } else if (!lease && autoBackupEnabledRef.current) {
+            setAutoBackupEnabled(false);
+            setAutoBackupHeldByOther(null);
+          }
+        })
+        .catch(() => {});
+    };
+    const id = window.setInterval(poll, 45_000);
+    return () => clearInterval(id);
+  }, [event?.id, user?.id, applyAutoBackupLease]);
+
+  // Best-effort release if the tab closes while we own the lease
+  useEffect(() => {
+    if (!event?.id || !user?.id) return;
+    const onUnload = () => {
+      if (!autoBackupEnabledRef.current) return;
+      const url = `${getApiBaseUrl()}/api/auto-backup-lease/${event.id}?userId=${encodeURIComponent(user.id)}`;
+      try {
+        fetch(url, { method: 'DELETE', headers: apiJsonHeaders(), keepalive: true });
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener('pagehide', onUnload);
+    return () => window.removeEventListener('pagehide', onUnload);
+  }, [event?.id, user?.id]);
 
   // Configurable auto backups (API skips duplicate saves if another tab already wrote this interval)
   useEffect(() => {
@@ -11617,7 +11823,7 @@ const RunOfShowPage: React.FC = () => {
                     <div className="flex items-stretch rounded overflow-hidden border border-emerald-600/70 text-sm h-[30px]">
                       <button
                         type="button"
-                        onClick={() => setAutoBackupEnabled(false)}
+                        onClick={() => { void disableAutoBackup(); }}
                         className="flex items-center gap-1 px-2 bg-emerald-700/90 hover:bg-emerald-600 text-emerald-50"
                         title={autoBackupStatus || `Auto every ${autoBackupIntervalMinutes} min — click to turn off`}
                       >
@@ -11635,10 +11841,20 @@ const RunOfShowPage: React.FC = () => {
                         ))}
                       </select>
                     </div>
+                  ) : autoBackupHeldByOther ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="flex items-center gap-1 px-3 py-1 bg-yellow-600/90 text-yellow-50 text-sm rounded border border-yellow-500/80 cursor-default opacity-95"
+                      title={`Auto enabled by ${autoBackupHeldByOther.userName} (every ${autoBackupHeldByOther.intervalMinutes} min). Frees up after ~12 min of inactivity.`}
+                    >
+                      <span className="w-1.5 h-1.5 bg-yellow-200 rounded-full animate-pulse shrink-0" />
+                      Auto
+                    </button>
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setAutoBackupEnabled(true)}
+                      onClick={() => { void enableAutoBackup(); }}
                       className="px-3 py-1 bg-slate-600 hover:bg-emerald-700 text-slate-200 hover:text-white text-sm rounded border border-slate-500"
                       title={`Enable auto backup every ${autoBackupIntervalMinutes} min`}
                     >
@@ -13393,7 +13609,7 @@ const RunOfShowPage: React.FC = () => {
                       ...prev,
                       [field]: Math.max(0, Number.parseInt(e.target.value, 10) || 0),
                     }))}
-                    className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-violet-400 focus:outline-none"
+                    className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-amber-400 focus:outline-none"
                   />
                 </label>
               ))}
@@ -13413,7 +13629,7 @@ const RunOfShowPage: React.FC = () => {
               <button
                 type="button"
                 onClick={addDelayBlock}
-                className="rounded bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-500"
+                className="rounded bg-amber-600 px-4 py-2 font-medium text-white hover:bg-amber-500"
               >
                 Add Delay
               </button>
@@ -15632,9 +15848,12 @@ const RunOfShowPage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={autoBackupEnabled}
-                    onChange={(e) => setAutoBackupEnabled(e.target.checked)}
+                    onChange={(e) => {
+                      if (e.target.checked) void enableAutoBackup();
+                      else void disableAutoBackup();
+                    }}
                     className="rounded border-slate-500 w-4 h-4"
-                    disabled={currentUserRole === 'VIEWER'}
+                    disabled={currentUserRole === 'VIEWER' || Boolean(autoBackupHeldByOther)}
                   />
                   <span className="text-white text-sm font-medium">Auto backup</span>
                 </label>
@@ -15652,9 +15871,11 @@ const RunOfShowPage: React.FC = () => {
                   </select>
                 </div>
                 <span className="text-slate-400 text-xs truncate max-w-[28rem]">
-                  {autoBackupEnabled
-                    ? (autoBackupStatus || 'Snapshots while this tab is open · keeps last 24 · API skips duplicates if multiple users have Auto on')
-                    : 'Off — turn on to snapshot on a timer while this tab is open'}
+                  {autoBackupHeldByOther
+                    ? `On for ${autoBackupHeldByOther.userName} · frees after ~12 min inactive`
+                    : autoBackupEnabled
+                      ? (autoBackupStatus || 'Snapshots while this tab is open · keeps last 24')
+                      : 'Off — only one person can enable Auto at a time'}
                 </span>
               </div>
 
