@@ -11,16 +11,16 @@ const DEFAULT_BINDING = {
   tableName: '',
   /** Same CSV/XML URL pasted into vMix Data Sources (supports ?day=N). */
   feedUrl: '',
+  /** Always cue-column match (row-index mode removed from UI). */
   matchMode: 'cueColumn',
   cueColumn: 'cue',
   dayFilter: null,
   /**
-   * vMix Excel/CSV option "Use first row as column names".
-   * When true (default), DataSourceSelectRow 0 = first data row.
-   * When false, row 0 is the header line — we offset accordingly.
-   * XML feeds ignore this (no header row).
+   * Matches vMix Excel/CSV “Use first row as column names”:
+   * - false (default): that box is ON → row 0 is first cue (header not selectable)
+   * - true: that box is OFF → header line is vMix row 0 (Column1=Row, Column2=Cue, …)
    */
-  vmixUsesHeaderRow: true,
+  csvHeaderIsDataRow: false,
 };
 
 const DEFAULTS = {
@@ -41,6 +41,15 @@ function configPath() {
   return path.join(app.getPath('userData'), 'ros-vmix-datasource-config.json');
 }
 
+/** Prefer csvHeaderIsDataRow; migrate older inverted vmixUsesHeaderRow. */
+function normalizeCsvHeaderIsDataRow(b) {
+  if (!b || typeof b !== 'object') return false;
+  if (b.csvHeaderIsDataRow === true) return true;
+  if (b.csvHeaderIsDataRow === false) return false;
+  if (b.vmixUsesHeaderRow === false) return true;
+  return false;
+}
+
 function loadConfig() {
   try {
     const raw = fs.readFileSync(configPath(), 'utf8');
@@ -54,6 +63,8 @@ function loadConfig() {
         ...b,
         id: b.id || `b${i + 1}`,
         enabled: b.enabled !== false,
+        matchMode: 'cueColumn',
+        csvHeaderIsDataRow: normalizeCsvHeaderIsDataRow(b),
       }));
     }
     return merged;
@@ -85,18 +96,18 @@ function saveConfig(partial) {
     label: String(b.label || '').trim(),
     dataSourceName: String(b.dataSourceName || '').trim(),
     tableName: String(b.tableName || '').trim(),
-    matchMode: b.matchMode === 'rowIndex' ? 'rowIndex' : 'cueColumn',
+    matchMode: 'cueColumn',
     feedUrl: String(b.feedUrl || '').trim(),
     cueColumn: String(b.cueColumn || 'cue').trim() || 'cue',
     dayFilter:
       b.dayFilter === '' || b.dayFilter == null || Number.isNaN(Number(b.dayFilter))
         ? null
         : Number(b.dayFilter),
-    vmixUsesHeaderRow: b.vmixUsesHeaderRow !== false,
+    csvHeaderIsDataRow: normalizeCsvHeaderIsDataRow(b),
   }));
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;
 }
 
-module.exports = { DEFAULTS, DEFAULT_BINDING, loadConfig, saveConfig };
+module.exports = { DEFAULTS, DEFAULT_BINDING, loadConfig, saveConfig, normalizeCsvHeaderIsDataRow };

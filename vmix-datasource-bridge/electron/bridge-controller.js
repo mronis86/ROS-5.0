@@ -177,7 +177,7 @@ class BridgeController {
             dataSourceName: binding.dataSourceName,
             tableName: binding.tableName || '',
             ok: false,
-            mode: binding.matchMode,
+            mode: 'cueColumn',
             message: `Feed error: ${feedMeta.error} (${feedMeta.url})`,
           });
           continue;
@@ -190,21 +190,21 @@ class BridgeController {
             dataSourceName: binding.dataSourceName,
             tableName: binding.tableName || '',
             ok: false,
-            mode: binding.matchMode,
+            mode: 'cueColumn',
             message: `Feed parsed 0 rows — check URL / day filter (${feedMeta?.url || binding.feedUrl})`,
           });
           continue;
         }
       }
 
-      const resolved = resolveRowIndex(binding.matchMode || 'cueColumn', {
+      const resolved = resolveRowIndex('cueColumn', {
         scheduleItems: this.scheduleItems,
         itemId: id,
         timerRow,
         dayFilter: binding.dayFilter,
         cueColumn: binding.cueColumn,
         parsedFeed,
-        vmixUsesHeaderRow: binding.vmixUsesHeaderRow !== false,
+        csvHeaderIsDataRow: binding.csvHeaderIsDataRow === true,
       });
 
       if (!resolved.ok) {
@@ -214,7 +214,7 @@ class BridgeController {
           dataSourceName: binding.dataSourceName,
           tableName: binding.tableName || '',
           ok: false,
-          mode: binding.matchMode,
+          mode: 'cueColumn',
           message: resolved.message,
           source: resolved.source,
         });

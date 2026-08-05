@@ -20,22 +20,24 @@ It does **not** replace your XML/CSV feeds. vMix still pulls table data from Rai
 5. Sheet blank for XML/CSV; set sheet for Excel/Google Sheets.
 6. **Start**, then load a cue in ROS.
 
-## Match modes
+## Match mode
 
-Paste the **same CSV/XML Feed URL** that vMix Data Sources uses. The bridge fetches and parses that file (it does **not** read cells out of vMix’s API).
+Paste the **same CSV/XML Feed URL** that vMix Data Sources uses. The bridge fetches that file and matches the loaded/running cue against the **Cue** column, then calls `DataSourceSelectRow`.
 
-| Mode | Behavior |
-|------|----------|
-| Cue match | Find the feed row whose **Cue** column matches the loaded/running cue (`CUE 12` ≈ `12`), then `DataSourceSelectRow` that index |
-| Row index | Find the feed row whose **Row** column equals this cue’s 1-based position in that feed (after day filter) |
+### CSV header in vMix
+
+ROS CSV files start with a header line (`Row,Cue,…`). In vMix you can toggle **Use first row as column names**:
+
+| Bridge setting | vMix checkbox | Index 0 |
+|----------------|---------------|---------|
+| Column names (default) | ON | First cue |
+| Counts as a data row | OFF | Header (`Row`/`Cue` text); cues start at 1 |
+
+If you see `Column1` / `Column2` and a header line in the table, pick **Counts as a data row**.
 
 ### Multi-day
 
-Use a `?day=N` feed URL in vMix **and** set the bridge **Day filter** to the same N (the bridge also appends `day` when fetching). Row numbers restart at 1 for that day.
-
-### CSV headers vs vMix
-
-ROS CSV files include a header line (`Row,Day,Cue,…`). Matching always uses the file content. For the selected **index**, tick Advanced → **vMix “Use first row as column names” is ON** when that option is enabled in vMix (default). Untick it only if vMix treats the header as data row 0. XML feeds have no header row.
+Use a `?day=N` feed URL in vMix **and** set the bridge **Day filter** to the same N.
 
 ## Dev
 

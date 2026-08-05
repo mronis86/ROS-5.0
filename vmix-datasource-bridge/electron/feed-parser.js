@@ -5,7 +5,7 @@
  * Important: vMix may or may not treat the first CSV row as column names
  * ("Use first row as column names"). This parser always reads the *file* content
  * itself — it does not assume vMix has headers enabled. Callers map dataIndex
- * → DataSourceSelectRow index via vmixUsesHeaderRow.
+ * → DataSourceSelectRow index via csvHeaderIsDataRow.
  */
 
 function normalizeHeaderKey(value) {
@@ -272,15 +272,14 @@ function withDayQuery(feedUrl, day) {
 
 /**
  * Map a parsed data row to the 0-based index vMix DataSourceSelectRow expects.
- * - CSV + vMix "Use first row as column names" ON → dataIndex
- * - CSV + that option OFF → physicalIndex (header counts as row 0)
+ * - CSV + header used as column names (csvHeaderIsDataRow false) → dataIndex
+ * - CSV + header counted as data (csvHeaderIsDataRow true) → physicalIndex
  * - XML → dataIndex (no header row)
  */
-function vmixIndexForRow(parsed, row, vmixUsesHeaderRow) {
+function vmixIndexForRow(parsed, row, csvHeaderIsDataRow) {
   if (!row) return -1;
   if (parsed.format === 'xml') return row.dataIndex;
-  if (vmixUsesHeaderRow === false) return row.physicalIndex;
-  // Default: assume operator ticked "Use first row as column names" for ROS CSV
+  if (csvHeaderIsDataRow === true) return row.physicalIndex;
   return row.dataIndex;
 }
 

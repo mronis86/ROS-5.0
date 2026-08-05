@@ -28,15 +28,15 @@ assert.strictEqual(parsedCsv.hasHeaderRow, true);
 assert.strictEqual(parsedCsv.rows.length, 3);
 assert.strictEqual(parsedCsv.rows[2].cue, 'CUE 12');
 assert.strictEqual(parsedCsv.rows[2].rowNumber, 3);
-assert.strictEqual(vmixIndexForRow(parsedCsv, parsedCsv.rows[2], true), 2);
-assert.strictEqual(vmixIndexForRow(parsedCsv, parsedCsv.rows[2], false), 3); // header counts as row 0
+assert.strictEqual(vmixIndexForRow(parsedCsv, parsedCsv.rows[2], false), 2);
+assert.strictEqual(vmixIndexForRow(parsedCsv, parsedCsv.rows[2], true), 3); // header counts as row 0
 
 const byCueFeed = resolveRowIndex('cueColumn', {
   scheduleItems: schedule,
   itemId: 12,
   timerRow: { cue_is: 'CUE 12', timer_state: 'loaded' },
   parsedFeed: parsedCsv,
-  vmixUsesHeaderRow: true,
+  csvHeaderIsDataRow: false,
 });
 assert.strictEqual(byCueFeed.ok, true);
 assert.strictEqual(byCueFeed.index, 2);
@@ -46,22 +46,51 @@ const byRowFeed = resolveRowIndex('rowIndex', {
   scheduleItems: schedule,
   itemId: 12,
   parsedFeed: parsedCsv,
-  vmixUsesHeaderRow: true,
+  csvHeaderIsDataRow: false,
 });
 assert.strictEqual(byRowFeed.ok, true);
 assert.strictEqual(byRowFeed.index, 2);
 assert.strictEqual(byRowFeed.targetRowNumber, 3);
 
-// Without header option: vMix index includes header line
-const byCueNoHeader = resolveRowIndex('cueColumn', {
+// Header counted as data row (vMix "Use first row as column names" OFF)
+const byCueHeaderData = resolveRowIndex('cueColumn', {
   scheduleItems: schedule,
   itemId: 5,
   timerRow: { cue_is: 'CUE 5' },
   parsedFeed: parsedCsv,
-  vmixUsesHeaderRow: false,
+  csvHeaderIsDataRow: true,
 });
-assert.strictEqual(byCueNoHeader.ok, true);
-assert.strictEqual(byCueNoHeader.index, 2); // physical line of CUE 5
+assert.strictEqual(byCueHeaderData.ok, true);
+assert.strictEqual(byCueHeaderData.index, 2); // physical line of CUE 5
+
+// Screenshot case: CUE 9 with header as data → index is physical (dataIndex+1)
+const cue9Csv = `Row,Cue,Program,Segment Name
+1,0,PreShow,Doors
+11,8.4,Video,Video 2
+12,9,Panel,Lunch
+`;
+const cue9Parsed = parseCsvFeed(cue9Csv);
+const cue9Sched = [
+  { id: 1, customFields: { cue: '0' } },
+  { id: 9, customFields: { cue: '8.4' } },
+  { id: 10, customFields: { cue: '9' } },
+];
+const cue9Wrong = resolveRowIndex('cueColumn', {
+  scheduleItems: cue9Sched,
+  itemId: 10,
+  timerRow: { cue_is: 'CUE 9' },
+  parsedFeed: cue9Parsed,
+  csvHeaderIsDataRow: false,
+});
+assert.strictEqual(cue9Wrong.index, 2); // would select wrong vs vMix when header is data
+const cue9Right = resolveRowIndex('cueColumn', {
+  scheduleItems: cue9Sched,
+  itemId: 10,
+  timerRow: { cue_is: 'CUE 9' },
+  parsedFeed: cue9Parsed,
+  csvHeaderIsDataRow: true,
+});
+assert.strictEqual(cue9Right.index, 3); // header + 3 data rows → cue 9 at physical 3
 
 // All-days ROS feeds number Row globally (not per day). Day-scoped ?day=N feeds restart at 1.
 const multiDayCsv = `Row,Day,Cue

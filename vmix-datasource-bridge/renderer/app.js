@@ -180,10 +180,12 @@ function newBinding(partial = {}) {
     dataSourceName: partial.dataSourceName || '',
     tableName: partial.tableName || '',
     feedUrl: partial.feedUrl || '',
-    matchMode: partial.matchMode === 'rowIndex' ? 'rowIndex' : 'cueColumn',
+    matchMode: 'cueColumn',
     cueColumn: partial.cueColumn || 'cue',
     dayFilter: partial.dayFilter == null ? '' : partial.dayFilter,
-    vmixUsesHeaderRow: partial.vmixUsesHeaderRow !== false,
+    csvHeaderIsDataRow:
+      partial.csvHeaderIsDataRow === true ||
+      (partial.csvHeaderIsDataRow == null && partial.vmixUsesHeaderRow === false),
   };
 }
 
@@ -205,13 +207,13 @@ function readForm() {
       dataSourceName: String(b.dataSourceName || '').trim(),
       tableName: String(b.tableName || '').trim(),
       feedUrl: String(b.feedUrl || '').trim(),
-      matchMode: b.matchMode === 'rowIndex' ? 'rowIndex' : 'cueColumn',
+      matchMode: 'cueColumn',
       cueColumn: String(b.cueColumn || 'cue').trim() || 'cue',
       dayFilter:
         b.dayFilter === '' || b.dayFilter == null || Number.isNaN(Number(b.dayFilter))
           ? null
           : Number(b.dayFilter),
-      vmixUsesHeaderRow: b.vmixUsesHeaderRow !== false,
+      csvHeaderIsDataRow: b.csvHeaderIsDataRow === true,
     })),
   };
 }
@@ -365,17 +367,23 @@ function renderBindings() {
           />
         </label>
 
-        <div class="mode-seg" data-mode-index="${i}">
-          <button type="button" data-mode="cueColumn" class="${b.matchMode !== 'rowIndex' ? 'active' : ''}">Cue match</button>
-          <button type="button" data-mode="rowIndex" class="${b.matchMode === 'rowIndex' ? 'active' : ''}">Row index</button>
-        </div>
         <p class="hint mode-hint">
-          ${
-            b.matchMode === 'rowIndex'
-              ? '<strong>Row index:</strong> reads the feed’s <code>Row</code> column and selects the vMix row whose Row number matches this cue’s position in that feed (1-based). Use a Day N feed URL <em>and</em> the same Day filter below for multi-day shows.'
-              : '<strong>Cue match:</strong> reads the feed’s <code>Cue</code> column (CSV/XML) and selects the vMix row whose Cue matches the loaded/running cue (e.g. <code>CUE 12</code> ≈ <code>12</code>). Does not assume vMix column mapping — matching is done on the feed file itself.'
-          }
+          <strong>Cue match:</strong> finds the feed’s <code>Cue</code> column and selects that vMix row
+          (e.g. <code>CUE 9</code> ≈ <code>9</code>).
         </p>
+
+        <fieldset class="header-mode">
+          <legend>CSV header in vMix</legend>
+          <label class="enable">
+            <input data-field="csvHeaderIsDataRow" type="radio" name="hdr-${i}" value="0" ${b.csvHeaderIsDataRow ? '' : 'checked'} />
+            <strong>Column names</strong> — vMix “Use first row as column names” is <em>ON</em> (recommended). Index 0 = first cue.
+          </label>
+          <label class="enable">
+            <input data-field="csvHeaderIsDataRow" type="radio" name="hdr-${i}" value="1" ${b.csvHeaderIsDataRow ? 'checked' : ''} />
+            <strong>Counts as a data row</strong> — that box is <em>OFF</em> (you see Column1/Column2 and a Row/Cue header line). Index 0 = header; cues start at 1.
+          </label>
+          <p class="hint">Must match the checkbox in vMix Data Source settings. XML feeds ignore this.</p>
+        </fieldset>
 
         <details class="advanced">
           <summary>Advanced</summary>
@@ -389,14 +397,8 @@ function renderBindings() {
               <input data-field="dayFilter" type="number" min="1" value="${escapeAttr(b.dayFilter ?? '')}" placeholder="all days" />
             </label>
           </div>
-          <label class="enable" style="margin-top:0.5rem">
-            <input data-field="vmixUsesHeaderRow" type="checkbox" ${b.vmixUsesHeaderRow !== false ? 'checked' : ''} />
-            vMix “Use first row as column names” is ON (CSV)
-          </label>
           <p class="hint">
             Day filter appends <code>?day=N</code> when fetching the feed (and filters by Day column if present).
-            Uncheck the header option only if that box is <em>unticked</em> in vMix — otherwise index 0 will land on the header line.
-            XML feeds ignore the header option.
           </p>
         </details>
       </article>`;
@@ -414,8 +416,8 @@ function renderBindings() {
           node.classList.toggle('disabled', !input.checked);
           return;
         }
-        if (field === 'vmixUsesHeaderRow') {
-          bindingState[index].vmixUsesHeaderRow = input.checked;
+        if (field === 'csvHeaderIsDataRow') {
+          bindingState[index].csvHeaderIsDataRow = input.value === '1';
           return;
         }
         if (field === '_sheetPick') {
@@ -446,13 +448,6 @@ function renderBindings() {
       if (input.tagName === 'INPUT' && input.type !== 'checkbox') {
         input.addEventListener('input', apply);
       }
-    });
-
-    node.querySelectorAll('[data-mode]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        bindingState[index].matchMode = btn.getAttribute('data-mode');
-        renderBindings();
-      });
     });
 
     const removeBtn = node.querySelector('[data-remove]');
@@ -524,7 +519,7 @@ function renderLive(status) {
         const title = m.label || m.dataSourceName || m.bindingId || 'Binding';
         const sheet = m.tableName ? ` · sheet ${escapeHtml(m.tableName)}` : '';
         const detail = m.ok
-          ? `index ${m.index} (${escapeHtml(m.mode || '')})${m.cueValue ? ` · ${escapeHtml(m.cueValue)}` : ''}`
+          ? `index ${m.index} (cue)${m.cueValue ? ` · ${escapeHtml(m.cueValue)}` : ''}`
           : escapeHtml(m.message || 'failed');
         return `<div class="match-card"><div class="title ${cls}">${escapeHtml(title)}${sheet}</div><div>${detail}</div></div>`;
       })
@@ -619,11 +614,10 @@ async function init() {
     bindingState.push(
       newBinding({
         dataSourceName: last.dataSourceName,
-        matchMode: last.matchMode,
         cueColumn: last.cueColumn,
         dayFilter: last.dayFilter,
         feedUrl: last.feedUrl,
-        vmixUsesHeaderRow: last.vmixUsesHeaderRow,
+        csvHeaderIsDataRow: last.csvHeaderIsDataRow,
         label: last.label ? `${last.label} (sheet)` : `${last.dataSourceName} sheet`,
         tableName: '',
         _sheetPick: '__custom__',

@@ -80,7 +80,8 @@ function resolveCueRaw(opts, items, itemId) {
  * @param {string} [opts.cueColumn] feed column name for cue match (default cue)
  * @param {number|null} [opts.dayFilter]
  * @param {object} [opts.parsedFeed] result of parseFeed()
- * @param {boolean} [opts.vmixUsesHeaderRow] vMix "Use first row as column names" (default true for CSV)
+ * @param {boolean} [opts.csvHeaderIsDataRow] true when vMix does NOT use first row as column names
+ * @param {boolean} [opts.vmixUsesHeaderRow] legacy inverted flag (true = header is names)
  */
 function resolveRowIndex(matchMode, opts = {}) {
   const items = filterScheduleItems(opts.scheduleItems, opts.dayFilter);
@@ -89,13 +90,16 @@ function resolveRowIndex(matchMode, opts = {}) {
   const feedRowsAll = parsed && Array.isArray(parsed.rows) ? parsed.rows : [];
   const feedRows = filterFeedRows(feedRowsAll, opts.dayFilter);
   const useFeed = feedRows.length > 0;
-  const vmixUsesHeaderRow = opts.vmixUsesHeaderRow !== false;
+  const csvHeaderIsDataRow =
+    opts.csvHeaderIsDataRow === true ||
+    (opts.csvHeaderIsDataRow == null && opts.vmixUsesHeaderRow === false);
   const cueColumnName = String(opts.cueColumn || 'cue').trim() || 'cue';
 
   if (!useFeed && !items.length) {
     return { ok: false, message: 'No schedule items or feed rows loaded for matching', index: -1 };
   }
 
+  // Row-index kept for tests / legacy configs; UI is cue-only.
   if (matchMode === 'rowIndex') {
     return resolveByRowNumber({
       items,
@@ -103,7 +107,7 @@ function resolveRowIndex(matchMode, opts = {}) {
       useFeed,
       feedRows,
       parsed,
-      vmixUsesHeaderRow,
+      csvHeaderIsDataRow,
       dayFilter: opts.dayFilter,
       scheduleItemsAll: opts.scheduleItems,
     });
@@ -116,7 +120,7 @@ function resolveRowIndex(matchMode, opts = {}) {
     useFeed,
     feedRows,
     parsed,
-    vmixUsesHeaderRow,
+    csvHeaderIsDataRow,
     cueColumnName,
   });
 }
@@ -127,7 +131,7 @@ function resolveByRowNumber({
   useFeed,
   feedRows,
   parsed,
-  vmixUsesHeaderRow,
+  csvHeaderIsDataRow,
   dayFilter,
   scheduleItemsAll,
 }) {
@@ -190,7 +194,7 @@ function resolveByRowNumber({
         source: 'feed',
       };
     }
-    const index = vmixIndexForRow(parsed, hit, vmixUsesHeaderRow);
+    const index = vmixIndexForRow(parsed, hit, csvHeaderIsDataRow);
     return {
       ok: true,
       mode: 'rowIndex',
@@ -224,7 +228,7 @@ function resolveByCueColumn({
   useFeed,
   feedRows,
   parsed,
-  vmixUsesHeaderRow,
+  csvHeaderIsDataRow,
   cueColumnName,
 }) {
   const cueRaw = resolveCueRaw({ timerRow }, items, itemId);
@@ -251,7 +255,7 @@ function resolveByCueColumn({
         source: 'feed',
       };
     }
-    const index = vmixIndexForRow(parsed, hit, vmixUsesHeaderRow);
+    const index = vmixIndexForRow(parsed, hit, csvHeaderIsDataRow);
     return {
       ok: true,
       mode: 'cueColumn',
