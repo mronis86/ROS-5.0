@@ -831,6 +831,9 @@ const RunOfShowPage: React.FC = () => {
   const [activeTimerIntervals, setActiveTimerIntervals] = useState<Record<number, NodeJS.Timeout>>({});
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
   const [completedCues, setCompletedCues] = useState<Record<number, boolean>>({});
+  /** Keep live cue ids available to async completed-cue sync (refresh / tab return). */
+  const activeTimersRef = useRef<Record<number, boolean>>({});
+  const activeLoadedItemIdRef = useRef<number | null>(null);
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0); // Minutes late (+) or early (-)
@@ -914,6 +917,21 @@ const RunOfShowPage: React.FC = () => {
   
   // ClockPage-style hybrid timer data for real-time updates
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  useEffect(() => {
+    activeTimersRef.current = activeTimers;
+  }, [activeTimers]);
+  useEffect(() => {
+    const fromHybrid =
+      hybridTimerData?.activeTimer?.item_id != null
+        ? Number(hybridTimerData.activeTimer.item_id)
+        : NaN;
+    const fromActive = activeItemId != null ? Number(activeItemId) : NaN;
+    activeLoadedItemIdRef.current = Number.isFinite(fromHybrid)
+      ? fromHybrid
+      : Number.isFinite(fromActive)
+        ? fromActive
+        : null;
+  }, [hybridTimerData?.activeTimer?.item_id, activeItemId]);
   /** Brief yellow flash when Resolume align updates arrive via WebSocket */
   const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
   const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1221,6 +1239,30 @@ const RunOfShowPage: React.FC = () => {
     return Number.isFinite(n) ? n : null;
   };
 
+  /** Drop the currently loaded/running cue from a completed map (DB can still list it). */
+  const stripLiveCuesFromCompletedMap = (
+    map: Record<number, boolean>,
+    extraIds: Array<number | null | undefined> = []
+  ): Record<number, boolean> => {
+    const next = { ...map };
+    const liveIds = new Set<number>();
+    const refId = activeLoadedItemIdRef.current;
+    if (refId != null) liveIds.add(refId);
+    Object.entries(activeTimersRef.current).forEach(([key, on]) => {
+      if (!on) return;
+      const id = normalizeScheduleItemId(key);
+      if (id != null) liveIds.add(id);
+    });
+    extraIds.forEach((id) => {
+      const n = normalizeScheduleItemId(id);
+      if (n != null) liveIds.add(n);
+    });
+    liveIds.forEach((id) => {
+      delete next[id];
+    });
+    return next;
+  };
+
   const isItemCompleted = (itemId: number) =>
     Object.entries(completedCues).some(
       ([key, done]) => !!done && normalizeScheduleItemId(key) === itemId
@@ -1231,8 +1273,23 @@ const RunOfShowPage: React.FC = () => {
   const DELAY_BLOCK_ROW_CLASS =
     'bg-amber-950/90 ring-2 ring-inset ring-amber-500/80';
 
-  const isItemDimmed = (itemId: number) =>
-    isItemCompleted(itemId) || stoppedItems.has(itemId);
+  /** Running/loaded cue must stay green/blue — never treat as completed/dimmed. */
+  const isCueLiveOnStage = (itemId: number) => {
+    if (activeTimers[itemId]) return true;
+    const liveId = normalizeScheduleItemId(
+      hybridTimerData?.activeTimer?.item_id ?? activeItemId
+    );
+    if (liveId !== itemId) return false;
+    if (hybridTimerData?.activeTimer && hybridTimerData.activeTimer.is_active === false) {
+      return false;
+    }
+    return true;
+  };
+
+  const isItemDimmed = (itemId: number) => {
+    if (isCueLiveOnStage(itemId)) return false;
+    return isItemCompleted(itemId) || stoppedItems.has(itemId);
+  };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
 
@@ -2291,8 +2348,8 @@ const RunOfShowPage: React.FC = () => {
           const id = normalizeScheduleItemId(cue.item_id);
           if (id != null) completedCuesMap[id] = true;
         });
-        setCompletedCues(completedCuesMap);
-        console.log('🟣 Synced completed cues:', completedCuesMap);
+        setCompletedCues(stripLiveCuesFromCompletedMap(completedCuesMap));
+        console.log('🟣 Synced completed cues:', stripLiveCuesFromCompletedMap(completedCuesMap));
       }
     } catch (error) {
       console.warn('⚠️ Error syncing completed cues:', error);
@@ -2515,16 +2572,14 @@ const RunOfShowPage: React.FC = () => {
         completedCuesData.forEach((cue: any) => {
           const id = normalizeScheduleItemId(cue.item_id);
           if (id == null) return;
-          const loadedId = normalizeScheduleItemId(hybridTimerData?.activeTimer?.item_id ?? activeItemId);
-          if (loadedId != null && loadedId === id && hybridTimerData?.activeTimer?.is_active) {
-            console.log('🟣 Skipping currently active cue from completed cues:', id);
-            return;
-          }
           completedCuesMap[id] = true;
         });
-        
-        setCompletedCues(completedCuesMap);
-        console.log('🟣 Set completedCues state:', completedCuesMap);
+        const filtered = stripLiveCuesFromCompletedMap(completedCuesMap, [
+          hybridTimerData?.activeTimer?.item_id,
+          activeItemId,
+        ]);
+        setCompletedCues(filtered);
+        console.log('🟣 Set completedCues state:', filtered);
       } else {
         console.log('🟣 No completed cues found');
       }
@@ -2871,6 +2926,12 @@ const RunOfShowPage: React.FC = () => {
           }
           setLoadedCueDependents(dependentIds);
         }
+
+        // Running/loaded cue must not stay in completedCues after restore
+        setCompletedCues((prev) =>
+          stripLiveCuesFromCompletedMap(prev, [activeTimer.item_id])
+        );
+        activeLoadedItemIdRef.current = normalizeScheduleItemId(activeTimer.item_id);
         
         console.log('✅ Active timer loaded from API with accurate timing');
       } else {
@@ -5138,6 +5199,21 @@ const RunOfShowPage: React.FC = () => {
       
       return newCompleted;
     });
+
+    // Persist un-complete so refresh / reconnect don't revive completed styling while this cue is live
+    if (event?.id) {
+      const idsToUnmark = [itemId];
+      const currentIndex = schedule.findIndex(item => item.id === itemId);
+      if (currentIndex !== -1) {
+        for (let i = currentIndex + 1; i < schedule.length; i++) {
+          if (schedule[i].isIndented) idsToUnmark.push(schedule[i].id);
+          else break;
+        }
+      }
+      void Promise.all(
+        idsToUnmark.map((id) => DatabaseService.unmarkCueCompleted(event.id, id))
+      ).catch((err) => console.warn('⚠️ Failed to unmark completed cues on load:', err));
+    }
     
     // Clear stopped status for the newly loaded CUE and its indented items
     setStoppedItems(prev => {
@@ -6447,10 +6523,14 @@ const RunOfShowPage: React.FC = () => {
             if (id != null) acc[id] = true;
             return acc;
           }, {});
-          setCompletedCues(completedObject);
+          setCompletedCues(stripLiveCuesFromCompletedMap(completedObject));
         } else if (data && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
+            // Never re-complete the cue that is currently loaded/running
+            if (isCueLiveOnStage(id) || activeLoadedItemIdRef.current === id || activeTimersRef.current[id]) {
+              return;
+            }
             setCompletedCues((prev) => ({
               ...prev,
               [id]: true,
@@ -9796,12 +9876,19 @@ const RunOfShowPage: React.FC = () => {
     filteredSchedule.forEach((item, index) => {
       const hybridItemId: any = hybridTimerData?.activeTimer?.item_id;
       const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
-      const isHybridRunning = Boolean(isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
-      const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running);
+      const isHybridRunning = Boolean(
+        isMatch &&
+          hybridTimerData?.activeTimer?.is_active !== false &&
+          (hybridTimerData?.activeTimer?.is_running ||
+            hybridTimerData?.activeTimer?.timer_state === 'running' ||
+            activeTimers[item.id])
+      );
+      const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.timer_state !== 'running');
       const isCompleted = isItemCompleted(item.id);
       const isStopped = stoppedItems.has(item.id);
 
-      if (isHybridRunning && !isCompleted && !isStopped) {
+      // Running wins over stale completed flags (refresh / tab return)
+      if (isHybridRunning && !isStopped) {
         classNames.set(
           item.id,
           isResolumeSynced(hybridTimerData?.activeTimer)
@@ -9814,7 +9901,7 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
         return;
       }
-      if (isCompleted || isStopped) {
+      if ((isCompleted || isStopped) && !isCueLiveOnStage(item.id)) {
         classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }

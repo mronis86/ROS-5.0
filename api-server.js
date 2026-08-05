@@ -3307,10 +3307,8 @@ app.get('/api/completed-cues/:eventId', async (req, res) => {
       'SELECT * FROM completed_cues WHERE event_id = $1',
       [eventId]
     );
-    
-    // Broadcast completed cues update via WebSocket for real-time sync
-    broadcastUpdate(eventId, 'completedCuesUpdated', result.rows);
-    
+    // Do not broadcast on GET — reads were re-pushing stale completed lists to every
+    // client (including ones with a cue still running) and overwrote green with dimmed.
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching completed cues:', error);
