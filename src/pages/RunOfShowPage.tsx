@@ -1239,20 +1239,28 @@ const RunOfShowPage: React.FC = () => {
     return Number.isFinite(n) ? n : null;
   };
 
-  /** Drop the currently loaded/running cue from a completed map (DB can still list it). */
+  /** Drop currently running cues from a completed map (DB can still list them). */
   const stripLiveCuesFromCompletedMap = (
     map: Record<number, boolean>,
     extraIds: Array<number | null | undefined> = []
   ): Record<number, boolean> => {
     const next = { ...map };
     const liveIds = new Set<number>();
-    const refId = activeLoadedItemIdRef.current;
-    if (refId != null) liveIds.add(refId);
     Object.entries(activeTimersRef.current).forEach(([key, on]) => {
       if (!on) return;
       const id = normalizeScheduleItemId(key);
       if (id != null) liveIds.add(id);
     });
+    // Only the actively running hybrid timer — not merely loaded (stopped cues stay completed)
+    const hybrid = hybridTimerData?.activeTimer;
+    if (
+      hybrid &&
+      hybrid.is_active !== false &&
+      (hybrid.is_running || hybrid.timer_state === 'running')
+    ) {
+      const id = normalizeScheduleItemId(hybrid.item_id);
+      if (id != null) liveIds.add(id);
+    }
     extraIds.forEach((id) => {
       const n = normalizeScheduleItemId(id);
       if (n != null) liveIds.add(n);
@@ -1269,25 +1277,24 @@ const RunOfShowPage: React.FC = () => {
     );
 
   const COMPLETED_ROW_CLASS =
-    'bg-purple-950/90 ring-2 ring-inset ring-purple-400/45';
+    'bg-purple-950/80 ring-1 ring-inset ring-purple-500/30';
   const DELAY_BLOCK_ROW_CLASS =
-    'bg-amber-950/90 ring-2 ring-inset ring-amber-500/80';
+    'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
 
-  /** Running/loaded cue must stay green/blue — never treat as completed/dimmed. */
-  const isCueLiveOnStage = (itemId: number) => {
+  /** True only while the cue timer is actually running (not merely loaded). */
+  const isCueRunningOnStage = (itemId: number) => {
     if (activeTimers[itemId]) return true;
-    const liveId = normalizeScheduleItemId(
-      hybridTimerData?.activeTimer?.item_id ?? activeItemId
-    );
+    const t = hybridTimerData?.activeTimer;
+    const liveId = normalizeScheduleItemId(t?.item_id);
     if (liveId !== itemId) return false;
-    if (hybridTimerData?.activeTimer && hybridTimerData.activeTimer.is_active === false) {
-      return false;
-    }
-    return true;
+    if (t?.is_active === false) return false;
+    return Boolean(t?.is_running || t?.timer_state === 'running');
   };
 
   const isItemDimmed = (itemId: number) => {
-    if (isCueLiveOnStage(itemId)) return false;
+    // Only skip dimming while RUNNING. A just-stopped cue can still be "loaded"
+    // and must go straight to dimmed-complete (not a bright purple last-loaded flash).
+    if (isCueRunningOnStage(itemId)) return false;
     return isItemCompleted(itemId) || stoppedItems.has(itemId);
   };
   const isDelayBlock = (itemId: number) =>
@@ -1324,10 +1331,9 @@ const RunOfShowPage: React.FC = () => {
     ...getRowDimStyle(item),
     ...(item.programType === 'Delay Block'
       ? {
-          // Amber base with purple stripe accents (hold look, not solid PreShow purple)
-          backgroundColor: '#3b1d0f',
+          backgroundColor: '#2e1065',
           backgroundImage:
-            'repeating-linear-gradient(135deg, rgba(245,158,11,0.22) 0, rgba(245,158,11,0.22) 8px, rgba(139,92,246,0.28) 8px, rgba(139,92,246,0.28) 16px, rgba(69,26,3,0.2) 16px, rgba(69,26,3,0.2) 24px)',
+            'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
         }
       : {}),
     ...extra,
@@ -2574,10 +2580,7 @@ const RunOfShowPage: React.FC = () => {
           if (id == null) return;
           completedCuesMap[id] = true;
         });
-        const filtered = stripLiveCuesFromCompletedMap(completedCuesMap, [
-          hybridTimerData?.activeTimer?.item_id,
-          activeItemId,
-        ]);
+        const filtered = stripLiveCuesFromCompletedMap(completedCuesMap);
         setCompletedCues(filtered);
         console.log('🟣 Set completedCues state:', filtered);
       } else {
@@ -2927,11 +2930,16 @@ const RunOfShowPage: React.FC = () => {
           setLoadedCueDependents(dependentIds);
         }
 
-        // Running/loaded cue must not stay in completedCues after restore
-        setCompletedCues((prev) =>
-          stripLiveCuesFromCompletedMap(prev, [activeTimer.item_id])
-        );
-        activeLoadedItemIdRef.current = normalizeScheduleItemId(activeTimer.item_id);
+        // Running/loaded cue must not stay in completedCues after restore (refresh)
+        const restoredId = normalizeScheduleItemId(activeTimer.item_id);
+        if (restoredId != null) {
+          setCompletedCues((prev) => {
+            const next = { ...prev };
+            delete next[restoredId];
+            return next;
+          });
+          activeLoadedItemIdRef.current = restoredId;
+        }
         
         console.log('✅ Active timer loaded from API with accurate timing');
       } else {
@@ -3881,9 +3889,9 @@ const RunOfShowPage: React.FC = () => {
     'Video': '#F59E0B',              // Bright Yellow/Orange
     'Panel+Remote': '#1E40AF',       // Darker Blue
     'Remote Only': '#60A5FA',        // Light Blue
-    'Break F&B/B2B': '#DB2777',              // Magenta / rose (not purple)
-    'Breakout Session': '#0D9488',           // Teal
-    'Delay Block': '#B45309',                 // Amber / hold (distinct from PreShow purple)
+    'Break F&B/B2B': '#EC4899',              // Bright Pink
+    'Breakout Session': '#20B2AA',           // Seafoam
+    'Delay Block': '#7C3AED',                 // Violet
     'TBD': '#6B7280',                // Medium Gray
     'KILLED': '#DC2626',             // Bright Red
     'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
@@ -6527,8 +6535,8 @@ const RunOfShowPage: React.FC = () => {
         } else if (data && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
-            // Never re-complete the cue that is currently loaded/running
-            if (isCueLiveOnStage(id) || activeLoadedItemIdRef.current === id || activeTimersRef.current[id]) {
+            // Never re-complete a cue that is currently RUNNING
+            if (isCueRunningOnStage(id) || activeTimersRef.current[id]) {
               return;
             }
             setCompletedCues((prev) => ({
@@ -9901,7 +9909,9 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
         return;
       }
-      if ((isCompleted || isStopped) && !isCueLiveOnStage(item.id)) {
+      // Completed/stopped → dimmed purple immediately (even if still "loaded").
+      // Only a RUNNING cue stays green over completed.
+      if ((isCompleted || isStopped) && !isCueRunningOnStage(item.id)) {
         classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }
@@ -13696,7 +13706,7 @@ const RunOfShowPage: React.FC = () => {
                       ...prev,
                       [field]: Math.max(0, Number.parseInt(e.target.value, 10) || 0),
                     }))}
-                    className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-amber-400 focus:outline-none"
+                    className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-violet-400 focus:outline-none"
                   />
                 </label>
               ))}
@@ -13716,7 +13726,7 @@ const RunOfShowPage: React.FC = () => {
               <button
                 type="button"
                 onClick={addDelayBlock}
-                className="rounded bg-amber-600 px-4 py-2 font-medium text-white hover:bg-amber-500"
+                className="rounded bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-500"
               >
                 Add Delay
               </button>
