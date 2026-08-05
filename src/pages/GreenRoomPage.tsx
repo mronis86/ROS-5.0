@@ -438,6 +438,12 @@ const GreenRoomPage: React.FC = () => {
           if (data.settings?.dayStartTimes) {
             setDayStartTimes(data.settings.dayStartTimes);
           }
+
+          const modeFromRos =
+            data.settings?.show_mode === 'in-show' || data.settings?.show_mode === 'rehearsal'
+              ? data.settings.show_mode
+              : null;
+          if (modeFromRos) setShowMode(modeFromRos);
           
           // Reload overtime data and show mode (cache invalidated above)
           try {
@@ -447,7 +453,7 @@ const GreenRoomPage: React.FC = () => {
               DatabaseService.getIndentedCues(id),
               DatabaseService.getShowMode(id)
             ]);
-            const currentShowMode = showModeData;
+            const currentShowMode = modeFromRos || showModeData;
             setShowMode(currentShowMode);
             const overtimeDataMap = overtimeData || {};
             let overtimeValue = 0;
@@ -920,22 +926,32 @@ const GreenRoomPage: React.FC = () => {
       
       try {
         console.log('⏰ GreenRoom: Loading overtime data from dedicated endpoints...');
-        const overtimeData = await DatabaseService.getOvertimeMinutes(currentEventId);
-        const showStartOvertimeData = await DatabaseService.getShowStartOvertime(currentEventId);
-        const indentedCuesData = await DatabaseService.getIndentedCues(currentEventId);
+        apiClient.invalidateShowModeCache(currentEventId);
+        const [overtimeData, showStartOvertimeData, indentedCuesData, showModeData] = await Promise.all([
+          DatabaseService.getOvertimeMinutes(currentEventId),
+          DatabaseService.getShowStartOvertime(currentEventId),
+          DatabaseService.getIndentedCues(currentEventId),
+          DatabaseService.getShowMode(currentEventId),
+        ]);
+        const modeFromRos =
+          data?.settings?.show_mode === 'in-show' || data?.settings?.show_mode === 'rehearsal'
+            ? data.settings.show_mode
+            : null;
+        const currentShowMode = modeFromRos || showModeData;
+        setShowMode(currentShowMode);
         
         if (overtimeData) {
-          freshOvertimeData = overtimeData;
+          freshOvertimeData = currentShowMode === 'rehearsal' ? {} : overtimeData;
           setOvertimeMinutes(overtimeData);
-          console.log('✅ GreenRoom: Loaded overtime data:', overtimeData);
+          console.log('✅ GreenRoom: Loaded overtime data:', overtimeData, 'mode:', currentShowMode);
         }
         
         if (showStartOvertimeData !== null) {
           const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
-          freshShowStartOvertime = overtimeValue;
-          setShowStartOvertime(overtimeValue);
+          freshShowStartOvertime = currentShowMode === 'rehearsal' ? 0 : overtimeValue;
+          setShowStartOvertime(freshShowStartOvertime);
           if (overtimeValue !== 0) {
-            console.log('✅ GreenRoom: Loaded show start overtime:', overtimeValue);
+            console.log('✅ GreenRoom: Loaded show start overtime:', overtimeValue, 'applied:', freshShowStartOvertime);
           }
         }
         
@@ -990,7 +1006,7 @@ const GreenRoomPage: React.FC = () => {
         setDayStartTimes(data.settings.dayStartTimes);
       }
       
-      // Load overtime data from API
+      // Load overtime data from API (store raw; start-time calc already used mode-gated fresh* above)
       if (data && data.overtime_minutes) {
         console.log('⏰ Loaded overtime minutes:', data.overtime_minutes);
         setOvertimeMinutes(data.overtime_minutes);
@@ -1002,11 +1018,7 @@ const GreenRoomPage: React.FC = () => {
         setIndentedCues(data.indented_cues);
       }
       
-      // Load show start overtime and start cue ID
-      if (data && data.show_start_overtime !== undefined) {
-        console.log('⭐ Loaded show start overtime:', data.show_start_overtime);
-        setShowStartOvertime(data.show_start_overtime);
-      }
+      // Do not re-apply show_start_overtime from ROS payload here — mode-gated value was set above
       
       if (data && data.start_cue_id !== undefined) {
         console.log('🎯 Loaded start cue ID:', data.start_cue_id);
@@ -1179,11 +1191,13 @@ const GreenRoomPage: React.FC = () => {
     loadSchedule();
   }, [event?.id]);
 
-  // Recalculate schedule when overtime changes
+  // Recalculate schedule when overtime / show mode changes
   // Skip during initial load to prevent flashing
   useEffect(() => {
     if (schedule.length > 0 && !isInitialLoadRef.current) {
-      // Removed verbose logging to prevent console spam
+      // Rehearsal must ignore stored In-Show offsets (same as Photo Large View)
+      const effectiveOvertimeData = showMode === 'rehearsal' ? {} : overtimeMinutes;
+      const effectiveShowStartOvertime = showMode === 'rehearsal' ? 0 : showStartOvertime;
       
       // Recalculate all start and end times using the full schedule
       const recalculatedSchedule = schedule.map((item: any, index: number) => {
@@ -1206,8 +1220,8 @@ const GreenRoomPage: React.FC = () => {
           index, 
           schedule, 
           daySpecificStartTime, 
-          overtimeMinutes, 
-          showStartOvertime, 
+          effectiveOvertimeData, 
+          effectiveShowStartOvertime, 
           startCueId, 
           indentedCues
         );
@@ -1226,8 +1240,8 @@ const GreenRoomPage: React.FC = () => {
                 nextItemIndex, 
                 schedule, 
                 nextDaySpecificStartTime, 
-                overtimeMinutes, 
-                showStartOvertime, 
+                effectiveOvertimeData, 
+                effectiveShowStartOvertime, 
                 startCueId, 
                 indentedCues
               );
@@ -1268,7 +1282,7 @@ const GreenRoomPage: React.FC = () => {
       
       setSchedule(recalculatedSchedule);
     }
-  }, [overtimeMinutes, showStartOvertime, startCueId, indentedCues, masterStartTime, dayStartTimes]);
+  }, [overtimeMinutes, showStartOvertime, startCueId, indentedCues, masterStartTime, dayStartTimes, showMode]);
 
   // WebSocket connection for schedule changes
   useEffect(() => {
@@ -1286,9 +1300,24 @@ const GreenRoomPage: React.FC = () => {
       onShowStartOvertimeUpdate: () => {
         // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
+      onOvertimeReset: (data: { event_id?: string }) => {
+        if (data?.event_id === event?.id) {
+          setOvertimeMinutes({});
+          runDataSyncRef.current?.();
+        }
+      },
+      onShowStartOvertimeReset: (data: { event_id?: string }) => {
+        if (data?.event_id === event?.id) {
+          setShowStartOvertime(0);
+          runDataSyncRef.current?.();
+        }
+      },
       onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
         if (data.event_id === event?.id) {
-          if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
+          if (data.showMode === 'rehearsal' || data.showMode === 'in-show') {
+            setShowMode(data.showMode);
+            apiClient.invalidateShowModeCache(event.id);
+          }
           runDataSyncRef.current?.();
         }
       },

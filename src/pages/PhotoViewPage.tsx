@@ -361,6 +361,21 @@ const PhotoViewPage: React.FC = () => {
     }
   });
   const [broadcastChromeVisible, setBroadcastChromeVisible] = useState(true);
+  /** Scales Large-view content without resizing the browser (S/M only). */
+  const [broadcastZoom, setBroadcastZoom] = useState<'sm' | 'md'>(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get('zoom');
+      if (q === 'sm') return 'sm';
+      if (q === 'md' || q === 'lg' || q === 'xl') return 'md';
+      const saved = localStorage.getItem('photoViewBroadcastZoom');
+      if (saved === 'sm') return 'sm';
+      if (saved === 'md' || saved === 'lg' || saved === 'xl') return 'md';
+    } catch {
+      /* ignore */
+    }
+    return 'md';
+  });
+  const broadcastZoomScale = broadcastZoom === 'sm' ? 0.85 : 1;
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
     duration: number;
@@ -390,6 +405,7 @@ const PhotoViewPage: React.FC = () => {
 
   useEffect(() => {
     if (!event?.id) return;
+    apiClient.invalidateShowModeCache(event.id);
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
@@ -1032,6 +1048,16 @@ const PhotoViewPage: React.FC = () => {
           const startCueItem = formattedSchedule.find((item: any) => item.isStartCue === true);
           setStartCueId(startCueItem ? startCueItem.id : null);
 
+          // Prefer settings embedded in run-of-show payload (keeps Photo / Large View in sync with ROS mode)
+          const modeFromRos =
+            data.settings?.show_mode === 'in-show' || data.settings?.show_mode === 'rehearsal'
+              ? data.settings.show_mode
+              : null;
+          if (modeFromRos) setShowMode(modeFromRos);
+          if (typeof data.settings?.track_was_durations === 'boolean') {
+            setTrackWasDurations(data.settings.track_was_durations === true);
+          }
+
           const overtimeData = await DatabaseService.getOvertimeMinutes(id);
           const showStartOvertimeData = await DatabaseService.getShowStartOvertime(id);
           setOvertimeMinutes(overtimeData);
@@ -1059,6 +1085,7 @@ const PhotoViewPage: React.FC = () => {
           }
 
           const showSettings = await DatabaseService.getShowSettings(id);
+          setShowMode(showSettings.showMode);
           setTrackWasDurations(showSettings.trackWasDurations);
 
           const origDurs = data.settings?.original_durations;
@@ -1390,8 +1417,13 @@ const PhotoViewPage: React.FC = () => {
       },
       onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
         if (data.event_id === event?.id) {
-          if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
+          console.log('📡 PhotoView: showModeUpdate', data.showMode, data.trackWasDurations);
+          if (data.showMode === 'rehearsal' || data.showMode === 'in-show') {
+            setShowMode(data.showMode);
+          }
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          // Force next data sync to re-read mode/overtime from API (no stale cache)
+          if (event?.id) apiClient.invalidateShowModeCache(event.id);
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -1989,6 +2021,10 @@ const PhotoViewPage: React.FC = () => {
         url.searchParams.delete('broadcast');
         url.searchParams.delete('display');
         window.history.replaceState({}, '', url.toString());
+      } else if (e.key === '-' || e.key === '_') {
+        setBroadcastZoom('sm');
+      } else if (e.key === '=' || e.key === '+') {
+        setBroadcastZoom('md');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -2001,6 +2037,19 @@ const PhotoViewPage: React.FC = () => {
     const t = window.setTimeout(() => setBroadcastChromeVisible(false), 2800);
     return () => window.clearTimeout(t);
   }, [broadcastMode]);
+
+  useEffect(() => {
+    if (!broadcastMode) return;
+    try {
+      localStorage.setItem('photoViewBroadcastZoom', broadcastZoom);
+      const url = new URL(window.location.href);
+      if (broadcastZoom === 'md') url.searchParams.delete('zoom');
+      else url.searchParams.set('zoom', broadcastZoom);
+      window.history.replaceState({}, '', url.toString());
+    } catch {
+      /* ignore */
+    }
+  }, [broadcastMode, broadcastZoom]);
 
   const enterBroadcastMode = useCallback(() => {
     setBroadcastMode(true);
@@ -2177,8 +2226,9 @@ const PhotoViewPage: React.FC = () => {
               height: 'min(100vh, calc(100vw * 9 / 16))',
             }}
           >
-            {/* Top bar — mirrors normal Photo View: event left, LOADED + timer right */}
-            <div className="absolute inset-x-0 top-0 z-10 px-[2%] pt-[1%] pb-[0.6%] flex items-start justify-between gap-4 bg-gradient-to-b from-black/80 to-transparent">
+            {/* Top bar + progress (stacked so the bar never cuts through labels) */}
+            <div className="absolute inset-x-0 top-0 z-10 px-[2%] pt-[1%] bg-gradient-to-b from-black/80 to-transparent">
+              <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1 pr-2">
                 <h1 className="text-[clamp(0.75rem,1.5vw,1.1rem)] font-bold leading-tight truncate text-slate-200">
                   {event?.name || 'Current Event'}
@@ -2192,7 +2242,7 @@ const PhotoViewPage: React.FC = () => {
                     </span>
                   ) : null}
                 </div>
-                <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                   {currentItem?.programType ? (
                     <span
                       className="px-2 py-0.5 rounded text-[clamp(0.7rem,1.25vw,1rem)] font-semibold text-white"
@@ -2266,43 +2316,57 @@ const PhotoViewPage: React.FC = () => {
                     {formatTime(getRemainingTime())}
                   </div>
                 </div>
-                <div className="mt-0.5 text-slate-400 text-[clamp(0.75rem,1.25vw,1.05rem)]">
+                <div className="mt-1 text-slate-400 text-[clamp(0.75rem,1.25vw,1.05rem)]">
                   {currentTime.toLocaleTimeString()}
                 </div>
               </div>
-            </div>
+              </div>
 
-            {/* Progress */}
-            <div className="absolute left-[2%] right-[2%] top-[12%] h-[0.45%] bg-slate-800/90 overflow-hidden rounded-full">
-              <div
-                className="h-full absolute top-0 right-0 transition-all duration-1000"
-                style={{
-                  width: `${getRemainingPercentage()}%`,
-                  background: getProgressBarColor(),
-                }}
-              />
+              {/* Progress — below header content so it never intersects labels */}
+              <div className="relative mt-3 mb-2 h-2.5 w-full bg-slate-800/90 overflow-hidden rounded-full">
+                <div
+                  className="absolute top-0 right-0 h-full transition-all duration-1000 rounded-full"
+                  style={{
+                    width: `${getRemainingPercentage()}%`,
+                    background: getProgressBarColor(),
+                  }}
+                />
+              </div>
             </div>
 
             {/* Speakers + notes */}
-            <div className="absolute left-[2%] right-[2%] top-[14%] bottom-[17%] flex gap-[1.5%] min-h-0">
-              <div className={`flex items-stretch justify-center gap-[1.2%] min-w-0 ${hasValidNotes ? 'flex-[1.35]' : 'flex-1'}`}>
+            <div className="absolute left-[2%] right-[2%] top-[20%] bottom-[17%] flex gap-[1.5%] min-h-0">
+              <div
+                className={`flex items-stretch justify-center gap-[1.2%] min-w-0 ${
+                  hasValidNotes ? 'flex-[1.75]' : 'flex-1'
+                }`}
+              >
                 {currentSpeakers.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center text-slate-500 text-[clamp(1rem,2vw,1.5rem)]">
                     No speakers on this cue
                   </div>
                 ) : (
                   currentSpeakers.map((speaker: any, idx: number) => {
-                    const nameResult = formatNameForTwoLines(speaker.fullName || 'Unnamed');
+                    const fullName = String(speaker.fullName || 'Unnamed').trim();
                     const titleOrg = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                    const z = broadcastZoomScale;
+                    // Notes squeeze columns — use a 2-line name split (no "…") instead of ellipsis.
+                    const nameWithNotes = hasValidNotes;
+                    const nameTwoLine = nameWithNotes ? formatNameForTwoLines(fullName) : null;
                     return (
                       <div
                         key={`${speaker.slot}-${idx}`}
-                        className="flex-1 min-w-0 max-w-[22%] flex flex-col items-center justify-start"
+                        className={`flex-1 min-w-0 flex flex-col items-center justify-start ${
+                          hasValidNotes ? 'max-w-[28%]' : 'max-w-[22%]'
+                        }`}
                       >
-                        <div className="w-full aspect-[3/4] max-h-[72%] rounded-lg overflow-hidden border border-slate-600 shadow-xl bg-slate-900">
+                        <div
+                          className="w-full aspect-[3/4] rounded-lg overflow-hidden border border-slate-600 shadow-xl bg-slate-900"
+                          style={{ maxHeight: `${Math.min(78, 62 * z + 8)}%` }}
+                        >
                           <img
                             src={speaker.photoLink || '/speaker-placeholder.svg'}
-                            alt={speaker.fullName || 'Speaker'}
+                            alt={fullName}
                             className="w-full h-full object-cover"
                             style={{ objectPosition: 'center top' }}
                             onError={(e) => {
@@ -2311,17 +2375,40 @@ const PhotoViewPage: React.FC = () => {
                             }}
                           />
                         </div>
-                        <div
-                          className="mt-2 text-center font-bold leading-tight text-[clamp(0.75rem,1.5vw,1.25rem)]"
-                          dangerouslySetInnerHTML={{ __html: nameResult.html }}
-                        />
+                        {nameTwoLine ? (
+                          <div
+                            className="mt-2 text-center font-bold leading-tight w-full px-0.5"
+                            style={{
+                              fontSize: `clamp(${0.82 * z}rem, ${2.05 * z}vw, ${1.7 * z}rem)`,
+                            }}
+                            title={fullName}
+                            dangerouslySetInnerHTML={{ __html: nameTwoLine.html }}
+                          />
+                        ) : (
+                          <div
+                            className="mt-2 text-center font-bold leading-none whitespace-nowrap overflow-hidden text-ellipsis w-full px-0.5"
+                            style={{
+                              fontSize: `clamp(${0.95 * z}rem, ${2.35 * z}vw, ${1.95 * z}rem)`,
+                            }}
+                            title={fullName}
+                          >
+                            {fullName}
+                          </div>
+                        )}
                         {titleOrg ? (
-                          <div className="text-slate-400 text-center text-[clamp(0.55rem,1vw,0.85rem)] truncate max-w-full px-1">
+                          <div
+                            className="text-slate-400 text-center max-w-full px-1 mt-1 whitespace-nowrap overflow-hidden text-ellipsis"
+                            style={{ fontSize: `clamp(${0.55 * z}rem, ${1.05 * z}vw, ${0.9 * z}rem)` }}
+                            title={titleOrg}
+                          >
                             {titleOrg}
                           </div>
                         ) : null}
                         {speaker.location ? (
-                          <div className="mt-1 text-[clamp(0.5rem,0.9vw,0.75rem)] text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded">
+                          <div
+                            className="mt-1.5 font-semibold text-slate-100 bg-slate-700/90 px-2.5 py-1 rounded-md tracking-wide"
+                            style={{ fontSize: `clamp(${0.7 * z}rem, ${1.45 * z}vw, ${1.2 * z}rem)` }}
+                          >
                             {speaker.location}
                           </div>
                         ) : null}
@@ -2332,13 +2419,19 @@ const PhotoViewPage: React.FC = () => {
               </div>
 
               {hasValidNotes ? (
-                <div className="flex-[0.85] min-w-0 min-h-0 flex flex-col rounded-lg border border-slate-700 bg-slate-900/80 p-[1.2%] overflow-hidden">
-                  <div className="text-slate-400 text-[clamp(0.55rem,0.95vw,0.75rem)] font-bold tracking-widest mb-1 shrink-0">
+                <div className="flex-[0.65] min-w-0 min-h-0 flex flex-col rounded-lg border border-slate-700 bg-slate-900/80 p-[1.2%] overflow-hidden">
+                  <div
+                    className="text-slate-400 font-bold tracking-widest mb-1 shrink-0"
+                    style={{ fontSize: `clamp(${0.55 * broadcastZoomScale}rem, ${0.95 * broadcastZoomScale}vw, ${0.75 * broadcastZoomScale}rem)` }}
+                  >
                     NOTES
                   </div>
                   <div
-                    className="notes-display text-[clamp(0.7rem,1.25vw,1.05rem)] text-slate-100 leading-relaxed overflow-y-auto pr-1"
-                    style={{ whiteSpace: 'pre-line' }}
+                    className="notes-display text-slate-100 leading-relaxed overflow-y-auto pr-1"
+                    style={{
+                      whiteSpace: 'pre-line',
+                      fontSize: `clamp(${0.7 * broadcastZoomScale}rem, ${1.25 * broadcastZoomScale}vw, ${1.05 * broadcastZoomScale}rem)`,
+                    }}
                     dangerouslySetInnerHTML={{
                       __html: (currentItem!.notes || '')
                         .replace(/\n/g, '<br>')
@@ -2392,10 +2485,32 @@ const PhotoViewPage: React.FC = () => {
 
             {/* Controls — bottom-left so they never cover the timer */}
             <div
-              className={`absolute bottom-[17.5%] left-[2%] z-20 flex gap-1.5 transition-opacity duration-300 ${
+              className={`absolute bottom-[17.5%] left-[2%] z-20 flex flex-wrap items-center gap-1.5 transition-opacity duration-300 ${
                 broadcastChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
               }`}
             >
+              <div
+                className="flex items-center rounded border border-slate-600 bg-slate-800/90 overflow-hidden"
+                title="Zoom content (also - / + keys)"
+              >
+                {([
+                  ['sm', 'S'],
+                  ['md', 'M'],
+                ] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setBroadcastZoom(id)}
+                    className={`px-2 py-1 text-[10px] font-bold ${
+                      broadcastZoom === id
+                        ? 'bg-sky-600 text-white'
+                        : 'text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
                 onClick={() => setShowNotes((v) => !v)}

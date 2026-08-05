@@ -25,6 +25,13 @@ export interface BackupData {
   updated_at: string;
 }
 
+export type CreateBackupResult = BackupData & {
+  skipped?: boolean;
+  reason?: string;
+  last_backup_at?: string;
+  last_backup_by?: string | null;
+};
+
 export class NeonBackupService {
   /**
    * Test if the backup table exists and is accessible
@@ -52,17 +59,9 @@ export class NeonBackupService {
   }
 
   /**
-   * Create or update a daily backup of the current run of show data
-   * @param eventId - The event ID to backup
-   * @param scheduleData - The current schedule data
-   * @param customColumnsData - The current custom columns data
-   * @param eventData - The current event data
-   * @param backupType - 'auto' or 'manual'
-   * @param backupName - Custom name for the backup (optional)
-   * @param userId - User ID creating the backup
-   * @param userName - User name creating the backup
-   * @param userRole - User role creating the backup
-   * @returns Promise with the created/updated backup data
+   * Create a backup of the current run of show data.
+   * Manual and auto backups each create a new row. The API keeps the newest 24 auto backups per event.
+   * Auto backups may return `{ skipped: true }` if another user/tab already saved within the interval.
    */
   static async createBackup(
     eventId: string,
@@ -73,8 +72,9 @@ export class NeonBackupService {
     backupName?: string,
     userId?: string,
     userName?: string,
-    userRole?: string
-  ): Promise<BackupData> {
+    userRole?: string,
+    options?: { minIntervalMinutes?: number }
+  ): Promise<CreateBackupResult> {
     try {
       console.log(`🔄 Creating/updating ${backupType} backup for event: ${eventId}`);
       console.log(`🔍 API_BASE_URL: ${API_BASE_URL}`);
@@ -97,7 +97,7 @@ export class NeonBackupService {
       
       const finalBackupName = backupName || `${backupType === 'auto' ? 'Auto Backup' : 'Manual Backup'} - ${timestamp}`;
       
-      const backupPayload = {
+      const backupPayload: Record<string, unknown> = {
         event_id: eventId,
         event_name: eventName,
         event_date: eventDate,
@@ -113,6 +113,9 @@ export class NeonBackupService {
         created_by_name: userName || 'Unknown User',
         created_by_role: userRole || 'VIEWER'
       };
+      if (backupType === 'auto' && options?.minIntervalMinutes) {
+        backupPayload.min_interval_minutes = options.minIntervalMinutes;
+      }
       
       const fullUrl = `${API_BASE_URL}/api/backups`;
       console.log(`🔍 Full URL: ${fullUrl}`);
@@ -128,7 +131,11 @@ export class NeonBackupService {
       }
       
       const result = await response.json();
-      console.log(`✅ Backup ${backupType === 'auto' ? 'created/updated' : 'created'} successfully: ${result.backup_name}`);
+      if (result?.skipped) {
+        console.log(`⏭️ Auto backup skipped (another saver within interval):`, result.last_backup_by || result.reason);
+        return result;
+      }
+      console.log(`✅ Backup ${backupType === 'auto' ? 'created' : 'created'} successfully: ${result.backup_name}`);
       return result;
       
     } catch (error) {

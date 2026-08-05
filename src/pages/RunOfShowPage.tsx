@@ -839,6 +839,8 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => { showModeRef.current = showMode; }, [showMode]);
   const [showInShowConfirmModal, setShowInShowConfirmModal] = useState(false);
   const [showRehearsalConfirmModal, setShowRehearsalConfirmModal] = useState(false);
+  const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
+  const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   const originalDurationsSetForEventRef = useRef<string | null>(null);
@@ -958,6 +960,12 @@ const RunOfShowPage: React.FC = () => {
     autoBackups: 0,
     manualBackups: 0
   });
+  const AUTO_BACKUP_INTERVALS = [5, 10, 15, 30] as const;
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
+  const [autoBackupIntervalMinutes, setAutoBackupIntervalMinutes] = useState<number>(10);
+  const [lastAutoBackupAt, setLastAutoBackupAt] = useState<string | null>(null);
+  const [autoBackupStatus, setAutoBackupStatus] = useState<string>('');
+  const autoBackupInFlightRef = useRef(false);
   const [showRestorePreview, setShowRestorePreview] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<BackupData | null>(null);
   const [isPageVisible, setIsPageVisible] = useState(true);
@@ -1736,6 +1744,9 @@ const RunOfShowPage: React.FC = () => {
     setTimeout(() => {
       if (modalLockRowIdRef.current === rowId) return;
       if (localEditingRowIdRef.current !== rowId) return;
+      // Checkbox / short edits: keep the lock while "Editing - Sync Paused" is active
+      // so other browsers still show "{name} is editing" until the idle timeout.
+      if (isUserEditingRef.current) return;
       const active = document.activeElement as HTMLElement | null;
       const rowEl = document.querySelector(`[data-item-id="${rowId}"]`);
       if (rowEl && active && rowEl.contains(active)) return;
@@ -1938,7 +1949,8 @@ const RunOfShowPage: React.FC = () => {
       showAddModal ||
       showBreakoutRoomModal ||
       showDelayBlockModal ||
-      showCustomColumnModal;
+      showCustomColumnModal ||
+      showPublicBulkModal;
     const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
 
     if (shouldPause) {
@@ -1955,7 +1967,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showDelayBlockModal, showCustomColumnModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showDelayBlockModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -3393,7 +3405,8 @@ const RunOfShowPage: React.FC = () => {
       showAddModal ||
       showBreakoutRoomModal ||
       showDelayBlockModal ||
-      showCustomColumnModal
+      showCustomColumnModal ||
+      showPublicBulkModal
     ) {
       console.log('🚫 Skipping sync - modal is open');
       return;
@@ -5425,6 +5438,128 @@ const RunOfShowPage: React.FC = () => {
     console.log('✅ RunOfShow: Reset all states event emitted');
   };
 
+  /** Manually nudge show-start offset (minutes). Positive = late / push later. Requires START cue. */
+  const adjustShowStartOffset = async (deltaMinutes: number) => {
+    if (!event?.id) return;
+    if (!startCueId) {
+      alert('Mark a START cue (star) first. The offset shifts Start times from that row onward.');
+      return;
+    }
+    const next = showStartOvertime + deltaMinutes;
+    const startIndex = schedule.findIndex(s => s.id === startCueId);
+    const scheduledTime = startIndex >= 0 ? (calculateStartTime(startIndex) || '') : '';
+    const actualTime = new Date().toISOString();
+    setShowStartOvertime(next);
+    try {
+      await DatabaseService.saveShowStartOvertime(event.id, startCueId, next, scheduledTime, actualTime);
+      logChange(
+        'SHOW_START_OFFSET_ADJUST',
+        `Show start offset set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
+        { fieldName: 'showStartOvertime', oldValue: showStartOvertime, newValue: next, deltaMinutes }
+      );
+    } catch (error) {
+      console.error('❌ Failed to save show start offset:', error);
+      alert('Could not save schedule offset. Please try again.');
+    }
+  };
+
+  /** Parent cue whose per-cue overtime "Prev" controls should edit (before loaded/running, else last completed). */
+  const resolvePreviousCueForOvertimeAdjust = (): { id: number; label: string } | null => {
+    const day = selectedDay || 1;
+    const parents = schedule.filter(
+      (s) => (s.day || 1) === day && !isIndentedScheduleItem(s, indentedCues)
+    );
+    if (parents.length === 0) return null;
+
+    const cueLabel = (item: (typeof parents)[number]) =>
+      String(item.customFields?.cue || item.segmentName || `Row ${item.id}`);
+
+    if (activeItemId != null) {
+      const activeIdx = parents.findIndex(
+        (s) => s.id === activeItemId || String(s.id) === String(activeItemId)
+      );
+      if (activeIdx > 0) {
+        const prev = parents[activeIdx - 1];
+        return { id: prev.id, label: cueLabel(prev) };
+      }
+    }
+
+    for (let i = parents.length - 1; i >= 0; i--) {
+      if (completedCues[parents[i].id]) {
+        return { id: parents[i].id, label: cueLabel(parents[i]) };
+      }
+    }
+
+    // Fallback: last parent that already has an overtime value
+    for (let i = parents.length - 1; i >= 0; i--) {
+      if ((overtimeMinutes[parents[i].id] || 0) !== 0) {
+        return { id: parents[i].id, label: cueLabel(parents[i]) };
+      }
+    }
+
+    return null;
+  };
+
+  /** Nudge per-cue overtime on the previous (local) cue — does not change root show-start offset. */
+  const adjustPreviousCueOvertime = async (deltaMinutes: number) => {
+    if (!event?.id) return;
+    const target = resolvePreviousCueForOvertimeAdjust();
+    if (!target) {
+      alert('Load or complete a cue first so we know which previous cue to adjust.');
+      return;
+    }
+    const prevValue = overtimeMinutes[target.id] || 0;
+    const next = prevValue + deltaMinutes;
+    setOvertimeMinutes((prev) => ({ ...prev, [target.id]: next }));
+    try {
+      await DatabaseService.saveOvertimeMinutes(event.id, target.id, next);
+      const socket = socketClient.getSocket();
+      if (socket) {
+        socket.emit('overtimeUpdate', {
+          event_id: event.id,
+          item_id: target.id,
+          overtimeMinutes: next,
+        });
+      }
+      logChange(
+        'CUE_OVERTIME_ADJUST',
+        `Cue ${target.label} overtime set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
+        {
+          fieldName: 'overtimeMinutes',
+          itemId: target.id,
+          cueLabel: target.label,
+          oldValue: prevValue,
+          newValue: next,
+          deltaMinutes,
+        }
+      );
+    } catch (error) {
+      console.error('❌ Failed to save previous-cue overtime:', error);
+      setOvertimeMinutes((prev) => ({ ...prev, [target.id]: prevValue }));
+      alert('Could not save cue overtime. Please try again.');
+    }
+  };
+
+  /** Wipe per-cue overtime + show-start offset without stopping timers / completed cues. */
+  const clearShowOffsets = async () => {
+    if (!event?.id) return;
+    try {
+      await DatabaseService.clearOvertimeMinutes(event.id);
+      await DatabaseService.clearShowStartOvertime(event.id);
+      setOvertimeMinutes({});
+      setShowStartOvertime(0);
+      logChange('CLEAR_SHOW_OFFSETS', 'Cleared all schedule overtime offsets for this show', {
+        fieldName: 'overtimeOffsets',
+        oldValue: 'present',
+        newValue: 'cleared',
+      });
+      console.log('✅ Cleared show offsets (overtime minutes + show start overtime)');
+    } catch (error) {
+      console.error('❌ Failed to clear show offsets:', error);
+      alert('Could not clear offsets. Please try again.');
+    }
+  };
+
 
   // Open full-screen timer in new window
   const openFullScreenTimer = () => {
@@ -6732,7 +6867,6 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onShowStartOvertimeReset: (data: { event_id: string }) => {
-        if (showModeRef.current !== 'in-show') return;
         if (data.event_id === event?.id) {
           setShowStartOvertime(0);
           console.log('✅ Show start overtime reset to 0');
@@ -7207,57 +7341,150 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [isPageVisible, hasChanges]);
 
-  // DISABLED: Automatic backup every 5 minutes
-  // This was causing interference with the main run of show
-  // Manual backup only to prevent accidental data loss
-  /*
+  // Load / persist per-event auto-backup preferences
   useEffect(() => {
     if (!event?.id) return;
+    try {
+      const raw = localStorage.getItem(`autoBackupConfig_${event.id}`);
+      if (!raw) {
+        setAutoBackupEnabled(false);
+        setAutoBackupIntervalMinutes(10);
+        setLastAutoBackupAt(null);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      setAutoBackupEnabled(parsed.enabled === true);
+      const mins = Number(parsed.intervalMinutes);
+      setAutoBackupIntervalMinutes(
+        AUTO_BACKUP_INTERVALS.includes(mins as (typeof AUTO_BACKUP_INTERVALS)[number]) ? mins : 10
+      );
+      setLastAutoBackupAt(typeof parsed.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt : null);
+    } catch {
+      setAutoBackupEnabled(false);
+      setAutoBackupIntervalMinutes(10);
+    }
+  }, [event?.id]);
 
-    console.log('🔄 Starting automatic backup for event:', event.id);
+  useEffect(() => {
+    if (!event?.id) return;
+    localStorage.setItem(
+      `autoBackupConfig_${event.id}`,
+      JSON.stringify({
+        enabled: autoBackupEnabled,
+        intervalMinutes: autoBackupIntervalMinutes,
+        lastAutoBackupAt,
+      })
+    );
+  }, [event?.id, autoBackupEnabled, autoBackupIntervalMinutes, lastAutoBackupAt]);
 
-    const createAutoBackup = async () => {
+  // Configurable auto backups (API skips duplicate saves if another tab already wrote this interval)
+  useEffect(() => {
+    if (!event?.id || !autoBackupEnabled) {
+      setAutoBackupStatus('');
+      return;
+    }
+    if (currentUserRole === 'VIEWER') {
+      setAutoBackupStatus('Auto backup is on, but Viewers do not create backups');
+      return;
+    }
+
+    const intervalMs = Math.max(1, autoBackupIntervalMinutes) * 60 * 1000;
+    setAutoBackupStatus(
+      lastAutoBackupAt
+        ? `Every ${autoBackupIntervalMinutes} min · last ${new Date(lastAutoBackupAt).toLocaleTimeString()}`
+        : `Auto backup every ${autoBackupIntervalMinutes} min`
+    );
+
+    const createAutoBackup = async (reason: string) => {
+      if (autoBackupInFlightRef.current) return;
+      if (document.hidden) {
+        console.log('⏸️ Skipping auto backup — tab hidden');
+        return;
+      }
+      if (isUserEditingRef.current) {
+        console.log('✏️ Skipping auto backup — user is editing');
+        setAutoBackupStatus(`Skipped while editing — next try in ${autoBackupIntervalMinutes} min`);
+        return;
+      }
+      const scheduleNow = scheduleRef.current;
+      if (!scheduleNow?.length) {
+        console.log('⏸️ Skipping auto backup — empty schedule');
+        return;
+      }
+
+      autoBackupInFlightRef.current = true;
       try {
-        // Skip if user is actively editing
-        if (isUserEditing) {
-          console.log('✏️ Skipping auto backup - user is actively editing');
-          return;
-        }
-
-        console.log('🔄 Creating automatic backup...');
-        
-        await NeonBackupService.createBackup(
+        console.log(`🔄 Auto backup (${reason}) for event:`, event.id);
+        const timestamp = new Date().toLocaleString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        });
+        const result = await NeonBackupService.createBackup(
           event.id,
-          schedule,
-          customColumns,
+          scheduleNow,
+          customColumnsRef.current,
           event,
           'auto',
-          undefined,
+          `Auto • ${event.name} • ${timestamp}`,
           user?.id,
           user?.full_name || user?.email,
-          user?.role
+          currentUserRole || user?.role,
+          { minIntervalMinutes: autoBackupIntervalMinutes }
         );
-        
-        console.log('✅ Automatic backup created');
-        
-        // Refresh backup stats
+        if (result?.skipped) {
+          const lastAt = result.last_backup_at
+            ? new Date(result.last_backup_at).toISOString()
+            : new Date().toISOString();
+          setLastAutoBackupAt(lastAt);
+          const by = result.last_backup_by ? ` by ${result.last_backup_by}` : '';
+          setAutoBackupStatus(
+            `Every ${autoBackupIntervalMinutes} min · already saved${by}`
+          );
+          console.log('⏭️ Auto backup skipped — another open session already saved in this interval');
+          return;
+        }
+        const at = new Date().toISOString();
+        setLastAutoBackupAt(at);
+        setAutoBackupStatus(`Every ${autoBackupIntervalMinutes} min · last ${new Date(at).toLocaleTimeString()}`);
         const stats = await NeonBackupService.getBackupStats(event.id);
         setBackupStats(stats);
-        
+        console.log('✅ Automatic backup created');
       } catch (error) {
         console.error('❌ Error creating automatic backup:', error);
+        setAutoBackupStatus('Auto backup failed — will retry on next interval');
+      } finally {
+        autoBackupInFlightRef.current = false;
       }
     };
 
-    // Create backup immediately
-    createAutoBackup();
-    
-    // Then create backup every 5 minutes (300,000 ms)
-    const backupInterval = setInterval(createAutoBackup, 300000);
-    
-    return () => clearInterval(backupInterval);
-  }, [event?.id, schedule, customColumns, isUserEditing]);
-  */
+    const initialTimer = setTimeout(() => {
+      void createAutoBackup('initial');
+    }, 15_000);
+
+    const backupInterval = setInterval(() => {
+      void createAutoBackup('interval');
+    }, intervalMs);
+
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(backupInterval);
+    };
+  }, [
+    event?.id,
+    event?.name,
+    autoBackupEnabled,
+    autoBackupIntervalMinutes,
+    currentUserRole,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    user?.role,
+  ]);
 
   // Load backups when backup modal opens
   useEffect(() => {
@@ -9828,6 +10055,20 @@ const RunOfShowPage: React.FC = () => {
         confirmClassName="bg-amber-600 hover:bg-amber-500"
       />
 
+      {/* Clear schedule offsets (demo / accidental In-Show overtime) */}
+      <ConfirmModal
+        isOpen={showClearOffsetsConfirmModal}
+        onClose={() => setShowClearOffsetsConfirmModal(false)}
+        onConfirm={() => {
+          void clearShowOffsets();
+        }}
+        title="Clear all schedule offsets?"
+        message="This deletes per-cue overtime and the show-start offset for this event. Timers and completed cues are kept. Use this after a demo or if In-Show tracking was turned on by accident."
+        confirmLabel="Clear offsets"
+        cancelLabel="Cancel"
+        confirmClassName="bg-red-600 hover:bg-red-500"
+      />
+
       {/* Move Rows modal - reorder rows below current loaded/running cue (step 1: select, step 2: confirm) */}
       {showMoveRowsModal && (() => {
         const { boundaryIndex, filtered, movable, movableParents, blocks } = moveRowsBoundaryAndMovable;
@@ -11371,6 +11612,40 @@ const RunOfShowPage: React.FC = () => {
                 >
                   💾 Create Backup
                 </button>
+                {currentUserRole !== 'VIEWER' && (
+                  autoBackupEnabled ? (
+                    <div className="flex items-stretch rounded overflow-hidden border border-emerald-600/70 text-sm h-[30px]">
+                      <button
+                        type="button"
+                        onClick={() => setAutoBackupEnabled(false)}
+                        className="flex items-center gap-1 px-2 bg-emerald-700/90 hover:bg-emerald-600 text-emerald-50"
+                        title={autoBackupStatus || `Auto every ${autoBackupIntervalMinutes} min — click to turn off`}
+                      >
+                        <span className="w-1.5 h-1.5 bg-emerald-200 rounded-full animate-pulse shrink-0" />
+                        Auto
+                      </button>
+                      <select
+                        value={autoBackupIntervalMinutes}
+                        onChange={(e) => setAutoBackupIntervalMinutes(Number(e.target.value))}
+                        className="px-1 bg-emerald-900/80 text-emerald-100 border-l border-emerald-600/70 text-sm focus:outline-none max-w-[3.25rem] h-full"
+                        title="Interval"
+                      >
+                        {AUTO_BACKUP_INTERVALS.map((mins) => (
+                          <option key={mins} value={mins}>{mins}m</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setAutoBackupEnabled(true)}
+                      className="px-3 py-1 bg-slate-600 hover:bg-emerald-700 text-slate-200 hover:text-white text-sm rounded border border-slate-500"
+                      title={`Enable auto backup every ${autoBackupIntervalMinutes} min`}
+                    >
+                      Auto+
+                    </button>
+                  )
+                )}
                 {isUserEditing && (
                   <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-600 rounded text-sm">
                     <div className="w-2 h-2 bg-yellow-200 rounded-full animate-pulse"></div>
@@ -11817,6 +12092,7 @@ const RunOfShowPage: React.FC = () => {
                               if (currentUserRole === 'EDITOR') {
                                 const dayItems = schedule.filter((i: ScheduleItem) => (i.day || 1) === selectedDay);
                                 setPublicBulkSelectedIds(dayItems.filter((i: ScheduleItem) => i.isPublic).map((i: ScheduleItem) => i.id));
+                                handleModalEditing();
                                 setShowPublicBulkModal(true);
                               }
                             }}
@@ -11999,7 +12275,7 @@ const RunOfShowPage: React.FC = () => {
             </div>
             
             {/* Action Buttons */}
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center flex-wrap justify-end">
               {/* Working Day Selector for Multi-Day Events */}
               {(event?.numberOfDays && event.numberOfDays > 1) && (
                 <div className="flex items-center gap-3 mr-4">
@@ -12018,6 +12294,62 @@ const RunOfShowPage: React.FC = () => {
                   </select>
                 </div>
               )}
+
+              {currentUserRole === 'OPERATOR' && (() => {
+                const prevCue = resolvePreviousCueForOvertimeAdjust();
+                const prevOt = prevCue ? (overtimeMinutes[prevCue.id] || 0) : 0;
+                const isRoot = offsetAdjustTarget === 'root';
+                const displayValue = isRoot ? showStartOvertime : prevOt;
+                const canAdjust = isRoot ? !!startCueId : !!prevCue;
+                const adjust = (delta: number) => {
+                  if (isRoot) void adjustShowStartOffset(delta);
+                  else void adjustPreviousCueOvertime(delta);
+                };
+                return (
+                  <div className="flex items-center gap-1.5 mr-1">
+                    <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setOffsetAdjustTarget('root')}
+                        className={`px-2 py-1.5 font-medium transition-colors ${isRoot ? 'bg-slate-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                        title="Root show-start offset (from ★ START)"
+                      >
+                        Root
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOffsetAdjustTarget('prev')}
+                        className={`px-2 py-1.5 font-medium transition-colors border-l border-slate-600 ${!isRoot ? 'bg-slate-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                        title={prevCue ? `Previous cue overtime (${prevCue.label})` : 'Previous cue overtime (load/complete a cue first)'}
+                      >
+                        Prev{prevCue ? ` ${prevCue.label}` : ''}
+                      </button>
+                    </div>
+                    <div className="flex items-center rounded overflow-hidden border border-slate-600 text-xs">
+                      <button type="button" onClick={() => adjust(-5)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-40" title="-5 min">−5</button>
+                      <button type="button" onClick={() => adjust(-1)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 border-l border-slate-600 disabled:opacity-40" title="-1 min">−1</button>
+                      <span
+                        className={`px-2 py-1.5 font-semibold tabular-nums border-l border-r border-slate-600 min-w-[3.25rem] text-center ${
+                          displayValue > 0 ? 'bg-red-900/40 text-red-300' : displayValue < 0 ? 'bg-emerald-900/40 text-emerald-300' : 'bg-slate-800 text-slate-300'
+                        }`}
+                        title={isRoot ? 'Root offset' : (prevCue ? `${prevCue.label} overtime` : 'No previous cue')}
+                      >
+                        {displayValue > 0 ? '+' : ''}{displayValue}m
+                      </span>
+                      <button type="button" onClick={() => adjust(1)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-40" title="+1 min">+1</button>
+                      <button type="button" onClick={() => adjust(5)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 border-l border-slate-600 disabled:opacity-40" title="+5 min">+5</button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowClearOffsetsConfirmModal(true)}
+                      className="px-2 py-1.5 text-xs font-medium rounded border border-red-700/60 bg-red-900/30 text-red-200 hover:bg-red-800/50"
+                      title="Clear all overtime offsets"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                );
+              })()}
               
               <button
                 onClick={() => {
@@ -12697,6 +13029,7 @@ const RunOfShowPage: React.FC = () => {
                           if (currentUserRole === 'EDITOR') {
                             const dayItems = schedule.filter((i: ScheduleItem) => (i.day || 1) === selectedDay);
                             setPublicBulkSelectedIds(dayItems.filter((i: ScheduleItem) => i.isPublic).map((i: ScheduleItem) => i.id));
+                            handleModalEditing();
                             setShowPublicBulkModal(true);
                           }
                         }}
@@ -15025,8 +15358,12 @@ const RunOfShowPage: React.FC = () => {
       {showPublicBulkModal && (() => {
         const dayItems = schedule.filter((item: ScheduleItem) => (item.day || 1) === selectedDay);
         const allDayIds = dayItems.map((i: ScheduleItem) => i.id);
+        const closePublicBulkModal = () => {
+          setShowPublicBulkModal(false);
+          handleModalClosed();
+        };
         return (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowPublicBulkModal(false)}>
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={closePublicBulkModal}>
             <div
               className="bg-slate-800 rounded-xl shadow-2xl border border-slate-600 w-full max-w-xl"
               style={{ maxHeight: '90vh' }}
@@ -15036,7 +15373,7 @@ const RunOfShowPage: React.FC = () => {
                 <h2 className="text-xl font-bold text-white">Set public cues</h2>
                 <button
                   type="button"
-                  onClick={() => setShowPublicBulkModal(false)}
+                  onClick={closePublicBulkModal}
                   className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-600 rounded"
                   aria-label="Close"
                 >
@@ -15044,7 +15381,7 @@ const RunOfShowPage: React.FC = () => {
                 </button>
               </div>
               <p className="text-slate-400 text-sm px-4 pt-2 pb-3">
-                Select which cues should be public (current day only).
+                Select which cues should be public (current day only). Sync is paused while this is open.
               </p>
               <div className="overflow-y-auto border-t border-b border-slate-600" style={{ height: 'min(400px, 50vh)' }}>
                 <table className="w-full border-collapse text-left">
@@ -15106,7 +15443,7 @@ const RunOfShowPage: React.FC = () => {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowPublicBulkModal(false)}
+                    onClick={closePublicBulkModal}
                     className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded-lg"
                   >
                     Cancel
@@ -15114,19 +15451,21 @@ const RunOfShowPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                    setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => ({
-                      ...scheduleItem,
-                      isPublic: publicBulkSelectedIds.includes(scheduleItem.id)
-                    })));
+                    setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => {
+                      if ((scheduleItem.day || 1) !== selectedDay) return scheduleItem;
+                      return {
+                        ...scheduleItem,
+                        isPublic: publicBulkSelectedIds.includes(scheduleItem.id)
+                      };
+                    }));
                     if (logChange) {
                       logChange('FIELD_UPDATE', `Bulk set public: ${publicBulkSelectedIds.length} of ${allDayIds.length} cues`, {
                         changeType: 'BULK_PUBLIC',
                         details: { selectedCount: publicBulkSelectedIds.length, dayTotal: allDayIds.length }
                       });
                     }
-                    handleUserEditing();
-                    if (saveToAPI) saveToAPI();
                     setShowPublicBulkModal(false);
+                    handleModalClosed();
                   }}
                   className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg"
                 >
@@ -15275,106 +15614,115 @@ const RunOfShowPage: React.FC = () => {
       {/* Backup Modal */}
       {showBackupModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-8 w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-white">Backup Management</h2>
+          <div className="bg-slate-800 rounded-lg p-5 w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col min-h-0">
+            <div className="flex justify-between items-center mb-3 shrink-0">
+              <h2 className="text-xl font-bold text-white">Backup Management</h2>
               <button
                 onClick={() => setShowBackupModal(false)}
-                className="text-slate-400 hover:text-white text-2xl font-bold"
+                className="text-slate-400 hover:text-white text-2xl font-bold leading-none"
               >
                 ✕
               </button>
             </div>
 
-            {/* Info Banner */}
-            <div className="bg-blue-900 border border-blue-600 rounded-lg p-4 mb-6">
-              <div className="flex items-start">
-                <div className="text-blue-400 text-xl mr-3">ℹ️</div>
-                <div>
-                  <h4 className="text-blue-200 font-semibold mb-1">Neon Database Backups</h4>
-                  <p className="text-blue-100 text-sm">
-                    Create and manage backups of your run of show data stored in Neon database. 
-                    Use the "💾 Create Backup" button to create manual backups when needed.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Filters and Search */}
-            <div className="bg-slate-700 rounded-lg p-6 mb-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Filter & Search</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Search backups</label>
+            {/* Auto backup + filters (compact) */}
+            <div className="shrink-0 space-y-3 mb-3">
+              <div className="bg-slate-700 rounded-lg px-3 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
-                    type="text"
-                    value={backupSearchTerm}
-                    placeholder="Filter by backup name, type, author..."
-                    className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 text-base"
-                    onChange={(e) => setBackupSearchTerm(e.target.value)}
+                    type="checkbox"
+                    checked={autoBackupEnabled}
+                    onChange={(e) => setAutoBackupEnabled(e.target.checked)}
+                    className="rounded border-slate-500 w-4 h-4"
+                    disabled={currentUserRole === 'VIEWER'}
                   />
-                </div>
-                <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Filter by backup date</label>
-                  <input
-                    type="date"
-                    value={backupDateFilter}
-                    className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:border-blue-500 text-base"
-                    onChange={(e) => setBackupDateFilter(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Sort by</label>
+                  <span className="text-white text-sm font-medium">Auto backup</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-400 text-xs">Every</span>
                   <select
-                    value={backupSortOrder}
-                    className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:border-blue-500 text-base"
-                    onChange={(e) => setBackupSortOrder(e.target.value as typeof backupSortOrder)}
+                    value={autoBackupIntervalMinutes}
+                    disabled={!autoBackupEnabled || currentUserRole === 'VIEWER'}
+                    onChange={(e) => setAutoBackupIntervalMinutes(Number(e.target.value))}
+                    className="px-2 py-1 bg-slate-600 border border-slate-500 rounded text-white text-sm disabled:opacity-40"
                   >
-                    <option value="newest">Newest First</option>
-                    <option value="oldest">Oldest First</option>
-                    <option value="event">Event Name</option>
-                    <option value="type">Backup Type</option>
+                    {AUTO_BACKUP_INTERVALS.map((mins) => (
+                      <option key={mins} value={mins}>{mins} min</option>
+                    ))}
                   </select>
                 </div>
+                <span className="text-slate-400 text-xs truncate max-w-[28rem]">
+                  {autoBackupEnabled
+                    ? (autoBackupStatus || 'Snapshots while this tab is open · keeps last 24 · API skips duplicates if multiple users have Auto on')
+                    : 'Off — turn on to snapshot on a timer while this tab is open'}
+                </span>
+              </div>
+
+              <div className="bg-slate-700 rounded-lg px-3 py-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={backupSearchTerm}
+                  placeholder="Search backups..."
+                  className="w-full px-2.5 py-1.5 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 text-sm focus:outline-none focus:border-blue-500"
+                  onChange={(e) => setBackupSearchTerm(e.target.value)}
+                />
+                <input
+                  type="date"
+                  value={backupDateFilter}
+                  className="w-full px-2.5 py-1.5 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                  onChange={(e) => setBackupDateFilter(e.target.value)}
+                />
+                <select
+                  value={backupSortOrder}
+                  className="w-full px-2.5 py-1.5 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                  onChange={(e) => setBackupSortOrder(e.target.value as typeof backupSortOrder)}
+                >
+                  <option value="newest">Newest First</option>
+                  <option value="oldest">Oldest First</option>
+                  <option value="event">Event Name</option>
+                  <option value="type">Backup Type</option>
+                </select>
               </div>
             </div>
 
             {/* Backup List */}
-            <div className="bg-slate-700 rounded-lg p-6 flex-1 overflow-hidden flex flex-col">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-semibold text-white">
+            <div className="bg-slate-700 rounded-lg p-3 flex-1 min-h-0 overflow-hidden flex flex-col">
+              <div className="flex justify-between items-center mb-2 shrink-0">
+                <h3 className="text-base font-semibold text-white">
                   Available Backups
-                  {backups.length > 0 && filteredBackups.length !== backups.length && (
-                    <span className="text-slate-400 text-base font-normal ml-2">
-                      ({filteredBackups.length} of {backups.length})
+                  {backups.length > 0 && (
+                    <span className="text-slate-400 text-sm font-normal ml-2">
+                      {filteredBackups.length !== backups.length
+                        ? `(${filteredBackups.length} of ${backups.length})`
+                        : `(${backups.length})`}
                     </span>
                   )}
                 </h3>
                 <button
                   onClick={loadBackups}
-                  className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-base font-medium rounded-lg transition-colors"
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors"
                 >
-                  🔄 Refresh
+                  Refresh
                 </button>
               </div>
               
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 min-h-0 overflow-y-auto">
                 {backups.length === 0 ? (
-                  <div className="text-slate-400 text-center py-12 text-lg">
-                    No backups available. Use the "💾 Create Backup" button in the main interface to create a manual backup.
+                  <div className="text-slate-400 text-center py-8 text-sm">
+                    No backups yet. Use Create Backup, or turn on Auto backup above.
                   </div>
                 ) : filteredBackups.length === 0 ? (
-                  <div className="text-slate-400 text-center py-12 text-lg">
+                  <div className="text-slate-400 text-center py-8 text-sm">
                     No backups match your search or date filter.
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-2">
                     {filteredBackups.map((backup) => (
-                      <div key={backup.id} className="bg-slate-600 p-6 rounded-lg flex justify-between items-center hover:bg-slate-500 transition-colors">
-                        <div className="flex-1">
-                          <div className="text-white font-semibold text-xl mb-2 flex items-center gap-3">
-                            {backup.backup_name}
-                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      <div key={backup.id} className="bg-slate-600 px-3 py-2.5 rounded-lg flex justify-between items-center gap-3 hover:bg-slate-500 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-white font-medium text-sm flex items-center gap-2 flex-wrap">
+                            <span className="truncate">{backup.backup_name}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${
                               backup.backup_type === 'auto' 
                                 ? 'bg-blue-600 text-blue-100' 
                                 : 'bg-green-600 text-green-100'
@@ -15382,26 +15730,28 @@ const RunOfShowPage: React.FC = () => {
                               {backup.backup_type}
                             </span>
                           </div>
-                          <div className="text-slate-400 text-sm">
-                            <strong>Event Date:</strong> {backup.event_data?.date ? new Date(backup.event_data.date).toLocaleDateString() : 'N/A'} • 
-                            <strong> Schedule Items:</strong> {backup.schedule_data?.length || 0} • 
-                            <strong> Custom Columns:</strong> {backup.custom_columns_data?.length || 0}
+                          <div className="text-slate-400 text-xs mt-0.5">
+                            {new Date(backup.backup_timestamp || backup.created_at).toLocaleString()}
+                            {' · '}
+                            {backup.schedule_data?.length || backup.schedule_items_count || 0} items
+                            {' · '}
+                            {backup.custom_columns_data?.length || backup.custom_columns_count || 0} columns
                           </div>
                         </div>
-                        <div className="flex space-x-3">
+                        <div className="flex space-x-2 shrink-0">
                           <button
                             onClick={() => openRestorePreview(backup)}
-                            className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white text-base font-medium rounded-lg transition-colors"
+                            className="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded transition-colors"
                             title="Preview and load this backup"
                           >
-                            🔄 Load/Overwrite
+                            Restore
                           </button>
                           <button
                             onClick={() => deleteBackup(String(backup.id))}
-                            className="px-5 py-3 bg-red-600 hover:bg-red-500 text-white text-base font-medium rounded-lg transition-colors"
+                            className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
                             title="Delete this backup"
                           >
-                            🗑️ Delete
+                            Delete
                           </button>
                         </div>
                       </div>

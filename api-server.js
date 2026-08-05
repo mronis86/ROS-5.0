@@ -6308,6 +6308,7 @@ app.get('/api/backups/test', async (req, res) => {
 
 // Create or update backup
 app.post('/api/backups', async (req, res) => {
+  const client = await pool.connect();
   try {
     const {
       event_id,
@@ -6323,87 +6324,117 @@ app.post('/api/backups', async (req, res) => {
       custom_columns_count,
       created_by,
       created_by_name,
-      created_by_role
+      created_by_role,
+      min_interval_minutes
     } = req.body;
 
-    console.log(`🔄 Creating/updating ${backup_type} backup for event: ${event_id}`);
-
-    // Check if backup already exists for this event and date
-    const existingBackup = await pool.query(
-      'SELECT id FROM run_of_show_backups WHERE event_id = $1 AND event_date = $2',
-      [event_id, event_date]
-    );
-
-    let result;
-
-    if (existingBackup.rows.length > 0) {
-      // Update existing backup
-      console.log(`🔄 Updating existing backup for ${event_name} on ${event_date}`);
-      
-      const updateResult = await pool.query(`
-        UPDATE run_of_show_backups 
-        SET 
-          backup_name = $1,
-          schedule_data = $2,
-          custom_columns_data = $3,
-          event_data = $4,
-          backup_type = $5,
-          event_name = $6,
-          event_location = $7,
-          schedule_items_count = $8,
-          custom_columns_count = $9,
-          created_by = $10,
-          created_by_name = $11,
-          created_by_role = $12,
-          updated_at = NOW()
-        WHERE id = $13
-        RETURNING *
-      `, [
-        backup_name,
-        JSON.stringify(schedule_data),
-        JSON.stringify(custom_columns_data),
-        JSON.stringify(event_data),
-        backup_type,
-        event_name,
-        event_location,
-        schedule_items_count,
-        custom_columns_count,
-        created_by,
-        created_by_name,
-        created_by_role,
-        existingBackup.rows[0].id
-      ]);
-
-      result = updateResult.rows[0];
-      console.log(`✅ Backup updated successfully: ${result.backup_name}`);
-    } else {
-      // Create new backup
-      console.log(`🔄 Creating new backup for ${event_name} on ${event_date}`);
-      
-      const insertResult = await pool.query(`
-        INSERT INTO run_of_show_backups (
-          event_id, event_name, event_date, event_location,
-          backup_name, backup_type, schedule_data, custom_columns_data,
-          event_data, schedule_items_count, custom_columns_count,
-          created_by, created_by_name, created_by_role
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        RETURNING *
-      `, [
-        event_id, event_name, event_date, event_location,
-        backup_name, backup_type, JSON.stringify(schedule_data),
-        JSON.stringify(custom_columns_data), JSON.stringify(event_data),
-        schedule_items_count, custom_columns_count,
-        created_by, created_by_name, created_by_role
-      ]);
-
-      result = insertResult.rows[0];
-      console.log(`✅ Backup created successfully: ${result.backup_name}`);
+    if (!event_id) {
+      res.status(400).json({ error: 'event_id is required' });
+      return;
     }
 
+    const type = backup_type === 'manual' ? 'manual' : 'auto';
+    console.log(`🔄 Creating ${type} backup for event: ${event_id}`);
+
+    // Allow multiple backups per event/day (legacy unique indexes blocked this)
+    try {
+      await client.query('DROP INDEX IF EXISTS idx_run_of_show_backups_unique_event_date');
+      await client.query('DROP INDEX IF EXISTS idx_run_of_show_backups_event_date_unique');
+    } catch (dropErr) {
+      console.warn('⚠️ Could not drop legacy backup unique indexes:', dropErr.message);
+    }
+
+    await client.query('BEGIN');
+
+    // Serialize auto backups per event so multiple open ROS tabs/users only keep one saver per window
+    if (type === 'auto') {
+      const lockKey = `ros-auto-backup:${event_id}`;
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
+
+      const intervalMins = Math.max(
+        1,
+        Math.min(120, Number(min_interval_minutes) || 5)
+      );
+      const recent = await client.query(
+        `SELECT id, backup_name, backup_timestamp, created_at, created_by_name
+         FROM run_of_show_backups
+         WHERE event_id = $1 AND backup_type = 'auto'
+         ORDER BY COALESCE(backup_timestamp, created_at) DESC
+         LIMIT 1`,
+        [event_id]
+      );
+      if (recent.rows.length > 0) {
+        const last = recent.rows[0];
+        const lastAt = new Date(last.backup_timestamp || last.created_at).getTime();
+        const ageMs = Date.now() - lastAt;
+        if (Number.isFinite(lastAt) && ageMs < intervalMins * 60 * 1000) {
+          await client.query('COMMIT');
+          console.log(
+            `⏭️ Auto backup skipped for ${event_id} — last was ${Math.round(ageMs / 1000)}s ago by ${last.created_by_name || 'unknown'} (min ${intervalMins}m)`
+          );
+          return res.json({
+            skipped: true,
+            reason: 'too_soon',
+            min_interval_minutes: intervalMins,
+            last_backup_at: last.backup_timestamp || last.created_at,
+            last_backup_by: last.created_by_name || null,
+            last_backup: last,
+          });
+        }
+      }
+    }
+
+    const insertResult = await client.query(`
+      INSERT INTO run_of_show_backups (
+        event_id, event_name, event_date, event_location,
+        backup_name, backup_type, schedule_data, custom_columns_data,
+        event_data, schedule_items_count, custom_columns_count,
+        created_by, created_by_name, created_by_role,
+        backup_timestamp
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+      RETURNING *
+    `, [
+      event_id, event_name, event_date, event_location,
+      backup_name, type, JSON.stringify(schedule_data),
+      JSON.stringify(custom_columns_data), JSON.stringify(event_data),
+      schedule_items_count, custom_columns_count,
+      created_by, created_by_name, created_by_role
+    ]);
+
+    const result = insertResult.rows[0];
+    console.log(`✅ Backup created successfully: ${result.backup_name}`);
+
+    // Keep a rolling window of auto backups so interval snapshots don't fill the DB
+    if (type === 'auto') {
+      const AUTO_KEEP = 24;
+      try {
+        const prune = await client.query(
+          `DELETE FROM run_of_show_backups
+           WHERE id IN (
+             SELECT id FROM run_of_show_backups
+             WHERE event_id = $1 AND backup_type = 'auto'
+             ORDER BY COALESCE(backup_timestamp, created_at) DESC
+             OFFSET $2
+           )
+           RETURNING id`,
+          [event_id, AUTO_KEEP]
+        );
+        if (prune.rowCount > 0) {
+          console.log(`🧹 Pruned ${prune.rowCount} old auto backup(s) for event ${event_id} (keep ${AUTO_KEEP})`);
+        }
+      } catch (pruneErr) {
+        console.warn('⚠️ Auto backup prune failed:', pruneErr.message);
+      }
+    }
+
+    await client.query('COMMIT');
     res.json(result);
   } catch (error) {
-    console.error('❌ Error creating/updating backup:', error);
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    console.error('❌ Error creating backup:', error);
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
 

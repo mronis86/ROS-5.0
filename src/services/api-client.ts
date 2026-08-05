@@ -372,11 +372,12 @@ class ApiClient {
     return result;
   }
 
-  /** Invalidate cache for Photo page 20s sync - ensures fresh overtime/schedule data every sync */
+  /** Invalidate cache for Photo page 20s sync - ensures fresh overtime/schedule/show-mode data every sync */
   invalidateSyncDataCache(eventId: string): void {
     this.cache.delete(`runOfShowData_${eventId}`);
     this.cache.delete(`overtimeMinutes_${eventId}`);
     this.cache.delete(`showStartOvertime_${eventId}`);
+    this.cache.delete(`showMode_${eventId}`);
   }
 
   /** Invalidate show mode cache so refresh/reconnect gets current in-show state */

@@ -878,32 +878,32 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             checked={!!item.isPublic}
             onChange={(e) => {
               if (isLockedByOther) return;
+              claimRowLock();
+              handleUserEditing();
               if (currentUserRole === 'VIEWER') {
                 alert('Viewers cannot change public status. Please change your role to EDITOR or OPERATOR.');
                 return;
               }
-              claimRowLock();
               const oldValue = !!item.isPublic;
               setSchedule((prev: any[]) => prev.map(scheduleItem => 
                 scheduleItem.id === item.id 
                   ? { ...scheduleItem, isPublic: e.target.checked }
                   : scheduleItem
               ));
-              if (logChange) {
-                logChange('FIELD_UPDATE', `Updated Public status for "${item.segmentName}" from ${oldValue} to ${e.target.checked}`, {
+              logChangeDebounced(
+                `isPublic_${item.id}`,
+                'FIELD_UPDATE',
+                `Updated Public status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`,
+                {
                   changeType: 'FIELD_CHANGE',
                   itemId: item.id,
                   itemName: item.segmentName,
                   fieldName: 'isPublic',
-                  oldValue: oldValue,
-                  newValue: e.target.checked,
+                  oldValue: oldValue ? 'TRUE' : 'FALSE',
+                  newValue: e.target.checked ? 'TRUE' : 'FALSE',
                   details: { fieldType: 'checkbox', booleanChange: true }
-                });
-              }
-              handleUserEditing();
-              if (saveToAPI) {
-                saveToAPI();
-              }
+                }
+              );
             }}
             disabled={isLockedByOther || currentUserRole === 'VIEWER'}
             className={`w-5 h-5 rounded border-2 text-blue-600 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/55' : 'border-slate-500 bg-slate-700'}`}
