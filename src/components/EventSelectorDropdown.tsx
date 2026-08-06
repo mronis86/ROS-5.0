@@ -1,18 +1,15 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import { Event } from '../types/Event';
 
 export type EventFilter = 'all' | 'upcoming' | 'past';
 
-function getTodayLocal(): string {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
-
 function filterEvents(events: Event[], filter: EventFilter): Event[] {
   if (filter === 'all') return events;
-  const today = getTodayLocal();
-  if (filter === 'upcoming') return events.filter((e) => (e.date || '') >= today);
-  return events.filter((e) => (e.date || '') < today);
+  if (filter === 'upcoming') {
+    return events.filter((e) => isEventUpcoming(e.date || '', e.numberOfDays));
+  }
+  return events.filter((e) => isEventPast(e.date || '', e.numberOfDays));
 }
 
 interface EventSelectorDropdownProps {

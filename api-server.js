@@ -2295,7 +2295,12 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       [eventId]
     );
     if (result.rows.length === 0) {
-      return res.json({ showMode: 'rehearsal', trackWasDurations: false, rehearsalBaseline: null });
+      return res.json({
+        showMode: 'rehearsal',
+        trackWasDurations: false,
+        rehearsalBaseline: null,
+        lockedStartTimes: null,
+      });
     }
     const settings = result.rows[0].settings || {};
     const showMode = (settings.show_mode === 'in-show' || settings.show_mode === 'rehearsal')
@@ -2306,7 +2311,11 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
         ? settings.rehearsal_baseline
         : null;
-    res.json({ showMode, trackWasDurations, rehearsalBaseline });
+    const lockedStartTimes =
+      settings.locked_start_times && typeof settings.locked_start_times === 'object'
+        ? settings.locked_start_times
+        : null;
+    res.json({ showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes });
   } catch (error) {
     console.error('Error fetching show mode:', error);
     res.status(500).json({ error: 'Failed to fetch show mode' });
@@ -2316,7 +2325,14 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
 app.patch('/api/show-mode/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { showMode, trackWasDurations, rehearsalBaseline, clearRehearsalBaseline } = req.body;
+    const {
+      showMode,
+      trackWasDurations,
+      rehearsalBaseline,
+      clearRehearsalBaseline,
+      lockedStartTimes,
+      clearLockedStartTimes,
+    } = req.body;
     const updates = {};
     if (showMode === 'rehearsal' || showMode === 'in-show') {
       updates.show_mode = showMode;
@@ -2329,9 +2345,14 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     } else if (rehearsalBaseline && typeof rehearsalBaseline === 'object') {
       updates.rehearsal_baseline = rehearsalBaseline;
     }
+    if (clearLockedStartTimes === true) {
+      updates.locked_start_times = null;
+    } else if (lockedStartTimes && typeof lockedStartTimes === 'object') {
+      updates.locked_start_times = lockedStartTimes;
+    }
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({
-        error: 'Provide showMode, trackWasDurations, and/or rehearsalBaseline',
+        error: 'Provide showMode, trackWasDurations, rehearsalBaseline, and/or lockedStartTimes',
       });
     }
     const result = await pool.query(
@@ -2353,6 +2374,10 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
         ? settings.rehearsal_baseline
         : null;
+    const currentLockedStartTimes =
+      settings.locked_start_times && typeof settings.locked_start_times === 'object'
+        ? settings.locked_start_times
+        : null;
     // CRITICAL: Only include showMode in broadcast when we actually updated it.
     // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
     const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
@@ -2360,11 +2385,15 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (rehearsalBaseline || clearRehearsalBaseline === true) {
       payload.rehearsalBaseline = currentBaseline;
     }
+    if (lockedStartTimes || clearLockedStartTimes === true) {
+      payload.lockedStartTimes = currentLockedStartTimes;
+    }
     broadcastUpdate(eventId, 'showModeUpdate', payload);
     res.json({
       showMode: currentShowMode,
       trackWasDurations: currentTrackWasDurations,
       rehearsalBaseline: currentBaseline,
+      lockedStartTimes: currentLockedStartTimes,
     });
   } catch (error) {
     console.error('Error updating show mode:', error);
@@ -3131,6 +3160,9 @@ app.post('/api/run-of-show-data', async (req, res) => {
       }
       if (incomingSettings?.original_durations === undefined && current.original_durations && typeof current.original_durations === 'object') {
         settingsToSave = { ...settingsToSave, original_durations: current.original_durations };
+      }
+      if (incomingSettings?.locked_start_times === undefined && current.locked_start_times && typeof current.locked_start_times === 'object') {
+        settingsToSave = { ...settingsToSave, locked_start_times: current.locked_start_times };
       }
       if (incomingSettings?.rehearsal_baseline === undefined && current.rehearsal_baseline && typeof current.rehearsal_baseline === 'object') {
         settingsToSave = { ...settingsToSave, rehearsal_baseline: current.rehearsal_baseline };

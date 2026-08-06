@@ -67,7 +67,10 @@ export function getLocationColor(location: string): string {
 
 export function isUpcomingEvent(event: DashboardEventSummary, today = new Date()): boolean {
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return parseLocalDate(event.date) >= todayStart;
+  const start = parseLocalDate(event.date);
+  const days = Math.max(1, Number(event.numberOfDays) || 1);
+  const lastDay = addDays(start, days - 1);
+  return lastDay >= todayStart;
 }
 
 export function isWithinDays(dateStr: string, days: number, from = new Date()): boolean {
@@ -79,7 +82,10 @@ export function isWithinDays(dateStr: string, days: number, from = new Date()): 
 
 export function isPastEvent(event: DashboardEventSummary, today = new Date()): boolean {
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return parseLocalDate(event.date) < todayStart;
+  const start = parseLocalDate(event.date);
+  const days = Math.max(1, Number(event.numberOfDays) || 1);
+  const lastDay = addDays(start, days - 1);
+  return lastDay < todayStart;
 }
 
 export function filterByTimeRange(
@@ -106,7 +112,11 @@ export function sortEventsByDate(
 
 export function filterRecordStreamingEvents(events: DashboardEventSummary[]): DashboardEventSummary[] {
   return events.filter(
-    (e) => !e.isQuickMode && (e.recordStreaming === 'Record' || e.recordStreaming === 'Streaming')
+    (e) =>
+      !e.isQuickMode &&
+      (e.recordStreaming === 'Record' ||
+        e.recordStreaming === 'Streaming' ||
+        e.recordStreaming === 'Stream+Rec')
   );
 }
 

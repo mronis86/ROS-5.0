@@ -34,6 +34,7 @@ export const EVENT_TYPE_OPTIONS = [
 export const RECORD_STREAMING_OPTIONS = [
   { value: 'Record', label: 'Record', color: 'bg-red-500' },
   { value: 'Streaming', label: 'Streaming', color: 'bg-green-700' },
+  { value: 'Stream+Rec', label: 'Stream+Rec', color: 'bg-violet-600' },
   { value: 'None', label: 'None', color: 'bg-slate-500' },
 ];
 

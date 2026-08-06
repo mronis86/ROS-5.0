@@ -306,7 +306,10 @@ export const RunOfShowShowcaseContent: React.FC = () => {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="px-3 py-1 bg-blue-600 text-white text-xs rounded">Filter View</span>
-          <span className="px-3 py-1 bg-green-600 text-white text-xs rounded">⏰ Time Toast</span>
+          <span className="px-3 py-1 bg-green-600 text-white text-xs rounded inline-flex items-center gap-1.5">
+            <img src="/time-toast-icon.png" alt="" className="h-4 w-4 object-contain" />
+            Time Toast
+          </span>
           <span className="px-3 py-1 bg-purple-600 text-white text-xs font-medium rounded ring-4 ring-inset ring-green-400">
             🎯 Follow
           </span>

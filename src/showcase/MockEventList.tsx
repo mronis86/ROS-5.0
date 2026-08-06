@@ -50,6 +50,7 @@ const EVENT_TYPE_COLOR: Record<string, string> = {
 const BROADCAST_COLOR: Record<string, string> = {
   Record: 'bg-red-600',
   Streaming: 'bg-blue-600',
+  'Stream+Rec': 'bg-violet-600',
   None: 'bg-slate-600',
 };
 
@@ -113,7 +114,9 @@ function EventTableRow({ event, isNew }: { event: Event; isNew?: boolean }) {
             ? 'None'
             : event.recordStreaming === 'Record'
               ? 'Rec'
-              : 'Stream'}
+              : event.recordStreaming === 'Stream+Rec'
+                ? 'Stream+Rec'
+                : 'Stream'}
         </span>
       </td>
       <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">

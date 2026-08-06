@@ -39,7 +39,8 @@ interface SocketCallbacks {
     showMode?: 'rehearsal' | 'in-show';
     trackWasDurations?: boolean;
     rehearsalBaseline?: any;
-  }) => void; // Global show mode and track-was-durations / rehearsal baseline
+    lockedStartTimes?: Record<string, string> | null;
+  }) => void; // Global show mode and track-was-durations / rehearsal baseline / locked starts
   onMicAssignmentsUpdate?: (data: { event_id: string; assignments?: Record<string, any>; changes?: any[] }) => void;
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
   onForceDisconnect?: () => void; // Admin forced disconnect – show message and do not reconnect

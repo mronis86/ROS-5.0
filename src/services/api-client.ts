@@ -303,6 +303,7 @@ class ApiClient {
     showMode: 'rehearsal' | 'in-show';
     trackWasDurations: boolean;
     rehearsalBaseline: any | null;
+    lockedStartTimes: Record<string, string> | null;
   }> {
     const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
     return {
@@ -311,6 +312,10 @@ class ApiClient {
       rehearsalBaseline: result?.rehearsalBaseline && typeof result.rehearsalBaseline === 'object'
         ? result.rehearsalBaseline
         : null,
+      lockedStartTimes:
+        result?.lockedStartTimes && typeof result.lockedStartTimes === 'object'
+          ? result.lockedStartTimes
+          : null,
     };
   }
 
@@ -330,6 +335,8 @@ class ApiClient {
       trackWasDurations?: boolean;
       rehearsalBaseline?: any;
       clearRehearsalBaseline?: boolean;
+      lockedStartTimes?: Record<string, string> | null;
+      clearLockedStartTimes?: boolean;
     }
   ) {
     const result = await this.request(`/api/show-mode/${eventId}`, {

@@ -5,6 +5,7 @@ import { canAccessCatering, isCateringOnlyUser } from '../services/auth-service'
 import { DatabaseService } from '../services/database';
 import { LOCATION_OPTIONS } from '../types/Event';
 import { isQuickModeCalendarEvent } from '../lib/quickModeEvent';
+import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 
 type EventRow = {
   id: string;
@@ -16,17 +17,6 @@ type EventRow = {
   eventType: string;
   isQuickMode?: boolean;
 };
-
-function startOfToday(): Date {
-  const n = new Date();
-  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
-}
-
-function parseLocalDate(dateStr: string): Date | null {
-  const parts = String(dateStr || '').split('-').map(Number);
-  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
-  return new Date(parts[0], parts[1] - 1, parts[2]);
-}
 
 function parseScheduleData(raw: unknown): Record<string, any> {
   if (raw == null) return {};
@@ -117,13 +107,13 @@ const CateringEventListPage: React.FC = () => {
   }, [allowed, authLoading, load, navigate]);
 
   const filtered = useMemo(() => {
-    const today = startOfToday();
     const q = searchTerm.trim().toLowerCase();
     return events
       .filter((e) => {
-        const d = parseLocalDate(e.date);
-        if (!d) return tab === 'upcoming';
-        const inTab = tab === 'upcoming' ? d >= today : d < today;
+        const inTab =
+          tab === 'upcoming'
+            ? isEventUpcoming(e.date, e.numberOfDays)
+            : isEventPast(e.date, e.numberOfDays);
         if (!inTab) return false;
         if (!q) return true;
         return (

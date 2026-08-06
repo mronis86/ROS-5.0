@@ -1,3 +1,4 @@
+import { isEventPast, isEventUpcoming, parseEventDateLocal, startOfTodayLocal } from './eventActiveWindow';
 import { isQuickModeCalendarEvent } from './quickModeEvent';
 
 export interface AccessEventCalendarRow {
@@ -26,15 +27,10 @@ export interface EventAccessLoadResult {
   error?: string;
 }
 
-function startOfTodayLocal(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-}
-
-function parseEventDateLocal(dateStr: string): Date | null {
-  const parts = String(dateStr || '').split('-').map(Number);
-  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
-  return new Date(parts[0], parts[1] - 1, parts[2]);
+function accessEventNumberOfDays(event: AccessEventCalendarRow): number {
+  const raw = event.schedule_data?.numberOfDays;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
 /** Normalize API rows so Quick Mode is detected even if the server omits isQuickMode. */
@@ -53,9 +49,9 @@ export function eventMatchesAccessTab(
   const isQuick = event.isQuickMode === true || isQuickModeCalendarEvent(event);
   if (tab === 'quickMode') return isQuick;
   if (isQuick) return false;
-  const eventDate = parseEventDateLocal(event.date);
-  if (!eventDate) return tab === 'upcoming';
-  return tab === 'upcoming' ? eventDate >= today : eventDate < today;
+  const days = accessEventNumberOfDays(event);
+  if (tab === 'upcoming') return isEventUpcoming(event.date, days, today);
+  return isEventPast(event.date, days, today);
 }
 
 export function filterEventsForAccessTab(
