@@ -307,7 +307,10 @@ export class DatabaseService {
 
   // Run of Show Data Methods
   static async saveRunOfShowData(
-    data: Omit<RunOfShowData, 'id' | 'created_at' | 'updated_at' | 'last_change_at' | 'last_modified_by' | 'last_modified_by_name' | 'last_modified_by_role'> & { version?: number | null },
+    data: Omit<RunOfShowData, 'id' | 'created_at' | 'updated_at' | 'last_change_at' | 'last_modified_by' | 'last_modified_by_name' | 'last_modified_by_role'> & {
+      version?: number | null;
+      allow_empty_schedule?: boolean;
+    },
     userInfo?: { userId: string; userName: string; userRole: string }
   ): Promise<RunOfShowData | null> {
     try {
@@ -317,6 +320,7 @@ export class DatabaseService {
         customColumnsCount: data.custom_columns?.length || 0,
         settingsKeys: Object.keys(data.settings || {}),
         version: data.version,
+        allowEmpty: data.allow_empty_schedule === true,
         userInfo: userInfo ? `${userInfo.userName} (${userInfo.userRole})` : 'No user info'
       });
 
@@ -331,7 +335,7 @@ export class DatabaseService {
       const result = await apiClient.saveRunOfShowData(dataWithUser);
       return result;
     } catch (error: any) {
-      // Don't mask version conflicts with a localStorage fallback
+      // Don't mask version / empty-schedule conflicts with a localStorage fallback
       if (error?.status === 409) {
         throw error;
       }

@@ -3105,6 +3105,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
       last_modified_by_name,
       last_modified_by_role,
       version: expectedVersion,
+      allow_empty_schedule: allowEmptySchedule,
     } = req.body;
 
     if (!event_id) {
@@ -3167,6 +3168,25 @@ app.post('/api/run-of-show-data', async (req, res) => {
         }
       }
       if (!Array.isArray(existingItems)) existingItems = [];
+
+      // Guard: refuse accidental wipe of a non-empty schedule with []
+      // Intentional clears must send allow_empty_schedule: true (e.g. Excel Delete All).
+      if (
+        existingItems.length > 0 &&
+        scheduleToSave.length === 0 &&
+        allowEmptySchedule !== true
+      ) {
+        console.warn(
+          `🛑 Blocked empty schedule save for event ${event_id}: DB has ${existingItems.length} row(s), incoming was empty (no allow_empty_schedule)`
+        );
+        return res.status(409).json({
+          error: 'empty_schedule_rejected',
+          message:
+            'Refusing to overwrite a non-empty schedule with an empty one. Reload the event, or confirm Delete All.',
+          current: currentRow,
+          existing_count: existingItems.length,
+        });
+      }
 
       const locks = typeof locksByEvent !== 'undefined' ? locksByEvent.get(String(event_id)) : null;
       if (locks && locks.size > 0) {

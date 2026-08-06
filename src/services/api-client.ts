@@ -240,6 +240,8 @@ class ApiClient {
     last_modified_by_role?: string;
     /** Document version last seen by the client (optimistic concurrency). */
     version?: number | null;
+    /** Required to persist an empty schedule over a non-empty one (intentional Delete All). */
+    allow_empty_schedule?: boolean;
   }) {
     const result = await this.request('/api/run-of-show-data', {
       method: 'POST',

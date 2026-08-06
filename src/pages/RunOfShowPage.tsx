@@ -1675,6 +1675,8 @@ const RunOfShowPage: React.FC = () => {
   /** Last schedule + document version accepted from server (for safe saves / OCC). */
   const lastSyncedScheduleRef = useRef<any[]>([]);
   const scheduleVersionRef = useRef<number | null>(null);
+  /** One-shot: next save may persist [] over a non-empty DB (intentional Delete All). */
+  const allowEmptyScheduleOnceRef = useRef(false);
   const isUserEditingRef = useRef(false);
   const scheduleRef = useRef(schedule);
   const customColumnsRef = useRef(customColumns);
@@ -6061,6 +6063,23 @@ const RunOfShowPage: React.FC = () => {
         console.log(`🔒 Save: preserved ${preservedLockCount} row(s) locked by others`);
       }
 
+      // Guard 2: never autosave [] over a known non-empty schedule (Delete All sets allowEmpty).
+      const allowEmpty = allowEmptyScheduleOnceRef.current;
+      const lastSynced = lastSyncedScheduleRef.current || [];
+      if (
+        scheduleWithDurationSeconds.length === 0 &&
+        lastSynced.length > 0 &&
+        !allowEmpty
+      ) {
+        console.warn(
+          `🛑 Skipping empty schedule save for event ${event.id}: last synced had ${lastSynced.length} row(s); restoring local schedule`
+        );
+        scheduleRef.current = lastSynced;
+        setSchedule(lastSynced);
+        return;
+      }
+      if (allowEmpty) allowEmptyScheduleOnceRef.current = false;
+
       const originals = originalDurationsRef.current || {};
       const dataToSave = {
         event_id: event.id,
@@ -6080,6 +6099,7 @@ const RunOfShowPage: React.FC = () => {
           ...(Object.keys(originals).length > 0 && { original_durations: originals })
         },
         version: scheduleVersionRef.current,
+        ...(allowEmpty ? { allow_empty_schedule: true } : {}),
       };
 
       console.log('🔄 Saving schedule', {
@@ -6087,6 +6107,7 @@ const RunOfShowPage: React.FC = () => {
         items: scheduleWithDurationSeconds.length,
         version: scheduleVersionRef.current,
         preservedLockCount,
+        allowEmpty,
       });
 
       const result = await DatabaseService.saveRunOfShowData(dataToSave, {
@@ -6102,10 +6123,17 @@ const RunOfShowPage: React.FC = () => {
     } catch (error: any) {
       if (error?.status === 409 && error?.data?.current) {
         const current = error.data.current;
-        console.warn('⚠️ Save rejected (stale version) — merging server state', {
-          clientVersion: scheduleVersionRef.current,
-          serverVersion: current.version,
-        });
+        const rejectedEmpty = error?.data?.error === 'empty_schedule_rejected';
+        console.warn(
+          rejectedEmpty
+            ? '🛑 Save rejected — empty schedule wipe blocked; restoring server rows'
+            : '⚠️ Save rejected (stale version) — merging server state',
+          {
+            clientVersion: scheduleVersionRef.current,
+            serverVersion: current.version,
+            error: error?.data?.error,
+          }
+        );
         let items = current.schedule_items;
         if (typeof items === 'string') {
           try {
@@ -9279,13 +9307,15 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Handle delete all schedule items
+  // Handle delete all schedule items (intentional wipe — must pass allow_empty_schedule)
   const handleDeleteAllScheduleItems = () => {
     try {
       const itemCount = schedule.length;
       
       // Clear all schedule items
       setSchedule([]);
+      allowEmptyScheduleOnceRef.current = true;
+      handleUserEditing();
       
       // Log the change
       logChange('DELETE_ALL', `Deleted all ${itemCount} schedule items`, {
@@ -9294,7 +9324,7 @@ const RunOfShowPage: React.FC = () => {
         source: 'Excel Import Modal'
       });
       
-      console.log(`✅ Deleted all ${itemCount} schedule items`);
+      console.log(`✅ Deleted all ${itemCount} schedule items (allow_empty_schedule armed for next save)`);
       
     } catch (error) {
       console.error('❌ Error deleting all schedule items:', error);
