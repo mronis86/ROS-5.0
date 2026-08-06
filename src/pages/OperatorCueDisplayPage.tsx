@@ -234,6 +234,8 @@ const OperatorCueDisplayPage: React.FC = () => {
   const [otMap, setOtMap] = useState<Record<number, number>>({});
   const [showStartOt, setShowStartOt] = useState(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
+  /** Frozen Enter In-Show starts — WAS under Start (same blob as ROS). */
+  const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
   const [indented, setIndented] = useState<Record<number, { parentId: number }>>({});
   const [visible, setVisible] = useState<Set<FieldId>>(() => loadVisibleFields());
   const [showFields, setShowFields] = useState(false);
@@ -494,10 +496,11 @@ const OperatorCueDisplayPage: React.FC = () => {
       if (Array.isArray(data?.custom_columns)) {
         setColumns(data.custom_columns.map((c: any) => ({ id: String(c.id), name: String(c.name || c.id) })));
       }
-      const [ot, showOt, ind] = await Promise.all([
+      const [ot, showOt, ind, showSettings] = await Promise.all([
         DatabaseService.getOvertimeMinutes(id),
         DatabaseService.getShowStartOvertime(id),
         DatabaseService.getIndentedCues(id),
+        DatabaseService.getShowSettings(id),
       ]);
       setOtMap(ot || {});
       if (showOt != null) {
@@ -510,6 +513,23 @@ const OperatorCueDisplayPage: React.FC = () => {
         if (c.item_id && c.parent_item_id) map[c.item_id] = { parentId: c.parent_item_id };
       });
       setIndented(map);
+
+      const fromRos: Record<number, string> = {};
+      const rawRos = data?.settings?.locked_start_times;
+      if (rawRos && typeof rawRos === 'object') {
+        for (const [k, v] of Object.entries(rawRos)) {
+          const rowId = Number(k);
+          if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) fromRos[rowId] = v.trim();
+        }
+      }
+      const fromApi: Record<number, string> = {};
+      if (showSettings?.lockedStartTimes && typeof showSettings.lockedStartTimes === 'object') {
+        for (const [k, v] of Object.entries(showSettings.lockedStartTimes)) {
+          const rowId = Number(k);
+          if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) fromApi[rowId] = v.trim();
+        }
+      }
+      setLockedStartTimes({ ...fromRos, ...fromApi });
       setError('');
     } catch (e) {
       console.error(e);
@@ -565,6 +585,22 @@ const OperatorCueDisplayPage: React.FC = () => {
       onInitialSync: () => {
         void boot();
         void syncRef.current?.();
+      },
+      onShowModeUpdate: (d: {
+        event_id: string;
+        lockedStartTimes?: Record<string, string> | null;
+      }) => {
+        if (d.event_id !== event.id || d.lockedStartTimes === undefined) return;
+        if (d.lockedStartTimes && typeof d.lockedStartTimes === 'object') {
+          const mapped: Record<number, string> = {};
+          for (const [k, v] of Object.entries(d.lockedStartTimes)) {
+            const rowId = Number(k);
+            if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) mapped[rowId] = v.trim();
+          }
+          setLockedStartTimes(mapped);
+        } else {
+          setLockedStartTimes({});
+        }
       },
       onConnectionChange: () => {},
     };
@@ -626,7 +662,10 @@ const OperatorCueDisplayPage: React.FC = () => {
   }, [dayRows, current]);
 
   const curIdx = current ? schedule.findIndex((s) => s.id === current.id) : -1;
-  const startWas = curIdx >= 0 ? baseStart(schedule, curIdx) : '';
+  const startWas =
+    curIdx >= 0 && current
+      ? lockedStartTimes[current.id]?.trim() || baseStart(schedule, curIdx)
+      : '';
   const startNow = curIdx >= 0 ? adjStart(schedule, curIdx) : '';
   const otNow = curIdx >= 0 ? cumOt(schedule, curIdx) : 0;
   const rowOt = current ? otMap[current.id] || 0 : 0;
@@ -851,11 +890,18 @@ const OperatorCueDisplayPage: React.FC = () => {
     if (colId === 'segmentName') return <span className="font-semibold truncate">{item.segmentName || '—'}</span>;
     if (colId === 'duration') return <span className="font-mono truncate">{durLabel(item)}</span>;
     if (colId === 'start') {
+      const was =
+        lockedStartTimes[item.id]?.trim() || (idx >= 0 ? baseStart(schedule, idx) : '');
       return (
-        <span className="truncate leading-tight">
-          <span className="text-slate-200">{st || '—'}</span>
-          {ot !== 0 && (
-            <span className={`ml-1 ${ot > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{otLabel(ot)}</span>
+        <span className="truncate leading-tight inline-flex flex-col">
+          <span>
+            <span className="text-slate-200">{st || '—'}</span>
+            {ot !== 0 && (
+              <span className={`ml-1 ${ot > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{otLabel(ot)}</span>
+            )}
+          </span>
+          {was && st && was !== st && (
+            <span className="text-[10px] text-slate-500 leading-none">was {was}</span>
           )}
         </span>
       );

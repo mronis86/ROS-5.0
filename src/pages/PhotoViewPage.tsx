@@ -390,6 +390,13 @@ const PhotoViewPage: React.FC = () => {
   const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimerState, setDisconnectTimerState] = useState<NodeJS.Timeout | null>(null);
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** False after auto-disconnect until user clicks Reconnect — blocks silent socket/API reconnect. */
+  const connectionEnabledRef = useRef(true);
+  const scheduleRef = useRef(schedule);
+  scheduleRef.current = schedule;
+  /** Bumped on Reconnect so the WebSocket effect re-runs and connects again. */
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
   
   // Overtime state variables
@@ -402,13 +409,26 @@ const PhotoViewPage: React.FC = () => {
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
+  /** Frozen Enter In-Show starts for WAS under Start. */
+  const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (!event?.id) return;
+    connectionEnabledRef.current = true;
     apiClient.invalidateShowModeCache(event.id);
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
+      if (s.lockedStartTimes && typeof s.lockedStartTimes === 'object') {
+        const locked: Record<number, string> = {};
+        for (const [k, v] of Object.entries(s.lockedStartTimes)) {
+          const rowId = Number(k);
+          if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) locked[rowId] = v.trim();
+        }
+        setLockedStartTimes(locked);
+      } else {
+        setLockedStartTimes({});
+      }
     });
   }, [event?.id]);
 
@@ -1025,6 +1045,8 @@ const PhotoViewPage: React.FC = () => {
     const runDataSync = async () => {
       const id = eventIdRef.current;
       if (!id) return;
+      // After auto-disconnect timer, stop polling until user reconnects
+      if (!connectionEnabledRef.current) return;
       try {
         apiClient.invalidateSyncDataCache(id);
         console.log('🔄 PhotoView: sync - fetching schedule, overtime, START cue');
@@ -1087,6 +1109,26 @@ const PhotoViewPage: React.FC = () => {
           const showSettings = await DatabaseService.getShowSettings(id);
           setShowMode(showSettings.showMode);
           setTrackWasDurations(showSettings.trackWasDurations);
+          if (showSettings.lockedStartTimes && typeof showSettings.lockedStartTimes === 'object') {
+            const locked: Record<number, string> = {};
+            for (const [k, v] of Object.entries(showSettings.lockedStartTimes)) {
+              const rowId = Number(k);
+              if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) locked[rowId] = v.trim();
+            }
+            setLockedStartTimes(locked);
+          } else {
+            const rawRos = data.settings?.locked_start_times;
+            if (rawRos && typeof rawRos === 'object') {
+              const locked: Record<number, string> = {};
+              for (const [k, v] of Object.entries(rawRos)) {
+                const rowId = Number(k);
+                if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) locked[rowId] = v.trim();
+              }
+              setLockedStartTimes(locked);
+            } else {
+              setLockedStartTimes({});
+            }
+          }
 
           const origDurs = data.settings?.original_durations;
           if (origDurs && typeof origDurs === 'object') {
@@ -1335,7 +1377,7 @@ const PhotoViewPage: React.FC = () => {
           });
 
           const itemId = parseInt(String(data.item_id), 10);
-          const scheduleItem = schedule.find(item => item.id === itemId);
+          const scheduleItem = scheduleRef.current.find(item => item.id === itemId);
 
           setSubCueTimerProgress(prev => ({
             ...prev,
@@ -1415,13 +1457,30 @@ const PhotoViewPage: React.FC = () => {
       onStartCueSelectionUpdate: () => {
         // Photo page ONLY gets START cue updates every 20s - ignore WebSocket
       },
-      onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
+      onShowModeUpdate: (data: {
+        event_id: string;
+        showMode?: 'rehearsal' | 'in-show';
+        trackWasDurations?: boolean;
+        lockedStartTimes?: Record<string, string> | null;
+      }) => {
         if (data.event_id === event?.id) {
           console.log('📡 PhotoView: showModeUpdate', data.showMode, data.trackWasDurations);
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') {
             setShowMode(data.showMode);
           }
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          if (data.lockedStartTimes !== undefined) {
+            if (data.lockedStartTimes && typeof data.lockedStartTimes === 'object') {
+              const mapped: Record<number, string> = {};
+              for (const [k, v] of Object.entries(data.lockedStartTimes)) {
+                const rowId = Number(k);
+                if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) mapped[rowId] = v.trim();
+              }
+              setLockedStartTimes(mapped);
+            } else {
+              setLockedStartTimes({});
+            }
+          }
           // Force next data sync to re-read mode/overtime from API (no stale cache)
           if (event?.id) apiClient.invalidateShowModeCache(event.id);
         }
@@ -1441,6 +1500,16 @@ const PhotoViewPage: React.FC = () => {
           DatabaseService.getShowSettings(event.id).then(s => {
             setShowMode(s.showMode);
             setTrackWasDurations(s.trackWasDurations);
+            if (s.lockedStartTimes && typeof s.lockedStartTimes === 'object') {
+              const locked: Record<number, string> = {};
+              for (const [k, v] of Object.entries(s.lockedStartTimes)) {
+                const rowId = Number(k);
+                if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) locked[rowId] = v.trim();
+              }
+              setLockedStartTimes(locked);
+            } else {
+              setLockedStartTimes({});
+            }
           });
         }
         // Load current active timer
@@ -1538,7 +1607,7 @@ const PhotoViewPage: React.FC = () => {
             if (activeSubCue) {
               const enriched = enrichSubCueTimer(activeSubCue);
               const itemId = parseInt(String(activeSubCue.item_id), 10);
-              const scheduleItem = schedule.find(item => item.id === itemId);
+              const scheduleItem = scheduleRef.current.find(item => item.id === itemId);
 
               setHybridTimerData(prev => ({
                 ...prev,
@@ -1582,26 +1651,28 @@ const PhotoViewPage: React.FC = () => {
       }
     };
 
-    // Connect to WebSocket
-    socketClient.connect(event.id, callbacks);
+    // Connect only while the auto-disconnect session is active
+    if (connectionEnabledRef.current) {
+      socketClient.connect(event.id, callbacks);
+    }
     
     // Show disconnect timer modal only on first connect
-    if (!hasShownModalOnce) {
+    if (!hasShownModalOnce && connectionEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
 
     // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
+      if (!connectionEnabledRef.current) return;
       if (document.hidden) {
         console.log('👁️ PhotoView: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(event.id);
-        // Timer keeps running in background
+        // Auto-disconnect countdown keeps running in background
       } else if (!socketClient.isConnected()) {
         console.log('👁️ PhotoView: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
-        // Modal won't show again - timer still running
       }
     };
 
@@ -1611,10 +1682,21 @@ const PhotoViewPage: React.FC = () => {
       console.log('🔄 Cleaning up PhotoView WebSocket connection');
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (disconnectTimerState) clearTimeout(disconnectTimerState);
+      // Do NOT clear disconnectTimerRef here — schedule syncs used to remount this effect
+      // and cancel the auto-disconnect timer. Only clear on true unmount via event change below.
       if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
     };
-  }, [event?.id, schedule]);
+  }, [event?.id, connectionEpoch]);
+
+  // Clear auto-disconnect timer only when leaving the event / unmounting
+  useEffect(() => {
+    return () => {
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+    };
+  }, [event?.id]);
 
 
   // Real-time countdown timer for running timers (same pattern as RunOfShowPage)
@@ -2115,7 +2197,10 @@ const PhotoViewPage: React.FC = () => {
       return;
     }
     
+    if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
     if (disconnectTimerState) clearTimeout(disconnectTimerState);
+
+    connectionEnabledRef.current = true;
     
     const ms = totalMinutes * 60 * 1000;
     const timer = setTimeout(() => {
@@ -2125,6 +2210,10 @@ const PhotoViewPage: React.FC = () => {
       
       console.log(`⏰ PhotoViewPage: Auto-disconnect timer expired (${timeText.trim()})`);
       console.log('📢 PhotoViewPage: Showing disconnect notification...');
+
+      connectionEnabledRef.current = false;
+      disconnectTimerRef.current = null;
+      setDisconnectTimerState(null);
       
       setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
@@ -2133,11 +2222,12 @@ const PhotoViewPage: React.FC = () => {
       setTimeout(() => {
         if (event?.id) {
           socketClient.disconnect(event.id);
-          console.log('🔌 PhotoViewPage: WebSocket disconnected');
+          console.log('🔌 PhotoViewPage: WebSocket disconnected (session ended)');
         }
       }, 100);
     }, ms);
-    
+
+    disconnectTimerRef.current = timer;
     setDisconnectTimerState(timer);
     setShowDisconnectModal(false);
     
@@ -2145,18 +2235,31 @@ const PhotoViewPage: React.FC = () => {
     if (hours > 0) timeText += `${hours}h `;
     if (minutes > 0) timeText += `${minutes}m`;
     console.log(`⏰ PhotoViewPage: Disconnect timer set to ${timeText.trim()}`);
+
+    // Ensure socket is up after Reconnect → Confirm (modal alone used to leave us disconnected)
+    if (event?.id && !socketClient.isConnected()) {
+      setConnectionEpoch((n) => n + 1);
+    }
   };
   
   const handleNeverDisconnect = () => {
+    if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+    disconnectTimerRef.current = null;
     if (disconnectTimerState) clearTimeout(disconnectTimerState);
     setDisconnectTimerState(null);
+    connectionEnabledRef.current = true;
     setShowDisconnectModal(false);
     console.log('⏰ PhotoViewPage: Disconnect timer set to Never');
+    if (event?.id && !socketClient.isConnected()) {
+      setConnectionEpoch((n) => n + 1);
+    }
   };
   
   const handleReconnect = () => {
+    connectionEnabledRef.current = true;
     setShowDisconnectNotification(false);
     if (event?.id) {
+      setConnectionEpoch((n) => n + 1);
       setShowDisconnectModal(true);
     }
   };
@@ -2837,8 +2940,10 @@ const PhotoViewPage: React.FC = () => {
             // Calculate start time: rehearsal = scheduled only, in-show = with overtime
             const itemIndex = schedule.findIndex(s => s.id === item.id);
             const scheduledStart = calculateStartTime(itemIndex);
+            const wasStart =
+              lockedStartTimes[item.id]?.trim() || scheduledStart;
             const startTime = showMode === 'rehearsal' ? scheduledStart : calculateStartTimeWithOvertime(itemIndex);
-            const startTimeRolled = showMode === 'in-show' && !indentedCues[item.id] && scheduledStart && startTime && String(scheduledStart) !== String(startTime);
+            const startTimeRolled = showMode === 'in-show' && !indentedCues[item.id] && wasStart && startTime && String(wasStart) !== String(startTime);
             
             // Format duration
             const duration = `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
@@ -2897,8 +3002,8 @@ const PhotoViewPage: React.FC = () => {
                         <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>
                           {startTime || (indentedCues[item.id] ? '↘' : 'No Time')}
                         </div>
-                        {startTimeRolled && scheduledStart && (
-                          <div className="text-xs text-slate-400">was {scheduledStart}</div>
+                        {startTimeRolled && wasStart && (
+                          <div className="text-xs text-slate-400">was {wasStart}</div>
                         )}
                         {/* Overtime indicator - only in in-show mode */}
                         {showMode !== 'rehearsal' && !indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(itemIndex) !== calculateStartTimeWithOvertime(itemIndex)) && (
