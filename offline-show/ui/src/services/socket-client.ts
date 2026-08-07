@@ -25,6 +25,8 @@ export interface SocketCallbacks {
     event_id: string;
     showMode?: 'rehearsal' | 'in-show';
     trackWasDurations?: boolean;
+    lockedStartTimes?: Record<string, string> | null;
+    rehearsalBaseline?: any;
   }) => void;
   onPresenceUpdated?: (viewers: {
     userId: string;

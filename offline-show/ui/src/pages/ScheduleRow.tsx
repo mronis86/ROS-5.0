@@ -49,6 +49,8 @@ export interface ScheduleRowProps {
   showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
   originalDuration?: { durationHours: number; durationMinutes: number; durationSeconds: number } | null;
   showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
+  /** Frozen Start time from Enter In-Show — WAS under Start stays on this. */
+  lockedStartTime?: string | null;
   isRowDimmed?: boolean;
   /** Lock held by another editor — row is read-only for everyone else. */
   rowLock?: { userId: string; userName: string } | null;
@@ -106,6 +108,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   showMode = 'in-show',
   originalDuration,
   showWasUnderDuration = false,
+  lockedStartTime = null,
   isRowDimmed = false,
   rowLock = null,
   currentUserId,
@@ -227,7 +230,17 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
         const displayedStart = calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : null;
         const isIndentedRow = Boolean(indentedCues[item.id] || item.isIndented);
-        const startTimeRolled = !isIndentedRow && showMode === 'in-show' && scheduledStart && displayedStart && scheduledStart !== displayedStart;
+        // Prefer frozen Enter In-Show times for WAS so +/- minutes don't move the "was" line.
+        const wasStart =
+          lockedStartTime && String(lockedStartTime).trim()
+            ? String(lockedStartTime).trim()
+            : scheduledStart;
+        const startTimeRolled =
+          !isIndentedRow &&
+          showMode === 'in-show' &&
+          wasStart &&
+          displayedStart &&
+          wasStart !== displayedStart;
         return (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
@@ -241,9 +254,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   ? '↘'
                   : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1))}
             </span>
-            {startTimeRolled && scheduledStart && (
+            {startTimeRolled && wasStart && (
               <span className="text-xs text-slate-400">
-                was {scheduledStart}
+                was {wasStart}
               </span>
             )}
             {!isIndentedRow && showMode !== 'rehearsal' && (

@@ -4279,8 +4279,8 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
     const itemIdNum = parseInt(itemId, 10);
     const { duration_seconds } = req.body;
 
-    if (!duration_seconds || duration_seconds < 0) {
-      return res.status(400).json({ error: 'duration_seconds must be a positive number' });
+    if (duration_seconds == null || Number(duration_seconds) < 0) {
+      return res.status(400).json({ error: 'duration_seconds must be a non-negative number' });
     }
 
     // 1. Update the schedule row duration (run_of_show_data.schedule_items) so the row shows the new duration

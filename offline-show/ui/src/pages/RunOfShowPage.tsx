@@ -22,6 +22,7 @@ import AgendaImportModal from '../components/AgendaImportModal';
 import ImportCSVModal from '../components/ImportCSVModal';
 import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
+import TimeToastIcon from '../components/TimeToastIcon';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
 import {
@@ -689,14 +690,23 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => { showModeRef.current = showMode; }, [showMode]);
   const [showInShowConfirmModal, setShowInShowConfirmModal] = useState(false);
   const [showRehearsalConfirmModal, setShowRehearsalConfirmModal] = useState(false);
+  const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
+  const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
+  /** Start times frozen when entering In-Show — WAS under Start stays on these. */
+  const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
+  const lockedStartTimesRef = useRef(lockedStartTimes);
+  useEffect(() => { lockedStartTimesRef.current = lockedStartTimes; }, [lockedStartTimes]);
   const originalDurationsSetForEventRef = useRef<string | null>(null);
   useEffect(() => { originalDurationsSetForEventRef.current = null; }, [event?.id]);
-  // Reset capture lock and clear originals when leaving in-show or unchecking track,
-  // so we re-capture current durations when re-entering (e.g. after rehearsal edits)
+  // Reset duration "was" capture when leaving in-show or unchecking track.
   useEffect(() => {
-    if (showMode !== 'in-show' || !trackWasDurations) {
+    if (showMode !== 'in-show') {
+      originalDurationsSetForEventRef.current = null;
+      setOriginalDurations({});
+      setLockedStartTimes({});
+    } else if (!trackWasDurations) {
       originalDurationsSetForEventRef.current = null;
       setOriginalDurations({});
     }
@@ -721,6 +731,16 @@ const RunOfShowPage: React.FC = () => {
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
+      if (s.lockedStartTimes && typeof s.lockedStartTimes === 'object') {
+        const mapped: Record<number, string> = {};
+        for (const [k, v] of Object.entries(s.lockedStartTimes)) {
+          const id = Number(k);
+          if (Number.isFinite(id) && typeof v === 'string' && v.trim()) mapped[id] = v;
+        }
+        setLockedStartTimes(mapped);
+      } else {
+        setLockedStartTimes({});
+      }
     });
   }, [event?.id]);
   
@@ -859,6 +879,14 @@ const RunOfShowPage: React.FC = () => {
   
   // Follow feature state
   const [isFollowEnabled, setIsFollowEnabled] = useState(false);
+  /** Compact Filter / Time Toast / Follow to icon-only to save toolbar space. */
+  const [toolbarActionsCompact, setToolbarActionsCompact] = useState(() => {
+    try {
+      return localStorage.getItem('rosToolbarActionsCompact') === 'true';
+    } catch {
+      return false;
+    }
+  });
   
   // Load follow state from localStorage on mount
   useEffect(() => {
@@ -872,6 +900,14 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(`followEnabled_${event?.id}`, isFollowEnabled.toString());
   }, [isFollowEnabled, event?.id]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('rosToolbarActionsCompact', toolbarActionsCompact ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [toolbarActionsCompact]);
 
   const { viewers, setViewers } = useActiveViewers();
 
@@ -5089,103 +5125,87 @@ const RunOfShowPage: React.FC = () => {
     return '#ffffff';
   };
 
-  // Adjust timer duration and update start times
+  // Adjust loaded/running cue duration (toolbar −5/−1/+1/+5). Must update hybrid countdown
+  // immediately — getRemainingTime() prefers hybridTimerProgress over schedule/timerProgress.
   const adjustTimerDuration = async (seconds: number) => {
-    console.log('⏱️⏱️⏱️ ADJUST TIMER CLICKED:', seconds, 'seconds');
-    console.log('⏱️⏱️⏱️ activeItemId:', activeItemId);
-    console.log('⏱️⏱️⏱️ user:', user);
-    console.log('⏱️⏱️⏱️ event:', event);
-    
+    console.log('⏱️ ADJUST TIMER CLICKED:', seconds, 'seconds', { activeItemId });
+
     if (!activeItemId || !user || !event?.id) {
       console.log('❌ Cannot adjust timer - missing data:', { activeItemId, user: !!user, eventId: event?.id });
       return;
     }
-    
+
     if (schedule.length === 0) {
       console.log('❌ Schedule is empty - waiting for data to load');
       alert('Schedule is still loading. Please wait a moment and try again.');
       return;
     }
-    
-    // Convert activeItemId to number if it's a string to match schedule item IDs
-    const numericActiveItemId = typeof activeItemId === 'string' ? parseInt(activeItemId) : activeItemId;
+
+    const numericActiveItemId = typeof activeItemId === 'string' ? parseInt(activeItemId, 10) : activeItemId;
     const item = schedule.find(s => s.id === numericActiveItemId);
     if (!item) {
-      console.log('❌ Cannot find active item in schedule');
-      console.log('❌ Active item ID type:', typeof activeItemId, activeItemId);
-      console.log('❌ Schedule item IDs:', schedule.map(s => ({ id: s.id, type: typeof s.id })));
+      console.log('❌ Cannot find active item in schedule', { activeItemId, numericActiveItemId });
       return;
     }
-    
-    console.log('⏱️⏱️⏱️ Found item:', item.segmentName);
-    
-    // Update the item's duration
-    const newDurationSeconds = Math.max(0, (item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds) + seconds);
+
+    const newDurationSeconds = Math.max(
+      0,
+      (item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds) + seconds
+    );
     const newHours = Math.floor(newDurationSeconds / 3600);
     const newMinutes = Math.floor((newDurationSeconds % 3600) / 60);
     const newSecs = newDurationSeconds % 60;
-    
-    // Update schedule with new duration - this will trigger the auto-save mechanism
-    const updatedSchedule = schedule.map(scheduleItem => 
-      scheduleItem.id === numericActiveItemId 
-        ? { 
-            ...scheduleItem, 
-            durationHours: newHours,
-            durationMinutes: newMinutes,
-            durationSeconds: newSecs
-          }
-        : scheduleItem
-    );
-    
-    setSchedule(updatedSchedule);
-    
-    const hybridRunning =
-      hybridTimerData?.activeTimer &&
-      (hybridTimerData.activeTimer.is_running === true ||
-        hybridTimerData.activeTimer.timer_state === 'running') &&
-      Number(hybridTimerData.activeTimer.item_id) === Number(numericActiveItemId);
-    const isRunningLocally = Boolean(activeTimers[numericActiveItemId]) || hybridRunning;
 
-    // Update the timer progress if it exists
-    if (timerProgress[numericActiveItemId] || isRunningLocally) {
-      console.log('🔄 Updating timer duration for item:', numericActiveItemId, 'new duration:', newDurationSeconds);
-      
-      // Always update the timer progress total duration
-      setTimerProgress(prev => ({
+    // Mark editing BEFORE any await so the schedule effect auto-saves.
+    handleUserEditing();
+
+    setSchedule(prev =>
+      prev.map(scheduleItem =>
+        scheduleItem.id === numericActiveItemId
+          ? {
+              ...scheduleItem,
+              durationHours: newHours,
+              durationMinutes: newMinutes,
+              durationSeconds: newSecs,
+            }
+          : scheduleItem
+      )
+    );
+
+    setTimerProgress(prev => {
+      const existing = prev[numericActiveItemId];
+      return {
         ...prev,
         [numericActiveItemId]: {
-          ...(prev[numericActiveItemId] || { elapsed: 0, startedAt: null }),
-          total: newDurationSeconds
-        }
-      }));
+          elapsed: existing?.elapsed ?? 0,
+          startedAt: existing?.startedAt ?? null,
+          total: newDurationSeconds,
+        },
+      };
+    });
 
-      if (hybridRunning || hybridTimerData?.activeTimer?.item_id != null) {
-        setHybridTimerData((prev: any) => {
-          const t = prev?.activeTimer;
-          if (!t || Number(t.item_id) !== Number(numericActiveItemId)) return prev;
-          return {
-            ...prev,
-            activeTimer: {
-              ...t,
-              duration_seconds: newDurationSeconds,
-            },
-          };
-        });
-      }
-      
-      // If timer is currently running, update it in the database immediately for real-time sync
-      if (isRunningLocally) {
-        console.log('🔄 Updating running timer duration in database for real-time sync');
-        markLocalMutationGuard(5000);
-        await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
-      }
+    const hybridId = hybridTimerData?.activeTimer?.item_id;
+    const hybridMatches =
+      hybridId != null &&
+      (Number(hybridId) === numericActiveItemId || String(hybridId) === String(numericActiveItemId));
+    if (hybridMatches) {
+      setHybridTimerData((prev: any) =>
+        prev?.activeTimer
+          ? { ...prev, activeTimer: { ...prev.activeTimer, duration_seconds: newDurationSeconds } }
+          : prev
+      );
+      setHybridTimerProgress(prev => ({ ...prev, total: newDurationSeconds }));
     }
-    
-    // Mark user as editing - this will pause sync and trigger auto-save after pause
-    console.log('✏️ Marking user as editing (timer duration change)');
-    handleUserEditing();
-    
-    console.log('✅ Timer duration updated - running timer synced immediately, schedule will sync after pause');
+
+    console.log('🔄 Updating cue duration via API:', newDurationSeconds);
+    try {
+      markLocalMutationGuard(5000);
+      await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
+    } catch (err) {
+      console.error('❌ Failed to update timer duration via API:', err);
+    }
+
+    console.log('✅ Timer duration adjusted to', newDurationSeconds, 's');
   };
   // Load a CUE (stop any active timer and select the CUE)
   const loadCue = async (itemId: number) => {
@@ -5734,6 +5754,127 @@ const RunOfShowPage: React.FC = () => {
     console.log('✅ RunOfShow: Reset all states event emitted');
   };
 
+  /** Manually nudge show-start offset (minutes). Positive = late / push later. Requires START cue. */
+  const adjustShowStartOffset = async (deltaMinutes: number) => {
+    if (!event?.id) return;
+    if (!startCueId) {
+      alert('Mark a START cue (star) first. The offset shifts Start times from that row onward.');
+      return;
+    }
+    const next = showStartOvertime + deltaMinutes;
+    const startIndex = schedule.findIndex(s => s.id === startCueId);
+    const scheduledTime = startIndex >= 0 ? (calculateStartTime(startIndex) || '') : '';
+    const actualTime = new Date().toISOString();
+    setShowStartOvertime(next);
+    try {
+      await DatabaseService.saveShowStartOvertime(event.id, startCueId, next, scheduledTime, actualTime);
+      logChange(
+        'SHOW_START_OFFSET_ADJUST',
+        `Show start offset set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
+        { fieldName: 'showStartOvertime', oldValue: showStartOvertime, newValue: next, deltaMinutes }
+      );
+    } catch (error) {
+      console.error('❌ Failed to save show start offset:', error);
+      alert('Could not save schedule offset. Please try again.');
+    }
+  };
+
+  /** Parent cue whose per-cue overtime "Prev" controls should edit (before loaded/running, else last completed). */
+  const resolvePreviousCueForOvertimeAdjust = (): { id: number; label: string } | null => {
+    const day = selectedDay || 1;
+    const parents = schedule.filter(
+      (s) => (s.day || 1) === day && !isIndentedScheduleItem(s, indentedCues)
+    );
+    if (parents.length === 0) return null;
+
+    const cueLabel = (item: (typeof parents)[number]) =>
+      String(item.customFields?.cue || item.segmentName || `Row ${item.id}`);
+
+    if (activeItemId != null) {
+      const activeIdx = parents.findIndex(
+        (s) => s.id === activeItemId || String(s.id) === String(activeItemId)
+      );
+      if (activeIdx > 0) {
+        const prev = parents[activeIdx - 1];
+        return { id: prev.id, label: cueLabel(prev) };
+      }
+    }
+
+    for (let i = parents.length - 1; i >= 0; i--) {
+      if (completedCues[parents[i].id]) {
+        return { id: parents[i].id, label: cueLabel(parents[i]) };
+      }
+    }
+
+    for (let i = parents.length - 1; i >= 0; i--) {
+      if ((overtimeMinutes[parents[i].id] || 0) !== 0) {
+        return { id: parents[i].id, label: cueLabel(parents[i]) };
+      }
+    }
+
+    return null;
+  };
+
+  /** Nudge per-cue overtime on the previous (local) cue — does not change root show-start offset. */
+  const adjustPreviousCueOvertime = async (deltaMinutes: number) => {
+    if (!event?.id) return;
+    const target = resolvePreviousCueForOvertimeAdjust();
+    if (!target) {
+      alert('Load or complete a cue first so we know which previous cue to adjust.');
+      return;
+    }
+    const prevValue = overtimeMinutes[target.id] || 0;
+    const next = prevValue + deltaMinutes;
+    setOvertimeMinutes((prev) => ({ ...prev, [target.id]: next }));
+    try {
+      await DatabaseService.saveOvertimeMinutes(event.id, target.id, next);
+      const socket = socketClient.getSocket();
+      if (socket) {
+        socket.emit('overtimeUpdate', {
+          event_id: event.id,
+          item_id: target.id,
+          overtimeMinutes: next,
+        });
+      }
+      logChange(
+        'CUE_OVERTIME_ADJUST',
+        `Cue ${target.label} overtime set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
+        {
+          fieldName: 'overtimeMinutes',
+          itemId: target.id,
+          cueLabel: target.label,
+          oldValue: prevValue,
+          newValue: next,
+          deltaMinutes,
+        }
+      );
+    } catch (error) {
+      console.error('❌ Failed to save previous-cue overtime:', error);
+      setOvertimeMinutes((prev) => ({ ...prev, [target.id]: prevValue }));
+      alert('Could not save cue overtime. Please try again.');
+    }
+  };
+
+  /** Wipe per-cue overtime + show-start offset without stopping timers / completed cues. */
+  const clearShowOffsets = async () => {
+    if (!event?.id) return;
+    try {
+      await DatabaseService.clearOvertimeMinutes(event.id);
+      await DatabaseService.clearShowStartOvertime(event.id);
+      setOvertimeMinutes({});
+      setShowStartOvertime(0);
+      logChange('CLEAR_SHOW_OFFSETS', 'Cleared all schedule overtime offsets for this show', {
+        fieldName: 'overtimeOffsets',
+        oldValue: 'present',
+        newValue: 'cleared',
+      });
+      console.log('✅ Cleared show offsets (overtime minutes + show start overtime)');
+    } catch (error) {
+      console.error('❌ Failed to clear show offsets:', error);
+      alert('Could not clear offsets. Please try again.');
+    }
+  };
+
 
   // Open full-screen timer in new window
   const openFullScreenTimer = () => {
@@ -6104,6 +6245,7 @@ const RunOfShowPage: React.FC = () => {
       }
 
       const originals = originalDurationsRef.current || {};
+      const locked = lockedStartTimesRef.current || {};
       const dataToSave = {
         event_id: event.id,
         event_name: event.name,
@@ -6119,7 +6261,12 @@ const RunOfShowPage: React.FC = () => {
           lastSaved: new Date().toISOString(),
           show_mode: showModeRef.current,
           track_was_durations: trackWasDurationsRef.current,
-          ...(Object.keys(originals).length > 0 && { original_durations: originals })
+          ...(Object.keys(originals).length > 0 && { original_durations: originals }),
+          ...(Object.keys(locked).length > 0 && {
+            locked_start_times: Object.fromEntries(
+              Object.entries(locked).map(([k, v]) => [String(k), v])
+            ),
+          }),
         }
       };
 
@@ -7039,10 +7186,27 @@ const RunOfShowPage: React.FC = () => {
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
         }
       },
-      onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
+      onShowModeUpdate: (data: {
+        event_id: string;
+        showMode?: 'rehearsal' | 'in-show';
+        trackWasDurations?: boolean;
+        lockedStartTimes?: Record<string, string> | null;
+      }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          if (data.lockedStartTimes !== undefined) {
+            if (data.lockedStartTimes && typeof data.lockedStartTimes === 'object') {
+              const mapped: Record<number, string> = {};
+              for (const [k, v] of Object.entries(data.lockedStartTimes)) {
+                const id = Number(k);
+                if (Number.isFinite(id) && typeof v === 'string' && v.trim()) mapped[id] = v;
+              }
+              setLockedStartTimes(mapped);
+            } else {
+              setLockedStartTimes({});
+            }
+          }
         }
       },
       onShowStartOvertimeReset: (data: { event_id: string }) => {
@@ -10013,11 +10177,39 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showInShowConfirmModal}
         onClose={() => setShowInShowConfirmModal(false)}
         onConfirm={() => {
-          DatabaseService.saveShowMode(event!.id, 'in-show').then(() => setShowMode('in-show'));
+          void (async () => {
+            if (!event?.id) return;
+            const nextLocked: Record<number, string> = {};
+            const lockedForApi: Record<string, string> = {};
+            schedule.forEach((item, idx) => {
+              if (item?.id == null) return;
+              if (indentedCues[item.id] || item.isIndented) return;
+              const t = String(calculateStartTime(idx) || '').trim();
+              if (!t) return;
+              nextLocked[item.id] = t;
+              lockedForApi[String(item.id)] = t;
+            });
+            await DatabaseService.saveShowModeWithBaseline(event.id, {
+              showMode: 'in-show',
+              lockedStartTimes: lockedForApi,
+            });
+            setShowMode('in-show');
+            setLockedStartTimes(nextLocked);
+            logChange(
+              'SHOW_MODE_CHANGE',
+              `Entered In-Show — locked start times (${Object.keys(nextLocked).length})`,
+              {
+                fieldName: 'showMode',
+                oldValue: 'rehearsal',
+                newValue: 'in-show',
+                lockedStartCount: Object.keys(nextLocked).length,
+              }
+            );
+          })();
         }}
         title="Enter Live Show Tracking Mode?"
-        message="Overtime will be tracked and the Start column will show live adjustments. Only switch when you are ready for the live show."
-        confirmLabel="Enter In-Show"
+        message="Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. Hit OK to continue."
+        confirmLabel="OK — Enter In-Show"
         cancelLabel="Cancel"
         confirmClassName="bg-green-600 hover:bg-green-500"
       />
@@ -10027,13 +10219,44 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showRehearsalConfirmModal}
         onClose={() => setShowRehearsalConfirmModal(false)}
         onConfirm={() => {
-          DatabaseService.saveShowMode(event!.id, 'rehearsal').then(() => setShowMode('rehearsal'));
+          void (async () => {
+            if (!event?.id) return;
+            await DatabaseService.saveShowModeWithBaseline(event.id, {
+              showMode: 'rehearsal',
+              clearLockedStartTimes: true,
+            });
+            setShowMode('rehearsal');
+            setLockedStartTimes({});
+            logChange(
+              'SHOW_MODE_CHANGE',
+              'Switched back to Rehearsal — overtime tracking paused (start-time lock cleared)',
+              {
+                fieldName: 'showMode',
+                oldValue: 'in-show',
+                newValue: 'rehearsal',
+              }
+            );
+          })();
         }}
         title="Switch back to Rehearsal mode?"
-        message="Overtime will no longer be tracked and the Start column will show scheduled times only. Continue?"
+        message="Overtime will no longer be tracked and the Start column will show scheduled times only. Locked start times (WAS) will be cleared. Continue?"
         confirmLabel="Switch to Rehearsal"
         cancelLabel="Stay In-Show"
         confirmClassName="bg-amber-600 hover:bg-amber-500"
+      />
+
+      {/* Clear schedule offsets (demo / accidental In-Show overtime) */}
+      <ConfirmModal
+        isOpen={showClearOffsetsConfirmModal}
+        onClose={() => setShowClearOffsetsConfirmModal(false)}
+        onConfirm={() => {
+          void clearShowOffsets();
+        }}
+        title="Clear all schedule offsets?"
+        message="This deletes per-cue overtime and the show-start offset for this event. Timers and completed cues are kept. Use this after a demo or if In-Show tracking was turned on by accident."
+        confirmLabel="Clear offsets"
+        cancelLabel="Cancel"
+        confirmClassName="bg-red-600 hover:bg-red-500"
       />
 
       {/* Move Rows modal - reorder rows below current loaded/running cue (step 1: select, step 2: confirm) */}
@@ -11426,44 +11649,124 @@ const RunOfShowPage: React.FC = () => {
               </div>
               
               {/* Right Side Controls */}
-              <div className="flex items-center gap-4">
-
+              <div className="flex items-center gap-2">
+              {/* Compact / expand Filter · Toast · Follow */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setToolbarActionsCompact((v) => !v);
+                }}
+                className="relative z-20 h-9 w-7 shrink-0 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-100 rounded transition-colors border border-slate-500/80"
+                title={
+                  toolbarActionsCompact
+                    ? 'Show button labels'
+                    : 'Hide labels (icon-only)'
+                }
+                aria-pressed={toolbarActionsCompact}
+                aria-label={
+                  toolbarActionsCompact
+                    ? 'Show button labels'
+                    : 'Hide button labels'
+                }
+              >
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  {toolbarActionsCompact ? (
+                    <>
+                      <path d="M19 6l-6 6 6 6" />
+                      <path d="M11 6l-6 6 6 6" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M5 6l6 6-6 6" />
+                      <path d="M13 6l6 6-6 6" />
+                    </>
+                  )}
+                </svg>
+              </button>
 
               {/* Filter View Button */}
               <button
                 onClick={() => setShowFilterModal(true)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors"
+                className={`h-9 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors inline-flex items-center justify-center ${
+                  toolbarActionsCompact ? 'w-9 px-0' : 'px-4 gap-1.5'
+                }`}
                 title="Open Filter View"
               >
-                Filter View
+                <span aria-hidden="true">🔍</span>
+                {!toolbarActionsCompact && <span>Filter View</span>}
               </button>
 
               
               {/* Time Toast Toggle Button */}
-              <button
-                onClick={() => setTimeToastEnabled(!timeToastEnabled)}
-                className={`px-4 py-2 text-white text-sm font-medium rounded transition-colors ${
-                  timeToastEnabled 
-                    ? 'bg-green-600 hover:bg-green-500' 
-                    : 'bg-slate-600 hover:bg-slate-500'
-                }`}
-                title={timeToastEnabled ? "Disable Time Toast" : "Enable Time Toast"}
-              >
-                ⏰ Time Toast
-              </button>
+              <div className="relative group/toast-tip">
+                <button
+                  onClick={() => setTimeToastEnabled(!timeToastEnabled)}
+                  className={`h-9 text-white text-sm font-medium rounded transition-colors inline-flex items-center justify-center leading-none ${
+                    toolbarActionsCompact ? 'w-9 px-0' : 'px-4 gap-1'
+                  } ${
+                    timeToastEnabled 
+                      ? 'bg-green-600 hover:bg-green-500' 
+                      : 'bg-slate-600 hover:bg-slate-500'
+                  }`}
+                  aria-label={
+                    timeToastEnabled
+                      ? 'Time Toast on. Click to turn off.'
+                      : 'Time Toast off. Click to turn on.'
+                  }
+                >
+                  <TimeToastIcon className="h-5 w-5 shrink-0 translate-y-px" />
+                  {!toolbarActionsCompact && <span>Time Toast</span>}
+                </button>
+                <div
+                  role="tooltip"
+                  className="pointer-events-none absolute left-1/2 top-full z-[80] mt-2 w-72 -translate-x-1/2 rounded-md border border-slate-400 bg-white px-3.5 py-3 text-left text-[15px] leading-relaxed text-black opacity-0 shadow-lg transition-opacity duration-150 group-hover/toast-tip:opacity-100 group-focus-within/toast-tip:opacity-100"
+                >
+                  {timeToastEnabled ? (
+                    <>
+                      <div className="font-bold text-black">Time Toast is on</div>
+                      <div className="mt-1.5 font-medium text-neutral-900">
+                        Shows a popup when a cue starts early, late, or on time.
+                      </div>
+                      <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn off</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="font-bold text-black">Time Toast is off</div>
+                      <div className="mt-1.5 font-medium text-neutral-900">
+                        Turn on to get popup alerts when a cue starts early, late, or on time.
+                      </div>
+                      <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn on</div>
+                    </>
+                  )}
+                </div>
+              </div>
               
               
               {/* Follow Button */}
               <button
                 onClick={() => setIsFollowEnabled(!isFollowEnabled)}
-                className={`px-4 py-2 text-white text-sm font-medium rounded transition-colors ${
+                className={`h-9 text-white text-sm font-medium rounded transition-colors inline-flex items-center justify-center ${
+                  toolbarActionsCompact ? 'w-9 px-0' : 'px-4 gap-1.5'
+                } ${
                   isFollowEnabled 
                     ? 'bg-purple-600 hover:bg-purple-500 ring-4 ring-inset ring-green-400' 
                     : 'bg-purple-600 hover:bg-purple-500'
                 }`}
                 title={isFollowEnabled ? "Disable auto-scroll to active row" : "Enable auto-scroll to active row"}
               >
-                🎯 Follow
+                <span aria-hidden="true">🎯</span>
+                {!toolbarActionsCompact && <span>Follow</span>}
               </button>
               
               {/* Duration Controls */}
@@ -12020,7 +12323,7 @@ const RunOfShowPage: React.FC = () => {
             </div>
             
             {/* Action Buttons */}
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center flex-wrap justify-end">
               {/* Working Day Selector for Multi-Day Events */}
               {(event?.numberOfDays && event.numberOfDays > 1) && (
                 <div className="flex items-center gap-3 mr-4">
@@ -12039,6 +12342,62 @@ const RunOfShowPage: React.FC = () => {
                   </select>
                 </div>
               )}
+
+              {currentUserRole === 'OPERATOR' && (() => {
+                const prevCue = resolvePreviousCueForOvertimeAdjust();
+                const prevOt = prevCue ? (overtimeMinutes[prevCue.id] || 0) : 0;
+                const isRoot = offsetAdjustTarget === 'root';
+                const displayValue = isRoot ? showStartOvertime : prevOt;
+                const canAdjust = isRoot ? !!startCueId : !!prevCue;
+                const adjust = (delta: number) => {
+                  if (isRoot) void adjustShowStartOffset(delta);
+                  else void adjustPreviousCueOvertime(delta);
+                };
+                return (
+                  <div className="flex items-center gap-1.5 mr-1">
+                    <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setOffsetAdjustTarget('root')}
+                        className={`px-2 py-1.5 font-medium transition-colors ${isRoot ? 'bg-slate-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                        title="Root show-start offset (from ★ START)"
+                      >
+                        Root
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOffsetAdjustTarget('prev')}
+                        className={`px-2 py-1.5 font-medium transition-colors border-l border-slate-600 ${!isRoot ? 'bg-slate-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                        title={prevCue ? `Previous cue overtime (${prevCue.label})` : 'Previous cue overtime (load/complete a cue first)'}
+                      >
+                        Prev{prevCue ? ` ${prevCue.label}` : ''}
+                      </button>
+                    </div>
+                    <div className="flex items-center rounded overflow-hidden border border-slate-600 text-xs">
+                      <button type="button" onClick={() => adjust(-5)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-40" title="-5 min">−5</button>
+                      <button type="button" onClick={() => adjust(-1)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 border-l border-slate-600 disabled:opacity-40" title="-1 min">−1</button>
+                      <span
+                        className={`px-2 py-1.5 font-semibold tabular-nums border-l border-r border-slate-600 min-w-[3.25rem] text-center ${
+                          displayValue > 0 ? 'bg-red-900/40 text-red-300' : displayValue < 0 ? 'bg-emerald-900/40 text-emerald-300' : 'bg-slate-800 text-slate-300'
+                        }`}
+                        title={isRoot ? 'Root offset' : (prevCue ? `${prevCue.label} overtime` : 'No previous cue')}
+                      >
+                        {displayValue > 0 ? '+' : ''}{displayValue}m
+                      </span>
+                      <button type="button" onClick={() => adjust(1)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-40" title="+1 min">+1</button>
+                      <button type="button" onClick={() => adjust(5)} disabled={!canAdjust} className="px-1.5 py-1.5 bg-slate-700 text-slate-200 hover:bg-slate-600 border-l border-slate-600 disabled:opacity-40" title="+5 min">+5</button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowClearOffsetsConfirmModal(true)}
+                      className="px-2 py-1.5 text-xs font-medium rounded border border-red-700/60 bg-red-900/30 text-red-200 hover:bg-red-800/50"
+                      title="Clear all overtime offsets"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                );
+              })()}
               
               <button
                 onClick={() => {
@@ -12851,6 +13210,7 @@ const RunOfShowPage: React.FC = () => {
                         showMode={showMode}
                         originalDuration={originalDurations[item.id]}
                         showWasUnderDuration={showMode === 'in-show' && trackWasDurations}
+                        lockedStartTime={lockedStartTimes[item.id] || null}
                         customColumns={customColumns}
                         visibleCustomColumns={visibleCustomColumns}
                         customColumnWidths={customColumnWidths}
@@ -14932,8 +15292,8 @@ const RunOfShowPage: React.FC = () => {
                 ? 'bg-red-600 border-red-500 text-red-100'
                 : 'bg-green-600 border-green-500 text-green-100'
             }`}>
-              <div className="text-3xl flex-shrink-0">
-                {timeStatus === 'early' ? '⏰' : timeStatus === 'late' ? '⚠️' : '✅'}
+              <div className="flex-shrink-0">
+                <TimeToastIcon className="h-10 w-10" />
               </div>
               <div className="flex-1">
                 <div className="font-bold text-lg mb-1">

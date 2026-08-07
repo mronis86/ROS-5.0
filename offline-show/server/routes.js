@@ -323,23 +323,60 @@ function registerRoutes(app, db, helpers) {
     const row = db
       .prepare('SELECT settings FROM run_of_show_data WHERE event_id = ?')
       .get(req.params.eventId);
-    if (!row) return res.json({ showMode: 'rehearsal', trackWasDurations: false });
+    if (!row) {
+      return res.json({
+        showMode: 'rehearsal',
+        trackWasDurations: false,
+        rehearsalBaseline: null,
+        lockedStartTimes: null,
+      });
+    }
     const settings = parseJson(row.settings, {});
     const showMode =
       settings.show_mode === 'in-show' || settings.show_mode === 'rehearsal'
         ? settings.show_mode
         : 'rehearsal';
-    res.json({ showMode, trackWasDurations: settings.track_was_durations === true });
+    const lockedStartTimes =
+      settings.locked_start_times && typeof settings.locked_start_times === 'object'
+        ? settings.locked_start_times
+        : null;
+    const rehearsalBaseline =
+      settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
+        ? settings.rehearsal_baseline
+        : null;
+    res.json({
+      showMode,
+      trackWasDurations: settings.track_was_durations === true,
+      rehearsalBaseline,
+      lockedStartTimes,
+    });
   });
 
   app.patch('/api/show-mode/:eventId', (req, res) => {
     const { eventId } = req.params;
-    const { showMode, trackWasDurations } = req.body || {};
+    const {
+      showMode,
+      trackWasDurations,
+      rehearsalBaseline,
+      clearRehearsalBaseline,
+      lockedStartTimes,
+      clearLockedStartTimes,
+    } = req.body || {};
     const row = db.prepare('SELECT settings FROM run_of_show_data WHERE event_id = ?').get(eventId);
     if (!row) return res.status(404).json({ error: 'Event not found' });
     const settings = parseJson(row.settings, {});
     if (showMode === 'rehearsal' || showMode === 'in-show') settings.show_mode = showMode;
     if (typeof trackWasDurations === 'boolean') settings.track_was_durations = trackWasDurations;
+    if (clearRehearsalBaseline === true) {
+      settings.rehearsal_baseline = null;
+    } else if (rehearsalBaseline && typeof rehearsalBaseline === 'object') {
+      settings.rehearsal_baseline = rehearsalBaseline;
+    }
+    if (clearLockedStartTimes === true) {
+      settings.locked_start_times = null;
+    } else if (lockedStartTimes && typeof lockedStartTimes === 'object') {
+      settings.locked_start_times = lockedStartTimes;
+    }
     const ts = nowIso();
     db.prepare('UPDATE run_of_show_data SET settings = ?, updated_at = ? WHERE event_id = ?').run(
       stringifyJson(settings),
@@ -351,10 +388,30 @@ function registerRoutes(app, db, helpers) {
       trackWasDurations: settings.track_was_durations === true,
     };
     if (showMode === 'rehearsal' || showMode === 'in-show') payload.showMode = settings.show_mode;
+    if (lockedStartTimes || clearLockedStartTimes === true) {
+      payload.lockedStartTimes =
+        settings.locked_start_times && typeof settings.locked_start_times === 'object'
+          ? settings.locked_start_times
+          : null;
+    }
+    if (rehearsalBaseline || clearRehearsalBaseline === true) {
+      payload.rehearsalBaseline =
+        settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
+          ? settings.rehearsal_baseline
+          : null;
+    }
     broadcastUpdate(eventId, 'showModeUpdate', payload);
     res.json({
       showMode: settings.show_mode === 'in-show' ? 'in-show' : 'rehearsal',
       trackWasDurations: settings.track_was_durations === true,
+      rehearsalBaseline:
+        settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
+          ? settings.rehearsal_baseline
+          : null,
+      lockedStartTimes:
+        settings.locked_start_times && typeof settings.locked_start_times === 'object'
+          ? settings.locked_start_times
+          : null,
     });
   });
 
@@ -403,6 +460,12 @@ function registerRoutes(app, db, helpers) {
       }
       if (body.settings?.original_durations === undefined && current.original_durations) {
         settingsToSave = { ...settingsToSave, original_durations: current.original_durations };
+      }
+      if (body.settings?.locked_start_times === undefined && current.locked_start_times) {
+        settingsToSave = { ...settingsToSave, locked_start_times: current.locked_start_times };
+      }
+      if (body.settings?.rehearsal_baseline === undefined && current.rehearsal_baseline) {
+        settingsToSave = { ...settingsToSave, rehearsal_baseline: current.rehearsal_baseline };
       }
     }
 

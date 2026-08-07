@@ -14,6 +14,7 @@ import { apiClient } from '../services/api-client';
 import { getOfflineDisplayName, getOfflineUserId } from '../services/offline-user';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import { isQuickModeCalendarEvent, clearQuickModeNewSessionDedupe } from '../lib/quickModeEvent';
+import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import QuickModeBoltIcon from '../components/QuickModeBoltIcon';
 import EventListRowActions from '../components/EventListRowActions';
 
@@ -576,6 +577,7 @@ const EventListPage: React.FC = () => {
   const getRecordStreamingShort = (recordStreaming: string) => {
     if (recordStreaming === 'Record') return { label: 'Rec', title: 'Record' };
     if (recordStreaming === 'Streaming') return { label: 'Stream', title: 'Streaming' };
+    if (recordStreaming === 'Stream+Rec') return { label: 'Stream+Rec', title: 'Stream+Rec' };
     return { label: 'None', title: 'None' };
   };
 
@@ -624,12 +626,9 @@ const EventListPage: React.FC = () => {
         return Boolean(event.isQuickMode) && searchMatch;
       }
 
-      const [year, month, day] = event.date.split('-').map(Number);
-      const eventDate = new Date(year, month - 1, day);
-      
-      const dateMatch = activeTab === 'upcoming' 
-        ? eventDate >= today 
-        : eventDate < today;
+      const dateMatch = activeTab === 'upcoming'
+        ? isEventUpcoming(event.date, event.numberOfDays, today)
+        : isEventPast(event.date, event.numberOfDays, today);
       
       const locationMatch = filterLocation === 'all' || event.location === filterLocation;
       const daysMatch = filterDays === 'all' || event.numberOfDays.toString() === filterDays;
@@ -641,7 +640,7 @@ const EventListPage: React.FC = () => {
         daysMatch,
         searchMatch,
         passes,
-        eventDate: isValidDate(eventDate) ? eventDate.toISOString() : 'Invalid Date',
+        eventDate: event.date,
         now: isValidDate(now) ? now.toISOString() : 'Invalid Date'
       });
       

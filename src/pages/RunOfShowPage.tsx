@@ -5018,81 +5018,91 @@ const RunOfShowPage: React.FC = () => {
     return '#ffffff';
   };
 
-  // Adjust timer duration and update start times
+  // Adjust loaded/running cue duration (toolbar −5/−1/+1/+5). Must update hybrid countdown
+  // immediately — getRemainingTime() prefers hybridTimerProgress over schedule/timerProgress.
   const adjustTimerDuration = async (seconds: number) => {
-    console.log('⏱️⏱️⏱️ ADJUST TIMER CLICKED:', seconds, 'seconds');
-    console.log('⏱️⏱️⏱️ activeItemId:', activeItemId);
-    console.log('⏱️⏱️⏱️ user:', user);
-    console.log('⏱️⏱️⏱️ event:', event);
-    
+    console.log('⏱️ ADJUST TIMER CLICKED:', seconds, 'seconds', { activeItemId });
+
     if (!activeItemId || !user || !event?.id) {
       console.log('❌ Cannot adjust timer - missing data:', { activeItemId, user: !!user, eventId: event?.id });
       return;
     }
-    
+
     if (schedule.length === 0) {
       console.log('❌ Schedule is empty - waiting for data to load');
       alert('Schedule is still loading. Please wait a moment and try again.');
       return;
     }
-    
-    // Convert activeItemId to number if it's a string to match schedule item IDs
-    const numericActiveItemId = typeof activeItemId === 'string' ? parseInt(activeItemId) : activeItemId;
+
+    const numericActiveItemId = typeof activeItemId === 'string' ? parseInt(activeItemId, 10) : activeItemId;
     const item = schedule.find(s => s.id === numericActiveItemId);
     if (!item) {
-      console.log('❌ Cannot find active item in schedule');
-      console.log('❌ Active item ID type:', typeof activeItemId, activeItemId);
-      console.log('❌ Schedule item IDs:', schedule.map(s => ({ id: s.id, type: typeof s.id })));
+      console.log('❌ Cannot find active item in schedule', { activeItemId, numericActiveItemId });
       return;
     }
-    
-    console.log('⏱️⏱️⏱️ Found item:', item.segmentName);
-    
-    // Update the item's duration
-    const newDurationSeconds = Math.max(0, (item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds) + seconds);
+
+    const newDurationSeconds = Math.max(
+      0,
+      (item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds) + seconds
+    );
     const newHours = Math.floor(newDurationSeconds / 3600);
     const newMinutes = Math.floor((newDurationSeconds % 3600) / 60);
     const newSecs = newDurationSeconds % 60;
-    
-    // Update schedule with new duration - this will trigger the auto-save mechanism
-    const updatedSchedule = schedule.map(scheduleItem => 
-      scheduleItem.id === numericActiveItemId 
-        ? { 
-            ...scheduleItem, 
-            durationHours: newHours,
-            durationMinutes: newMinutes,
-            durationSeconds: newSecs
-          }
-        : scheduleItem
+
+    // Mark editing BEFORE any await so the schedule effect auto-saves (await used to
+    // flush setSchedule while isUserEditing was still false → save skipped).
+    handleUserEditing();
+
+    setSchedule(prev =>
+      prev.map(scheduleItem =>
+        scheduleItem.id === numericActiveItemId
+          ? {
+              ...scheduleItem,
+              durationHours: newHours,
+              durationMinutes: newMinutes,
+              durationSeconds: newSecs,
+            }
+          : scheduleItem
+      )
     );
-    
-    setSchedule(updatedSchedule);
-    
-    // Update the timer progress if it exists
-    if (timerProgress[numericActiveItemId]) {
-      console.log('🔄 Updating timer duration for item:', numericActiveItemId, 'new duration:', newDurationSeconds);
-      
-      // Always update the timer progress total duration
-      setTimerProgress(prev => ({
+
+    setTimerProgress(prev => {
+      const existing = prev[numericActiveItemId];
+      return {
         ...prev,
         [numericActiveItemId]: {
-          ...prev[numericActiveItemId],
-          total: newDurationSeconds
-        }
-      }));
-      
-      // If timer is currently running, update it in the database immediately for real-time sync
-      if (activeTimers[numericActiveItemId]) {
-        console.log('🔄 Updating running timer duration in database for real-time sync');
-        await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
-      }
+          elapsed: existing?.elapsed ?? 0,
+          startedAt: existing?.startedAt ?? null,
+          total: newDurationSeconds,
+        },
+      };
+    });
+
+    // Optimistic update for the main countdown clock (hybrid path)
+    const hybridId = hybridTimerData?.activeTimer?.item_id;
+    const hybridMatches =
+      hybridId != null &&
+      (Number(hybridId) === numericActiveItemId || String(hybridId) === String(numericActiveItemId));
+    if (hybridMatches) {
+      setHybridTimerData((prev: any) =>
+        prev?.activeTimer
+          ? { ...prev, activeTimer: { ...prev.activeTimer, duration_seconds: newDurationSeconds } }
+          : prev
+      );
+      setHybridTimerProgress(prev => ({ ...prev, total: newDurationSeconds }));
     }
-    
-    // Mark user as editing - this will pause sync and trigger auto-save after pause
-    console.log('✏️ Marking user as editing (timer duration change)');
-    handleUserEditing();
-    
-    console.log('✅ Timer duration updated - running timer synced immediately, schedule will sync after pause');
+
+    // Always push via duration API: updates schedule row in DB immediately (and active_timers
+    // when loaded/running). Do not gate on activeTimers — loaded cues need this too, and the
+    // main countdown reads hybridTimerData which only refreshes from this path / sockets.
+    console.log('🔄 Updating cue duration via API:', newDurationSeconds);
+    try {
+      await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
+    } catch (err) {
+      console.error('❌ Failed to update timer duration via API:', err);
+    }
+
+    console.log('✅ Timer duration adjusted to', newDurationSeconds, 's');
   };
   // Load a CUE (stop any active timer and select the CUE)
   const loadCue = async (itemId: number) => {

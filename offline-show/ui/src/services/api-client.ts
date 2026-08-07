@@ -242,11 +242,24 @@ class ApiClient {
     return this.request(`/api/show-start-overtime/${eventId}`, {}, `showStartOvertime_${eventId}`, this.CACHE_TTL.completedCues);
   }
 
-  async getShowMode(eventId: string): Promise<{ showMode: 'rehearsal' | 'in-show'; trackWasDurations: boolean }> {
-    const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
+  async getShowMode(eventId: string): Promise<{
+    showMode: 'rehearsal' | 'in-show';
+    trackWasDurations: boolean;
+    rehearsalBaseline: any | null;
+    lockedStartTimes: Record<string, string> | null;
+  }> {
+    const result = (await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000)) as any;
     return {
       showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
-      trackWasDurations: result?.trackWasDurations === true
+      trackWasDurations: result?.trackWasDurations === true,
+      rehearsalBaseline:
+        result?.rehearsalBaseline && typeof result.rehearsalBaseline === 'object'
+          ? result.rehearsalBaseline
+          : null,
+      lockedStartTimes:
+        result?.lockedStartTimes && typeof result.lockedStartTimes === 'object'
+          ? result.lockedStartTimes
+          : null,
     };
   }
 
@@ -254,6 +267,25 @@ class ApiClient {
     const result = await this.request(`/api/show-mode/${eventId}`, {
       method: 'PATCH',
       body: JSON.stringify({ showMode }),
+    });
+    this.cache.delete(`showMode_${eventId}`);
+    return result;
+  }
+
+  async saveShowModeWithBaseline(
+    eventId: string,
+    payload: {
+      showMode?: 'rehearsal' | 'in-show';
+      trackWasDurations?: boolean;
+      rehearsalBaseline?: any;
+      clearRehearsalBaseline?: boolean;
+      lockedStartTimes?: Record<string, string> | null;
+      clearLockedStartTimes?: boolean;
+    }
+  ) {
+    const result = await this.request(`/api/show-mode/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
     });
     this.cache.delete(`showMode_${eventId}`);
     return result;
