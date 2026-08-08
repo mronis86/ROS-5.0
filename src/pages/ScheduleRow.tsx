@@ -54,6 +54,8 @@ export interface ScheduleRowProps {
   showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
   /** Frozen Start time from Enter In-Show — WAS under Start stays on this. */
   lockedStartTime?: string | null;
+  /** Uploaded platform files for this cue (not stored in the assets text field). */
+  platformFileCount?: number;
   isRowDimmed?: boolean;
   /** Lock held by another editor — row is read-only for everyone else. */
   rowLock?: { userId: string; userName: string } | null;
@@ -115,6 +117,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   originalDuration,
   showWasUnderDuration = false,
   lockedStartTime = null,
+  platformFileCount = 0,
   isRowDimmed = false,
   rowLock = null,
   currentUserId,
@@ -798,17 +801,17 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 alert(lockLabel);
                 return;
               }
-              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                if (item.assets && setViewingAssetsItem && setShowViewAssetsModal) {
+              const linkCount = item.assets
+                ? String(item.assets).split('||').filter((s: string) => s.trim()).length
+                : 0;
+              const hasAny = linkCount > 0 || platformFileCount > 0;
+              if (currentUserRole === 'VIEWER') {
+                if (hasAny && setViewingAssetsItem && setShowViewAssetsModal) {
                   setViewingAssetsItem(item.id);
                   setShowViewAssetsModal(true);
                   return;
                 }
-                if (!item.assets) {
-                  alert('No assets to view.');
-                  return;
-                }
-                alert('Only EDITORs can edit assets. Please change your role to EDITOR.');
+                alert('No assets to view.');
                 return;
               }
               claimRowLock();
@@ -817,17 +820,24 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setShowAssetsModal && setShowAssetsModal(true);
             }}
             className={`w-full px-3 py-2 border rounded text-base transition-colors flex items-center justify-center ${isLockedByOther ? cellFill + ' opacity-70 cursor-not-allowed' : cellFillInteractive}`}
-            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Click to view assets (read-only)' : 'Click to edit assets'}
+            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Click to view assets (read-only)' : 'Click to edit assets'}
           >
-            {item.assets ? (
-              <div className="text-center">
-                <div className="text-sm font-medium">
-                  {String(item.assets).split('||').length} Asset{String(item.assets).split('||').length !== 1 ? 's' : ''}
-                </div>
-              </div>
-            ) : (
-              <span className="text-slate-400">Click to add assets...</span>
-            )}
+            {(() => {
+              const linkCount = item.assets
+                ? String(item.assets).split('||').filter((s: string) => s.trim()).length
+                : 0;
+              const total = linkCount + (platformFileCount || 0);
+              if (total > 0) {
+                return (
+                  <div className="text-center">
+                    <div className="text-sm font-medium">
+                      {total} Asset{total !== 1 ? 's' : ''}
+                    </div>
+                  </div>
+                );
+              }
+              return <span className="text-slate-400">Click to add assets...</span>;
+            })()}
           </div>
         </div>
       )}

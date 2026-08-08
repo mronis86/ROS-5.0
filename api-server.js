@@ -36,6 +36,11 @@ const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
+const {
+  registerEventCueFileRoutes,
+  startEventCueFileCleanup,
+  ensureEventCueFilesSchema,
+} = require('./lib/event-cue-files');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const {
   ensureCalendarSoftDeleteSchema,
@@ -647,6 +652,7 @@ app.use(createApiAuthMiddleware(pool, apiAuthConfig));
 registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
+registerEventCueFileRoutes(app, pool);
 console.log(
   `[api-auth] require=${apiAuthConfig.requireLevel} legacyPublic=${apiAuthConfig.allowLegacy} sessionTtlHours=${apiAuthConfig.sessionTtlHours}`
 );
@@ -7090,6 +7096,13 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ run_of_show_data.version column ready');
     } catch (err) {
       console.warn('⚠️ run_of_show_data.version migration skipped:', err.message || err);
+    }
+    try {
+      await ensureEventCueFilesSchema(pool);
+      console.log('✅ event_cue_files table ready');
+      startEventCueFileCleanup(pool);
+    } catch (err) {
+      console.warn('⚠️ event_cue_files sync skipped:', err.message || err);
     }
   }
 });

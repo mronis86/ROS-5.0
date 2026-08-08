@@ -662,6 +662,74 @@ class ApiClient {
     return result;
   }
 
+  async getEventCueFilesStatus() {
+    return this.request<{ configured: boolean; retentionMonths: number; maxFileBytes: number }>(
+      '/api/event-cue-files/status',
+      {},
+      'eventCueFilesStatus',
+      60 * 1000
+    );
+  }
+
+  async listEventCueFiles(eventId: string) {
+    return this.request<{ files: EventCueFile[] }>(
+      `/api/events/${encodeURIComponent(eventId)}/cue-files`,
+      {},
+      `eventCueFiles_${eventId}`,
+      15 * 1000
+    );
+  }
+
+  async uploadEventCueFile(eventId: string, itemId: number, file: File) {
+    if (Date.now() < this.authBackoffUntil) {
+      const err: any = new Error('Authentication required. Sign in again (API auth backoff).');
+      err.status = 401;
+      throw err;
+    }
+    const apiBaseUrl = getApiBaseUrl();
+    const url = `${apiBaseUrl}/api/events/${encodeURIComponent(eventId)}/cue-files/${itemId}`;
+    const body = new FormData();
+    body.append('file', file);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { ...authHeaders() },
+      body,
+    });
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.authBackoffUntil = Date.now() + 2 * 60 * 1000;
+      }
+      let payload: any = null;
+      try {
+        payload = await response.json();
+      } catch {
+        /* ignore */
+      }
+      const err: any = new Error(payload?.error || payload?.message || `Upload failed (${response.status})`);
+      err.status = response.status;
+      err.data = payload;
+      throw err;
+    }
+    this.authBackoffUntil = 0;
+    this.cache.delete(`eventCueFiles_${eventId}`);
+    return (await response.json()) as { file: EventCueFile };
+  }
+
+  async getEventCueFileDownloadUrl(fileId: string) {
+    return this.request<{ url: string; expiresIn: number; file: EventCueFile }>(
+      `/api/event-cue-files/${encodeURIComponent(fileId)}/download`
+    );
+  }
+
+  async deleteEventCueFile(fileId: string, eventId?: string) {
+    const result = await this.request<{ ok: boolean }>(
+      `/api/event-cue-files/${encodeURIComponent(fileId)}`,
+      { method: 'DELETE' }
+    );
+    if (eventId) this.cache.delete(`eventCueFiles_${eventId}`);
+    return result;
+  }
+
   async clearLedOutput(eventId: string) {
     return this.request<{ ok: boolean }>('/api/led-output/clear', {
       method: 'POST',
@@ -705,6 +773,19 @@ export interface CateringNoteRow {
   schedule_item_id?: number | null;
   created_at: string;
   updated_at?: string;
+}
+
+export interface EventCueFile {
+  id: string;
+  eventId: string;
+  itemId: number;
+  originalName: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  uploadedBy?: string | null;
+  uploadedByName?: string | null;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export const apiClient = new ApiClient();

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event, LOCATION_OPTIONS } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
-import { apiClient, getApiBaseUrl } from '../services/api-client';
+import { apiClient, getApiBaseUrl, EventCueFile } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
 import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon-backup-service';
 import { apiJsonHeaders } from '../lib/sessionAuth';
@@ -28,6 +28,7 @@ import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
+import AssetRetentionNotice, { formatCueFileExpiry, formatCueFileSize } from '../components/AssetRetentionNotice';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
 import {
@@ -810,6 +811,10 @@ const RunOfShowPage: React.FC = () => {
   const [editingAssetsItem, setEditingAssetsItem] = useState<number | null>(null);
   /** In-progress assets while the modal is open (survives schedule sync). */
   const [tempAssets, setTempAssets] = useState<Array<{ id: string; name: string; link: string; showLink: boolean }>>([]);
+  const [platformUploadConfigured, setPlatformUploadConfigured] = useState(false);
+  const [platformCueFiles, setPlatformCueFiles] = useState<EventCueFile[]>([]);
+  const [platformUploadBusy, setPlatformUploadBusy] = useState(false);
+  const [platformUploadError, setPlatformUploadError] = useState<string | null>(null);
   const [showViewAssetsModal, setShowViewAssetsModal] = useState(false);
   const [viewingAssetsItem, setViewingAssetsItem] = useState<number | null>(null);
   const [showViewSpeakersModal, setShowViewSpeakersModal] = useState(false);
@@ -6024,6 +6029,90 @@ const RunOfShowPage: React.FC = () => {
     // Intentionally omit schedule / modalForm.assets so sync cannot wipe in-progress edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAssetsModal, editingAssetsItem]);
+
+  const refreshPlatformCueFiles = useCallback(async (eventId?: string) => {
+    const id = eventId || event?.id;
+    if (!id) {
+      setPlatformCueFiles([]);
+      return;
+    }
+    try {
+      const result = await apiClient.listEventCueFiles(id);
+      setPlatformCueFiles(Array.isArray(result?.files) ? result.files : []);
+    } catch (err) {
+      console.warn('Could not load platform cue files:', err);
+    }
+  }, [event?.id]);
+
+  useEffect(() => {
+    if (!event?.id) {
+      setPlatformCueFiles([]);
+      setPlatformUploadConfigured(false);
+      return;
+    }
+    apiClient
+      .getEventCueFilesStatus()
+      .then((s) => setPlatformUploadConfigured(!!s?.configured))
+      .catch(() => setPlatformUploadConfigured(false));
+    void refreshPlatformCueFiles(event.id);
+  }, [event?.id, showAssetsModal, showViewAssetsModal, refreshPlatformCueFiles]);
+
+  const platformFileCountByItem = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const file of platformCueFiles) {
+      counts.set(file.itemId, (counts.get(file.itemId) || 0) + 1);
+    }
+    return counts;
+  }, [platformCueFiles]);
+
+  const modalPlatformFiles = useMemo(() => {
+    const itemId = showAssetsModal ? editingAssetsItem : showViewAssetsModal ? viewingAssetsItem : null;
+    if (itemId == null || itemId <= 0) return [];
+    return platformCueFiles.filter((f) => f.itemId === itemId);
+  }, [platformCueFiles, showAssetsModal, editingAssetsItem, showViewAssetsModal, viewingAssetsItem]);
+
+  const openPlatformCueFile = async (fileId: string) => {
+    try {
+      const result = await apiClient.getEventCueFileDownloadUrl(fileId);
+      if (result?.url) window.open(result.url, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      alert(err?.message || 'Could not open file.');
+    }
+  };
+
+  const handlePlatformCueFileUpload = async (fileList: FileList | null) => {
+    if (!event?.id || editingAssetsItem == null || editingAssetsItem <= 0) {
+      alert('Save the cue first, then upload files.');
+      return;
+    }
+    if (!fileList?.length) return;
+    setPlatformUploadBusy(true);
+    setPlatformUploadError(null);
+    try {
+      for (const file of Array.from(fileList)) {
+        const result = await apiClient.uploadEventCueFile(event.id, editingAssetsItem, file);
+        if (result?.file) {
+          setPlatformCueFiles((prev) => [...prev, result.file]);
+        }
+      }
+      await refreshPlatformCueFiles(event.id);
+    } catch (err: any) {
+      setPlatformUploadError(err?.message || 'Upload failed.');
+    } finally {
+      setPlatformUploadBusy(false);
+    }
+  };
+
+  const handleDeletePlatformCueFile = async (fileId: string) => {
+    if (!event?.id) return;
+    if (!window.confirm('Delete this uploaded file from ROS? This cannot be undone.')) return;
+    try {
+      await apiClient.deleteEventCueFile(fileId, event.id);
+      setPlatformCueFiles((prev) => prev.filter((f) => f.id !== fileId));
+    } catch (err: any) {
+      alert(err?.message || 'Could not delete file.');
+    }
+  };
 
   // Initialize modal when opened
   useEffect(() => {
@@ -13681,6 +13770,7 @@ const RunOfShowPage: React.FC = () => {
                         originalDuration={originalDurations[item.id]}
                         showWasUnderDuration={showMode === 'in-show' && trackWasDurations}
                         lockedStartTime={lockedStartTimes[item.id] || null}
+                        platformFileCount={platformFileCountByItem.get(item.id) || 0}
                         customColumns={customColumns}
                         visibleCustomColumns={visibleCustomColumns}
                         customColumnWidths={customColumnWidths}
@@ -14972,11 +15062,75 @@ const RunOfShowPage: React.FC = () => {
        {showAssetsModal && editingAssetsItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
            <div className="bg-slate-800 rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-             <h2 className="text-2xl font-bold text-white mb-6">Edit Assets</h2>
+             <h2 className="text-2xl font-bold text-white mb-4">Edit Assets</h2>
+             <AssetRetentionNotice className="mb-4" />
+
+             <div className="mb-5 rounded-lg border border-slate-600 bg-slate-700/60 p-4 space-y-3">
+               <div className="flex flex-wrap items-center justify-between gap-2">
+                 <h3 className="text-lg font-semibold text-white">Upload to ROS</h3>
+                 {platformUploadConfigured ? (
+                   <label className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${
+                     platformUploadBusy || editingAssetsItem <= 0
+                       ? 'bg-slate-600 cursor-not-allowed'
+                       : 'bg-cyan-700 hover:bg-cyan-600 cursor-pointer'
+                   }`}>
+                     {platformUploadBusy ? 'Uploading…' : 'Upload file'}
+                     <input
+                       type="file"
+                       className="hidden"
+                       disabled={platformUploadBusy || editingAssetsItem <= 0}
+                       onChange={(e) => {
+                         void handlePlatformCueFileUpload(e.target.files);
+                         e.currentTarget.value = '';
+                       }}
+                     />
+                   </label>
+                 ) : (
+                   <span className="text-xs text-slate-400">Platform storage not configured yet</span>
+                 )}
+               </div>
+               {editingAssetsItem <= 0 && (
+                 <p className="text-sm text-slate-300">Save this cue first, then you can upload files.</p>
+               )}
+               {platformUploadError && (
+                 <p className="text-sm text-red-300">{platformUploadError}</p>
+               )}
+               {modalPlatformFiles.length > 0 ? (
+                 <div className="space-y-2">
+                   {modalPlatformFiles.map((file) => (
+                     <div key={file.id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-slate-800 px-3 py-2">
+                       <div className="min-w-0">
+                         <button
+                           type="button"
+                           onClick={() => void openPlatformCueFile(file.id)}
+                           className="text-left text-cyan-300 hover:underline font-medium truncate"
+                         >
+                           {file.originalName}
+                         </button>
+                         <div className="text-xs text-slate-400">
+                           {formatCueFileSize(file.sizeBytes)}
+                           {file.sizeBytes ? ' · ' : ''}
+                           Deletes {formatCueFileExpiry(file.expiresAt) || 'in 4 months'}
+                         </div>
+                       </div>
+                       <button
+                         type="button"
+                         onClick={() => void handleDeletePlatformCueFile(file.id)}
+                         className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded"
+                       >
+                         Delete
+                       </button>
+                     </div>
+                   ))}
+                 </div>
+               ) : (
+                 <p className="text-sm text-slate-400">No platform files on this cue yet.</p>
+               )}
+             </div>
              
              <div className="space-y-4">
                <div className="flex justify-between items-center">
-                 <h3 className="text-lg font-semibold text-white">Assets List</h3>
+                 <h3 className="text-lg font-semibold text-white">Links (Dropbox, Drive, etc.)</h3>
                  <button
                    onClick={addAssetRow}
                    className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors"
@@ -15053,11 +15207,11 @@ const RunOfShowPage: React.FC = () => {
          </div>
        )}
 
-       {/* View-Only Assets Modal for OPERATORs */}
+       {/* View-Only Assets Modal for VIEWERs */}
        {showViewAssetsModal && viewingAssetsItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
            <div className="bg-slate-800 rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-             <div className="flex justify-between items-center mb-6">
+             <div className="flex justify-between items-center mb-4">
                <h2 className="text-2xl font-bold text-white">Assets List</h2>
                <button
                  onClick={() => {
@@ -15069,12 +15223,34 @@ const RunOfShowPage: React.FC = () => {
                  Close
                </button>
              </div>
+             <AssetRetentionNotice className="mb-4" />
+             {modalPlatformFiles.length > 0 && (
+               <div className="mb-4 space-y-2">
+                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Uploaded to ROS</h3>
+                 {modalPlatformFiles.map((file) => (
+                   <div key={file.id} className="rounded-lg border border-slate-600 bg-slate-700 p-3">
+                     <button
+                       type="button"
+                       onClick={() => void openPlatformCueFile(file.id)}
+                       className="text-cyan-300 hover:underline font-semibold"
+                     >
+                       {file.originalName}
+                     </button>
+                     <div className="text-xs text-slate-400 mt-1">
+                       {formatCueFileSize(file.sizeBytes)}
+                       {file.sizeBytes ? ' · ' : ''}
+                       Deletes {formatCueFileExpiry(file.expiresAt) || 'in 4 months'}
+                     </div>
+                   </div>
+                 ))}
+               </div>
+             )}
              
              <div className="space-y-4">
                {(() => {
                  const item = schedule.find(s => s.id === viewingAssetsItem);
                  if (!item || !item.assets) {
-                   return (
+                   return modalPlatformFiles.length > 0 ? null : (
                      <div className="text-center py-8">
                        <p className="text-slate-400 text-lg">No assets available for this item.</p>
                      </div>
@@ -15135,7 +15311,7 @@ const RunOfShowPage: React.FC = () => {
                  }
                  
                  if (assets.length === 0) {
-                   return (
+                   return modalPlatformFiles.length > 0 ? null : (
                      <div className="text-center py-8">
                        <p className="text-slate-400 text-lg">No assets available for this item.</p>
                      </div>
