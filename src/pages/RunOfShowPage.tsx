@@ -815,6 +815,8 @@ const RunOfShowPage: React.FC = () => {
   const [platformCueFiles, setPlatformCueFiles] = useState<EventCueFile[]>([]);
   const [platformUploadBusy, setPlatformUploadBusy] = useState(false);
   const [platformUploadError, setPlatformUploadError] = useState<string | null>(null);
+  const [platformUploadDragOver, setPlatformUploadDragOver] = useState(false);
+  const platformFileInputRef = useRef<HTMLInputElement | null>(null);
   const [showViewAssetsModal, setShowViewAssetsModal] = useState(false);
   const [viewingAssetsItem, setViewingAssetsItem] = useState<number | null>(null);
   const [showViewSpeakersModal, setShowViewSpeakersModal] = useState(false);
@@ -6057,6 +6059,10 @@ const RunOfShowPage: React.FC = () => {
     void refreshPlatformCueFiles(event.id);
   }, [event?.id, showAssetsModal, showViewAssetsModal, refreshPlatformCueFiles]);
 
+  useEffect(() => {
+    if (!showAssetsModal) setPlatformUploadDragOver(false);
+  }, [showAssetsModal]);
+
   const platformFileCountByItem = useMemo(() => {
     const counts = new Map<number, number>();
     for (const file of platformCueFiles) {
@@ -6080,16 +6086,55 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  const handlePlatformCueFileUpload = async (fileList: FileList | null) => {
+  const downloadPlatformCueFile = async (file: EventCueFile) => {
+    try {
+      const result = await apiClient.getEventCueFileDownloadUrl(file.id);
+      if (!result?.url) throw new Error('Download link was not available.');
+      const response = await fetch(result.url);
+      if (!response.ok) throw new Error('Could not download file.');
+      const blob = await response.blob();
+      const suggestedName = file.originalName || 'download';
+      const picker = (window as any).showSaveFilePicker as
+        | undefined
+        | ((opts: {
+            suggestedName?: string;
+            types?: { description: string; accept: Record<string, string[]> }[];
+          }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }>);
+      if (typeof picker === 'function') {
+        try {
+          const handle = await picker({ suggestedName });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          return;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
+        }
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = suggestedName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (err: any) {
+      alert(err?.message || 'Could not download file.');
+    }
+  };
+
+  const handlePlatformCueFileUpload = async (fileList: FileList | File[] | null) => {
     if (!event?.id || editingAssetsItem == null || editingAssetsItem <= 0) {
       alert('Save the cue first, then upload files.');
       return;
     }
-    if (!fileList?.length) return;
+    const files = fileList ? Array.from(fileList).filter((f) => f && f.size > 0) : [];
+    if (!files.length) return;
     setPlatformUploadBusy(true);
     setPlatformUploadError(null);
     try {
-      for (const file of Array.from(fileList)) {
+      for (const file of files) {
         const result = await apiClient.uploadEventCueFile(event.id, editingAssetsItem, file);
         if (result?.file) {
           setPlatformCueFiles((prev) => [...prev, result.file]);
@@ -15068,27 +15113,80 @@ const RunOfShowPage: React.FC = () => {
              <div className="mb-5 rounded-lg border border-slate-600 bg-slate-700/60 p-4 space-y-3">
                <div className="flex flex-wrap items-center justify-between gap-2">
                  <h3 className="text-lg font-semibold text-white">Upload to ROS</h3>
-                 {platformUploadConfigured ? (
-                   <label className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${
-                     platformUploadBusy || editingAssetsItem <= 0
-                       ? 'bg-slate-600 cursor-not-allowed'
-                       : 'bg-cyan-700 hover:bg-cyan-600 cursor-pointer'
-                   }`}>
-                     {platformUploadBusy ? 'Uploading…' : 'Upload file'}
-                     <input
-                       type="file"
-                       className="hidden"
-                       disabled={platformUploadBusy || editingAssetsItem <= 0}
-                       onChange={(e) => {
-                         void handlePlatformCueFileUpload(e.target.files);
-                         e.currentTarget.value = '';
-                       }}
-                     />
-                   </label>
-                 ) : (
+                 {!platformUploadConfigured && (
                    <span className="text-xs text-slate-400">Platform storage not configured yet</span>
                  )}
                </div>
+               {platformUploadConfigured && (
+                 <>
+                   <input
+                     ref={platformFileInputRef}
+                     type="file"
+                     multiple
+                     className="hidden"
+                     disabled={platformUploadBusy || editingAssetsItem <= 0}
+                     onChange={(e) => {
+                       void handlePlatformCueFileUpload(e.target.files);
+                       e.currentTarget.value = '';
+                     }}
+                   />
+                   <div
+                     role="button"
+                     tabIndex={0}
+                     onClick={() => {
+                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       platformFileInputRef.current?.click();
+                     }}
+                     onKeyDown={(e) => {
+                       if (e.key === 'Enter' || e.key === ' ') {
+                         e.preventDefault();
+                         if (platformUploadBusy || editingAssetsItem <= 0) return;
+                         platformFileInputRef.current?.click();
+                       }
+                     }}
+                     onDragEnter={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       setPlatformUploadDragOver(true);
+                     }}
+                     onDragOver={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       e.dataTransfer.dropEffect = 'copy';
+                       setPlatformUploadDragOver(true);
+                     }}
+                     onDragLeave={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       setPlatformUploadDragOver(false);
+                     }}
+                     onDrop={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       setPlatformUploadDragOver(false);
+                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       const dropped = Array.from(e.dataTransfer.files || []);
+                       void handlePlatformCueFileUpload(dropped);
+                     }}
+                     className={`rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors ${
+                       platformUploadBusy || editingAssetsItem <= 0
+                         ? 'border-slate-600 bg-slate-800/40 cursor-not-allowed text-slate-500'
+                         : platformUploadDragOver
+                           ? 'border-cyan-400 bg-cyan-900/40 text-cyan-100 cursor-copy'
+                           : 'border-slate-500 bg-slate-800/60 text-slate-200 hover:border-cyan-500 hover:bg-slate-800 cursor-pointer'
+                     }`}
+                   >
+                     <div className="text-sm font-semibold">
+                       {platformUploadBusy ? 'Uploading…' : 'Drag a file here, or click to upload'}
+                     </div>
+                     <div className="mt-1 text-xs text-slate-400">
+                       PDF, Office, images, audio, video, or zip · max 50 MB
+                     </div>
+                   </div>
+                 </>
+               )}
                {editingAssetsItem <= 0 && (
                  <p className="text-sm text-slate-300">Save this cue first, then you can upload files.</p>
                )}
@@ -15113,13 +15211,22 @@ const RunOfShowPage: React.FC = () => {
                            Deletes {formatCueFileExpiry(file.expiresAt) || 'in 4 months'}
                          </div>
                        </div>
-                       <button
-                         type="button"
-                         onClick={() => void handleDeletePlatformCueFile(file.id)}
-                         className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded"
-                       >
-                         Delete
-                       </button>
+                       <div className="flex items-center gap-2">
+                         <button
+                           type="button"
+                           onClick={() => void downloadPlatformCueFile(file)}
+                           className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-sm rounded"
+                         >
+                           Download
+                         </button>
+                         <button
+                           type="button"
+                           onClick={() => void handleDeletePlatformCueFile(file.id)}
+                           className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded"
+                         >
+                           Delete
+                         </button>
+                       </div>
                      </div>
                    ))}
                  </div>
@@ -15228,19 +15335,28 @@ const RunOfShowPage: React.FC = () => {
                <div className="mb-4 space-y-2">
                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Uploaded to ROS</h3>
                  {modalPlatformFiles.map((file) => (
-                   <div key={file.id} className="rounded-lg border border-slate-600 bg-slate-700 p-3">
+                   <div key={file.id} className="rounded-lg border border-slate-600 bg-slate-700 p-3 flex flex-wrap items-center justify-between gap-2">
+                     <div className="min-w-0">
+                       <button
+                         type="button"
+                         onClick={() => void openPlatformCueFile(file.id)}
+                         className="text-cyan-300 hover:underline font-semibold"
+                       >
+                         {file.originalName}
+                       </button>
+                       <div className="text-xs text-slate-400 mt-1">
+                         {formatCueFileSize(file.sizeBytes)}
+                         {file.sizeBytes ? ' · ' : ''}
+                         Deletes {formatCueFileExpiry(file.expiresAt) || 'in 4 months'}
+                       </div>
+                     </div>
                      <button
                        type="button"
-                       onClick={() => void openPlatformCueFile(file.id)}
-                       className="text-cyan-300 hover:underline font-semibold"
+                       onClick={() => void downloadPlatformCueFile(file)}
+                       className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-sm rounded"
                      >
-                       {file.originalName}
+                       Download
                      </button>
-                     <div className="text-xs text-slate-400 mt-1">
-                       {formatCueFileSize(file.sizeBytes)}
-                       {file.sizeBytes ? ' · ' : ''}
-                       Deletes {formatCueFileExpiry(file.expiresAt) || 'in 4 months'}
-                     </div>
                    </div>
                  ))}
                </div>
