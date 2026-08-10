@@ -296,15 +296,13 @@ const Clock: React.FC<ClockProps> = ({
             setHybridTimerData(prev => ({ ...prev, secondaryTimer: null }));
           }
           
-          // Load current timer message
+          // Load current timer message (enabled only; null clears stale display)
           const timerMessage = await DatabaseService.getTimerMessage(eventId);
-          if (timerMessage) {
-            setHybridTimerData(prev => ({
-              ...prev,
-              timerMessage: timerMessage
-            }));
-            console.log('✅ Clock: Initial load - timer message loaded:', timerMessage);
-          }
+          setHybridTimerData(prev => ({
+            ...prev,
+            timerMessage: timerMessage || null
+          }));
+          console.log('✅ Clock: Initial load - timer message:', timerMessage);
         } catch (error) {
           console.error('❌ Clock: Initial load failed to load sub-cue timers and messages:', error);
         }
@@ -513,12 +511,12 @@ const Clock: React.FC<ClockProps> = ({
       onTimerMessageUpdated: (data: any) => {
         console.log('📨 Clock: WebSocket timer message updated:', data);
         if (data && data.event_id === eventId) {
-          // Update timer message data
+          const next = data.enabled ? data : null;
           setHybridTimerData(prev => ({
             ...prev,
-            timerMessage: data
+            timerMessage: next
           }));
-          console.log('✅ Clock: Timer message updated via WebSocket:', data);
+          console.log('✅ Clock: Timer message updated via WebSocket:', next);
         }
       },
       onInitialSync: async () => {
@@ -540,15 +538,13 @@ const Clock: React.FC<ClockProps> = ({
             }
           }
           
-          // Load current timer message
+          // Load current timer message (enabled only; null clears stale display)
           const timerMessage = await DatabaseService.getTimerMessage(eventId);
-          if (timerMessage) {
-            setHybridTimerData(prev => ({
-              ...prev,
-              timerMessage: timerMessage
-            }));
-            console.log('✅ Clock: Initial sync - timer message loaded:', timerMessage);
-          }
+          setHybridTimerData(prev => ({
+            ...prev,
+            timerMessage: timerMessage || null
+          }));
+          console.log('✅ Clock: Initial sync - timer message:', timerMessage);
         } catch (error) {
           console.error('❌ Clock: Initial sync failed to load sub-cue timers and messages:', error);
         }
@@ -770,6 +766,10 @@ const Clock: React.FC<ClockProps> = ({
         ? 'LOADED · RESOLUME (armed) - '
         : '';
 
+  // Prefer any currently enabled message; ignore stale disabled hybrid/prop copies
+  const activeStageMessage =
+    [hybridTimerData?.timerMessage, supabaseMessage].find((m) => m?.enabled) ?? null;
+
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
 
@@ -958,20 +958,11 @@ const Clock: React.FC<ClockProps> = ({
 
 
       {/* Message Display */}
-      {(() => {
-        // When supabaseOnly is true, only show Supabase messages
-        if (supabaseOnly) {
-          // Use hybrid data if available, otherwise fall back to supabaseMessage
-          const displayMessage = hybridTimerData?.timerMessage || supabaseMessage;
-          return displayMessage && displayMessage.enabled;
-        }
-        // When supabaseOnly is false, show both local and Supabase messages
-        return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
-      })() && (
+      {activeStageMessage && (
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: 'translateY(-40px)' }}>
           <div 
             className={`font-bold text-white bg-black bg-opacity-50 rounded-lg border-4 border-white text-center flex items-center justify-center ${
-              !!(hybridTimerData?.timerMessage?.flashing || supabaseMessage?.flashing) ? 'ros-timer-message-flash' : ''
+              activeStageMessage.flashing ? 'ros-timer-message-flash' : ''
             }`}
             style={{
               width: '80vw',
@@ -988,11 +979,7 @@ const Clock: React.FC<ClockProps> = ({
             }}
           >
             {(() => {
-              // When supabaseOnly is true, only use Supabase message
-              // When supabaseOnly is false, use Supabase message if available, otherwise use local message
-              const displayMessage = supabaseOnly 
-                ? (hybridTimerData?.timerMessage?.message || supabaseMessage?.message || '')
-                : supabaseMessage?.message || message;
+              const displayMessage = activeStageMessage.message || '';
               // Break long messages into multiple lines
               const words = displayMessage.split(' ');
               let formattedMessage;
@@ -1056,7 +1043,7 @@ const Clock: React.FC<ClockProps> = ({
           if (!currentSecondaryTimer) return false;
           
           // Check if there's a message active - if so, don't show this timer (use the new layout instead)
-          const hasMessage = (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled);
+          const hasMessage = !!activeStageMessage;
           if (hasMessage) return false;
           
           console.log('🔍 Clock: Secondary timer data:', {
@@ -1256,7 +1243,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return hasSecondaryTimer && hasMessage;
@@ -1304,7 +1291,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return hasSecondaryTimer && hasMessage;
@@ -1373,7 +1360,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return hasSecondaryTimer && hasMessage;
@@ -1422,7 +1409,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return !hasSecondaryTimer && !hasMessage;
@@ -1563,7 +1550,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return hasMessage && !hasSecondaryTimer;
@@ -1636,7 +1623,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return hasSecondaryTimer && !hasMessage;
@@ -1709,7 +1696,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return hasMessage && !hasSecondaryTimer;
@@ -1758,7 +1745,7 @@ const Clock: React.FC<ClockProps> = ({
         }
         
         const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
+          !!activeStageMessage :
           (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
         
         return hasSecondaryTimer && !hasMessage;

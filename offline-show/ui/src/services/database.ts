@@ -1659,7 +1659,9 @@ export class DatabaseService {
       const response = await DatabaseService.apiFetch(`${apiBase()}/api/timer-messages/${eventId}`);
       if (response.ok) {
         const messages = await response.json();
-        return messages.length > 0 ? messages[0] : null;
+        // Only an enabled message should drive Clock / Full Screen displays
+        const enabled = (messages || []).find((msg: TimerMessage) => msg && msg.enabled);
+        return enabled || null;
       }
       return null;
     } catch (error) {

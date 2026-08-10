@@ -279,7 +279,7 @@ const OfflineTimerPage: React.FC = () => {
       onTimerMessageUpdated: (data: any) => {
         console.log('📨 WebSocket: Timer message updated:', data);
         if (data && data.event_id === eventId) {
-          setSupabaseMessage(data);
+          setSupabaseMessage(data.enabled ? data : null);
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -389,7 +389,7 @@ const OfflineTimerPage: React.FC = () => {
       socketClient.connect(eventId, {
         onTimerMessageUpdated: (data: any) => {
           if (data && data.event_id === eventId) {
-            setSupabaseMessage(data);
+            setSupabaseMessage(data.enabled ? data : null);
           }
         },
       });

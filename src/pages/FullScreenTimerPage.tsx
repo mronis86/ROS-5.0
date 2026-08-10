@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import FullScreenTimer from '../components/FullScreenTimer';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
@@ -7,9 +7,11 @@ import { socketClient } from '../services/socket-client';
 const FullScreenTimerPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   
-  // Get timer data from location state or use defaults
+  // Get timer data from location state, URL, or defaults
   const timerData = location.state || {};
+  const eventIdFromUrl = searchParams.get('eventId');
   
   const [isRunning, setIsRunning] = useState(timerData.isRunning || false);
   const [elapsedTime, setElapsedTime] = useState(timerData.elapsedTime || 0);
@@ -18,7 +20,7 @@ const FullScreenTimerPage: React.FC = () => {
   const [messageEnabled, setMessageEnabled] = useState(false);
   const [supabaseMessage, setSupabaseMessage] = useState(null);
   const [itemId, setItemId] = useState(timerData.itemId || null);
-  const [eventId, setEventId] = useState(timerData.eventId || null);
+  const [eventId, setEventId] = useState(eventIdFromUrl || timerData.eventId || null);
   const [mainTimer, setMainTimer] = useState(timerData.mainTimer || null);
   const [secondaryTimer, setSecondaryTimer] = useState(timerData.secondaryTimer || null);
   
@@ -30,6 +32,12 @@ const FullScreenTimerPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+
+  useEffect(() => {
+    if (eventIdFromUrl !== null && eventIdFromUrl !== eventId) {
+      setEventId(eventIdFromUrl);
+    }
+  }, [eventIdFromUrl, eventId]);
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -110,7 +118,11 @@ const FullScreenTimerPage: React.FC = () => {
       onTimerMessageUpdated: (data: any) => {
         console.log('📨 WebSocket: Timer message updated:', data);
         if (data && data.event_id === eventId) {
-          setSupabaseMessage(data);
+          setSupabaseMessage(data.enabled ? data : null);
+          setHybridTimerData((prev: any) => ({
+            ...(prev || {}),
+            timerMessage: data.enabled ? data : null
+          }));
         }
       },
       onTimerUpdated: (data: any) => {
@@ -328,7 +340,7 @@ const FullScreenTimerPage: React.FC = () => {
       socketClient.connect(eventId, {
         onTimerMessageUpdated: (data: any) => {
           if (data && data.event_id === eventId) {
-            setSupabaseMessage(data);
+            setSupabaseMessage(data.enabled ? data : null);
           }
         }
       });

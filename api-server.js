@@ -4658,6 +4658,15 @@ app.post('/api/timer-messages', async (req, res) => {
     if (!event_id || !message) {
       return res.status(400).json({ error: 'event_id and message are required' });
     }
+
+    // Ensure column exists (safe if already migrated)
+    try {
+      await pool.query(
+        'ALTER TABLE timer_messages ADD COLUMN IF NOT EXISTS flashing BOOLEAN NOT NULL DEFAULT false'
+      );
+    } catch (migErr) {
+      console.warn('⚠️ timer_messages.flashing ensure skipped:', migErr.message || migErr);
+    }
     
     // First, disable any existing active messages for this event
     await pool.query(
@@ -4665,22 +4674,29 @@ app.post('/api/timer-messages', async (req, res) => {
       [event_id]
     );
     
-    // Create the new message
-    const result = await pool.query(
-      `INSERT INTO timer_messages 
-       (event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-       RETURNING *`,
-      [
-        event_id,
-        message,
-        enabled !== undefined ? enabled : true,
-        flashing === true,
-        sent_by,
-        sent_by_name,
-        sent_by_role,
-      ]
-    );
+    const isEnabled = enabled !== undefined ? enabled : true;
+    const isFlashing = flashing === true;
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO timer_messages 
+         (event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+         RETURNING *`,
+        [event_id, message, isEnabled, isFlashing, sent_by, sent_by_name, sent_by_role]
+      );
+    } catch (insertErr) {
+      // Older DBs without flashing — insert without the column, then attach flag for clients
+      console.warn('⚠️ timer message insert with flashing failed, retrying without column:', insertErr.message || insertErr);
+      result = await pool.query(
+        `INSERT INTO timer_messages 
+         (event_id, message, enabled, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+         RETURNING *`,
+        [event_id, message, isEnabled, sent_by, sent_by_name, sent_by_role]
+      );
+      if (result.rows[0]) result.rows[0].flashing = isFlashing;
+    }
     
     // Broadcast update via WebSocket
     broadcastUpdate(event_id, 'timerMessageUpdated', result.rows[0]);

@@ -210,6 +210,7 @@ const ClockPage: React.FC = () => {
     const loadMessage = async () => {
       try {
         const message = await DatabaseService.getTimerMessage(eventId);
+        // Enabled-only (or null) — never keep a disabled message as the active prop
         setSupabaseMessage(message);
         console.log('📨 Loaded timer message from API:', message);
       } catch (error) {
@@ -225,7 +226,8 @@ const ClockPage: React.FC = () => {
       onTimerMessageUpdated: (data: any) => {
         console.log('📨 WebSocket: Timer message updated:', data);
         if (data && data.event_id === eventId) {
-          setSupabaseMessage(data);
+          // Clear prop when disabled so Clock cannot fall back to a stale enabled message
+          setSupabaseMessage(data.enabled ? data : null);
         }
       },
       onConnectionChange: (connected: boolean) => {
@@ -237,7 +239,7 @@ const ClockPage: React.FC = () => {
       }
     };
 
-    socketClient.connect(eventId, callbacks);
+    socketClient.connect(eventId, callbacks, 'clockPage');
     
     // Show disconnect timer modal only on first connect
     if (!hasShownModalOnce) {
@@ -253,7 +255,7 @@ const ClockPage: React.FC = () => {
       if (document.hidden) return;
       if (!socketClient.isConnected()) {
         console.log('👁️ ClockPage: Tab visible - reconnecting WebSocket (no modal)');
-        socketClient.connect(eventId, callbacks);
+        socketClient.connect(eventId, callbacks, 'clockPage');
       }
       loadMessage();
     };
@@ -358,10 +360,10 @@ const ClockPage: React.FC = () => {
       socketClient.connect(eventId, {
         onTimerMessageUpdated: (data: any) => {
           if (data && data.event_id === eventId) {
-            setSupabaseMessage(data);
+            setSupabaseMessage(data.enabled ? data : null);
           }
         }
-      });
+      }, 'clockPage');
       // Show modal again after timed disconnect to set new timer
       setShowDisconnectModal(true);
     }

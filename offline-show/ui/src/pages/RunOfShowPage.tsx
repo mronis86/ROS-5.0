@@ -5934,8 +5934,8 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Open Clock in new window
-  const openTimerDisplay = () => {
+  // Open Offline Timer in new window or same-browser tab
+  const openTimerDisplay = (mode: 'external' | 'browser' = 'external') => {
     setShowMenuDropdown(false);
     
     // Close existing clock window if open
@@ -5971,13 +5971,15 @@ const RunOfShowPage: React.FC = () => {
       } : null
     };
 
-    // Open new window with event ID parameter
     const clockUrl = event?.id ? `/timer?eventId=${encodeURIComponent(event.id)}` : '/timer';
-    const newClockWindow = window.open(
-      clockUrl,
-      'offlineShowTimer',
-      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
-    );
+    const newClockWindow =
+      mode === 'browser'
+        ? window.open(clockUrl, '_blank')
+        : window.open(
+            clockUrl,
+            'offlineShowTimer',
+            'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+          );
 
     if (newClockWindow) {
       setClockWindow(newClockWindow);
@@ -15361,7 +15363,6 @@ const RunOfShowPage: React.FC = () => {
       <DisplayModal
         isOpen={showDisplayModal}
         onClose={() => setShowDisplayModal(false)}
-        onSelectFullscreenTimer={openFullScreenTimer}
         onSelectOfflineTimer={openTimerDisplay}
       />
 

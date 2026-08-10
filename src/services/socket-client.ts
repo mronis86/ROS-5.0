@@ -65,19 +65,43 @@ class SocketClient {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private disconnectedByAdmin = false;
+  /** Multiple pages (ClockPage + Clock) subscribe to messages without overwriting each other. */
+  private timerMessageHandlers = new Map<string, (data: any) => void>();
 
-  connect(eventId: string, callbacks: SocketCallbacks) {
+  private dispatchTimerMessage = (data: any) => {
+    for (const handler of this.timerMessageHandlers.values()) {
+      try {
+        handler(data);
+      } catch (err) {
+        console.error('❌ timerMessage handler error:', err);
+      }
+    }
+  };
+
+  connect(eventId: string, callbacks: SocketCallbacks, handlerKey: string = 'default') {
+    if (
+      callbacks.onTimerMessageUpdated &&
+      callbacks.onTimerMessageUpdated !== this.dispatchTimerMessage
+    ) {
+      this.timerMessageHandlers.set(handlerKey, callbacks.onTimerMessageUpdated);
+    }
+
     if (this.socket && this.eventId === eventId) {
       console.log('Socket.IO already connected for this event. Merging callbacks.');
       // Prefer newer callbacks so remounted pages (e.g. Content Review) keep live handlers.
       this.callbacks = { ...this.callbacks, ...callbacks };
+      // Always dispatch to every registered message handler (Clock + ClockPage).
+      this.callbacks.onTimerMessageUpdated = this.dispatchTimerMessage;
+      if (!this.socket.connected) {
+        this.socket.connect();
+      }
       return;
     }
 
     this.disconnect(); // Disconnect any existing connection
 
     this.eventId = eventId;
-    this.callbacks = callbacks;
+    this.callbacks = { ...callbacks, onTimerMessageUpdated: this.dispatchTimerMessage };
     const apiBaseUrl = getApiBaseUrl();
     this.socket = io(apiBaseUrl, {
       transports: ['websocket', 'polling'],
@@ -234,7 +258,10 @@ class SocketClient {
     });
   }
 
-  disconnect(eventId?: string) {
+  disconnect(eventId?: string, handlerKey?: string) {
+    if (handlerKey) {
+      this.timerMessageHandlers.delete(handlerKey);
+    }
     if (this.socket) {
       if (eventId && this.eventId !== eventId) {
         console.log(`Socket.IO: Not disconnecting, current eventId (${this.eventId}) does not match requested eventId (${eventId}).`);
@@ -250,6 +277,7 @@ class SocketClient {
       this.socket.disconnect();
       this.socket = null;
       this.eventId = null;
+      this.timerMessageHandlers.clear();
       this.callbacks.onConnectionChange?.(false);
     }
   }

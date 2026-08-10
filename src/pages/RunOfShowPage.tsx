@@ -5777,7 +5777,7 @@ const RunOfShowPage: React.FC = () => {
 
 
   // Open full-screen timer in new window
-  const openFullScreenTimer = () => {
+  const openFullScreenTimer = (mode: 'external' | 'browser' = 'external') => {
     setShowMenuDropdown(false);
     
     // Close existing timer window if open
@@ -5813,12 +5813,17 @@ const RunOfShowPage: React.FC = () => {
       } : null
     };
 
-    // Open new window
-    const timerWindow = window.open(
-      '/fullscreen-timer',
-      'fullScreenTimer',
-      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
-    );
+    const timerUrl = event?.id
+      ? `/fullscreen-timer?eventId=${encodeURIComponent(event.id)}`
+      : '/fullscreen-timer';
+    const timerWindow =
+      mode === 'browser'
+        ? window.open(timerUrl, '_blank')
+        : window.open(
+            timerUrl,
+            'fullScreenTimer',
+            'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+          );
 
     if (timerWindow) {
       setFullScreenTimerWindow(timerWindow);
@@ -5833,8 +5838,8 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Open Clock in new window
-  const openClock = () => {
+  // Open Clock in new window or same-browser tab
+  const openClock = (mode: 'external' | 'browser' = 'external') => {
     setShowMenuDropdown(false);
     
     // Close existing clock window if open
@@ -5870,13 +5875,15 @@ const RunOfShowPage: React.FC = () => {
       } : null
     };
 
-    // Open new window with event ID parameter
-    const clockUrl = event?.id ? `/clock?eventId=${event.id}` : '/clock';
-    const newClockWindow = window.open(
-      clockUrl,
-      'clock',
-      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
-    );
+    const clockUrl = event?.id ? `/clock?eventId=${encodeURIComponent(event.id)}` : '/clock';
+    const newClockWindow =
+      mode === 'browser'
+        ? window.open(clockUrl, '_blank')
+        : window.open(
+            clockUrl,
+            'clock',
+            'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+          );
 
     if (newClockWindow) {
       setClockWindow(newClockWindow);

@@ -652,17 +652,13 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
 
       {/* Message Display */}
       {(() => {
-        // When hybridTimerData is available, use it for messages (both Neon Only ON and OFF)
-        if (hybridTimerData?.timerMessage) {
-          return hybridTimerData.timerMessage.enabled;
-        }
-        // Fallback to supabaseMessage or local message
-        return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const activeMsg = [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) || null;
+        return !!activeMsg;
       })() && (
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: 'translateY(-40px)' }}>
           <div 
             className={`font-bold text-white bg-black bg-opacity-50 rounded-lg border-4 border-white text-center flex items-center justify-center ${
-              !!(hybridTimerData?.timerMessage?.flashing || supabaseMessage?.flashing) ? 'ros-timer-message-flash' : ''
+              !!([hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled)?.flashing) ? 'ros-timer-message-flash' : ''
             }`}
             style={{
               width: '80vw',
@@ -679,8 +675,10 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }}
           >
             {(() => {
-              // Use hybridTimerData message if available (both Neon Only ON and OFF), otherwise fallback
-              const displayMessage = hybridTimerData?.timerMessage?.message || supabaseMessage?.message || message;
+              // Use enabled message only
+              const displayMessage = ([hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled)?.message)
+                || message
+                || '';
               // Break long messages into multiple lines
               const words = displayMessage.split(' ');
               let formattedMessage;

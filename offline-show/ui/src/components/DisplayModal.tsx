@@ -1,12 +1,39 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+
+const STORAGE_KEY = 'ros_offline_display_open_external';
+
+export type DisplayOpenMode = 'external' | 'browser';
 
 interface DisplayModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectOfflineTimer: () => void;
+  onSelectOfflineTimer: (mode: DisplayOpenMode) => void;
 }
 
 const DisplayModal: React.FC<DisplayModalProps> = ({ isOpen, onClose, onSelectOfflineTimer }) => {
+  const [openMode, setOpenMode] = useState<DisplayOpenMode>('external');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === 'browser' || saved === 'external') {
+        setOpenMode(saved);
+      }
+    } catch {
+      // ignore
+    }
+  }, [isOpen]);
+
+  const setMode = (mode: DisplayOpenMode) => {
+    setOpenMode(mode);
+    try {
+      localStorage.setItem(STORAGE_KEY, mode);
+    } catch {
+      // ignore
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -29,18 +56,52 @@ const DisplayModal: React.FC<DisplayModalProps> = ({ isOpen, onClose, onSelectOf
             Open the timer display for stage monitors, iPads, and confidence screens on the show network.
           </p>
 
-          <div className="bg-amber-950/40 border border-amber-700/50 rounded-lg p-3 mb-4">
+          <div className="bg-amber-950/40 border border-amber-700/50 rounded-lg p-3">
             <p className="text-amber-200 text-xs font-semibold mb-1">Offline show · port 3004</p>
             <p className="text-slate-400 text-xs leading-relaxed">
-              Syncs with Run of Show on this show laptop over LAN. When <strong className="text-slate-300">Cloud on</strong>{' '}
-              is enabled, updates also bridge to the hosted app.
+              Syncs with Run of Show on this show laptop over LAN. When{' '}
+              <strong className="text-slate-300">Cloud on</strong> is enabled, updates also bridge to the hosted app.
             </p>
+          </div>
+
+          <div className="bg-slate-700 rounded-lg p-4 space-y-3">
+            <p className="text-white text-sm font-semibold">How to open</p>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="offline-display-open-mode"
+                checked={openMode === 'external'}
+                onChange={() => setMode('external')}
+                className="mt-1"
+              />
+              <span>
+                <span className="text-white text-sm font-medium">New window (external)</span>
+                <span className="block text-slate-400 text-xs mt-0.5">
+                  Chrome-less popup — good for a projector or second monitor
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="offline-display-open-mode"
+                checked={openMode === 'browser'}
+                onChange={() => setMode('browser')}
+                className="mt-1"
+              />
+              <span>
+                <span className="text-white text-sm font-medium">This browser (new tab)</span>
+                <span className="block text-slate-400 text-xs mt-0.5">
+                  Opens in the same browser — capture that tab/window in OBS/vMix instead of pasting a Browser Source URL
+                </span>
+              </span>
+            </label>
           </div>
 
           <button
             type="button"
             onClick={() => {
-              onSelectOfflineTimer();
+              onSelectOfflineTimer(openMode);
               onClose();
             }}
             className="w-full p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-left ring-1 ring-amber-600/50"
@@ -59,7 +120,7 @@ const DisplayModal: React.FC<DisplayModalProps> = ({ isOpen, onClose, onSelectOf
               <div>
                 <h3 className="text-white font-semibold">Offline Timer Screen</h3>
                 <p className="text-slate-400 text-sm">
-                  Full-screen countdown, messages, and sub-cue — opens in a new window
+                  Full-screen countdown, messages, and sub-cue
                 </p>
               </div>
             </div>
