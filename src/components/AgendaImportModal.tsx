@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { getApiBaseUrl } from '../services/api-client';
 import { authHeaders } from '../lib/sessionAuth';
 import {
@@ -75,7 +76,7 @@ interface DocViewerProps {
   onAddSample: (text: string, label: FieldLabel) => void;
 }
 
-// CSS injected into the Word doc iframe so tables look real
+// CSS injected into the Word/Excel iframe so tables look real
 const DOCX_STYLES = `
   body { font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1a1a1a;
          line-height: 1.5; padding: 48px 56px; max-width: 820px; margin: 0 auto; }
@@ -91,6 +92,65 @@ const DOCX_STYLES = `
   ::selection { background: rgba(59,130,246,0.3); }
 `;
 
+const EXCEL_MIME = new Set([
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+]);
+
+function isExcelFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return /\.(xlsx|xls)$/i.test(name) || EXCEL_MIME.has(file.type);
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function sheetToTableHtml(sheet: XLSX.WorkSheet): string {
+  const full = XLSX.utils.sheet_to_html(sheet);
+  const match = full.match(/<table[\s\S]*?<\/table>/i);
+  return match ? match[0] : full;
+}
+
+function workbookToDocHtml(wb: XLSX.WorkBook): string {
+  return wb.SheetNames.map((name) => {
+    const sheet = wb.Sheets[name];
+    if (!sheet) return '';
+    return `<h2>${escapeHtml(name)}</h2>${sheetToTableHtml(sheet)}`;
+  }).filter(Boolean).join('\n');
+}
+
+function workbookToTextLines(wb: XLSX.WorkBook): string[] {
+  const lines: string[] = [];
+  for (const name of wb.SheetNames) {
+    const sheet = wb.Sheets[name];
+    if (!sheet) continue;
+    if (wb.SheetNames.length > 1) {
+      lines.push(`[Sheet: ${name}]`);
+      lines.push('');
+    }
+    const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+    });
+    for (const row of rows) {
+      const cells = (Array.isArray(row) ? row : []).map((c) => String(c ?? '').trim());
+      if (cells.every((c) => !c)) {
+        lines.push('');
+        continue;
+      }
+      lines.push(cells.join('\t'));
+    }
+    lines.push('');
+  }
+  return lines;
+}
+
 function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
   const [docHtml, setDocHtml]         = useState<string | null>(null);
   const [loading, setLoading]         = useState(true);
@@ -104,10 +164,32 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
   const viewerRef                     = useRef<HTMLDivElement>(null);
   const iframeRef                     = useRef<HTMLIFrameElement>(null);
   const isPdf                         = file.name.toLowerCase().endsWith('.pdf');
+  const isExcel                       = isExcelFile(file);
+  const usesIframeDoc                 = !isPdf; // Word + Excel render into the selectable iframe
+
+  // ── Excel: convert sheets to HTML tables for the iframe ───────────────────
+  useEffect(() => {
+    if (!isExcel) return;
+    let cancelled = false;
+    setLoading(true); setLoadErr(null); setDocHtml(null);
+    (async () => {
+      try {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+        const html = workbookToDocHtml(wb);
+        if (!cancelled) setDocHtml(html || '<p><em>(empty spreadsheet)</em></p>');
+      } catch {
+        if (!cancelled) setLoadErr('Could not render Excel file — use manual entry below.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [file, isExcel]);
 
   // ── Word doc: convert with mammoth, inject into sandboxed iframe ─────────
   useEffect(() => {
-    if (isPdf) return;
+    if (isPdf || isExcel) return;
     setLoading(true); setLoadErr(null); setDocHtml(null);
     const convert = () => {
       const reader = new FileReader();
@@ -129,7 +211,7 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
     s.onload = convert;
     s.onerror = () => { setLoadErr('Renderer unavailable — use manual entry.'); setLoading(false); };
     document.head.appendChild(s);
-  }, [file, isPdf]);
+  }, [file, isPdf, isExcel]);
 
   // ── PDF: render pages to canvas images via PDF.js ────────────────────────
   useEffect(() => {
@@ -171,7 +253,7 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
     document.head.appendChild(s);
   }, [file, isPdf]);
 
-  // ── Inject HTML into the Word iframe whenever content or samples change ───
+  // ── Inject HTML into the Word/Excel iframe whenever content or samples change ───
   const fullDocHtml = React.useMemo(() => {
     if (!docHtml) return null;
     let body = docHtml;
@@ -196,9 +278,9 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
     doc.open(); doc.write(fullDocHtml); doc.close();
   }, [fullDocHtml]);
 
-  // ── Word iframe: intercept selection via postMessage ─────────────────────
+  // ── Word/Excel iframe: intercept text selection for labeling ──────────────
   useEffect(() => {
-    if (isPdf || !docHtml) return;
+    if (!usesIframeDoc || !docHtml) return;
     const iframe = iframeRef.current;
     if (!iframe) return;
     const onLoad = () => {
@@ -222,7 +304,7 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
     };
     iframe.addEventListener('load', onLoad);
     return () => iframe.removeEventListener('load', onLoad);
-  }, [isPdf, docHtml]);
+  }, [usesIframeDoc, docHtml]);
 
   const commitLabel = (label: FieldLabel) => {
     if (!popup) return;
@@ -253,7 +335,9 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950 z-10">
             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-slate-400 text-sm">{isPdf ? 'Rendering PDF pages…' : 'Loading document…'}</span>
+            <span className="text-slate-400 text-sm">
+              {isPdf ? 'Rendering PDF pages…' : isExcel ? 'Loading spreadsheet…' : 'Loading document…'}
+            </span>
           </div>
         )}
 
@@ -283,8 +367,8 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
           </div>
         )}
 
-        {/* ── Word: sandboxed iframe with real table styles ── */}
-        {!isPdf && !loading && !loadErr && (
+        {/* ── Word / Excel: sandboxed iframe with real table styles ── */}
+        {usesIframeDoc && !loading && !loadErr && (
           <>
             {popup && <div className="fixed inset-0 z-40" onClick={dismissPopup} />}
             <iframe
@@ -422,6 +506,11 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
   const extractClientSide = useCallback(async (): Promise<string[]> => {
     if (!file) return [];
     const isPdf = file.name.toLowerCase().endsWith('.pdf');
+    if (isExcelFile(file)) {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+      return workbookToTextLines(wb);
+    }
     if (!isPdf) {
       // Word: use mammoth to get plain text
       const loadMammoth = (): Promise<any> => new Promise((res, rej) => {
@@ -714,10 +803,10 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
               <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-6 space-y-5">
                 <div>
                   <p className="text-white font-semibold">Upload your agenda</p>
-                  <p className="text-slate-400 text-sm mt-0.5">PDF or Word (.docx)</p>
+                  <p className="text-slate-400 text-sm mt-0.5">PDF, Word (.docx), or Excel (.xlsx / .xls)</p>
                 </div>
                 <input ref={fileInputRef} type="file"
-                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  accept=".pdf,.docx,.xlsx,.xls,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                   onChange={handleFileChange}
                   className="block w-full text-sm text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-500 file:cursor-pointer file:font-medium"
                 />

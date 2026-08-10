@@ -14,6 +14,7 @@ const { Pool } = require('pg');
 const multer = require('multer');
 const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
+const XLSX = require('xlsx');
 const { parseAgenda, findFirstTimeLineIndex } = require('./lib/agenda-parser');
 
 // Force Railway rebuild - 2025-02-05 - Backup error details + redeploy
@@ -662,15 +663,20 @@ if (isNeonAuthConfigured()) {
   console.warn('[api-auth] NEON_AUTH_BASE_URL not set — using legacy API login tokens only');
 }
 
-// Multer for agenda file upload (PDF / Word)
+// Multer for agenda file upload (PDF / Word / Excel)
 const agendaUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = /\.(pdf|docx)$/i.test(file.originalname) ||
-      ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.mimetype);
+    const ok = /\.(pdf|docx|xlsx|xls)$/i.test(file.originalname) ||
+      [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+      ].includes(file.mimetype);
     if (ok) cb(null, true);
-    else cb(new Error('Only PDF and Word (.docx) files are allowed'));
+    else cb(new Error('Only PDF, Word (.docx), or Excel (.xlsx/.xls) files are allowed'));
   }
 });
 
@@ -1847,20 +1853,24 @@ app.get('/api/test-upstash', async (req, res) => {
   }
 });
 
-// Parse agenda from PDF or Word (server-side, no external APIs)
+// Parse agenda from PDF, Word, or Excel (server-side, no external APIs)
 app.get('/api/parse-agenda', (req, res) => {
-  res.json({ ok: true, message: 'POST a PDF or .docx file as "file" to parse agenda.' });
+  res.json({ ok: true, message: 'POST a PDF, .docx, or Excel (.xlsx/.xls) file as "file" to parse agenda.' });
 });
 
 app.post('/api/parse-agenda', agendaUpload.single('file'), async (req, res) => {
   try {
     if (!req.file || !req.file.buffer) {
-      return res.status(400).json({ error: 'No file uploaded. Send a PDF or Word (.docx) file as "file".' });
+      return res.status(400).json({ error: 'No file uploaded. Send a PDF, Word (.docx), or Excel (.xlsx/.xls) file as "file".' });
     }
     const buf = req.file.buffer;
     const name = (req.file.originalname || '').toLowerCase();
-    const isPdf = name.endsWith('.pdf') || req.file.mimetype === 'application/pdf';
-    const isDocx = name.endsWith('.docx') || req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    const mime = req.file.mimetype || '';
+    const isPdf = name.endsWith('.pdf') || mime === 'application/pdf';
+    const isDocx = name.endsWith('.docx') || mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    const isExcel = /\.(xlsx|xls)$/i.test(name) ||
+      mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      mime === 'application/vnd.ms-excel';
 
     let rawText = '';
     if (isPdf) {
@@ -1869,8 +1879,30 @@ app.post('/api/parse-agenda', agendaUpload.single('file'), async (req, res) => {
     } else if (isDocx) {
       const result = await mammoth.extractRawText({ buffer: buf });
       rawText = result.value || '';
+    } else if (isExcel) {
+      const wb = XLSX.read(buf, { type: 'buffer', cellDates: true });
+      const lines = [];
+      for (const sheetName of wb.SheetNames) {
+        const sheet = wb.Sheets[sheetName];
+        if (!sheet) continue;
+        if (wb.SheetNames.length > 1) {
+          lines.push(`[Sheet: ${sheetName}]`);
+          lines.push('');
+        }
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+        for (const row of rows) {
+          const cells = (Array.isArray(row) ? row : []).map((c) => String(c ?? '').trim());
+          if (cells.every((c) => !c)) {
+            lines.push('');
+            continue;
+          }
+          lines.push(cells.join('\t'));
+        }
+        lines.push('');
+      }
+      rawText = lines.join('\n');
     } else {
-      return res.status(400).json({ error: 'Unsupported format. Use PDF or Word (.docx) only.' });
+      return res.status(400).json({ error: 'Unsupported format. Use PDF, Word (.docx), or Excel (.xlsx/.xls).' });
     }
 
     const extractOnly = /^(1|true|yes)$/i.test(String(req.query.extractOnly ?? req.body?.extractOnly ?? '').trim());

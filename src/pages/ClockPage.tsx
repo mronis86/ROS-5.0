@@ -245,18 +245,17 @@ const ClockPage: React.FC = () => {
       setHasShownModalOnce(true);
     }
 
-    // Handle tab visibility changes - disconnect when hidden to save costs
+    // Keep WebSocket alive while this display page is open.
+    // Do NOT disconnect on document.hidden: browsers mark occluded / unfocused
+    // windows as hidden, which dropped messages until the user focused again.
+    // Cost control is handled by the auto-disconnect timer modal instead.
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        console.log('👁️ ClockPage: Tab hidden - disconnecting WebSocket to save costs');
-        socketClient.disconnect(eventId);
-        // Timer keeps running in background
-      } else if (!socketClient.isConnected()) {
-        console.log('👁️ ClockPage: Tab visible - silently reconnecting WebSocket (no modal)');
+      if (document.hidden) return;
+      if (!socketClient.isConnected()) {
+        console.log('👁️ ClockPage: Tab visible - reconnecting WebSocket (no modal)');
         socketClient.connect(eventId, callbacks);
-        loadMessage(); // Reload message on reconnect
-        // Modal won't show again - timer still running
       }
+      loadMessage();
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
