@@ -210,3 +210,11 @@ html.led-output-broadcast #root,
   padding-right: 10px !important;
   line-height: 1.5 !important;
 }
+/* Stage timer/clock message flash (when message.flashing is true) */
+@keyframes ros-timer-message-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+.ros-timer-message-flash {
+  animation: ros-timer-message-flash 1s ease-in-out infinite;
+}

@@ -778,7 +778,7 @@ function registerRoutes(app, db, helpers) {
 
   app.put('/api/timer-messages/:id', (req, res) => {
     const id = req.params.id;
-    const { enabled, message } = req.body || {};
+    const { enabled, message, flashing } = req.body || {};
     const ts = nowIso();
     const row = db.prepare('SELECT * FROM timer_messages WHERE id = ?').get(id);
     if (!row) return res.status(404).json({ error: 'Message not found' });
@@ -786,11 +786,13 @@ function registerRoutes(app, db, helpers) {
       UPDATE timer_messages SET
         enabled = COALESCE(?, enabled),
         message = COALESCE(?, message),
+        flashing = COALESCE(?, flashing),
         updated_at = ?
       WHERE id = ?
     `).run(
       enabled != null ? boolToInt(enabled) : null,
       message ?? null,
+      flashing != null ? boolToInt(flashing) : null,
       ts,
       id
     );
@@ -800,7 +802,7 @@ function registerRoutes(app, db, helpers) {
   });
 
   app.post('/api/timer-messages', (req, res) => {
-    const { event_id, message, enabled, sent_by, sent_by_name, sent_by_role } = req.body || {};
+    const { event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role } = req.body || {};
     if (!event_id || !message) {
       return res.status(400).json({ error: 'event_id and message required' });
     }
@@ -808,13 +810,14 @@ function registerRoutes(app, db, helpers) {
     const ts = nowIso();
     const id = randomUUID();
     db.prepare(`
-      INSERT INTO timer_messages (id, event_id, message, enabled, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO timer_messages (id, event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       event_id,
       message,
       boolToInt(enabled !== false),
+      boolToInt(flashing === true),
       sent_by,
       sent_by_name,
       sent_by_role,

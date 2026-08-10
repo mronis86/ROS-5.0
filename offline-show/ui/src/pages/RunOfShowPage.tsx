@@ -797,6 +797,7 @@ const RunOfShowPage: React.FC = () => {
   const [showPinNotesColumnModal, setShowPinNotesColumnModal] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [messageText, setMessageText] = useState('');
+  const [messageFlashing, setMessageFlashing] = useState(false);
   const [messageEnabled, setMessageEnabled] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [showOSCModal, setShowOSCModal] = useState(false);
@@ -11895,6 +11896,7 @@ const RunOfShowPage: React.FC = () => {
                       // Turn off local message
                       setMessageEnabled(false);
                       setMessageText('');
+                      setMessageFlashing(false);
                       if (fullScreenTimerWindow && !fullScreenTimerWindow.closed) {
                         fullScreenTimerWindow.postMessage({
                           type: 'MESSAGE_UPDATE',
@@ -14823,11 +14825,27 @@ const RunOfShowPage: React.FC = () => {
               {/* Message Preview */}
               {messageText && (
                 <div className="p-3 bg-slate-700 rounded-lg">
-                  <div className="text-slate-300 text-sm">
+                  <div className={`text-slate-300 text-sm ${messageFlashing ? 'ros-timer-message-flash' : ''}`}>
                     <strong>Message Preview:</strong> {messageText}
                   </div>
                 </div>
               )}
+
+              {/* Flashing mode */}
+              <label className="flex items-start gap-3 cursor-pointer select-none rounded-lg border border-slate-600 bg-slate-700/40 px-3 py-3">
+                <input
+                  type="checkbox"
+                  checked={messageFlashing}
+                  onChange={(e) => setMessageFlashing(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-500 bg-slate-800 text-blue-500 focus:ring-blue-500"
+                />
+                <span>
+                  <span className="block text-white text-sm font-medium">Flashing mode</span>
+                  <span className="block text-slate-400 text-xs mt-0.5">
+                    Message flashes on Clock and Full Screen Timer displays
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* Footer */}
@@ -14851,6 +14869,7 @@ const RunOfShowPage: React.FC = () => {
                       event_id: event.id,
                       message: messageText.trim(),
                       enabled: true,
+                      flashing: messageFlashing,
                       sent_by: user?.id,
                       sent_by_name: user?.full_name || user?.email || 'Unknown User',
                       sent_by_role: currentUserRole || 'VIEWER',
@@ -14873,12 +14892,14 @@ const RunOfShowPage: React.FC = () => {
                     fullScreenTimerWindow.postMessage({
                       type: 'MESSAGE_UPDATE',
                       message: messageText,
-                      enabled: true
+                      enabled: true,
+                      flashing: messageFlashing
                     }, '*');
                   }
                     
                     // Clear form
                     setMessageText('');
+                    setMessageFlashing(false);
                   setShowMessagesModal(false);
                   } catch (error) {
                     console.error('❌ Error saving message:', error);

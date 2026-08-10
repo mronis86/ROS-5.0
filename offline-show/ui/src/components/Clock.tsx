@@ -970,7 +970,9 @@ const Clock: React.FC<ClockProps> = ({
       })() && (
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: 'translateY(-40px)' }}>
           <div 
-            className="font-bold text-white bg-black bg-opacity-50 rounded-lg border-4 border-white text-center flex items-center justify-center"
+            className={`font-bold text-white bg-black bg-opacity-50 rounded-lg border-4 border-white text-center flex items-center justify-center ${
+              !!(hybridTimerData?.timerMessage?.flashing || supabaseMessage?.flashing) ? 'ros-timer-message-flash' : ''
+            }`}
             style={{
               width: '80vw',
               minHeight: '50vh',

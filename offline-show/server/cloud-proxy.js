@@ -297,17 +297,19 @@ function mirrorTimerMessage(db, row) {
   if (!row?.event_id || !row?.id) return;
   const ts = row.updated_at || row.created_at || nowIso();
   db.prepare(`
-    INSERT INTO timer_messages (id, event_id, message, enabled, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO timer_messages (id, event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       message = excluded.message,
       enabled = excluded.enabled,
+      flashing = excluded.flashing,
       updated_at = excluded.updated_at
   `).run(
     row.id,
     row.event_id,
     row.message,
     boolToInt(row.enabled),
+    boolToInt(row.flashing === true),
     row.sent_by,
     row.sent_by_name,
     row.sent_by_role,

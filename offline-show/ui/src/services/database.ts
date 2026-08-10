@@ -36,6 +36,8 @@ export interface TimerMessage {
   event_id: string;
   message: string;
   enabled: boolean;
+  /** When true, Clock / Full Screen Timer flashes the message on screen. */
+  flashing?: boolean;
   sent_by?: string;
   sent_by_name?: string;
   sent_by_role?: string;

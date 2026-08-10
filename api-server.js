@@ -4653,7 +4653,7 @@ app.get('/api/timer-messages/:eventId', async (req, res) => {
 // Create a new timer message
 app.post('/api/timer-messages', async (req, res) => {
   try {
-    const { event_id, message, enabled, sent_by, sent_by_name, sent_by_role } = req.body;
+    const { event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role } = req.body;
     
     if (!event_id || !message) {
       return res.status(400).json({ error: 'event_id and message are required' });
@@ -4668,10 +4668,18 @@ app.post('/api/timer-messages', async (req, res) => {
     // Create the new message
     const result = await pool.query(
       `INSERT INTO timer_messages 
-       (event_id, message, enabled, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+       (event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
        RETURNING *`,
-      [event_id, message, enabled !== undefined ? enabled : true, sent_by, sent_by_name, sent_by_role]
+      [
+        event_id,
+        message,
+        enabled !== undefined ? enabled : true,
+        flashing === true,
+        sent_by,
+        sent_by_name,
+        sent_by_role,
+      ]
     );
     
     // Broadcast update via WebSocket
@@ -7128,6 +7136,14 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ run_of_show_data.version column ready');
     } catch (err) {
       console.warn('⚠️ run_of_show_data.version migration skipped:', err.message || err);
+    }
+    try {
+      await pool.query(
+        'ALTER TABLE timer_messages ADD COLUMN IF NOT EXISTS flashing BOOLEAN NOT NULL DEFAULT false'
+      );
+      console.log('✅ timer_messages.flashing column ready');
+    } catch (err) {
+      console.warn('⚠️ timer_messages.flashing migration skipped:', err.message || err);
     }
     try {
       await ensureEventCueFilesSchema(pool);

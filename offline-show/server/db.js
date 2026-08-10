@@ -132,6 +132,7 @@ function initDb() {
       event_id TEXT NOT NULL,
       message TEXT NOT NULL,
       enabled INTEGER DEFAULT 1,
+      flashing INTEGER DEFAULT 0,
       sent_by TEXT,
       sent_by_name TEXT,
       sent_by_role TEXT,
@@ -175,6 +176,13 @@ function initDb() {
     );
   `);
 
+  // Additive migrations for existing local DBs
+  try {
+    db.exec('ALTER TABLE timer_messages ADD COLUMN flashing INTEGER DEFAULT 0');
+  } catch {
+    // column already exists
+  }
+
   console.log(`📂 Offline DB: ${DB_PATH}`);
   return db;
 }
@@ -211,6 +219,7 @@ function normalizeTimerMessage(row) {
   return {
     ...row,
     enabled: intToBool(row.enabled),
+    flashing: intToBool(row.flashing),
   };
 }
 
