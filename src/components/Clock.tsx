@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import { startSecondTicker } from '../utils/secondTicker';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -173,15 +174,12 @@ const Clock: React.FC<ClockProps> = ({
         });
       };
       
-      // Update immediately
-      updateCountdown();
-      
-      // Set up interval for real-time updates
-      const interval = setInterval(updateCountdown, 1000);
+      // Worker-based tick so countdown stays smooth when window is visible but unfocused
+      const stopTicker = startSecondTicker(updateCountdown);
       
       return () => {
         console.log('🔍 [CLOCK DEBUG] Cleaning up countdown interval');
-        clearInterval(interval);
+        stopTicker();
       };
     } else if (supabaseOnly && hybridTimerData?.activeTimer && !hybridTimerData?.activeTimer?.is_running) {
       // Timer is loaded but not running - show 0 elapsed
@@ -205,13 +203,11 @@ const Clock: React.FC<ClockProps> = ({
     }
   }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, supabaseOnly, clockOffset]);
 
-  // Update current time every second
+  // Update current time every second (Worker tick — not throttled when unfocused but visible)
   useEffect(() => {
-    const timeInterval = setInterval(() => {
+    return startSecondTicker(() => {
       setCurrentTime(new Date());
-    }, 1000);
-
-    return () => clearInterval(timeInterval);
+    });
   }, []);
 
   // REMOVED: This was for props-based mode, but Clock always uses WebSocket mode
@@ -575,19 +571,21 @@ const Clock: React.FC<ClockProps> = ({
 
     socketClient.connect(eventId, callbacks);
 
+    // Re-register callbacks + refresh when the page becomes visible again.
+    // Never disconnect here — display clocks must keep receiving messages while open
+    // (including when another window has focus, or this window was briefly occluded).
     const refreshClockOnReturn = () => {
       if (document.hidden) return;
-      console.log('🔄 Clock: Visible/focused - silently refreshing timer state');
+      console.log('🔄 Clock: Visible - re-registering callbacks and refreshing timer state');
+      socketClient.connect(eventId, callbacks);
       setCurrentTime(new Date());
       void loadActiveTimer();
     };
     document.addEventListener('visibilitychange', refreshClockOnReturn);
-    window.addEventListener('focus', refreshClockOnReturn);
 
     return () => {
       console.log('🔄 Clock: Cleaning up WebSocket connection');
       document.removeEventListener('visibilitychange', refreshClockOnReturn);
-      window.removeEventListener('focus', refreshClockOnReturn);
       socketClient.disconnect(eventId);
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component
@@ -596,11 +594,9 @@ const Clock: React.FC<ClockProps> = ({
   useEffect(() => {
     if (!supabaseOnly || !hybridTimerData?.secondaryTimer) return;
 
-    const interval = setInterval(() => {
+    return startSecondTicker(() => {
       setSecondaryTimerUpdate(prev => prev + 1);
-    }, 1000);
-
-    return () => clearInterval(interval);
+    });
   }, [supabaseOnly, hybridTimerData?.secondaryTimer]);
 
   // REMOVED: Duplicate timer effect that was causing flickering
