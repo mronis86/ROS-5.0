@@ -567,6 +567,56 @@ class ApiClient {
     );
   }
 
+  // Pre-Flight / Show Checklist (BTS Crew + Admin) — per event day
+  async getPreflightChecklist(eventId: string, day = 1) {
+    const dayNum = Math.max(1, Math.floor(Number(day) || 1));
+    return this.request<{
+      day: number;
+      items: PreflightChecklistItemRow[];
+      progress: { total: number; checked: number; complete: boolean };
+    }>(
+      `/api/preflight-checklist/${encodeURIComponent(eventId)}?day=${dayNum}`,
+      {},
+      undefined,
+      0
+    );
+  }
+
+  async updatePreflightChecklistItem(
+    id: string,
+    data: {
+      is_checked?: boolean;
+      note?: string | null;
+      label?: string;
+      user_id?: string;
+      user_name?: string;
+    }
+  ) {
+    return this.request<PreflightChecklistItemRow>(
+      `/api/preflight-checklist/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(data) }
+    );
+  }
+
+  async createPreflightChecklistItem(data: {
+    event_id: string;
+    section: string;
+    label: string;
+    day?: number;
+  }) {
+    return this.request<PreflightChecklistItemRow>('/api/preflight-checklist', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deletePreflightChecklistItem(id: string) {
+    return this.request<{ ok: boolean; id: string }>(
+      `/api/preflight-checklist/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+  }
+
   async createComplaintLineNote(data: {
     event_id: string;
     user_id: string;
@@ -659,6 +709,18 @@ class ApiClient {
     );
     if (eventId) this.cache.delete(`cateringNotes_${eventId}`);
     if (result?.event_id) this.cache.delete(`cateringNotes_${result.event_id}`);
+    return result;
+  }
+
+  async setCueRecording(eventId: string, itemId: number, needsRecording: boolean) {
+    const result = await this.request<any>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/recording`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ item_id: itemId, needs_recording: needsRecording }),
+      }
+    );
+    this.cache.delete(`runOfShowData_${eventId}`);
     return result;
   }
 
@@ -760,6 +822,23 @@ export interface ComplaintLineNoteRow {
   category: string;
   content: string;
   created_at: string;
+  updated_at?: string;
+}
+
+export interface PreflightChecklistItemRow {
+  id: string;
+  event_id: string;
+  day?: number;
+  section: string;
+  label: string;
+  sort_order: number;
+  is_custom: boolean;
+  is_checked: boolean;
+  checked_by_user_id?: string | null;
+  checked_by_name?: string | null;
+  checked_at?: string | null;
+  note?: string | null;
+  created_at?: string;
   updated_at?: string;
 }
 

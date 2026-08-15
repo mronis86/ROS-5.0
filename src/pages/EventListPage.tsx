@@ -4,7 +4,7 @@ import { Event, EventFormData, LOCATION_OPTIONS, DAYS_OPTIONS, TIMEZONE_OPTIONS,
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
-import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, isCateringOnlyUser } from '../services/auth-service';
+import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, canAccessComms, isCateringOnlyUser, isCommsOnlyUser } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import { useNarrowViewport } from '../hooks/useNarrowViewport';
@@ -78,10 +78,12 @@ const EventListPage: React.FC = () => {
     localStorage.removeItem('forceLocalServer');
   }, []);
 
-  // Catering-only accounts land on the catering home, not the full Event List
+  // Catering-only / Comms-only accounts land on their home, not the full Event List
   useEffect(() => {
     if (isCateringOnlyUser(user)) {
       navigate('/catering', { replace: true });
+    } else if (isCommsOnlyUser(user)) {
+      navigate('/comms', { replace: true });
     }
   }, [user, navigate]);
 
@@ -715,6 +717,15 @@ const EventListPage: React.FC = () => {
                 className="rounded-lg border border-cyan-600/60 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50"
               >
                 Open Production Dashboard
+              </button>
+            ) : null}
+            {canAccessComms(user) ? (
+              <button
+                type="button"
+                onClick={() => navigate('/comms')}
+                className="rounded-lg border border-red-600/60 bg-red-950/40 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-900/50"
+              >
+                Open Comms
               </button>
             ) : null}
           </div>

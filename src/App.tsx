@@ -25,6 +25,8 @@ import ReportsPage from './pages/ReportsPage';
 import PostShowReportPage from './pages/PostShowReportPage';
 import CateringEventListPage from './pages/CateringEventListPage';
 import CateringEventPage from './pages/CateringEventPage';
+import CommsEventListPage from './pages/CommsEventListPage';
+import CommsEventPage from './pages/CommsEventPage';
 import ContentReviewPage from './pages/ContentReviewPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
@@ -134,6 +136,8 @@ function AppContent() {
             <Route path="/post-show-report" element={<PostShowReportPage />} />
             <Route path="/catering" element={<CateringEventListPage />} />
             <Route path="/catering/event" element={<CateringEventPage />} />
+            <Route path="/comms" element={<CommsEventListPage />} />
+            <Route path="/comms/event" element={<CommsEventPage />} />
             <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />

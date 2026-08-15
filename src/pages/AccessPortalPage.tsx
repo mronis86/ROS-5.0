@@ -14,7 +14,7 @@ import {
   passwordPolicyError,
 } from '../lib/passwordPolicy';
 import { useAuth } from '../contexts/AuthContext';
-import { isCateringOnlyUser } from '../services/auth-service';
+import { isCateringOnlyUser, isCommsOnlyUser } from '../services/auth-service';
 import ReportIssueButton from '../components/ReportIssueButton';
 
 const AccessPortalPage: React.FC = () => {
@@ -93,20 +93,23 @@ const AccessPortalPage: React.FC = () => {
         is_admin: result.is_admin,
         is_event_manager: result.is_event_manager,
         is_catering: result.is_catering,
+        is_bts_crew: result.is_bts_crew,
+        is_comms: result.is_comms,
         dashboard_enabled: result.dashboard_enabled,
       });
+      const portalUser = {
+        id: result.neon_user_id || '',
+        email: result.email || portal?.email || '',
+        full_name: result.full_name || portal?.full_name || '',
+        role: 'VIEWER' as const,
+        is_admin: result.is_admin,
+        is_event_manager: result.is_event_manager,
+        is_catering: result.is_catering,
+        is_bts_crew: result.is_bts_crew,
+        is_comms: result.is_comms,
+      };
       navigate(
-        isCateringOnlyUser({
-          id: result.neon_user_id || '',
-          email: result.email || portal?.email || '',
-          full_name: result.full_name || portal?.full_name || '',
-          role: 'VIEWER',
-          is_admin: result.is_admin,
-          is_event_manager: result.is_event_manager,
-          is_catering: result.is_catering,
-        })
-          ? '/catering'
-          : '/',
+        isCateringOnlyUser(portalUser) ? '/catering' : isCommsOnlyUser(portalUser) ? '/comms' : '/',
         { replace: true }
       );
     } catch (err) {

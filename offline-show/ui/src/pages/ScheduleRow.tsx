@@ -539,7 +539,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {/* Segment name column (after Duration) */}
       {visibleColumns.segmentName && (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
           style={{ width: columnWidths.segmentName }}
         >
           <input
@@ -579,6 +579,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             placeholder={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
             title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit segment names' : 'Edit segment name'}
           />
+          {item.needsRecording ? (
+            <span
+              className="absolute top-1 right-1 inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-black tracking-wide text-white shadow"
+              title="Marked for recording"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-white" />
+              REC
+            </span>
+          ) : null}
         </div>
       )}
       {/* Shot type column (after Segment Name) */}
@@ -717,6 +726,52 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               <span className="text-base font-medium text-white">Q&A</span>
             </label>
           </div>
+        </div>
+      )}
+      {visibleColumns.recording && (
+        <div
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={{ width: columnWidths.recording }}
+        >
+          <label className="flex flex-col items-center gap-1">
+            <input
+              type="checkbox"
+              checked={!!item.needsRecording}
+              onChange={(e) => {
+                if (isLockedByOther) return;
+                claimRowLock();
+                handleUserEditing();
+                if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                  alert('Only EDITORs can mark cues for recording. Please change your role to EDITOR.');
+                  return;
+                }
+                const oldValue = !!item.needsRecording;
+                setSchedule((prev: any[]) => prev.map(scheduleItem =>
+                  scheduleItem.id === item.id
+                    ? { ...scheduleItem, needsRecording: e.target.checked }
+                    : scheduleItem
+                ));
+                logChangeDebounced(
+                  `needsRecording_${item.id}`,
+                  'FIELD_UPDATE',
+                  `Updated recording flag for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'needsRecording',
+                    oldValue: oldValue ? 'TRUE' : 'FALSE',
+                    newValue: e.target.checked ? 'TRUE' : 'FALSE',
+                    details: { fieldType: 'checkbox', booleanChange: true }
+                  }
+                );
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+              className={`w-6 h-6 rounded border-2 ${item.needsRecording ? 'border-red-400 bg-red-700' : isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
+              title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can mark cues for recording' : 'Mark this cue for recording'}
+            />
+            <span className={`text-xs font-black tracking-wide ${item.needsRecording ? 'text-red-400' : 'text-slate-300'}`}>REC</span>
+          </label>
         </div>
       )}
       {/* Notes column (after PPT/QA) */}
@@ -1090,7 +1145,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'programType', 'shotType', 'segmentName',
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'assets', 'speakers', 'speakersText',
-    'hasPPT', 'hasQA', 'isPublic'
+    'hasPPT', 'hasQA', 'needsRecording', 'isPublic'
   ] as const;
   for (const field of fieldsToCheck) {
     if ((prevItem as any)?.[field] !== (nextItem as any)?.[field]) return false;

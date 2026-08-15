@@ -32,6 +32,8 @@ interface User {
   is_admin?: boolean;
   is_event_manager?: boolean;
   is_catering?: boolean;
+  is_bts_crew?: boolean;
+  is_comms?: boolean;
   dashboard_enabled?: boolean;
   accessStatus?: AccessStatus;
 }
@@ -49,24 +51,48 @@ export function canAccessAdmin(user: User | null | undefined): boolean {
 export function canAccessAccessManager(user: User | null | undefined): boolean {
   if (!user) return false;
   if (user.is_admin) return true;
-  return user.is_event_manager === true;
+  return user.is_event_manager === true || user.is_bts_crew === true;
 }
 
-/** Catering UI: catering role, Event Managers, or Admins. */
+/** Pre-Flight / Show Checklist: Admins and BTS Crew only. */
+export function canAccessPreFlightChecklist(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin) return true;
+  return user.is_bts_crew === true;
+}
+
+/** Catering UI: catering role, Event Managers, BTS Crew, or Admins. */
 export function canAccessCatering(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager) return true;
+  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return true;
   return user.is_catering === true;
 }
 
 /**
- * Catering-only accounts: signed-in catering users who are not admin/EM.
+ * Catering-only accounts: signed-in catering users who are not admin/EM/BTS.
  * Used to route them to /catering instead of the full Event List / ROS.
  */
 export function isCateringOnlyUser(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager) return false;
+  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return false;
   return user.is_catering === true;
+}
+
+/** Comms UI: comms role, Event Managers, BTS Crew, or Admins. */
+export function canAccessComms(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return true;
+  return user.is_comms === true;
+}
+
+/**
+ * Comms-only accounts: signed-in comms users who are not admin/EM/BTS.
+ * Used to route them to /comms instead of the full Event List / ROS.
+ */
+export function isCommsOnlyUser(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return false;
+  return user.is_comms === true;
 }
 
 /** Run-of-show Operator session role: admins and event managers only. */
@@ -199,6 +225,8 @@ class AuthService {
     is_admin?: boolean;
     is_event_manager?: boolean;
     is_catering?: boolean;
+    is_bts_crew?: boolean;
+    is_comms?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -244,6 +272,8 @@ class AuthService {
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
       is_catering: data.is_catering,
+      is_bts_crew: data.is_bts_crew,
+      is_comms: data.is_comms,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -261,6 +291,8 @@ class AuthService {
     is_admin?: boolean;
     is_event_manager?: boolean;
     is_catering?: boolean;
+    is_bts_crew?: boolean;
+    is_comms?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -329,6 +361,8 @@ class AuthService {
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
       is_catering: data.is_catering,
+      is_bts_crew: data.is_bts_crew,
+      is_comms: data.is_comms,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -346,6 +380,8 @@ class AuthService {
     is_admin?: boolean;
     is_event_manager?: boolean;
     is_catering?: boolean;
+    is_bts_crew?: boolean;
+    is_comms?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
   }> {
@@ -364,6 +400,8 @@ class AuthService {
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
       is_catering: data.is_catering,
+      is_bts_crew: data.is_bts_crew,
+      is_comms: data.is_comms,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -404,6 +442,8 @@ class AuthService {
               is_admin: access.is_admin,
               is_event_manager: access.is_event_manager,
               is_catering: access.is_catering,
+              is_bts_crew: access.is_bts_crew,
+              is_comms: access.is_comms,
               dashboard_enabled: access.dashboard_enabled,
               accessStatus: access.status,
             };
@@ -517,6 +557,8 @@ class AuthService {
           is_admin: exchange.is_admin,
           is_event_manager: exchange.is_event_manager,
           is_catering: exchange.is_catering,
+          is_bts_crew: exchange.is_bts_crew,
+          is_comms: exchange.is_comms,
           dashboard_enabled: exchange.dashboard_enabled,
           accessStatus: exchange.status,
         };
@@ -629,6 +671,8 @@ class AuthService {
     is_admin?: boolean;
     is_event_manager?: boolean;
     is_catering?: boolean;
+    is_bts_crew?: boolean;
+    is_comms?: boolean;
     dashboard_enabled?: boolean;
   }) {
     setApiAccessToken(session.token);
@@ -640,6 +684,8 @@ class AuthService {
       is_admin: session.is_admin,
       is_event_manager: session.is_event_manager,
       is_catering: session.is_catering,
+      is_bts_crew: session.is_bts_crew,
+      is_comms: session.is_comms,
       dashboard_enabled: session.dashboard_enabled ?? session.is_admin,
       accessStatus: session.status,
     };
@@ -774,6 +820,8 @@ class AuthService {
           this.authState.user.is_admin = exchange.is_admin;
           this.authState.user.is_event_manager = exchange.is_event_manager;
           this.authState.user.is_catering = exchange.is_catering;
+          this.authState.user.is_bts_crew = exchange.is_bts_crew;
+          this.authState.user.is_comms = exchange.is_comms;
           this.authState.user.dashboard_enabled = exchange.dashboard_enabled;
           this.persistUserSession(this.authState.user, exchange.status);
         }
@@ -788,6 +836,8 @@ class AuthService {
       this.authState.user.is_admin = access.is_admin;
       this.authState.user.is_event_manager = access.is_event_manager;
       this.authState.user.is_catering = access.is_catering;
+      this.authState.user.is_bts_crew = access.is_bts_crew;
+      this.authState.user.is_comms = access.is_comms;
       this.authState.user.dashboard_enabled = access.dashboard_enabled;
       this.persistUserSession(this.authState.user, access.status);
     }

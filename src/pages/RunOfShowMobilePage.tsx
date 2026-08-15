@@ -69,6 +69,7 @@ type ScheduleItem = {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
+  needsRecording?: boolean;
   customFields?: Record<string, string>;
 };
 
@@ -191,6 +192,7 @@ function normalizeScheduleItemMobile(raw: any): ScheduleItem {
     speakersText: String(raw.speakersText ?? raw.speakers_text ?? raw.speakers ?? ''),
     hasPPT: !!(raw.hasPPT ?? raw.has_ppt),
     hasQA: !!(raw.hasQA ?? raw.has_qa),
+    needsRecording: !!(raw.needsRecording ?? raw.needs_recording),
     customFields: typeof cf === 'object' && cf !== null ? cf : {}
   };
 }
@@ -550,6 +552,7 @@ const RunOfShowMobilePage: React.FC = () => {
   const [cueDraft, setCueDraft] = useState('');
   const [hasPptDraft, setHasPptDraft] = useState(false);
   const [hasQaDraft, setHasQaDraft] = useState(false);
+  const [needsRecordingDraft, setNeedsRecordingDraft] = useState(false);
   const [extraCustomDraft, setExtraCustomDraft] = useState<Record<string, string>>({});
 
   const itemsRef = useRef<ScheduleItem[]>([]);
@@ -760,6 +763,7 @@ const RunOfShowMobilePage: React.FC = () => {
     setCueDraft(selectedItem.customFields?.cue || '');
     setHasPptDraft(!!selectedItem.hasPPT);
     setHasQaDraft(!!selectedItem.hasQA);
+    setNeedsRecordingDraft(!!selectedItem.needsRecording);
     setSaveMessage('');
 
     const cols = Array.isArray(rosData?.custom_columns) ? rosData.custom_columns : [];
@@ -791,6 +795,7 @@ const RunOfShowMobilePage: React.FC = () => {
       speakersText: stringifySpeakersDraft(speakerDraft),
       hasPPT: hasPptDraft,
       hasQA: hasQaDraft,
+      needsRecording: needsRecordingDraft,
       customFields: {
         ...(selectedItem.customFields || {}),
         ...extraCustomDraft,
@@ -1474,6 +1479,16 @@ const RunOfShowMobilePage: React.FC = () => {
                   />
                   Q&A
                 </label>
+                <label className="inline-flex items-center gap-2 text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={needsRecordingDraft}
+                    onChange={(e) => setNeedsRecordingDraft(e.target.checked)}
+                    disabled={!canEditEditorOnlyFields}
+                    title={!canEditEditorOnlyFields ? 'Only Editors can mark cues for recording' : undefined}
+                  />
+                  Record
+                </label>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1568,7 +1583,14 @@ const RunOfShowMobilePage: React.FC = () => {
                           : 'border-slate-700'
                   }`}
                 >
-                  <div>{cueLabel(item)}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span>{cueLabel(item)}</span>
+                    {item.needsRecording ? (
+                      <span className="inline-flex items-center rounded-full bg-red-600 px-1 py-px text-[9px] font-black tracking-wide text-white">
+                        REC
+                      </span>
+                    ) : null}
+                  </div>
                 </button>
               );
             })}

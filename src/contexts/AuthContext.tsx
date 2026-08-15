@@ -25,6 +25,8 @@ interface AuthContextType {
     is_admin?: boolean;
     is_event_manager?: boolean;
     is_catering?: boolean;
+    is_bts_crew?: boolean;
+    is_comms?: boolean;
     dashboard_enabled?: boolean;
   }) => void;
   signOut: () => Promise<void>;
@@ -118,6 +120,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     status: AccessStatus;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_catering?: boolean;
+    is_bts_crew?: boolean;
+    is_comms?: boolean;
     dashboard_enabled?: boolean;
   }) => {
     authService.applySessionFromPortal(session);

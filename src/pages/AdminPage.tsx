@@ -24,6 +24,7 @@ import {
   approvedDomainInputHint,
   normalizeApprovedDomainInput,
 } from '../lib/approvedDomains';
+import { PREFLIGHT_SECTIONS, type PreflightSection } from '../lib/preflightChecklist';
 import {
   buildApprovalEmailDraft,
   buildApprovalMailtoUrl,
@@ -58,6 +59,8 @@ interface AccessRequestRow {
   is_admin?: boolean;
   is_event_manager?: boolean;
   is_catering?: boolean;
+  is_bts_crew?: boolean;
+  is_comms?: boolean;
   neon_user_id?: string | null;
   password_set_at?: string | null;
   portal_url?: string | null;
@@ -243,6 +246,7 @@ const ADMIN_NAV: { id: string; label: string }[] = [
   { id: 'access', label: 'Access' },
   { id: 'tokens', label: 'Tokens' },
   { id: 'domains', label: 'Domains' },
+  { id: 'preflight', label: 'Pre-Flight' },
   { id: 'backup', label: 'Backup' },
   { id: 'branding', label: 'Branding' },
 ];
@@ -400,6 +404,20 @@ export default function AdminPage() {
   const [approvedDomains, setApprovedDomains] = useState<string[]>([]);
   const [approvedDomainsLoading, setApprovedDomainsLoading] = useState(false);
   const [approvedDomainsError, setApprovedDomainsError] = useState<string | null>(null);
+
+  type PreflightTemplateRow = {
+    id: string;
+    section: string;
+    label: string;
+    sort_order: number;
+    is_enabled: boolean;
+  };
+  const [preflightTemplate, setPreflightTemplate] = useState<PreflightTemplateRow[]>([]);
+  const [preflightTemplateLoading, setPreflightTemplateLoading] = useState(false);
+  const [preflightTemplateError, setPreflightTemplateError] = useState<string | null>(null);
+  const [preflightTemplateBusy, setPreflightTemplateBusy] = useState(false);
+  const [preflightNewSection, setPreflightNewSection] = useState<PreflightSection>('Lighting');
+  const [preflightNewLabel, setPreflightNewLabel] = useState('');
   const [addDomainInput, setAddDomainInput] = useState('');
   const [addDomainLoading, setAddDomainLoading] = useState(false);
   const [domainsNeedsMigration, setDomainsNeedsMigration] = useState(false);
@@ -1123,6 +1141,129 @@ export default function AdminPage() {
     }
   }, []);
 
+  const fetchPreflightTemplate = useCallback(async () => {
+    setPreflightTemplateLoading(true);
+    setPreflightTemplateError(null);
+    try {
+      const res = await adminFetch('/api/admin/preflight-template');
+      if (res.status === 401) {
+        setPreflightTemplateError('Unauthorized');
+        setPreflightTemplate([]);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setPreflightTemplateError((err as { error?: string }).error || `HTTP ${res.status}`);
+        setPreflightTemplate([]);
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { items?: PreflightTemplateRow[] };
+      setPreflightTemplate(Array.isArray(data.items) ? data.items : []);
+    } catch (e) {
+      setPreflightTemplateError(e instanceof Error ? e.message : 'Request failed');
+      setPreflightTemplate([]);
+    } finally {
+      setPreflightTemplateLoading(false);
+    }
+  }, []);
+
+  const addPreflightTemplateItem = useCallback(async () => {
+    const label = preflightNewLabel.trim();
+    if (!label) return;
+    setPreflightTemplateBusy(true);
+    setPreflightTemplateError(null);
+    try {
+      const res = await adminFetch('/api/admin/preflight-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ section: preflightNewSection, label, is_enabled: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || `HTTP ${res.status}`);
+      }
+      setPreflightNewLabel('');
+      await fetchPreflightTemplate();
+    } catch (e) {
+      setPreflightTemplateError(e instanceof Error ? e.message : 'Failed to add item');
+    } finally {
+      setPreflightTemplateBusy(false);
+    }
+  }, [preflightNewLabel, preflightNewSection, fetchPreflightTemplate]);
+
+  const patchPreflightTemplateItem = useCallback(
+    async (id: string, patch: Partial<Pick<PreflightTemplateRow, 'label' | 'section' | 'is_enabled'>>) => {
+      setPreflightTemplateBusy(true);
+      setPreflightTemplateError(null);
+      try {
+        const res = await adminFetch(`/api/admin/preflight-template/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string }).error || `HTTP ${res.status}`);
+        }
+        const updated = (await res.json()) as PreflightTemplateRow;
+        setPreflightTemplate((prev) => prev.map((row) => (row.id === id ? { ...row, ...updated } : row)));
+      } catch (e) {
+        setPreflightTemplateError(e instanceof Error ? e.message : 'Failed to update item');
+      } finally {
+        setPreflightTemplateBusy(false);
+      }
+    },
+    []
+  );
+
+  const deletePreflightTemplateItem = useCallback(
+    async (id: string, label: string) => {
+      if (!window.confirm(`Remove “${label}” from the standard Pre-Flight template?`)) return;
+      setPreflightTemplateBusy(true);
+      setPreflightTemplateError(null);
+      try {
+        const res = await adminFetch(`/api/admin/preflight-template/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string }).error || `HTTP ${res.status}`);
+        }
+        setPreflightTemplate((prev) => prev.filter((row) => row.id !== id));
+      } catch (e) {
+        setPreflightTemplateError(e instanceof Error ? e.message : 'Failed to delete item');
+      } finally {
+        setPreflightTemplateBusy(false);
+      }
+    },
+    []
+  );
+
+  const resetPreflightTemplateDefaults = useCallback(async () => {
+    if (
+      !window.confirm(
+        'Replace the entire Pre-Flight template with the built-in defaults? This cannot be undone.'
+      )
+    ) {
+      return;
+    }
+    setPreflightTemplateBusy(true);
+    setPreflightTemplateError(null);
+    try {
+      const res = await adminFetch('/api/admin/preflight-template/reset-defaults', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || `HTTP ${res.status}`);
+      }
+      const data = (await res.json().catch(() => ({}))) as { items?: PreflightTemplateRow[] };
+      setPreflightTemplate(Array.isArray(data.items) ? data.items : []);
+    } catch (e) {
+      setPreflightTemplateError(e instanceof Error ? e.message : 'Failed to reset template');
+    } finally {
+      setPreflightTemplateBusy(false);
+    }
+  }, []);
+
   const addApprovedDomain = useCallback(async () => {
     const domain = normalizeApprovedDomainInput(addDomainInput);
     if (!domain) {
@@ -1273,7 +1414,7 @@ export default function AdminPage() {
     async (
       id: string,
       email: string,
-      patch: { status?: AccessStatus; is_admin?: boolean; is_event_manager?: boolean; is_catering?: boolean; dashboard_enabled?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
+      patch: { status?: AccessStatus; is_admin?: boolean; is_event_manager?: boolean; is_catering?: boolean; is_bts_crew?: boolean; is_comms?: boolean; dashboard_enabled?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
     ) => {
       setAccessRequestsError(null);
       try {
@@ -1413,6 +1554,21 @@ export default function AdminPage() {
           {r.is_event_manager ? 'Revoke event mgr' : 'Event manager'}
         </button>
       )}
+      {!r.is_admin && r.status !== 'approved' && (
+        <button
+          type="button"
+          onClick={() =>
+            void updateAccessUser(r.id, r.email, {
+              is_bts_crew: !(r.is_bts_crew === true),
+              notify_user: false,
+            })
+          }
+          className={`${accessActionBtn} ${r.is_bts_crew ? 'bg-teal-800 hover:bg-teal-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
+          title="BTS Crew: Event Manager–level access + Pre-Flight / Show Checklist"
+        >
+          {r.is_bts_crew ? 'Revoke BTS Crew' : 'BTS Crew'}
+        </button>
+      )}
       {r.status !== 'approved' && (
         <button
           type="button"
@@ -1494,6 +1650,21 @@ export default function AdminPage() {
           type="button"
           onClick={() =>
             void updateAccessUser(r.id, r.email, {
+              is_bts_crew: !(r.is_bts_crew === true),
+              notify_user: false,
+            })
+          }
+          className={`${accessActionBtn} ${r.is_bts_crew ? 'bg-teal-800 hover:bg-teal-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
+          title="BTS Crew: Event Manager–level access + Pre-Flight / Show Checklist"
+        >
+          {r.is_bts_crew ? 'Revoke BTS Crew' : 'BTS Crew'}
+        </button>
+      )}
+      {!r.is_admin && r.status === 'approved' && (
+        <button
+          type="button"
+          onClick={() =>
+            void updateAccessUser(r.id, r.email, {
               is_catering: !(r.is_catering === true),
               notify_user: false,
             })
@@ -1502,6 +1673,21 @@ export default function AdminPage() {
           title="Catering users land on the catering event list (assign events via Event access)"
         >
           {r.is_catering ? 'Revoke catering' : 'Catering'}
+        </button>
+      )}
+      {!r.is_admin && r.status === 'approved' && (
+        <button
+          type="button"
+          onClick={() =>
+            void updateAccessUser(r.id, r.email, {
+              is_comms: !(r.is_comms === true),
+              notify_user: false,
+            })
+          }
+          className={`${accessActionBtn} ${r.is_comms ? 'bg-red-800 hover:bg-red-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
+          title="Comms users land on the Comms event list to mark cues for recording"
+        >
+          {r.is_comms ? 'Revoke Comms' : 'Comms'}
         </button>
       )}
       {r.status === 'approved' && (
@@ -1792,11 +1978,20 @@ export default function AdminPage() {
   useEffect(() => {
     if (!unlocked) return;
     fetchApprovedDomains();
+    fetchPreflightTemplate();
     fetchIntegrationTokens();
     fetchAccessRequests();
     fetchPlatformMaintenance();
     fetchEventLifecycle();
-  }, [unlocked, fetchApprovedDomains, fetchIntegrationTokens, fetchAccessRequests, fetchPlatformMaintenance, fetchEventLifecycle]);
+  }, [
+    unlocked,
+    fetchApprovedDomains,
+    fetchPreflightTemplate,
+    fetchIntegrationTokens,
+    fetchAccessRequests,
+    fetchPlatformMaintenance,
+    fetchEventLifecycle,
+  ]);
 
   const disconnectUser = useCallback(async (eventId: string, userId: string) => {
     if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
@@ -3150,11 +3345,15 @@ export default function AdminPage() {
                         <td className={`${accessTableCellClass} text-slate-300`}>
                           {r.is_admin
                             ? 'Admin'
-                            : r.is_event_manager
-                              ? 'Event manager'
-                              : r.is_catering
-                                ? 'Catering'
-                                : 'User'}
+                            : r.is_bts_crew
+                              ? 'BTS Crew'
+                              : r.is_event_manager
+                                ? 'Event manager'
+                                : r.is_catering
+                                  ? 'Catering'
+                                  : r.is_comms
+                                    ? 'Comms'
+                                    : 'User'}
                         </td>
                         <td className={`${accessTableCellClass} text-slate-400`}>
                           {r.status === 'approved' ? (
@@ -3471,6 +3670,148 @@ export default function AdminPage() {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        <section id="preflight" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+                Pre-Flight checklist template
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Standard items loaded into each event/day checklist. Uncheck to exclude from new checklists.
+                Existing show checklists are not changed.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void fetchPreflightTemplate()}
+                disabled={preflightTemplateLoading || preflightTemplateBusy}
+                className="rounded-lg bg-slate-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+              >
+                {preflightTemplateLoading ? 'Loading…' : 'Refresh'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void resetPreflightTemplateDefaults()}
+                disabled={preflightTemplateBusy}
+                className="rounded-lg bg-slate-700 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-slate-600 disabled:opacity-50"
+              >
+                Reset defaults
+              </button>
+            </div>
+          </div>
+
+          {preflightTemplateError ? (
+            <p className="mb-3 text-sm text-red-300">{preflightTemplateError}</p>
+          ) : null}
+
+          <div className="mb-4 flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-900/50 p-3 sm:flex-row">
+            <select
+              value={preflightNewSection}
+              onChange={(e) => setPreflightNewSection(e.target.value as PreflightSection)}
+              className="rounded-lg border border-slate-600 bg-slate-700 px-2 py-2 text-sm text-white"
+            >
+              {PREFLIGHT_SECTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={preflightNewLabel}
+              onChange={(e) => setPreflightNewLabel(e.target.value)}
+              placeholder="New standard item…"
+              className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-400"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void addPreflightTemplateItem();
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => void addPreflightTemplateItem()}
+              disabled={preflightTemplateBusy || !preflightNewLabel.trim()}
+              className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              Add item
+            </button>
+          </div>
+
+          {preflightTemplateLoading && preflightTemplate.length === 0 ? (
+            <p className="text-sm text-slate-400">Loading template…</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {PREFLIGHT_SECTIONS.map((section) => {
+                const sectionItems = preflightTemplate.filter((i) => i.section === section);
+                return (
+                  <div key={section} className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                    <h3 className="mb-2 border-b border-slate-700 pb-2 text-sm font-semibold text-white">
+                      {section}{' '}
+                      <span className="font-normal text-slate-500">
+                        ({sectionItems.filter((i) => i.is_enabled).length}/{sectionItems.length} on)
+                      </span>
+                    </h3>
+                    {sectionItems.length === 0 ? (
+                      <p className="text-xs text-slate-500">No items.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {sectionItems.map((item) => (
+                          <li key={item.id} className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              className="mt-1 h-4 w-4 accent-blue-500"
+                              checked={item.is_enabled}
+                              disabled={preflightTemplateBusy}
+                              title="Include in new event checklists"
+                              onChange={(e) =>
+                                void patchPreflightTemplateItem(item.id, {
+                                  is_enabled: e.target.checked,
+                                })
+                              }
+                            />
+                            <input
+                              type="text"
+                              value={item.label}
+                              disabled={preflightTemplateBusy}
+                              onChange={(e) =>
+                                setPreflightTemplate((prev) =>
+                                  prev.map((row) =>
+                                    row.id === item.id ? { ...row, label: e.target.value } : row
+                                  )
+                                )
+                              }
+                              onBlur={(e) => {
+                                const next = e.target.value.trim();
+                                if (!next || next === item.label) {
+                                  if (!next) void fetchPreflightTemplate();
+                                  return;
+                                }
+                                void patchPreflightTemplateItem(item.id, { label: next });
+                              }}
+                              className="min-w-0 flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-200"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void deletePreflightTemplateItem(item.id, item.label)}
+                              disabled={preflightTemplateBusy}
+                              className="rounded px-2 py-1 text-xs text-red-300 hover:bg-slate-700"
+                            >
+                              Delete
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </section>
 

@@ -73,6 +73,7 @@ interface ScheduleItem {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
+  needsRecording?: boolean;
   timerId: string;
   customFields: Record<string, string>;
   isPublic: boolean;
@@ -835,6 +836,7 @@ const RunOfShowPage: React.FC = () => {
     segmentName: true,
     shotType: true,
     pptQA: true,
+    recording: true,
     notes: true,
     assets: true,
     participants: false, // 👈 hidden now,
@@ -853,6 +855,7 @@ const RunOfShowPage: React.FC = () => {
     segmentName: 320, // w-80 = 320px
     shotType: 192, // w-48 = 192px
     pptQA: 192, // w-48 = 192px
+    recording: 88,
     notes: 384, // w-96 = 384px
     assets: 192, // w-48 = 192px
     participants: 256, // w-64 = 256px
@@ -5972,14 +5975,17 @@ const RunOfShowPage: React.FC = () => {
     };
 
     const clockUrl = event?.id ? `/timer?eventId=${encodeURIComponent(event.id)}` : '/timer';
-    const newClockWindow =
-      mode === 'browser'
-        ? window.open(clockUrl, '_blank')
-        : window.open(
-            clockUrl,
-            'offlineShowTimer',
-            'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
-          );
+
+    if (mode === 'browser') {
+      navigate(clockUrl, { state: timerData });
+      return;
+    }
+
+    const newClockWindow = window.open(
+      clockUrl,
+      'offlineShowTimer',
+      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+    );
 
     if (newClockWindow) {
       setClockWindow(newClockWindow);
@@ -12066,6 +12072,23 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
+                      {visibleColumns.recording && (
+                        <div 
+                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          style={{ width: columnWidths.recording }}
+                        >
+                          <span className="text-white font-bold flex items-center gap-1">
+                            Rec
+                            {currentUserRole === 'VIEWER' && (
+                              <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                            )}
+                          </span>
+                          <div 
+                            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                            onMouseDown={(e) => handleResizeStart(e, 'recording')}
+                          />
+                        </div>
+                      )}
                       {visibleColumns.notes && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
@@ -12999,6 +13022,23 @@ const RunOfShowPage: React.FC = () => {
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                         onMouseDown={(e) => handleResizeStart(e, 'pptQA')}
+                      />
+                    </div>
+                  )}
+                  {visibleColumns.recording && (
+                    <div 
+                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      style={{ width: columnWidths.recording }}
+                    >
+                      <span className="text-white font-bold flex items-center gap-1">
+                        Rec
+                        {currentUserRole === 'VIEWER' && (
+                          <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                        )}
+                      </span>
+                      <div 
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                        onMouseDown={(e) => handleResizeStart(e, 'recording')}
                       />
                     </div>
                   )}
@@ -15008,6 +15048,16 @@ const RunOfShowPage: React.FC = () => {
                   <label className="flex items-center gap-3">
                     <input
                       type="checkbox"
+                      checked={visibleColumns.recording}
+                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, recording: e.target.checked }))}
+                      className="rounded"
+                    />
+                    <span className="text-white">Recording</span>
+                  </label>
+                  
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
                       checked={visibleColumns.notes}
                       onChange={(e) => setVisibleColumns(prev => ({ ...prev, notes: e.target.checked }))}
                       className="rounded"
@@ -15096,6 +15146,7 @@ const RunOfShowPage: React.FC = () => {
                       segmentName: true,
                       shotType: true,
                       pptQA: true,
+                      recording: true,
                       notes: true,
                       assets: true,
                       participants: false, // 👈 hidden now,
@@ -15124,6 +15175,7 @@ const RunOfShowPage: React.FC = () => {
                       segmentName: false,
                       shotType: false,
                       pptQA: false,
+                      recording: false,
                       notes: false,
                       assets: false,
                       participants: false,

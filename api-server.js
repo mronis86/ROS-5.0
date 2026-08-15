@@ -30,7 +30,7 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
-const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
@@ -1060,6 +1060,148 @@ app.delete('/api/admin/approved-domains/:domain', async (req, res) => {
   }
 });
 
+const PREFLIGHT_SECTIONS_SET = new Set(['Lighting', 'Audio', 'Broadcast', 'Media Playback']);
+
+function normalizePreflightSection(value) {
+  const s = String(value || '').trim();
+  return PREFLIGHT_SECTIONS_SET.has(s) ? s : null;
+}
+
+// Admin: Pre-Flight standard template
+app.get('/api/admin/preflight-template', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await runPreflightTemplateSyncTable(pool);
+    await ensurePreflightTemplateSeeded(pool);
+    const r = await pool.query(
+      `SELECT id, section, label, sort_order, is_enabled, created_at, updated_at
+       FROM preflight_checklist_template
+       ORDER BY sort_order ASC, created_at ASC`
+    );
+    res.json({ items: r.rows });
+  } catch (err) {
+    console.error('[admin preflight-template GET]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/preflight-template', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await runPreflightTemplateSyncTable(pool);
+    const section = normalizePreflightSection(req.body?.section);
+    const label = String(req.body?.label || '').trim();
+    if (!section || !label) {
+      return res.status(400).json({ error: 'section and label are required' });
+    }
+    const maxOrder = await pool.query(
+      `SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM preflight_checklist_template`
+    );
+    const sortOrder = Number(maxOrder.rows[0]?.max_order ?? -1) + 1;
+    const isEnabled = req.body?.is_enabled === false || req.body?.is_enabled === 'false' ? false : true;
+    const r = await pool.query(
+      `INSERT INTO preflight_checklist_template (section, label, sort_order, is_enabled)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, section, label, sort_order, is_enabled, created_at, updated_at`,
+      [section, label, sortOrder, isEnabled]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (err) {
+    console.error('[admin preflight-template POST]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/admin/preflight-template/:id', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    const { id } = req.params;
+    const body = req.body || {};
+    const existing = await pool.query(`SELECT * FROM preflight_checklist_template WHERE id = $1`, [id]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'Template item not found' });
+
+    const updates = [];
+    const values = [];
+    let param = 1;
+
+    if (body.section !== undefined) {
+      const section = normalizePreflightSection(body.section);
+      if (!section) return res.status(400).json({ error: 'Invalid section' });
+      updates.push(`section = $${param++}`);
+      values.push(section);
+    }
+    if (body.label !== undefined) {
+      const label = String(body.label || '').trim();
+      if (!label) return res.status(400).json({ error: 'label cannot be empty' });
+      updates.push(`label = $${param++}`);
+      values.push(label);
+    }
+    if (body.is_enabled !== undefined) {
+      updates.push(`is_enabled = $${param++}`);
+      values.push(body.is_enabled === true || body.is_enabled === 'true' || body.is_enabled === 1);
+    }
+    if (body.sort_order !== undefined) {
+      updates.push(`sort_order = $${param++}`);
+      values.push(Math.floor(Number(body.sort_order) || 0));
+    }
+    if (updates.length === 0) return res.status(400).json({ error: 'No changes provided' });
+    updates.push('updated_at = NOW()');
+    values.push(id);
+    const r = await pool.query(
+      `UPDATE preflight_checklist_template
+       SET ${updates.join(', ')}
+       WHERE id = $${param}
+       RETURNING id, section, label, sort_order, is_enabled, created_at, updated_at`,
+      values
+    );
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error('[admin preflight-template PATCH]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/preflight-template/:id', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    const { id } = req.params;
+    const r = await pool.query(
+      `DELETE FROM preflight_checklist_template WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Template item not found' });
+    res.json({ ok: true, id });
+  } catch (err) {
+    console.error('[admin preflight-template DELETE]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/preflight-template/reset-defaults', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await runPreflightTemplateSyncTable(pool);
+    await pool.query(`DELETE FROM preflight_checklist_template`);
+    for (let i = 0; i < PREFLIGHT_DEFAULT_TEMPLATE.length; i++) {
+      const row = PREFLIGHT_DEFAULT_TEMPLATE[i];
+      await pool.query(
+        `INSERT INTO preflight_checklist_template (section, label, sort_order, is_enabled)
+         VALUES ($1, $2, $3, TRUE)`,
+        [row.section, row.label, i]
+      );
+    }
+    const r = await pool.query(
+      `SELECT id, section, label, sort_order, is_enabled, created_at, updated_at
+       FROM preflight_checklist_template
+       ORDER BY sort_order ASC, created_at ASC`
+    );
+    res.json({ ok: true, items: r.rows });
+  } catch (err) {
+    console.error('[admin preflight-template reset]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Admin backup config: check if table exists (for debugging "migration required" when Neon says it's there)
 app.get('/api/admin/backup-config/check-table', async (req, res) => {
   if (!requireAdminAccess(req, res)) return;
@@ -1168,6 +1310,166 @@ async function runCateringRoleColumnSync(db) {
       ON public.api_user_access (is_catering)
       WHERE is_catering = TRUE
   `);
+}
+
+async function runBtsCrewRoleColumnSync(db) {
+  await db.query(`
+    ALTER TABLE public.api_user_access
+      ADD COLUMN IF NOT EXISTS is_bts_crew BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_api_user_access_bts_crew
+      ON public.api_user_access (is_bts_crew)
+      WHERE is_bts_crew = TRUE
+  `);
+}
+
+async function runCommsRoleColumnSync(db) {
+  await db.query(`
+    ALTER TABLE public.api_user_access
+      ADD COLUMN IF NOT EXISTS is_comms BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_api_user_access_comms
+      ON public.api_user_access (is_comms)
+      WHERE is_comms = TRUE
+  `);
+}
+
+async function runPreflightChecklistSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.preflight_checklist_items (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id TEXT NOT NULL,
+      section TEXT NOT NULL,
+      label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_custom BOOLEAN NOT NULL DEFAULT FALSE,
+      is_checked BOOLEAN NOT NULL DEFAULT FALSE,
+      checked_by_user_id TEXT,
+      checked_by_name TEXT,
+      checked_at TIMESTAMPTZ,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`
+    ALTER TABLE public.preflight_checklist_items
+      ADD COLUMN IF NOT EXISTS day INTEGER NOT NULL DEFAULT 1
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_preflight_checklist_event_section
+      ON public.preflight_checklist_items (event_id, section, sort_order)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_preflight_checklist_event_checked
+      ON public.preflight_checklist_items (event_id, is_checked)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_preflight_checklist_event_day
+      ON public.preflight_checklist_items (event_id, day, sort_order)
+  `);
+}
+
+async function runPreflightTemplateSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.preflight_checklist_template (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      section TEXT NOT NULL,
+      label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_preflight_template_section_order
+      ON public.preflight_checklist_template (section, sort_order)
+  `);
+}
+
+/** Default Pre-Flight template (keep in sync with src/lib/preflightChecklist.ts). */
+const PREFLIGHT_DEFAULT_TEMPLATE = [
+  { section: 'Lighting', label: 'House lights preset confirmed' },
+  { section: 'Lighting', label: 'Stage wash / specials verified' },
+  { section: 'Lighting', label: 'Cue look matches show caller brief' },
+  { section: 'Lighting', label: 'Backup / emergency lighting path known' },
+  { section: 'Lighting', label: 'Followspot / movers (if used) checked' },
+  { section: 'Audio', label: 'Room PA on and level-checked' },
+  { section: 'Audio', label: 'Mics labeled (handheld / lav / podium)' },
+  { section: 'Audio', label: 'RF scan / batteries confirmed' },
+  { section: 'Audio', label: 'Speaker walk-on / walk-off music path tested' },
+  { section: 'Audio', label: 'Comms / IFB (if used) verified' },
+  { section: 'Broadcast', label: 'Program audio feed clean' },
+  { section: 'Broadcast', label: 'Record / stream path armed' },
+  { section: 'Broadcast', label: 'Levels / meters checked (no clip, not too quiet)' },
+  { section: 'Broadcast', label: 'Camera / ISO / framing (if applicable) confirmed' },
+  { section: 'Broadcast', label: 'Lower thirds / CG source linked and updating' },
+  { section: 'Media Playback', label: 'Playback machine / playlist armed' },
+  { section: 'Media Playback', label: 'Videos / decks on correct machine and output' },
+  { section: 'Media Playback', label: 'Resolume / Mitti / Companion path tested (if used)' },
+  { section: 'Media Playback', label: 'Confidence monitor shows correct content' },
+  { section: 'Media Playback', label: 'Backup media / spare drive available' },
+];
+
+async function ensurePreflightTemplateSeeded(db) {
+  const count = await db.query(`SELECT COUNT(*)::int AS n FROM preflight_checklist_template`);
+  if ((count.rows[0]?.n || 0) > 0) return;
+  for (let i = 0; i < PREFLIGHT_DEFAULT_TEMPLATE.length; i++) {
+    const row = PREFLIGHT_DEFAULT_TEMPLATE[i];
+    await db.query(
+      `INSERT INTO preflight_checklist_template (section, label, sort_order, is_enabled)
+       VALUES ($1, $2, $3, TRUE)`,
+      [row.section, row.label, i]
+    );
+  }
+}
+
+async function loadEnabledPreflightTemplate(db) {
+  await ensurePreflightTemplateSeeded(db);
+  const result = await db.query(
+    `SELECT section, label, sort_order
+     FROM preflight_checklist_template
+     WHERE is_enabled = TRUE
+     ORDER BY sort_order ASC, created_at ASC`
+  );
+  return result.rows;
+}
+
+function requirePreflightAccess(req, res) {
+  if (userCanAccessPreflightChecklist(req.auth)) return true;
+  res.status(403).json({
+    error: 'Forbidden',
+    message: 'Pre-Flight checklist is limited to BTS Crew and administrators.',
+  });
+  return false;
+}
+
+function normalizePreflightDay(value) {
+  const n = parseInt(String(value ?? '1'), 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+async function ensurePreflightItemsForEvent(db, eventId, day = 1) {
+  const dayNum = normalizePreflightDay(day);
+  const existing = await db.query(
+    `SELECT id FROM preflight_checklist_items WHERE event_id = $1 AND day = $2 LIMIT 1`,
+    [eventId, dayNum]
+  );
+  if (existing.rows.length > 0) return;
+  const template = await loadEnabledPreflightTemplate(db);
+  const rows = template.length > 0 ? template : PREFLIGHT_DEFAULT_TEMPLATE;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    await db.query(
+      `INSERT INTO preflight_checklist_items
+         (event_id, day, section, label, sort_order, is_custom, is_checked)
+       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE)`,
+      [eventId, dayNum, row.section, row.label, row.sort_order != null ? row.sort_order : i]
+    );
+  }
 }
 
 // Full sync: create table if missing with all columns, or add any missing columns. Safe to run anytime.
@@ -2562,6 +2864,109 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
   }
 });
 
+function canWriteCueRecording(auth) {
+  if (!auth) return false;
+  return !!(auth.isAdmin || auth.isEventManager || auth.isBtsCrew || auth.isComms);
+}
+
+function isCommsOnlyAuth(auth) {
+  if (!auth) return false;
+  if (auth.isAdmin || auth.isEventManager || auth.isBtsCrew) return false;
+  return auth.isComms === true;
+}
+
+app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    if (!canWriteCueRecording(req.auth)) {
+      return res.status(403).json({
+        error: 'Only Comms, event managers, and administrators can mark cues for recording.',
+      });
+    }
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const body = req.body || {};
+    const updates = [];
+    if (Array.isArray(body.items)) {
+      for (const row of body.items) {
+        const id = Number(row?.id ?? row?.item_id);
+        if (!Number.isFinite(id)) continue;
+        updates.push({
+          id,
+          needsRecording: row.needsRecording === true || row.needs_recording === true,
+        });
+      }
+    } else {
+      const id = Number(body.item_id ?? body.itemId ?? body.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: 'item_id is required' });
+      }
+      const flag = body.needs_recording ?? body.needsRecording;
+      if (typeof flag !== 'boolean') {
+        return res.status(400).json({ error: 'needs_recording must be a boolean' });
+      }
+      updates.push({ id, needsRecording: flag });
+    }
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No recording updates provided' });
+    }
+
+    const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    const currentRow = existing.rows[0];
+    let items = currentRow.schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    if (!Array.isArray(items)) items = [];
+
+    const byId = new Map(updates.map((u) => [u.id, u.needsRecording]));
+    const nextItems = items.map((item) => {
+      const id = Number(item.id);
+      if (!byId.has(id)) return item;
+      return { ...item, needsRecording: byId.get(id) };
+    });
+
+    const result = await pool.query(
+      `UPDATE run_of_show_data SET
+         schedule_items = $1,
+         last_modified_by = $2,
+         last_modified_by_name = $3,
+         last_modified_by_role = $4,
+         last_change_at = NOW(),
+         updated_at = NOW(),
+         version = COALESCE(version, 1) + 1
+       WHERE event_id = $5
+       RETURNING *`,
+      [
+        JSON.stringify(nextItems),
+        req.auth?.userId || null,
+        req.auth?.fullName || req.auth?.email || 'Comms',
+        'COMMS',
+        eventId,
+      ]
+    );
+    const savedData = result.rows[0];
+    await regenerateUpstashCache(eventId, savedData);
+    broadcastUpdate(eventId, 'runOfShowDataUpdated', savedData);
+    res.json(savedData);
+  } catch (error) {
+    console.error('Error updating cue recording flags:', error);
+    res.status(500).json({ error: 'Failed to update recording flags' });
+  }
+});
+
 // Lower Thirds XML endpoint
 app.get('/api/lower-thirds.xml', async (req, res) => {
   try {
@@ -3178,6 +3583,12 @@ app.post('/api/run-of-show-data', async (req, res) => {
     if (!event_id) {
       return res.status(400).json({ error: 'event_id is required' });
     }
+    if (isCommsOnlyAuth(req.auth)) {
+      return res.status(403).json({
+        error: 'Comms users can only update recording flags.',
+        hint: 'PATCH /api/run-of-show-data/:eventId/recording',
+      });
+    }
 
     // Preserve show_mode and track_was_durations from DB when not in payload
     // (schedule saves don't include them, which was overwriting In-Show state)
@@ -3719,6 +4130,195 @@ app.delete('/api/complaint-line/:id', async (req, res) => {
   }
 });
 
+// Pre-Flight / Show Checklist — BTS Crew + Admin (per event day)
+app.get('/api/preflight-checklist/:eventId', async (req, res) => {
+  if (!requirePreflightAccess(req, res)) return;
+  try {
+    const { eventId } = req.params;
+    const day = normalizePreflightDay(req.query.day);
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'No access to this event.' });
+    }
+    await ensurePreflightItemsForEvent(pool, eventId, day);
+    const result = await pool.query(
+      `SELECT id, event_id, day, section, label, sort_order, is_custom, is_checked,
+              checked_by_user_id, checked_by_name, checked_at, note, created_at, updated_at
+       FROM preflight_checklist_items
+       WHERE event_id = $1 AND day = $2
+       ORDER BY sort_order ASC, created_at ASC`,
+      [eventId, day]
+    );
+    const items = result.rows;
+    const checked = items.filter((i) => i.is_checked).length;
+    res.json({
+      day,
+      items,
+      progress: { total: items.length, checked, complete: items.length > 0 && checked === items.length },
+    });
+  } catch (error) {
+    if (error.code === '42P01') {
+      return res.status(503).json({
+        error: 'Run migration 045_create_preflight_checklist.sql on Neon (or restart API to sync the table).',
+      });
+    }
+    console.error('Error fetching preflight checklist:', error);
+    res.status(500).json({ error: 'Failed to fetch preflight checklist' });
+  }
+});
+
+app.patch('/api/preflight-checklist/:id', async (req, res) => {
+  if (!requirePreflightAccess(req, res)) return;
+  try {
+    const { id } = req.params;
+    const body = req.body || {};
+    const existing = await pool.query(
+      `SELECT * FROM preflight_checklist_items WHERE id = $1`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Checklist item not found' });
+    }
+    const row = existing.rows[0];
+    if (!userCanAccessEvent(req.auth, row.event_id)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'No access to this event.' });
+    }
+
+    const updates = [];
+    const values = [];
+    let param = 1;
+
+    if (body.is_checked !== undefined) {
+      const checked = body.is_checked === true || body.is_checked === 'true' || body.is_checked === 1;
+      updates.push(`is_checked = $${param++}`);
+      values.push(checked);
+      if (checked) {
+        updates.push(`checked_by_user_id = $${param++}`);
+        values.push(String(body.user_id || req.auth?.userId || ''));
+        updates.push(`checked_by_name = $${param++}`);
+        values.push(String(body.user_name || req.auth?.fullName || req.auth?.email || ''));
+        updates.push('checked_at = NOW()');
+      } else {
+        updates.push('checked_by_user_id = NULL');
+        updates.push('checked_by_name = NULL');
+        updates.push('checked_at = NULL');
+      }
+    }
+
+    if (body.note !== undefined) {
+      updates.push(`note = $${param++}`);
+      values.push(body.note == null ? null : String(body.note).trim() || null);
+    }
+
+    if (body.label !== undefined && row.is_custom) {
+      const label = String(body.label || '').trim();
+      if (!label) {
+        return res.status(400).json({ error: 'label cannot be empty' });
+      }
+      updates.push(`label = $${param++}`);
+      values.push(label);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No changes provided' });
+    }
+
+    updates.push('updated_at = NOW()');
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE preflight_checklist_items
+       SET ${updates.join(', ')}
+       WHERE id = $${param}
+       RETURNING id, event_id, day, section, label, sort_order, is_custom, is_checked,
+                 checked_by_user_id, checked_by_name, checked_at, note, created_at, updated_at`,
+      values
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '42P01') {
+      return res.status(503).json({
+        error: 'Run migration 045_create_preflight_checklist.sql on Neon (or restart API to sync the table).',
+      });
+    }
+    console.error('Error updating preflight checklist item:', error);
+    res.status(500).json({ error: 'Failed to update checklist item' });
+  }
+});
+
+app.post('/api/preflight-checklist', async (req, res) => {
+  if (!requirePreflightAccess(req, res)) return;
+  try {
+    const { event_id, section, label, day } = req.body || {};
+    const eventId = String(event_id || '').trim();
+    const sectionName = String(section || '').trim();
+    const itemLabel = String(label || '').trim();
+    const dayNum = normalizePreflightDay(day);
+    if (!eventId || !sectionName || !itemLabel) {
+      return res.status(400).json({ error: 'event_id, section, and label are required' });
+    }
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'No access to this event.' });
+    }
+    await ensurePreflightItemsForEvent(pool, eventId, dayNum);
+    const maxOrder = await pool.query(
+      `SELECT COALESCE(MAX(sort_order), -1) AS max_order
+       FROM preflight_checklist_items WHERE event_id = $1 AND day = $2`,
+      [eventId, dayNum]
+    );
+    const sortOrder = Number(maxOrder.rows[0]?.max_order ?? -1) + 1;
+    const result = await pool.query(
+      `INSERT INTO preflight_checklist_items
+         (event_id, day, section, label, sort_order, is_custom, is_checked)
+       VALUES ($1, $2, $3, $4, $5, TRUE, FALSE)
+       RETURNING id, event_id, day, section, label, sort_order, is_custom, is_checked,
+                 checked_by_user_id, checked_by_name, checked_at, note, created_at, updated_at`,
+      [eventId, dayNum, sectionName, itemLabel, sortOrder]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '42P01') {
+      return res.status(503).json({
+        error: 'Run migration 045_create_preflight_checklist.sql on Neon (or restart API to sync the table).',
+      });
+    }
+    console.error('Error creating preflight checklist item:', error);
+    res.status(500).json({ error: 'Failed to add checklist item' });
+  }
+});
+
+app.delete('/api/preflight-checklist/:id', async (req, res) => {
+  if (!requirePreflightAccess(req, res)) return;
+  try {
+    const { id } = req.params;
+    const existing = await pool.query(
+      `SELECT id, event_id, is_custom FROM preflight_checklist_items WHERE id = $1`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Checklist item not found' });
+    }
+    const row = existing.rows[0];
+    if (!userCanAccessEvent(req.auth, row.event_id)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'No access to this event.' });
+    }
+    if (!row.is_custom) {
+      return res.status(400).json({ error: 'Only event-specific (custom) items can be deleted.' });
+    }
+    await pool.query(`DELETE FROM preflight_checklist_items WHERE id = $1`, [id]);
+    res.json({ ok: true, id });
+  } catch (error) {
+    if (error.code === '42P01') {
+      return res.status(503).json({
+        error: 'Run migration 045_create_preflight_checklist.sql on Neon (or restart API to sync the table).',
+      });
+    }
+    console.error('Error deleting preflight checklist item:', error);
+    res.status(500).json({ error: 'Failed to delete checklist item' });
+  }
+});
+
 const CATERING_NOTE_CATEGORIES = new Set(['general', 'break', 'plating', 'meal', 'other']);
 
 function normalizeCateringNoteCategory(value) {
@@ -3727,9 +4327,9 @@ function normalizeCateringNoteCategory(value) {
 }
 
 function canWriteCateringNotes(auth) {
-  // Admin + Event Managers write; catering users are read-only.
+  // Admin + Event Managers + BTS Crew write; catering users are read-only.
   if (!auth) return false;
-  return !!(auth.isAdmin || auth.isEventManager);
+  return !!(auth.isAdmin || auth.isEventManager || auth.isBtsCrew);
 }
 
 // Catering notes — shared board for catering role / EM / Admin
@@ -7144,6 +7744,31 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ api_user_access.is_catering column ready');
     } catch (err) {
       console.warn('⚠️ is_catering column sync skipped:', err.message || err);
+    }
+    try {
+      await runBtsCrewRoleColumnSync(pool);
+      console.log('✅ api_user_access.is_bts_crew column ready');
+    } catch (err) {
+      console.warn('⚠️ is_bts_crew column sync skipped:', err.message || err);
+    }
+    try {
+      await runCommsRoleColumnSync(pool);
+      console.log('✅ api_user_access.is_comms column ready');
+    } catch (err) {
+      console.warn('⚠️ is_comms column sync skipped:', err.message || err);
+    }
+    try {
+      await runPreflightChecklistSyncTable(pool);
+      console.log('✅ preflight_checklist_items table synced');
+    } catch (err) {
+      console.warn('⚠️ preflight_checklist_items sync skipped:', err.message || err);
+    }
+    try {
+      await runPreflightTemplateSyncTable(pool);
+      await ensurePreflightTemplateSeeded(pool);
+      console.log('✅ preflight_checklist_template table synced');
+    } catch (err) {
+      console.warn('⚠️ preflight_checklist_template sync skipped:', err.message || err);
     }
     try {
       await pool.query(

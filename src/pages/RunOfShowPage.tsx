@@ -12,7 +12,7 @@ import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
-import { canAccessAccessManager, canSelectOperatorRole } from '../services/auth-service';
+import { canAccessAccessManager, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
@@ -21,6 +21,8 @@ import DisplayModal from '../components/DisplayModal';
 import PinNotesColumnModal from '../components/PinNotesColumnModal';
 import ComplaintLineModal from '../components/ComplaintLineModal';
 import ComplaintLineFab from '../components/ComplaintLineFab';
+import PreFlightChecklistModal from '../components/PreFlightChecklistModal';
+import { getEventDayNumberForDate } from '../lib/preflightChecklist';
 import ExcelImportModal from '../components/ExcelImportModal';
 import AgendaImportModal from '../components/AgendaImportModal';
 import ImportCSVModal from '../components/ImportCSVModal';
@@ -189,6 +191,7 @@ interface ScheduleItem {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
+  needsRecording?: boolean;
   timerId: string;
   customFields: Record<string, string>;
   isPublic: boolean;
@@ -972,6 +975,13 @@ const RunOfShowPage: React.FC = () => {
   const [pinNotesColumns, setPinNotesColumns] = useState<{ type: 'notes' | 'custom' | 'cue'; id: string; name: string }[]>([]);
   const [showPinNotesColumnModal, setShowPinNotesColumnModal] = useState(false);
   const [showComplaintLineModal, setShowComplaintLineModal] = useState(false);
+  const [showPreFlightChecklistModal, setShowPreFlightChecklistModal] = useState(false);
+  const [preflightProgress, setPreflightProgress] = useState<{
+    total: number;
+    checked: number;
+    complete: boolean;
+  } | null>(null);
+  const [preflightBannerDismissed, setPreflightBannerDismissed] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [messageFlashing, setMessageFlashing] = useState(false);
@@ -1098,6 +1108,7 @@ const RunOfShowPage: React.FC = () => {
     segmentName: true,
     shotType: true,
     pptQA: true,
+    recording: true,
     notes: true,
     assets: true,
     participants: false, // 👈 hidden now,
@@ -1116,6 +1127,7 @@ const RunOfShowPage: React.FC = () => {
     segmentName: 320, // w-80 = 320px
     shotType: 192, // w-48 = 192px
     pptQA: 192, // w-48 = 192px
+    recording: 88,
     notes: 384, // w-96 = 384px
     assets: 192, // w-48 = 192px
     participants: 256, // w-64 = 256px
@@ -2299,6 +2311,32 @@ const RunOfShowPage: React.FC = () => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [event?.id, user]);
+
+  // Pre-Flight progress for BTS Crew / Admin (menu badge for selected day + takeoff hold for today's day)
+  useEffect(() => {
+    if (!event?.id || !user || !canAccessPreFlightChecklist(user)) {
+      setPreflightProgress(null);
+      return;
+    }
+    let cancelled = false;
+    const calendarDay = getEventDayNumberForDate(event.date, event.numberOfDays);
+    if (calendarDay != null && showMode === 'rehearsal') {
+      setPreflightBannerDismissed(false);
+    }
+    const dayForProgress = selectedDay || 1;
+    void (async () => {
+      try {
+        const res = await apiClient.getPreflightChecklist(event.id, dayForProgress);
+        if (!cancelled && res?.progress) setPreflightProgress(res.progress);
+      } catch (err) {
+        console.warn('Pre-Flight checklist progress unavailable:', err);
+        if (!cancelled) setPreflightProgress(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, event?.date, event?.numberOfDays, user, showMode, selectedDay]);
 
   // Load change log data and sync status
   useEffect(() => {
@@ -3904,6 +3942,7 @@ const RunOfShowPage: React.FC = () => {
     speakersText: '',
     hasPPT: false,
     hasQA: false,
+    needsRecording: false,
     timerId: '',
     isPublic: false,
     isIndented: false,
@@ -5816,14 +5855,17 @@ const RunOfShowPage: React.FC = () => {
     const timerUrl = event?.id
       ? `/fullscreen-timer?eventId=${encodeURIComponent(event.id)}`
       : '/fullscreen-timer';
-    const timerWindow =
-      mode === 'browser'
-        ? window.open(timerUrl, '_blank')
-        : window.open(
-            timerUrl,
-            'fullScreenTimer',
-            'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
-          );
+
+    if (mode === 'browser') {
+      navigate(timerUrl, { state: timerData });
+      return;
+    }
+
+    const timerWindow = window.open(
+      timerUrl,
+      'fullScreenTimer',
+      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+    );
 
     if (timerWindow) {
       setFullScreenTimerWindow(timerWindow);
@@ -5876,14 +5918,17 @@ const RunOfShowPage: React.FC = () => {
     };
 
     const clockUrl = event?.id ? `/clock?eventId=${encodeURIComponent(event.id)}` : '/clock';
-    const newClockWindow =
-      mode === 'browser'
-        ? window.open(clockUrl, '_blank')
-        : window.open(
-            clockUrl,
-            'clock',
-            'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
-          );
+
+    if (mode === 'browser') {
+      navigate(clockUrl, { state: timerData });
+      return;
+    }
+
+    const newClockWindow = window.open(
+      clockUrl,
+      'clock',
+      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+    );
 
     if (newClockWindow) {
       setClockWindow(newClockWindow);
@@ -8343,6 +8388,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      needsRecording: false,
       timerId: '',
       isPublic: false,
       isIndented: false,
@@ -8375,6 +8421,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      needsRecording: false,
       timerId: '',
       isPublic: false,
       isIndented: false,
@@ -8444,6 +8491,7 @@ const RunOfShowPage: React.FC = () => {
           speakersText: '',
           hasPPT: false,
           hasQA: false,
+          needsRecording: false,
           timerId: generateRandomTimerId(),
           isPublic: parentBreakout.isPublic || false,
           isIndented: true,
@@ -9467,6 +9515,7 @@ const RunOfShowPage: React.FC = () => {
           speakersText: transformedSpeakersData,
           hasPPT: row.hasPPT || false,
           hasQA: row.hasQA || false,
+          needsRecording: !!(row.needsRecording || row.recording),
           timerId: row.timerId || '',
           isPublic: row.isPublic || false,
           isIndented: row.isIndented || false,
@@ -9866,6 +9915,7 @@ const RunOfShowPage: React.FC = () => {
       'Speakers',
       'Has PPT',
       'Has QA',
+      'Recording',
       'Timer ID',
       'Is Public',
       'Is Indented',
@@ -9923,6 +9973,7 @@ const RunOfShowPage: React.FC = () => {
         item.speakersText || '',
         item.hasPPT ? 'Yes' : 'No',
         item.hasQA ? 'Yes' : 'No',
+        item.needsRecording ? 'Yes' : 'No',
         item.timerId || '',
         item.isPublic ? 'Yes' : 'No',
         item.isIndented ? 'Yes' : 'No',
@@ -10440,6 +10491,50 @@ const RunOfShowPage: React.FC = () => {
   }
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
+      {canAccessPreFlightChecklist(user) &&
+      event?.id &&
+      showMode === 'rehearsal' &&
+      (() => {
+        const todayDay = getEventDayNumberForDate(event.date, event.numberOfDays);
+        return (
+          todayDay != null &&
+          selectedDay === todayDay &&
+          preflightProgress &&
+          !preflightProgress.complete &&
+          !preflightBannerDismissed
+        );
+      })() ? (
+        <div className="sticky top-0 z-[45] border-b border-amber-700/50 bg-slate-900 px-4 py-2.5 text-sm">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-medium text-amber-200">
+                Pre-Flight incomplete
+                {(event.numberOfDays || 1) > 1 ? ` · Day ${selectedDay}` : ''} —{' '}
+                {preflightProgress!.checked}/{preflightProgress!.total} done
+              </p>
+              <p className="text-xs text-slate-400">
+                Show day · still in Rehearsal. Finish the checklist before going In-Show.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPreFlightChecklistModal(true)}
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
+              >
+                Open checklist
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreflightBannerDismissed(true)}
+                className="rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* Audio callout alert — centered */}
       {activeVoAlert && timeToastEnabled && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
@@ -11602,6 +11697,34 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Green Room
                       </button>
+                      {canAccessPreFlightChecklist(user) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMenuDropdown(false);
+                            setShowPreFlightChecklistModal(true);
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                          title="Pre-Flight / Show Checklist (AV Cockpit)"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                          </svg>
+                          <span className="flex-1">
+                            Pre-Flight Checklist
+                            {(event?.numberOfDays || 1) > 1 ? ` · Day ${selectedDay}` : ''}
+                          </span>
+                          {preflightProgress && !preflightProgress.complete ? (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">
+                              {preflightProgress.checked}/{preflightProgress.total}
+                            </span>
+                          ) : preflightProgress?.complete ? (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                              Clear
+                            </span>
+                          ) : null}
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -12670,6 +12793,23 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
+                      {visibleColumns.recording && (
+                        <div 
+                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          style={{ width: columnWidths.recording }}
+                        >
+                          <span className="text-white font-bold flex items-center gap-1">
+                            Rec
+                            {currentUserRole === 'VIEWER' && (
+                              <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                            )}
+                          </span>
+                          <div 
+                            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                            onMouseDown={(e) => handleResizeStart(e, 'recording')}
+                          />
+                        </div>
+                      )}
                       {visibleColumns.notes && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
@@ -13033,6 +13173,7 @@ const RunOfShowPage: React.FC = () => {
                     speakersText: '',
                     hasPPT: false,
                     hasQA: false,
+                    needsRecording: false,
                     timerId: '',
                     isPublic: false,
                     isIndented: false,
@@ -13604,6 +13745,23 @@ const RunOfShowPage: React.FC = () => {
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                         onMouseDown={(e) => handleResizeStart(e, 'pptQA')}
+                      />
+                    </div>
+                  )}
+                  {visibleColumns.recording && (
+                    <div 
+                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      style={{ width: columnWidths.recording }}
+                    >
+                      <span className="text-white font-bold flex items-center gap-1">
+                        Rec
+                        {currentUserRole === 'VIEWER' && (
+                          <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                        )}
+                      </span>
+                      <div 
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                        onMouseDown={(e) => handleResizeStart(e, 'recording')}
                       />
                     </div>
                   )}
@@ -14274,6 +14432,18 @@ const RunOfShowPage: React.FC = () => {
                     className="rounded"
                   />
                   <span className="text-slate-300 text-sm">Has QA</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!modalForm.needsRecording}
+                    onChange={(e) => {
+                      handleUserEditing();
+                      setModalForm(prev => ({ ...prev, needsRecording: e.target.checked }));
+                    }}
+                    className="rounded"
+                  />
+                  <span className="text-slate-300 text-sm">Record</span>
                 </label>
               </div>
             </div>
@@ -16042,6 +16212,16 @@ const RunOfShowPage: React.FC = () => {
                   <label className="flex items-center gap-3">
                     <input
                       type="checkbox"
+                      checked={visibleColumns.recording}
+                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, recording: e.target.checked }))}
+                      className="rounded"
+                    />
+                    <span className="text-white">Recording</span>
+                  </label>
+                  
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
                       checked={visibleColumns.notes}
                       onChange={(e) => setVisibleColumns(prev => ({ ...prev, notes: e.target.checked }))}
                       className="rounded"
@@ -16130,6 +16310,7 @@ const RunOfShowPage: React.FC = () => {
                       segmentName: true,
                       shotType: true,
                       pptQA: true,
+                      recording: true,
                       notes: true,
                       assets: true,
                       participants: false, // 👈 hidden now,
@@ -16158,6 +16339,7 @@ const RunOfShowPage: React.FC = () => {
                       segmentName: false,
                       shotType: false,
                       pptQA: false,
+                      recording: false,
                       notes: false,
                       assets: false,
                       participants: false,
@@ -16444,6 +16626,20 @@ const RunOfShowPage: React.FC = () => {
             userName={user.full_name || user.email}
           />
         </>
+      ) : null}
+
+      {canAccessPreFlightChecklist(user) && event?.id && user?.id ? (
+        <PreFlightChecklistModal
+          isOpen={showPreFlightChecklistModal}
+          onClose={() => setShowPreFlightChecklistModal(false)}
+          eventId={event.id}
+          eventName={event.name}
+          day={selectedDay || 1}
+          numberOfDays={event.numberOfDays || 1}
+          userId={user.id}
+          userName={user.full_name || user.email}
+          onProgressChange={setPreflightProgress}
+        />
       ) : null}
 
       {/* Backup Modal */}
