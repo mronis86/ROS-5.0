@@ -27,8 +27,13 @@ DEFAULTS: dict[str, Any] = {
     "record_only_marked": True,
     "auto_copy": True,
     "poll_seconds": 1,
+    "auto_stop_hours": 2,
+    "auto_stop_minutes": 0,
+    "auto_stop_never": False,
     "copied_keys": [],
 }
+
+AUTO_STOP_MINUTES = (0, 5, 10, 15, 20, 25, 30, 45)
 
 
 def config_dir() -> str:
@@ -64,6 +69,9 @@ def load_config() -> dict[str, Any]:
         data["poll_seconds"] = min(60, max(1, int(data.get("poll_seconds") or 1)))
     except (TypeError, ValueError):
         data["poll_seconds"] = 1
+    data["auto_stop_hours"] = _clamp_auto_stop_hours(data.get("auto_stop_hours"))
+    data["auto_stop_minutes"] = _clamp_auto_stop_minutes(data.get("auto_stop_minutes"))
+    data["auto_stop_never"] = data.get("auto_stop_never") is True
     return data
 
 
@@ -73,9 +81,32 @@ def save_config(data: dict[str, Any]) -> dict[str, Any]:
     merged["api_base_url"] = normalize_base_url(str(merged.get("api_base_url") or ""))
     merged["api_token"] = normalize_api_token(str(merged.get("api_token") or ""))
     merged.pop("last_event_id", None)
+    try:
+        merged["poll_seconds"] = min(60, max(1, int(merged.get("poll_seconds") or 1)))
+    except (TypeError, ValueError):
+        merged["poll_seconds"] = 1
+    merged["auto_stop_hours"] = _clamp_auto_stop_hours(merged.get("auto_stop_hours"))
+    merged["auto_stop_minutes"] = _clamp_auto_stop_minutes(merged.get("auto_stop_minutes"))
+    merged["auto_stop_never"] = merged.get("auto_stop_never") is True
     path = config_path()
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(merged, fh, indent=2)
     os.replace(tmp, path)
     return merged
+
+
+def _clamp_auto_stop_hours(value: Any) -> int:
+    try:
+        hours = int(value)
+    except (TypeError, ValueError):
+        hours = 2
+    return min(24, max(0, hours))
+
+
+def _clamp_auto_stop_minutes(value: Any) -> int:
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        minutes = 0
+    return minutes if minutes in AUTO_STOP_MINUTES else 0

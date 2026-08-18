@@ -12,7 +12,7 @@ import tkinter as tk
 from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
 
-from config_store import load_config, save_config
+from config_store import AUTO_STOP_MINUTES, load_config, save_config
 from copy_util import CopyError, copy_from_folder, copy_from_ftp, unique_dest
 from hyperdeck_client import ClipInfo, HyperDeckClient, HyperDeckError
 from names import (
@@ -66,6 +66,12 @@ class HyperDeckIngestApp:
         self._recording_clip_name = ""
         self._recording_meta: dict = {}
         self.copied_keys = set(str(x) for x in (self.cfg.get("copied_keys") or []))
+        self._auto_stop_never = False
+        self._auto_stop_ends_at: float | None = None
+        self._auto_stop_label = ""
+        self._auto_stop_tick = None
+        self._auto_stop_notice = ""
+        self._end_lock = threading.Lock()
 
         self._build_style()
         self._build_ui()
@@ -160,6 +166,7 @@ class HyperDeckIngestApp:
 
         header = tk.Frame(self.root, bg=BG)
         header.pack(fill="x", padx=14, pady=(12, 8))
+        self.header = header
         brand = tk.Frame(header, bg=BG)
         brand.pack(side="left")
         tk.Label(
@@ -179,6 +186,15 @@ class HyperDeckIngestApp:
             pady=3,
         )
         self.follow_pill.pack(side="left", padx=(12, 0))
+        self.auto_stop_pill = tk.Label(
+            brand,
+            text="",
+            bg="#1e3a5f",
+            fg="#e2e8f0",
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=3,
+        )
         actions = tk.Frame(header, bg=BG)
         actions.pack(side="right")
         ttk.Button(actions, text="Start follow", style="Accent.TButton", command=self.start_follow).pack(
@@ -186,6 +202,22 @@ class HyperDeckIngestApp:
         )
         ttk.Button(actions, text="Stop", command=self.stop_follow).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Save", command=self._save).pack(side="left", padx=(6, 0))
+
+        self.notice_frame = tk.Frame(self.root, bg="#78350f", highlightbackground="#f59e0b", highlightthickness=1)
+        notice_inner = tk.Frame(self.notice_frame, bg="#78350f")
+        notice_inner.pack(fill="x", padx=12, pady=8)
+        self.notice_label = tk.Label(
+            notice_inner,
+            text="",
+            bg="#78350f",
+            fg="#fde68a",
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=760,
+        )
+        self.notice_label.pack(side="left", fill="x", expand=True)
+        ttk.Button(notice_inner, text="Start again", command=self.start_follow).pack(side="right", padx=(8, 0))
 
         status = tk.Frame(self.root, bg=BG)
         status.pack(fill="x", padx=10, pady=(0, 8))
@@ -688,6 +720,169 @@ class HyperDeckIngestApp:
 
         self.root.after(0, apply)
 
+    def _format_duration(self, seconds: int) -> str:
+        total = max(0, int(seconds))
+        hours, rem = divmod(total, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours:
+            return f"{hours}h {minutes:02d}m"
+        return f"{minutes}m {secs:02d}s"
+
+    def _auto_stop_label_text(self, hours: int, minutes: int) -> str:
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        return " ".join(parts) or "0m"
+
+    def _clear_auto_stop_timer(self) -> None:
+        if self._auto_stop_tick is not None:
+            try:
+                self.root.after_cancel(self._auto_stop_tick)
+            except tk.TclError:
+                pass
+            self._auto_stop_tick = None
+        self._auto_stop_ends_at = None
+        self._auto_stop_label = ""
+        self._auto_stop_never = False
+        self.auto_stop_pill.pack_forget()
+        self.auto_stop_pill.configure(text="")
+
+    def _update_auto_stop_pill(self) -> None:
+        if self._auto_stop_never:
+            self.auto_stop_pill.configure(text="No auto-stop", bg="#334155")
+            if not self.auto_stop_pill.winfo_ismapped():
+                self.auto_stop_pill.pack(side="left", padx=(8, 0))
+            return
+        if not self._auto_stop_ends_at:
+            self.auto_stop_pill.pack_forget()
+            return
+        left_ms = self._auto_stop_ends_at - (time.time() * 1000)
+        if left_ms <= 0:
+            self.auto_stop_pill.configure(text="Stopping…", bg="#92400e")
+        else:
+            self.auto_stop_pill.configure(
+                text=f"Auto-stop {self._format_duration(int(left_ms / 1000))}",
+                bg="#1e3a5f",
+            )
+        if not self.auto_stop_pill.winfo_ismapped():
+            self.auto_stop_pill.pack(side="left", padx=(8, 0))
+
+    def _tick_auto_stop_pill(self) -> None:
+        if not self.following:
+            return
+        if not self._auto_stop_never and self._auto_stop_ends_at and time.time() * 1000 >= self._auto_stop_ends_at:
+            self.auto_stop_pill.configure(text="Stopping…", bg="#92400e")
+            self._bg(self._auto_stop_now)
+            return
+        self._update_auto_stop_pill()
+        self._auto_stop_tick = self.root.after(1000, self._tick_auto_stop_pill)
+
+    def _schedule_auto_stop(self, hours: int, minutes: int, never: bool) -> None:
+        self._clear_auto_stop_timer()
+        self._auto_stop_never = never
+        if never:
+            self._update_auto_stop_pill()
+            self._auto_stop_tick = self.root.after(1000, self._tick_auto_stop_pill)
+            return
+        ms = (max(0, hours) * 60 + max(0, minutes)) * 60 * 1000
+        if ms <= 0:
+            return
+        self._auto_stop_label = self._auto_stop_label_text(hours, minutes)
+        self._auto_stop_ends_at = time.time() * 1000 + ms
+        self._update_auto_stop_pill()
+        self._auto_stop_tick = self.root.after(1000, self._tick_auto_stop_pill)
+
+    def _show_auto_stop_notice(self, text: str) -> None:
+        self._auto_stop_notice = text
+        self.notice_label.configure(text=text)
+        if not self.notice_frame.winfo_ismapped():
+            self.notice_frame.pack(fill="x", padx=14, pady=(0, 8), after=self.header)
+
+    def _hide_auto_stop_notice(self) -> None:
+        self._auto_stop_notice = ""
+        self.notice_frame.pack_forget()
+
+    def _ask_auto_stop(self) -> dict | None:
+        hours = int(self.cfg.get("auto_stop_hours") or 2)
+        minutes = int(self.cfg.get("auto_stop_minutes") or 0)
+        if hours == 0 and minutes == 0:
+            hours = 2
+        result: dict | None = None
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Auto-stop timer")
+        dlg.configure(bg=CARD)
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(
+            dlg,
+            text="Stop follow after",
+            bg=CARD,
+            fg=FG,
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w", padx=16, pady=(16, 4))
+        tk.Label(
+            dlg,
+            text="Limits Railway polling if this PC is left running after the show.",
+            bg=CARD,
+            fg=MUTED,
+            wraplength=360,
+            justify="left",
+        ).pack(anchor="w", padx=16)
+
+        pick = tk.Frame(dlg, bg=CARD)
+        pick.pack(fill="x", padx=16, pady=12)
+        hours_var = tk.StringVar(value=str(hours))
+        minutes_var = tk.StringVar(value=str(minutes))
+        ttk.Label(pick, text="Hours", style="CardMuted.TLabel").grid(row=0, column=0, sticky="w")
+        hours_box = ttk.Combobox(
+            pick, textvariable=hours_var, values=[str(i) for i in range(25)], state="readonly", width=6
+        )
+        hours_box.grid(row=1, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(pick, text="Minutes", style="CardMuted.TLabel").grid(row=0, column=1, sticky="w")
+        minutes_box = ttk.Combobox(
+            pick,
+            textvariable=minutes_var,
+            values=[str(m) for m in AUTO_STOP_MINUTES],
+            state="readonly",
+            width=6,
+        )
+        minutes_box.grid(row=1, column=1, sticky="w")
+
+        def finish(choice: dict | None) -> None:
+            nonlocal result
+            result = choice
+            dlg.destroy()
+
+        def confirm() -> None:
+            h = int(hours_var.get() or 0)
+            m = int(minutes_var.get() or 0)
+            if h >= 24:
+                h, m = 24, 0
+            if h == 0 and m == 0:
+                messagebox.showinfo("Auto-stop", "Pick a time greater than 0, or choose Never auto-stop.", parent=dlg)
+                return
+            finish({"never": False, "hours": h, "minutes": m})
+
+        btns = tk.Frame(dlg, bg=CARD)
+        btns.pack(fill="x", padx=16, pady=(4, 16))
+        ttk.Button(btns, text="Never auto-stop", command=lambda: finish({"never": True, "hours": hours, "minutes": minutes})).pack(
+            side="left"
+        )
+        ttk.Button(btns, text="Start with timer", style="Accent.TButton", command=confirm).pack(side="right")
+        ttk.Button(btns, text="Cancel", command=lambda: finish(None)).pack(side="right", padx=(0, 6))
+        dlg.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_reqwidth()) // 2
+        y = self.root.winfo_rooty() + 80
+        dlg.geometry(f"+{x}+{y}")
+        self.root.wait_window(dlg)
+        return result
+
     def _browse(self, var: tk.StringVar) -> None:
         path = filedialog.askdirectory()
         if path:
@@ -729,6 +924,9 @@ class HyperDeckIngestApp:
             "record_only_marked": bool(self.only_marked_var.get()),
             "auto_copy": bool(self.auto_copy_var.get()),
             "poll_seconds": int(self.cfg.get("poll_seconds") or 1),
+            "auto_stop_hours": int(self.cfg.get("auto_stop_hours") or 2),
+            "auto_stop_minutes": int(self.cfg.get("auto_stop_minutes") or 0),
+            "auto_stop_never": bool(self.cfg.get("auto_stop_never")),
             "copied_keys": sorted(self.copied_keys),
         }
 
@@ -751,6 +949,7 @@ class HyperDeckIngestApp:
 
     def _on_close(self) -> None:
         self.following = False
+        self._clear_auto_stop_timer()
         try:
             save_config(self._snapshot_config())
         except Exception:
@@ -943,11 +1142,17 @@ class HyperDeckIngestApp:
     def start_follow(self) -> None:
         if self.following:
             return
+        if not self.event_id_var.get().strip():
+            messagebox.showinfo("Event", "Load events and select one first.")
+            return
+        choice = self._ask_auto_stop()
+        if choice is None:
+            return
+        self.cfg["auto_stop_hours"] = int(choice.get("hours") or self.cfg.get("auto_stop_hours") or 2)
+        self.cfg["auto_stop_minutes"] = int(choice.get("minutes") or 0)
+        self.cfg["auto_stop_never"] = bool(choice.get("never"))
         try:
             self._apply_api_from_fields()
-            if not self.event_id_var.get().strip():
-                messagebox.showinfo("Event", "Load events and select one first.")
-                return
             if not self.deck.connected:
                 self.deck.host = self.deck_host_var.get().strip()
                 self.deck.port = int(self.deck_port_var.get() or 9993)
@@ -958,17 +1163,61 @@ class HyperDeckIngestApp:
         except Exception as exc:
             messagebox.showerror("Cannot start", str(exc))
             return
+        self._hide_auto_stop_notice()
         self._save()
         self.following = True
         self._set_pill("following")
-        self.log("Follow started — polling active-timers", "ok")
+        self._schedule_auto_stop(
+            int(self.cfg.get("auto_stop_hours") or 2),
+            int(self.cfg.get("auto_stop_minutes") or 0),
+            bool(self.cfg.get("auto_stop_never")),
+        )
+        if self._auto_stop_never:
+            self.log("Follow started — polling until you click Stop", "ok")
+        else:
+            self.log(f"Follow started — auto-stop in {self._auto_stop_label}", "ok")
         self._follow_thread = threading.Thread(target=self._follow_loop, daemon=True)
         self._follow_thread.start()
 
     def stop_follow(self) -> None:
-        self.following = False
-        self._set_pill("stopped")
-        self.log("Follow stopped")
+        self._bg(lambda: self._end_follow(auto=False))
+
+    def _auto_stop_now(self) -> None:
+        self._end_follow(auto=True)
+
+    def _end_follow(self, auto: bool = False) -> None:
+        if not self._end_lock.acquire(blocking=False):
+            return
+        try:
+            was_following = self.following
+            was_recording = self._recording_item_id is not None
+            label = self._auto_stop_label
+            self.following = False
+            self.root.after(0, self._clear_auto_stop_timer)
+            if was_recording:
+                try:
+                    self._stop_and_maybe_copy()
+                except Exception as exc:
+                    self.log(str(exc), "error")
+            if auto:
+                try:
+                    self.deck.disconnect()
+                except Exception:
+                    pass
+                self.root.after(0, lambda: self.status_deck.set("Disconnected"))
+                notice = (
+                    f"Follow stopped after {label} to limit Railway polling. HyperDeck disconnected."
+                    if label
+                    else "Follow stopped after the auto-stop timer. HyperDeck disconnected."
+                )
+                self.log(notice)
+                self.root.after(0, lambda: self._show_auto_stop_notice(notice))
+            elif was_following:
+                self.log("Follow stopped")
+            self.root.after(0, lambda: self._set_pill("stopped"))
+            self.root.after(0, lambda: self.status_ros.set("Follow stopped"))
+        finally:
+            self._end_lock.release()
 
     def _follow_loop(self) -> None:
         poll = max(1, int(self.cfg.get("poll_seconds") or 1))
