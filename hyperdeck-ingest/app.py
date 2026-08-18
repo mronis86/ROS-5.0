@@ -26,19 +26,23 @@ from ros_api import RosApi, RosApiError
 
 BG = "#0f172a"
 CARD = "#1e293b"
+LINE = "#334155"
 FG = "#e2e8f0"
 MUTED = "#94a3b8"
 ACCENT = "#2563eb"
 OK = "#34d399"
 ERR = "#f87171"
+PILL_STOP = "#334155"
+PILL_FOLLOW = "#065f46"
+PILL_REC = "#991b1b"
 
 
 class HyperDeckIngestApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("ROS HyperDeck Ingest")
-        self.root.geometry("980x720")
-        self.root.minsize(860, 620)
+        self.root.geometry("1040x700")
+        self.root.minsize(920, 620)
         self.root.configure(bg=BG)
 
         self.cfg = load_config()
@@ -71,85 +75,72 @@ class HyperDeckIngestApp:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure(".", background=BG, foreground=FG, fieldbackground=CARD)
+        field = "#0b1220"
+        style.configure(".", background=BG, foreground=FG, fieldbackground=field)
         style.configure("TFrame", background=BG)
         style.configure("Card.TFrame", background=CARD)
         style.configure("TLabel", background=BG, foreground=FG)
         style.configure("Card.TLabel", background=CARD, foreground=FG)
         style.configure("Muted.TLabel", background=BG, foreground=MUTED)
         style.configure("CardMuted.TLabel", background=CARD, foreground=MUTED)
-        style.configure("TLabelframe", background=CARD, foreground=FG)
-        style.configure("TLabelframe.Label", background=CARD, foreground=FG)
-        style.configure("TButton", background="#334155", foreground=FG, padding=6)
-        style.configure("Accent.TButton", background=ACCENT, foreground="#fff")
+        style.configure("TButton", background=LINE, foreground=FG, padding=(10, 5))
+        style.configure("Accent.TButton", background=ACCENT, foreground="#fff", padding=(12, 6))
         style.configure("TCheckbutton", background=CARD, foreground=FG)
-        style.configure("TEntry", fieldbackground="#0b1220", foreground=FG)
-        style.configure("TCombobox", fieldbackground="#0b1220", foreground=FG)
-        style.configure("Treeview", background="#0b1220", foreground=FG, fieldbackground="#0b1220")
-        style.configure("Treeview.Heading", background="#334155", foreground=FG)
+        style.configure("TRadiobutton", background=CARD, foreground=FG)
+        style.configure("TEntry", fieldbackground=field, foreground=FG, insertcolor=FG, padding=4)
+        style.configure("TCombobox", fieldbackground=field, foreground=FG, padding=4)
+        style.configure(
+            "Treeview",
+            background=field,
+            foreground=FG,
+            fieldbackground=field,
+            rowheight=24,
+            borderwidth=0,
+        )
+        style.configure("Treeview.Heading", background=LINE, foreground=FG, relief="flat", padding=4)
         style.map("TButton", background=[("active", "#475569")])
         style.map("Accent.TButton", background=[("active", "#1d4ed8")])
+        style.map("TCheckbutton", background=[("active", CARD)], foreground=[("active", FG)])
+        style.map("TRadiobutton", background=[("active", CARD)], foreground=[("active", FG)])
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", field)],
+            foreground=[("readonly", FG)],
+            background=[("readonly", field)],
+        )
+        style.map("Treeview", background=[("selected", "#1d4ed8")], foreground=[("selected", "#fff")])
+        self.root.option_add("*TCombobox*Listbox.background", field)
+        self.root.option_add("*TCombobox*Listbox.foreground", FG)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
 
-    def _build_ui(self) -> None:
-        pad = {"padx": 8, "pady": 6}
-        top = ttk.Frame(self.root)
-        top.pack(fill="x", **pad)
-        ttk.Label(top, text="ROS HyperDeck Ingest", font=("Segoe UI", 14, "bold")).pack(side="left")
-        self.follow_pill = ttk.Label(top, text="Stopped", style="Muted.TLabel")
-        self.follow_pill.pack(side="left", padx=(12, 0))
-        ttk.Button(top, text="Save", command=self._save).pack(side="right")
-        ttk.Button(top, text="Stop follow", command=self.stop_follow).pack(side="right", padx=(0, 6))
-        ttk.Button(top, text="Start follow", style="Accent.TButton", command=self.start_follow).pack(
-            side="right", padx=(0, 6)
+    def _card(self, parent: tk.Widget, title: str, fill: str = "x") -> tk.Frame:
+        wrap = tk.Frame(parent, bg=BG)
+        wrap.pack(fill=fill, expand=(fill == "both"), pady=(0, 10))
+        tk.Label(
+            wrap,
+            text=title.upper(),
+            bg=BG,
+            fg=MUTED,
+            font=("Segoe UI", 8, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+        inner = tk.Frame(wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        inner.pack(fill="both", expand=True)
+        pad = tk.Frame(inner, bg=CARD)
+        pad.pack(fill="both", expand=True, padx=12, pady=10)
+        return pad
+
+    def _grid_label(self, parent: tk.Widget, row: int, text: str) -> None:
+        ttk.Label(parent, text=text, style="CardMuted.TLabel").grid(
+            row=row, column=0, sticky="w", padx=(0, 10), pady=4
         )
 
-        body = ttk.Frame(self.root)
-        body.pack(fill="both", expand=True, **pad)
-        left = ttk.Frame(body)
-        left.pack(side="left", fill="both", expand=True)
-        right = ttk.Frame(body)
-        right.pack(side="right", fill="both", expand=True, padx=(8, 0))
-
-        ros = ttk.LabelFrame(left, text="ROS (Railway)", padding=8)
-        ros.pack(fill="x")
+    def _build_ui(self) -> None:
         self.api_url_var = tk.StringVar()
         self.api_token_var = tk.StringVar()
         self.event_id_var = tk.StringVar()
-        self._labeled_entry(ros, "API base URL", self.api_url_var)
-        ttk.Label(ros, text="Admin → Integration tokens · ros_itok_… · read scope", style="CardMuted.TLabel").pack(
-            anchor="w"
-        )
-        self._labeled_entry(ros, "API token", self.api_token_var, show="*")
-        row = ttk.Frame(ros, style="Card.TFrame")
-        row.pack(fill="x", pady=(6, 0))
-        ttk.Button(row, text="Test API", command=self._test_api).pack(side="left")
-        ttk.Button(row, text="Load events", command=self._load_events).pack(side="left", padx=6)
-        self.event_combo = ttk.Combobox(ros, state="readonly")
-        self.event_combo.pack(fill="x", pady=(8, 0))
-        self.event_combo.bind("<<ComboboxSelected>>", self._on_event_chosen)
-        ttk.Label(ros, text="Event ID", style="Card.TLabel").pack(anchor="w", pady=(6, 0))
-        ttk.Entry(ros, textvariable=self.event_id_var).pack(fill="x")
-
-        deck = ttk.LabelFrame(left, text="HyperDeck", padding=8)
-        deck.pack(fill="x", pady=(8, 0))
-        host_row = ttk.Frame(deck, style="Card.TFrame")
-        host_row.pack(fill="x")
         self.deck_host_var = tk.StringVar()
         self.deck_port_var = tk.StringVar()
-        ttk.Label(host_row, text="IP", style="Card.TLabel").pack(side="left")
-        ttk.Entry(host_row, textvariable=self.deck_host_var, width=22).pack(side="left", padx=6)
-        ttk.Label(host_row, text="Port", style="Card.TLabel").pack(side="left")
-        ttk.Entry(host_row, textvariable=self.deck_port_var, width=8).pack(side="left", padx=6)
-        ttk.Button(host_row, text="Connect", command=self._connect_deck).pack(side="left", padx=(8, 0))
-        ttk.Button(host_row, text="Refresh clips", command=self._refresh_clips).pack(side="left", padx=6)
-        man = ttk.Frame(deck, style="Card.TFrame")
-        man.pack(fill="x", pady=(8, 0))
-        ttk.Button(man, text="Record", command=self._manual_record).pack(side="left")
-        ttk.Button(man, text="Stop", command=self._manual_stop).pack(side="left", padx=6)
-        ttk.Button(man, text="Copy last clip", command=self._copy_last).pack(side="left")
-
-        dest = ttk.LabelFrame(left, text="Copy after stop", padding=8)
-        dest.pack(fill="x", pady=(8, 0))
         self.copy_method_var = tk.StringVar(value="ftp")
         self.ftp_port_var = tk.StringVar()
         self.ftp_user_var = tk.StringVar()
@@ -159,88 +150,262 @@ class HyperDeckIngestApp:
         self.pattern_var = tk.StringVar()
         self.only_marked_var = tk.BooleanVar(value=True)
         self.auto_copy_var = tk.BooleanVar(value=True)
-        method = ttk.Frame(dest, style="Card.TFrame")
-        method.pack(fill="x")
-        ttk.Radiobutton(method, text="FTP from HyperDeck", variable=self.copy_method_var, value="ftp").pack(
+        self.status_ros = tk.StringVar(value="Not tested")
+        self.status_deck = tk.StringVar(value="Disconnected")
+        self.status_cue = tk.StringVar(value="—")
+        self.status_copy = tk.StringVar(value="—")
+
+        header = tk.Frame(self.root, bg=BG)
+        header.pack(fill="x", padx=14, pady=(12, 8))
+        brand = tk.Frame(header, bg=BG)
+        brand.pack(side="left")
+        tk.Label(
+            brand,
+            text="ROS HyperDeck Ingest",
+            bg=BG,
+            fg=FG,
+            font=("Segoe UI", 15, "bold"),
+        ).pack(side="left")
+        self.follow_pill = tk.Label(
+            brand,
+            text="Stopped",
+            bg=PILL_STOP,
+            fg="#e2e8f0",
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=3,
+        )
+        self.follow_pill.pack(side="left", padx=(12, 0))
+        actions = tk.Frame(header, bg=BG)
+        actions.pack(side="right")
+        ttk.Button(actions, text="Start follow", style="Accent.TButton", command=self.start_follow).pack(
             side="left"
         )
+        ttk.Button(actions, text="Stop", command=self.stop_follow).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Save", command=self._save).pack(side="left", padx=(6, 0))
+
+        status = tk.Frame(self.root, bg=BG)
+        status.pack(fill="x", padx=10, pady=(0, 8))
+        tiles = (
+            ("ROS", self.status_ros),
+            ("Deck", self.status_deck),
+            ("Cue", self.status_cue),
+            ("Copy", self.status_copy),
+        )
+        for i, (title, var) in enumerate(tiles):
+            cell = tk.Frame(status, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            cell.grid(row=0, column=i, sticky="nsew", padx=4)
+            status.columnconfigure(i, weight=1, uniform="stat")
+            tk.Label(cell, text=title, bg=CARD, fg=MUTED, font=("Segoe UI", 8, "bold"), anchor="w").pack(
+                fill="x", padx=10, pady=(8, 0)
+            )
+            tk.Label(
+                cell,
+                textvariable=var,
+                bg=CARD,
+                fg=FG,
+                font=("Segoe UI", 10),
+                anchor="w",
+                wraplength=230,
+                justify="left",
+            ).pack(fill="x", padx=10, pady=(2, 8))
+
+        body = tk.Frame(self.root, bg=BG)
+        body.pack(fill="both", expand=True, padx=14)
+        left_shell = tk.Frame(body, bg=BG, width=470)
+        left_shell.pack(side="left", fill="y")
+        left_shell.pack_propagate(False)
+        left_canvas = tk.Canvas(left_shell, bg=BG, highlightthickness=0, width=452)
+        left_scroll = ttk.Scrollbar(left_shell, orient="vertical", command=left_canvas.yview)
+        left = tk.Frame(left_canvas, bg=BG)
+        left.bind(
+            "<Configure>",
+            lambda e: left_canvas.configure(scrollregion=left_canvas.bbox("all")),
+        )
+        left_canvas.create_window((0, 0), window=left, anchor="nw", width=452)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left_canvas.pack(side="left", fill="both", expand=True)
+        left_scroll.pack(side="right", fill="y")
+
+        def _wheel(event):
+            left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_wheel(_event=None):
+            left_canvas.bind_all("<MouseWheel>", _wheel)
+
+        def _unbind_wheel(_event=None):
+            left_canvas.unbind_all("<MouseWheel>")
+
+        left_canvas.bind("<Enter>", _bind_wheel)
+        left_canvas.bind("<Leave>", _unbind_wheel)
+        right = tk.Frame(body, bg=BG)
+        right.pack(side="left", fill="both", expand=True, padx=(12, 0))
+
+        ros = self._card(left, "ROS")
+        ros.columnconfigure(1, weight=1)
+        self._grid_label(ros, 0, "API URL")
+        ttk.Entry(ros, textvariable=self.api_url_var).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(
+            ros,
+            text="Admin → Integration tokens · ros_itok_… · read",
+            style="CardMuted.TLabel",
+        ).grid(row=1, column=1, sticky="w")
+        self._grid_label(ros, 2, "Token")
+        ttk.Entry(ros, textvariable=self.api_token_var, show="*").grid(row=2, column=1, sticky="ew", pady=4)
+        btn_row = tk.Frame(ros, bg=CARD)
+        btn_row.grid(row=3, column=1, sticky="w", pady=(4, 2))
+        ttk.Button(btn_row, text="Test API", command=self._test_api).pack(side="left")
+        ttk.Button(btn_row, text="Load events", command=self._load_events).pack(side="left", padx=(6, 0))
+        self._grid_label(ros, 4, "Event")
+        self.event_combo = ttk.Combobox(ros, state="readonly")
+        self.event_combo.grid(row=4, column=1, sticky="ew", pady=4)
+        self.event_combo.bind("<<ComboboxSelected>>", self._on_event_chosen)
+        self.event_id_hint = ttk.Label(ros, text="", style="CardMuted.TLabel")
+        self.event_id_hint.grid(row=5, column=1, sticky="w")
+        self.event_id_var.trace_add("write", lambda *_: self._refresh_event_hint())
+
+        deck = self._card(left, "HyperDeck")
+        deck.columnconfigure(1, weight=1)
+        self._grid_label(deck, 0, "IP")
+        host_row = tk.Frame(deck, bg=CARD)
+        host_row.grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Entry(host_row, textvariable=self.deck_host_var).pack(side="left", fill="x", expand=True)
+        ttk.Label(host_row, text="Port", style="CardMuted.TLabel").pack(side="left", padx=(10, 6))
+        ttk.Entry(host_row, textvariable=self.deck_port_var, width=7).pack(side="left")
+        ttk.Button(host_row, text="Connect", command=self._connect_deck).pack(side="left", padx=(8, 0))
+        man = tk.Frame(deck, bg=CARD)
+        man.grid(row=1, column=1, sticky="w", pady=(6, 0))
+        ttk.Button(man, text="Record", command=self._manual_record).pack(side="left")
+        ttk.Button(man, text="Stop", command=self._manual_stop).pack(side="left", padx=(6, 0))
+        ttk.Button(man, text="Copy last", command=self._copy_last).pack(side="left", padx=(6, 0))
+        ttk.Button(man, text="Refresh clips", command=self._refresh_clips).pack(side="left", padx=(6, 0))
+
+        dest = self._card(left, "Copy after stop")
+        dest.columnconfigure(1, weight=1)
+        self._grid_label(dest, 0, "Method")
+        method = tk.Frame(dest, bg=CARD)
+        method.grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Radiobutton(method, text="FTP from deck", variable=self.copy_method_var, value="ftp").pack(side="left")
         ttk.Radiobutton(method, text="Folder on this PC", variable=self.copy_method_var, value="folder").pack(
-            side="left", padx=12
+            side="left", padx=(14, 0)
         )
-        ftp_row = ttk.Frame(dest, style="Card.TFrame")
-        ftp_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(ftp_row, text="FTP port", style="Card.TLabel").pack(side="left")
-        ttk.Entry(ftp_row, textvariable=self.ftp_port_var, width=6).pack(side="left", padx=6)
-        ttk.Label(ftp_row, text="User", style="Card.TLabel").pack(side="left")
-        ttk.Entry(ftp_row, textvariable=self.ftp_user_var, width=12).pack(side="left", padx=6)
-        ttk.Label(ftp_row, text="Password", style="Card.TLabel").pack(side="left")
-        ttk.Entry(ftp_row, textvariable=self.ftp_pass_var, show="*", width=12).pack(side="left", padx=6)
-        src_row = ttk.Frame(dest, style="Card.TFrame")
-        src_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(src_row, text="Source folder", style="Card.TLabel").pack(side="left")
-        ttk.Entry(src_row, textvariable=self.source_folder_var).pack(side="left", fill="x", expand=True, padx=6)
-        ttk.Button(src_row, text="Browse", command=lambda: self._browse(self.source_folder_var)).pack(side="left")
-        tgt_row = ttk.Frame(dest, style="Card.TFrame")
-        tgt_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(tgt_row, text="Target folder", style="Card.TLabel").pack(side="left")
-        ttk.Entry(tgt_row, textvariable=self.target_folder_var).pack(side="left", fill="x", expand=True, padx=6)
-        ttk.Button(tgt_row, text="Browse", command=lambda: self._browse(self.target_folder_var)).pack(side="left")
-        ttk.Label(dest, text="File name pattern  e.g. {date} {event} - {segment}", style="CardMuted.TLabel").pack(
-            anchor="w", pady=(8, 0)
+
+        self.ftp_row = tk.Frame(dest, bg=CARD)
+        self.ftp_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
+        self.ftp_row.columnconfigure(1, weight=1)
+        ttk.Label(self.ftp_row, text="FTP", style="CardMuted.TLabel").grid(row=0, column=0, sticky="nw", padx=(0, 10), pady=4)
+        ftp_fields = tk.Frame(self.ftp_row, bg=CARD)
+        ftp_fields.grid(row=0, column=1, sticky="ew")
+        ftp_fields.columnconfigure(1, weight=1)
+        ftp_fields.columnconfigure(3, weight=1)
+        ttk.Label(ftp_fields, text="Port", style="CardMuted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(ftp_fields, textvariable=self.ftp_port_var, width=6).grid(row=0, column=1, sticky="w", padx=(6, 12), pady=2)
+        ttk.Label(ftp_fields, text="User", style="CardMuted.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Entry(ftp_fields, textvariable=self.ftp_user_var).grid(row=0, column=3, sticky="ew", padx=(6, 0), pady=2)
+        ttk.Label(ftp_fields, text="Password", style="CardMuted.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Entry(ftp_fields, textvariable=self.ftp_pass_var, show="*").grid(
+            row=1, column=1, columnspan=3, sticky="ew", padx=(6, 0), pady=2
         )
-        ttk.Entry(dest, textvariable=self.pattern_var).pack(fill="x")
+
+        self.src_row = tk.Frame(dest, bg=CARD)
+        self.src_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
+        self.src_row.columnconfigure(1, weight=1)
+        ttk.Label(self.src_row, text="Source", style="CardMuted.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 10)
+        )
+        src_fields = tk.Frame(self.src_row, bg=CARD)
+        src_fields.grid(row=0, column=1, sticky="ew")
+        ttk.Entry(src_fields, textvariable=self.source_folder_var).pack(side="left", fill="x", expand=True)
+        ttk.Button(src_fields, text="Browse", command=lambda: self._browse(self.source_folder_var)).pack(
+            side="left", padx=(6, 0)
+        )
+
+        self._grid_label(dest, 2, "Target")
+        tgt = tk.Frame(dest, bg=CARD)
+        tgt.grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Entry(tgt, textvariable=self.target_folder_var).pack(side="left", fill="x", expand=True)
+        ttk.Button(tgt, text="Browse", command=lambda: self._browse(self.target_folder_var)).pack(
+            side="left", padx=(6, 0)
+        )
+        self._grid_label(dest, 3, "Name")
+        ttk.Entry(dest, textvariable=self.pattern_var).grid(row=3, column=1, sticky="ew", pady=4)
         ttk.Label(
             dest,
-            text="Tokens: {date} {event} {segment} {cue}   ·  date is event YYMMDD (260512)",
+            text="{date} {event} {segment} {cue}  ·  date is event YYMMDD",
             style="CardMuted.TLabel",
-        ).pack(anchor="w")
-        flags = ttk.Frame(dest, style="Card.TFrame")
-        flags.pack(fill="x", pady=(6, 0))
-        ttk.Checkbutton(flags, text="Only record cues marked Record", variable=self.only_marked_var).pack(
-            side="left"
-        )
-        ttk.Checkbutton(flags, text="Auto-copy after stop", variable=self.auto_copy_var).pack(side="left", padx=12)
+        ).grid(row=4, column=1, sticky="w")
+        flags = tk.Frame(dest, bg=CARD)
+        flags.grid(row=5, column=1, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(flags, text="Only marked Record cues", variable=self.only_marked_var).pack(anchor="w")
+        ttk.Checkbutton(flags, text="Auto-copy after stop", variable=self.auto_copy_var).pack(anchor="w", pady=(4, 0))
+        self.copy_method_var.trace_add("write", lambda *_: self._sync_copy_method_ui())
 
-        live = ttk.LabelFrame(right, text="Live", padding=8)
-        live.pack(fill="x")
-        self.status_ros = tk.StringVar(value="ROS: not tested")
-        self.status_deck = tk.StringVar(value="Deck: disconnected")
-        self.status_cue = tk.StringVar(value="Cue: —")
-        self.status_copy = tk.StringVar(value="Copy: —")
-        ttk.Label(live, textvariable=self.status_ros, style="Card.TLabel").pack(anchor="w")
-        ttk.Label(live, textvariable=self.status_deck, style="Card.TLabel").pack(anchor="w")
-        ttk.Label(live, textvariable=self.status_cue, style="Card.TLabel").pack(anchor="w")
-        ttk.Label(live, textvariable=self.status_copy, style="Card.TLabel").pack(anchor="w")
-
-        clips = ttk.LabelFrame(right, text="HyperDeck clips", padding=8)
-        clips.pack(fill="both", expand=True, pady=(8, 0))
+        clips = self._card(right, "HyperDeck clips", fill="both")
+        tree_wrap = tk.Frame(clips, bg=CARD)
+        tree_wrap.pack(fill="both", expand=True)
         cols = ("idx", "name", "duration", "copied")
-        self.clip_tree = ttk.Treeview(clips, columns=cols, show="headings", height=10, selectmode="browse")
+        self.clip_tree = ttk.Treeview(tree_wrap, columns=cols, show="headings", selectmode="browse")
         self.clip_tree.heading("idx", text="#")
-        self.clip_tree.heading("name", text="Clip name")
+        self.clip_tree.heading("name", text="Clip")
         self.clip_tree.heading("duration", text="Duration")
         self.clip_tree.heading("copied", text="Copied")
-        self.clip_tree.column("idx", width=40, stretch=False)
-        self.clip_tree.column("name", width=260)
-        self.clip_tree.column("duration", width=90, stretch=False)
-        self.clip_tree.column("copied", width=70, stretch=False)
-        scroll = ttk.Scrollbar(clips, orient="vertical", command=self.clip_tree.yview)
+        self.clip_tree.column("idx", width=44, stretch=False, anchor="center")
+        self.clip_tree.column("name", width=240)
+        self.clip_tree.column("duration", width=88, stretch=False, anchor="center")
+        self.clip_tree.column("copied", width=72, stretch=False, anchor="center")
+        scroll = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.clip_tree.yview)
         self.clip_tree.configure(yscrollcommand=scroll.set)
         self.clip_tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        log_frame = ttk.LabelFrame(self.root, text="Log", padding=6)
-        log_frame.pack(fill="both", expand=False, padx=8, pady=(0, 8))
+        log_wrap = tk.Frame(self.root, bg=BG)
+        log_wrap.pack(fill="x", padx=14, pady=(0, 12))
+        tk.Label(
+            log_wrap, text="LOG", bg=BG, fg=MUTED, font=("Segoe UI", 8, "bold"), anchor="w"
+        ).pack(fill="x", pady=(0, 6))
+        log_card = tk.Frame(log_wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        log_card.pack(fill="x")
         self.log_text = tk.Text(
-            log_frame, height=8, bg="#0b1220", fg=FG, insertbackground=FG, relief="flat", wrap="word"
+            log_card,
+            height=6,
+            bg="#0b1220",
+            fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            wrap="word",
+            borderwidth=0,
+            padx=8,
+            pady=6,
+            font=("Consolas", 9),
         )
-        self.log_text.pack(fill="both", expand=True)
+        self.log_text.pack(fill="x")
         self.log_text.tag_config("error", foreground=ERR)
         self.log_text.tag_config("ok", foreground=OK)
 
-    def _labeled_entry(self, parent, label: str, var: tk.StringVar, show: str | None = None) -> None:
-        ttk.Label(parent, text=label, style="Card.TLabel").pack(anchor="w", pady=(4, 0))
-        ttk.Entry(parent, textvariable=var, show=show or "").pack(fill="x")
+    def _refresh_event_hint(self) -> None:
+        eid = self.event_id_var.get().strip()
+        self.event_id_hint.configure(text=f"ID  {eid}" if eid else "Load events, then pick one")
+
+    def _sync_copy_method_ui(self) -> None:
+        if self.copy_method_var.get() == "folder":
+            self.ftp_row.grid_remove()
+            self.src_row.grid()
+        else:
+            self.src_row.grid_remove()
+            self.ftp_row.grid()
+
+    def _set_pill(self, kind: str) -> None:
+        styles = {
+            "stopped": ("Stopped", PILL_STOP),
+            "following": ("Following", PILL_FOLLOW),
+            "recording": ("Recording", PILL_REC),
+        }
+        text, bg = styles.get(kind, styles["stopped"])
+
+        def apply():
+            self.follow_pill.configure(text=text, bg=bg)
+
+        self.root.after(0, apply)
 
     def _browse(self, var: tk.StringVar) -> None:
         path = filedialog.askdirectory()
@@ -263,6 +428,8 @@ class HyperDeckIngestApp:
         self.pattern_var.set(c.get("name_pattern") or DEFAULT_PATTERN)
         self.only_marked_var.set(c.get("record_only_marked") is not False)
         self.auto_copy_var.set(c.get("auto_copy") is not False)
+        self._sync_copy_method_ui()
+        self._refresh_event_hint()
 
     def _snapshot_config(self) -> dict:
         return {
@@ -324,7 +491,7 @@ class HyperDeckIngestApp:
             api = self._apply_api_from_fields()
             msg = api.validate()
             self.log(msg, "ok")
-            self.root.after(0, lambda: self.status_ros.set(f"ROS: {msg}"))
+            self.root.after(0, lambda: self.status_ros.set(msg))
 
         self._bg(work)
 
@@ -348,7 +515,7 @@ class HyperDeckIngestApp:
                         if str(ev.get("id")) == current:
                             self.event_combo.current(i)
                             break
-                self.status_ros.set(f"ROS: loaded {len(events)} event(s)")
+                self.status_ros.set(f"Loaded {len(events)} event(s)")
                 self.log(f"Loaded {len(events)} events", "ok")
 
             self.root.after(0, apply)
@@ -391,7 +558,7 @@ class HyperDeckIngestApp:
             self.deck.port = int(self.deck_port_var.get() or 9993)
             model = self.deck.connect()
             self.log(f"HyperDeck connected: {model or self.deck.host}", "ok")
-            self.root.after(0, lambda: self.status_deck.set(f"Deck: {model or 'connected'}"))
+            self.root.after(0, lambda: self.status_deck.set(model or "Connected"))
             self._refresh_clips_sync()
 
         self._bg(work)
@@ -450,7 +617,7 @@ class HyperDeckIngestApp:
             )
         self.copied_keys.add(self._clip_key(clip))
         save_config(self._snapshot_config())
-        self.root.after(0, lambda: self.status_copy.set(f"Copy: {os.path.basename(path)}"))
+        self.root.after(0, lambda: self.status_copy.set(os.path.basename(path)))
         self.root.after(0, self._render_clips)
         self.log(f"Copied → {path}", "ok")
         return path
@@ -478,7 +645,8 @@ class HyperDeckIngestApp:
             self._recording_clip_name = name
             self._recording_meta = item or {}
             self.log(f"Recording as {name}", "ok")
-            self.root.after(0, lambda: self.status_deck.set(f"Deck: recording {name}"))
+            self.root.after(0, lambda: self.status_deck.set(f"Recording {name}"))
+            self._set_pill("recording")
 
         self._bg(work)
 
@@ -488,7 +656,8 @@ class HyperDeckIngestApp:
     def _stop_and_maybe_copy(self) -> None:
         self.deck.stop()
         self.log("HyperDeck stop")
-        self.root.after(0, lambda: self.status_deck.set("Deck: stopped"))
+        self.root.after(0, lambda: self.status_deck.set("Stopped"))
+        self._set_pill("following" if self.following else "stopped")
         item = self._recording_meta or self._item_by_id(self._recording_item_id)
         self._recording_item_id = None
         if not self.auto_copy_var.get():
@@ -519,7 +688,7 @@ class HyperDeckIngestApp:
                 self.deck.host = self.deck_host_var.get().strip()
                 self.deck.port = int(self.deck_port_var.get() or 9993)
                 model = self.deck.connect()
-                self.status_deck.set(f"Deck: {model or 'connected'}")
+                self.status_deck.set(model or "Connected")
                 self.log(f"HyperDeck connected: {model or self.deck.host}", "ok")
             self._refresh_schedule()
         except Exception as exc:
@@ -527,14 +696,14 @@ class HyperDeckIngestApp:
             return
         self._save()
         self.following = True
-        self.follow_pill.configure(text="Following")
+        self._set_pill("following")
         self.log("Follow started — polling active-timers", "ok")
         self._follow_thread = threading.Thread(target=self._follow_loop, daemon=True)
         self._follow_thread.start()
 
     def stop_follow(self) -> None:
         self.following = False
-        self.follow_pill.configure(text="Stopped")
+        self._set_pill("stopped")
         self.log("Follow stopped")
 
     def _follow_loop(self) -> None:
@@ -544,14 +713,14 @@ class HyperDeckIngestApp:
                 self._follow_tick()
             except Exception as exc:
                 self.log(str(exc), "error")
-                self.root.after(0, lambda m=str(exc): self.status_ros.set(f"ROS: {m}"))
+                self.root.after(0, lambda m=str(exc): self.status_ros.set(m))
             time.sleep(poll)
 
     def _follow_tick(self) -> None:
         eid = self.event_id_var.get().strip()
         timer = self.api.get_active_timer(eid)
         if not timer:
-            self.root.after(0, lambda: self.status_cue.set("Cue: none"))
+            self.root.after(0, lambda: self.status_cue.set("None"))
             if self._recording_item_id is not None:
                 self._stop_and_maybe_copy()
             self._last_running = False
@@ -575,9 +744,9 @@ class HyperDeckIngestApp:
         state = "running" if running else str(timer.get("timer_state") or "loaded")
         self.root.after(
             0,
-            lambda: self.status_cue.set(f"Cue: {cue or item_id}  {segment}  [{state}]  mark:{rec}"),
+            lambda: self.status_cue.set(f"{cue or item_id}  {segment}  [{state}]  {rec}"),
         )
-        self.root.after(0, lambda: self.status_ros.set("ROS: polling OK"))
+        self.root.after(0, lambda: self.status_ros.set("Polling OK"))
 
         changed = str(item_id) != str(self._last_item_id)
         stopped = self._last_running and not running
@@ -594,7 +763,8 @@ class HyperDeckIngestApp:
             self._recording_clip_name = name
             self._recording_meta = item or {}
             self.log(f"Auto-record {name}", "ok")
-            self.root.after(0, lambda: self.status_deck.set(f"Deck: recording {name}"))
+            self.root.after(0, lambda: self.status_deck.set(f"Recording {name}"))
+            self._set_pill("recording")
 
 
 def main() -> None:
