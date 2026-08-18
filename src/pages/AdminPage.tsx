@@ -8,13 +8,18 @@ import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-back
 import {
   getLogoVariant,
   getLogoVariantId,
+  getGreenRoomLayoutId,
   LOGO_VARIANTS,
+  GREEN_ROOM_LAYOUTS,
   applyLogoVariantId,
+  applyGreenRoomLayoutId,
   type LogoVariantId,
+  type GreenRoomLayoutId,
 } from '../lib/branding';
 import {
   fetchAdminAppSettings,
   saveAdminLogoVariant,
+  saveAdminGreenRoomLayout,
   syncAdminAppSettingsTable,
 } from '../lib/appSettings';
 import AppLogo from '../components/AppLogo';
@@ -468,6 +473,7 @@ export default function AdminPage() {
   } | null>(null);
   const [accessEmailCopied, setAccessEmailCopied] = useState(false);
   const [logoVariantId, setLogoVariantIdState] = useState<LogoVariantId>(() => getLogoVariantId());
+  const [greenRoomLayoutId, setGreenRoomLayoutIdState] = useState<GreenRoomLayoutId>(() => getGreenRoomLayoutId());
   const [logoSettingsLoading, setLogoSettingsLoading] = useState(false);
   const [logoSettingsSaving, setLogoSettingsSaving] = useState(false);
   const [logoSettingsError, setLogoSettingsError] = useState<string | null>(null);
@@ -722,7 +728,9 @@ export default function AdminPage() {
       setLogoSettingsNeedsMigration(settings.needsMigration === true);
       setLogoSettingsUpdatedAt(settings.updatedAt);
       applyLogoVariantId(settings.logoVariantId);
+      applyGreenRoomLayoutId(settings.greenRoomLayoutId);
       setLogoVariantIdState(settings.logoVariantId);
+      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to load logo settings');
     } finally {
@@ -737,10 +745,28 @@ export default function AdminPage() {
     try {
       const settings = await saveAdminLogoVariant(id);
       setLogoVariantIdState(settings.logoVariantId);
+      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
       setLogoSettingsUpdatedAt(settings.updatedAt);
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save logo setting');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handleGreenRoomLayoutChange = async (id: GreenRoomLayoutId) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminGreenRoomLayout(id);
+      setLogoVariantIdState(settings.logoVariantId);
+      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
+      setLogoSettingsUpdatedAt(settings.updatedAt);
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save Green Room layout');
     } finally {
       setLogoSettingsSaving(false);
     }
@@ -754,7 +780,9 @@ export default function AdminPage() {
       setLogoSettingsNeedsMigration(false);
       setLogoSettingsUpdatedAt(settings.updatedAt);
       applyLogoVariantId(settings.logoVariantId);
+      applyGreenRoomLayoutId(settings.greenRoomLayoutId);
       setLogoVariantIdState(settings.logoVariantId);
+      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to create app_settings table');
     } finally {
@@ -4022,8 +4050,8 @@ export default function AdminPage() {
                 <Image className="w-4 h-4" strokeWidth={2} />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-white">Header logo</h2>
-                <p className="text-slate-400 text-sm">Global branding for all users. Saved in Neon app_settings.</p>
+                <h2 className="text-lg font-semibold text-white">Branding</h2>
+                <p className="text-slate-400 text-sm">Global logo and Green Room layout. Saved in Neon app_settings.</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-2">
@@ -4119,6 +4147,47 @@ export default function AdminPage() {
               <span className="ml-2">Last updated {new Date(logoSettingsUpdatedAt).toLocaleString()}.</span>
             ) : null}
           </p>
+
+          <div className="mt-8 pt-6 border-t border-slate-700">
+            <h3 className="text-base font-semibold text-white">Green Room layout</h3>
+            <p className="text-slate-400 text-sm mt-1 mb-4">
+              Default for every Green Room. Only admins can save this. On the Green Room page, Classic / ROS
+              switches that display only (does not change this default). You can also preview with{' '}
+              <span className="font-mono text-slate-300">?layout=ros</span> or{' '}
+              <span className="font-mono text-slate-300">?layout=classic</span>.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {GREEN_ROOM_LAYOUTS.map((layout) => {
+                const selected = greenRoomLayoutId === layout.id;
+                return (
+                  <button
+                    key={layout.id}
+                    type="button"
+                    onClick={() => void handleGreenRoomLayoutChange(layout.id)}
+                    disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                    className={`rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
+                      selected
+                        ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                        : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-white">{layout.label}</p>
+                        <p className="mt-1 text-sm text-slate-400">{layout.description}</p>
+                      </div>
+                      <span
+                        className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border ${
+                          selected ? 'border-blue-400 bg-blue-500' : 'border-slate-500'
+                        }`}
+                        aria-hidden
+                      />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </section>
 
         <AccessEventAccessModal

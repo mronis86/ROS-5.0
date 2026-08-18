@@ -29,6 +29,73 @@ interface ScheduleItem {
 
 const BRAND_LOWER_THIRD_COLOR_UPDATER_URL = 'https://mronis-chamber.github.io/LoopColors/';
 
+const DOWNLOAD_TOOLS = [
+  {
+    id: 'python',
+    title: 'Python Desktop App',
+    blurb: 'Graphics generator with Railway / local toggle',
+    meta: '~2 MB · Python 3.8+',
+    href: '/OptimizedGraphicsGenerator-Python.zip',
+    filename: 'OptimizedGraphicsGenerator-Python.zip',
+    details: ['GUI toggle: Railway or Local', 'CSV files every 10 seconds', 'WebSocket real-time updates'],
+    row: 'bg-green-900/50 border-green-600',
+    bar: 'bg-green-500',
+    titleClass: 'text-green-100',
+    blurbClass: 'text-green-300/80',
+    metaClass: 'text-green-400/70',
+    btn: 'bg-green-600 hover:bg-green-500',
+  },
+  {
+    id: 'local-server',
+    title: 'Node.js Local Server',
+    blurb: 'Standalone API + WebSocket for local use',
+    meta: '~50 KB · Node 18+',
+    href: '/ROS-Local-Server-NodeJS.zip',
+    filename: 'ROS-Local-Server-NodeJS.zip',
+    details: ['API + WebSocket (port 3002)', 'All VMIX XML/CSV endpoints', 'One-click start · Node.js only'],
+    row: 'bg-purple-900/50 border-purple-600',
+    bar: 'bg-purple-500',
+    titleClass: 'text-purple-100',
+    blurbClass: 'text-purple-300/80',
+    metaClass: 'text-purple-400/70',
+    btn: 'bg-purple-600 hover:bg-purple-500',
+  },
+  {
+    id: 'vmix',
+    title: 'vMix DataSource Bridge',
+    blurb: 'Follows the loaded cue and selects the vMix Data Source row',
+    meta: '~97 MB · no Node install',
+    href: '/ros-vmix-datasource-bridge.zip',
+    filename: 'ros-vmix-datasource-bridge.zip',
+    details: ['Cue column match', 'Multi Data Source bindings', 'START.bat — no npm on show PC'],
+    row: 'bg-cyan-900/50 border-cyan-600',
+    bar: 'bg-cyan-500',
+    titleClass: 'text-cyan-100',
+    blurbClass: 'text-cyan-300/80',
+    metaClass: 'text-cyan-400/70',
+    btn: 'bg-cyan-600 hover:bg-cyan-500',
+  },
+  {
+    id: 'hyperdeck',
+    title: 'HyperDeck Ingest',
+    blurb: 'Record marked cues, then copy clips to an editor folder',
+    meta: 'Small zip · Python or portable exe',
+    href: '/ros-hyperdeck-ingest.zip',
+    filename: 'ros-hyperdeck-ingest.zip',
+    details: [
+      'Integration token (same as vMix bridge)',
+      'File names: {date} {event} - {segment}',
+      'FTP or mounted SSD → target folder',
+    ],
+    row: 'bg-red-950/70 border-red-700',
+    bar: 'bg-red-500',
+    titleClass: 'text-red-100',
+    blurbClass: 'text-red-300/80',
+    metaClass: 'text-red-400/70',
+    btn: 'bg-red-600 hover:bg-red-500',
+  },
+] as const;
+
 const GraphicsLinksPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -51,6 +118,7 @@ const GraphicsLinksPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [openDownloadId, setOpenDownloadId] = useState<string | null>(null);
 
   const openBrandLowerThirdColorUpdater = () => {
     window.open(BRAND_LOWER_THIRD_COLOR_UPDATER_URL, '_blank', 'noopener,noreferrer');
@@ -747,11 +815,8 @@ const GraphicsLinksPage: React.FC = () => {
 
       {/* Downloads & Tools - bottom of page */}
       <div id="downloads-section" className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-12">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-3xl font-bold text-white mb-2">📥 Downloads & Tools</h2>
-            <p className="text-gray-400">Desktop applications and local server packages for offline use</p>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h2 className="text-lg font-semibold text-white">Downloads &amp; Tools</h2>
           <button
             type="button"
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
@@ -761,78 +826,47 @@ const GraphicsLinksPage: React.FC = () => {
           </button>
         </div>
 
-        {/* Download Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Python Desktop App */}
-          <div className="bg-green-800 rounded-lg p-5 shadow-lg border border-green-600 hover:shadow-xl transition-shadow">
-            <h3 className="text-lg font-bold text-white mb-2">🐍 Python Desktop App</h3>
-            <p className="text-green-200 text-xs mb-3">Standalone graphics generator with GUI server toggle</p>
-            
-            <div className="bg-green-900/30 rounded p-2 mb-3">
-              <ul className="text-green-100 text-xs space-y-0.5">
-                <li>• GUI toggle: Railway or Local</li>
-                <li>• CSV files every 10 seconds</li>
-                <li>• WebSocket real-time updates</li>
-              </ul>
-            </div>
-            
-            <a
-              href="/OptimizedGraphicsGenerator-Python.zip"
-              download="OptimizedGraphicsGenerator-Python.zip"
-              className="block w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
-            >
-              📥 Download Python App
-            </a>
-            <p className="text-green-300 text-xs text-center mt-2">~2 MB • Requires Python 3.8+</p>
-          </div>
-
-          {/* Local Server Package */}
-          <div className="bg-purple-800 rounded-lg p-5 shadow-lg border border-purple-600 hover:shadow-xl transition-shadow">
-            <h3 className="text-lg font-bold text-white mb-2">💻 Node.js Local Server</h3>
-            <p className="text-purple-200 text-xs mb-3">Standalone API + WebSocket server for local use</p>
-            
-            <div className="bg-purple-900/30 rounded p-2 mb-3">
-              <ul className="text-purple-100 text-xs space-y-0.5">
-                <li>• API + WebSocket (port 3002)</li>
-                <li>• All VMIX XML/CSV endpoints</li>
-                <li>• One-click start • Node.js only</li>
-              </ul>
-            </div>
-            
-            <a
-              href="/ROS-Local-Server-NodeJS.zip"
-              download="ROS-Local-Server-NodeJS.zip"
-              className="block w-full bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
-            >
-              📥 Download Local Server
-            </a>
-            <p className="text-purple-300 text-xs text-center mt-2">~50 KB • Requires Node.js 18+</p>
-          </div>
-
-          {/* vMix DataSource Bridge */}
-          <div className="bg-cyan-900 rounded-lg p-5 shadow-lg border border-cyan-600 hover:shadow-xl transition-shadow">
-            <h3 className="text-lg font-bold text-white mb-2">🎛 vMix DataSource Bridge</h3>
-            <p className="text-cyan-200 text-xs mb-3">
-              Follows the loaded ROS cue and selects the matching row in vMix Data Sources
-            </p>
-
-            <div className="bg-cyan-950/40 rounded p-2 mb-3">
-              <ul className="text-cyan-100 text-xs space-y-0.5">
-                <li>• Cue column or row-index match</li>
-                <li>• Multi Data Source bindings</li>
-                <li>• Prebuilt START.bat — no npm on show PC</li>
-              </ul>
-            </div>
-
-            <a
-              href="/ros-vmix-datasource-bridge.zip"
-              download="ros-vmix-datasource-bridge.zip"
-              className="block w-full bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2.5 rounded-lg transition-colors font-semibold text-center text-sm"
-            >
-              📥 Download vMix Bridge
-            </a>
-            <p className="text-cyan-300 text-xs text-center mt-2">~97 MB · Unzip &amp; START.bat · no Node install</p>
-          </div>
+        <div className="space-y-2">
+          {DOWNLOAD_TOOLS.map((tool) => {
+            const open = openDownloadId === tool.id;
+            return (
+              <div key={tool.id} className={`rounded-lg border overflow-hidden ${tool.row}`}>
+                <div className="flex items-stretch">
+                  <div className={`w-1.5 shrink-0 ${tool.bar}`} aria-hidden />
+                  <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setOpenDownloadId(open ? null : tool.id)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      aria-expanded={open}
+                    >
+                      <span className={`w-4 shrink-0 ${tool.blurbClass}`}>{open ? '▾' : '▸'}</span>
+                      <span className={`truncate text-sm font-medium ${tool.titleClass}`}>{tool.title}</span>
+                      <span className={`hidden sm:inline truncate text-xs ${tool.blurbClass}`}>{tool.blurb}</span>
+                    </button>
+                    <span className={`shrink-0 text-[11px] ${tool.metaClass}`}>{tool.meta}</span>
+                    <a
+                      href={tool.href}
+                      download={tool.filename}
+                      className={`shrink-0 rounded px-3 py-1 text-xs font-semibold text-white ${tool.btn}`}
+                    >
+                      Download
+                    </a>
+                  </div>
+                </div>
+                {open ? (
+                  <div className="px-6 pb-2.5 pt-0">
+                    <p className={`text-xs mb-1.5 sm:hidden ${tool.blurbClass}`}>{tool.blurb}</p>
+                    <ul className={`text-xs space-y-0.5 ${tool.blurbClass}`}>
+                      {tool.details.map((line) => (
+                        <li key={line}>• {line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

@@ -91,7 +91,8 @@ $OptionalZips = @(
     'ros-osc-python-app.zip',
     'electron-osc-app.zip',
     'OptimizedGraphicsGenerator-Python.zip',
-    'ROS-Local-Server-NodeJS.zip'
+    'ROS-Local-Server-NodeJS.zip',
+    'ros-hyperdeck-ingest.zip'
 )
 
 foreach ($name in $OptionalZips) {
@@ -126,6 +127,7 @@ $redirectLines = New-Object System.Collections.Generic.List[string]
 [void]$redirectLines.Add('/electron-osc-app.zip                           /electron-osc-app.zip                           200')
 [void]$redirectLines.Add('/OptimizedGraphicsGenerator-Python.zip         /OptimizedGraphicsGenerator-Python.zip         200')
 [void]$redirectLines.Add('/ROS-Local-Server-NodeJS.zip                    /ROS-Local-Server-NodeJS.zip                    200')
+[void]$redirectLines.Add('/ros-hyperdeck-ingest.zip                       /ros-hyperdeck-ingest.zip                       200')
 
 foreach ($big in $LargeZips) {
     # 302 to Netlify so CF Pages stays under 25 MiB; app links stay /filename.zip

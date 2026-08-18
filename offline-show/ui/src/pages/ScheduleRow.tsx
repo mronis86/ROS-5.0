@@ -172,6 +172,39 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     onRowEditStart?.(item.id);
   };
 
+  const canEditRecording = currentUserRole !== 'VIEWER' && currentUserRole !== 'OPERATOR';
+
+  const setNeedsRecording = (next: boolean) => {
+    if (isLockedByOther) return;
+    claimRowLock();
+    handleUserEditing();
+    if (!canEditRecording) {
+      alert('Only EDITORs can mark cues for recording. Please change your role to EDITOR.');
+      return;
+    }
+    const oldValue = !!item.needsRecording;
+    if (oldValue === next) return;
+    setSchedule((prev: any[]) => prev.map(scheduleItem =>
+      scheduleItem.id === item.id
+        ? { ...scheduleItem, needsRecording: next }
+        : scheduleItem
+    ));
+    logChangeDebounced(
+      `needsRecording_${item.id}`,
+      'FIELD_UPDATE',
+      `Updated recording flag for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${next ? 'TRUE' : 'FALSE'}`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: item.id,
+        itemName: item.segmentName,
+        fieldName: 'needsRecording',
+        oldValue: oldValue ? 'TRUE' : 'FALSE',
+        newValue: next ? 'TRUE' : 'FALSE',
+        details: { fieldType: 'checkbox', booleanChange: true }
+      }
+    );
+  };
+
   const Content = (
     <>
       {isLockedByOther && (
@@ -575,19 +608,22 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               );
             }}
             disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-            className={`w-full px-3 py-2 border rounded text-base transition-colors ${cellFill}`}
+            className={`w-full px-3 py-2 rounded text-base transition-colors ${
+              item.needsRecording
+                ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
+                : cellFill
+            }`}
             placeholder={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
-            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit segment names' : 'Edit segment name'}
+            title={
+              item.needsRecording
+                ? 'Marked for recording'
+                : isLockedByOther
+                  ? lockLabel
+                  : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                    ? 'Only EDITORs can edit segment names'
+                    : 'Edit segment name'
+            }
           />
-          {item.needsRecording ? (
-            <span
-              className="absolute top-1 right-1 inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-black tracking-wide text-white shadow"
-              title="Marked for recording"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-white" />
-              REC
-            </span>
-          ) : null}
         </div>
       )}
       {/* Shot type column (after Segment Name) */}
@@ -737,35 +773,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             <input
               type="checkbox"
               checked={!!item.needsRecording}
-              onChange={(e) => {
-                if (isLockedByOther) return;
-                claimRowLock();
-                handleUserEditing();
-                if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                  alert('Only EDITORs can mark cues for recording. Please change your role to EDITOR.');
-                  return;
-                }
-                const oldValue = !!item.needsRecording;
-                setSchedule((prev: any[]) => prev.map(scheduleItem =>
-                  scheduleItem.id === item.id
-                    ? { ...scheduleItem, needsRecording: e.target.checked }
-                    : scheduleItem
-                ));
-                logChangeDebounced(
-                  `needsRecording_${item.id}`,
-                  'FIELD_UPDATE',
-                  `Updated recording flag for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`,
-                  {
-                    changeType: 'FIELD_CHANGE',
-                    itemId: item.id,
-                    itemName: item.segmentName,
-                    fieldName: 'needsRecording',
-                    oldValue: oldValue ? 'TRUE' : 'FALSE',
-                    newValue: e.target.checked ? 'TRUE' : 'FALSE',
-                    details: { fieldType: 'checkbox', booleanChange: true }
-                  }
-                );
-              }}
+              onChange={(e) => setNeedsRecording(e.target.checked)}
               disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
               className={`w-6 h-6 rounded border-2 ${item.needsRecording ? 'border-red-400 bg-red-700' : isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
               title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can mark cues for recording' : 'Mark this cue for recording'}

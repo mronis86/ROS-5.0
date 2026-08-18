@@ -33,6 +33,58 @@ export const LOGO_VARIANTS: LogoVariant[] = [
 export const LOGO_VARIANT_STORAGE_KEY = 'ros.logoVariant';
 export const LOGO_VARIANT_CHANGE_EVENT = 'ros:branding-change';
 
+export type GreenRoomLayoutId = 'classic' | 'ros';
+
+export const GREEN_ROOM_LAYOUTS: {
+  id: GreenRoomLayoutId;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: 'classic',
+    label: 'Classic (video)',
+    description: 'Hallway TV look — portrait 9:16 with video background',
+  },
+  {
+    id: 'ros',
+    label: 'ROS',
+    description: 'Same layout as Classic, with slate colors like Run of Show / Photo / Large Ops',
+  },
+];
+
+export const GREEN_ROOM_LAYOUT_STORAGE_KEY = 'ros.greenRoomLayout';
+
+let cachedGreenRoomLayoutId: GreenRoomLayoutId | null = null;
+
+function readGreenRoomLayoutFromStorage(): GreenRoomLayoutId | null {
+  try {
+    const raw = localStorage.getItem(GREEN_ROOM_LAYOUT_STORAGE_KEY);
+    if (raw === 'classic' || raw === 'ros') return raw;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function getGreenRoomLayoutId(): GreenRoomLayoutId {
+  if (cachedGreenRoomLayoutId) return cachedGreenRoomLayoutId;
+  return readGreenRoomLayoutFromStorage() ?? 'classic';
+}
+
+export function applyGreenRoomLayoutId(id: GreenRoomLayoutId): void {
+  cachedGreenRoomLayoutId = id;
+  try {
+    localStorage.setItem(GREEN_ROOM_LAYOUT_STORAGE_KEY, id);
+  } catch {
+    // ignore
+  }
+  window.dispatchEvent(new CustomEvent(LOGO_VARIANT_CHANGE_EVENT, { detail: { greenRoomLayoutId: id } }));
+}
+
+export function parseGreenRoomLayoutId(value: unknown): GreenRoomLayoutId | null {
+  return value === 'classic' || value === 'ros' ? value : null;
+}
+
 let cachedLogoVariantId: LogoVariantId | null = null;
 
 function readLogoVariantFromStorage(): LogoVariantId | null {

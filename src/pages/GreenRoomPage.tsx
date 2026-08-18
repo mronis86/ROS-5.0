@@ -3,6 +3,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
+import {
+  getGreenRoomLayoutId,
+  parseGreenRoomLayoutId,
+  LOGO_VARIANT_CHANGE_EVENT,
+  type GreenRoomLayoutId,
+} from '../lib/branding';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
@@ -46,6 +52,21 @@ const GreenRoomPage: React.FC = () => {
   const eventName = urlParams.get('eventName');
   const eventDate = urlParams.get('eventDate');
   const eventLocation = urlParams.get('eventLocation');
+  const layoutFromUrl = parseGreenRoomLayoutId(urlParams.get('layout'));
+  const [brandLayout, setBrandLayout] = useState<GreenRoomLayoutId>(() => getGreenRoomLayoutId());
+
+  useEffect(() => {
+    const refresh = () => setBrandLayout(getGreenRoomLayoutId());
+    window.addEventListener(LOGO_VARIANT_CHANGE_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(LOGO_VARIANT_CHANGE_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+
+  const layout: GreenRoomLayoutId = layoutFromUrl ?? brandLayout;
+  const isRos = layout === 'ros';
   
   const event: Event = location.state?.event || {
     id: eventId || '',
@@ -1463,21 +1484,18 @@ const GreenRoomPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="w-full h-screen flex items-center justify-center relative" style={{ aspectRatio: '9/16' }}>
-        {/* Video Background */}
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{
-            objectFit: 'cover'
-          }}
-        >
-          <source src="/pointed_crop_loop.webm" type="video/webm" />
-          Your browser does not support the video tag.
-        </video>
+      <div className={`w-full h-screen flex items-center justify-center relative ${isRos ? 'bg-gradient-to-br from-slate-900 to-slate-800' : ''}`} style={isRos ? undefined : { aspectRatio: '9/16' }}>
+        {!isRos ? (
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover"
+          >
+            <source src="/pointed_crop_loop.webm" type="video/webm" />
+          </video>
+        ) : null}
         <div className="text-white text-xl relative z-10 bg-black/50 px-4 py-2 rounded">Loading Green Room...</div>
       </div>
     );
@@ -1485,21 +1503,18 @@ const GreenRoomPage: React.FC = () => {
 
   if (error) {
     return (
-      <div className="w-full h-screen flex items-center justify-center relative" style={{ aspectRatio: '9/16' }}>
-        {/* Video Background */}
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{
-            objectFit: 'cover'
-          }}
-        >
-          <source src="/pointed_crop_loop.webm" type="video/webm" />
-          Your browser does not support the video tag.
-        </video>
+      <div className={`w-full h-screen flex items-center justify-center relative ${isRos ? 'bg-gradient-to-br from-slate-900 to-slate-800' : ''}`} style={isRos ? undefined : { aspectRatio: '9/16' }}>
+        {!isRos ? (
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover"
+          >
+            <source src="/pointed_crop_loop.webm" type="video/webm" />
+          </video>
+        ) : null}
         <div className="text-red-400 text-xl relative z-10 bg-black/50 px-4 py-2 rounded">{error}</div>
       </div>
     );
@@ -1571,36 +1586,44 @@ const GreenRoomPage: React.FC = () => {
     setShowEventSelector(false);
     setError(null);
     setIsLoading(true);
-    navigate(
-      `/green-room?eventId=${encodeURIComponent(selected.id)}&eventName=${encodeURIComponent(selected.name || '')}&eventDate=${encodeURIComponent(selected.date || '')}&eventLocation=${encodeURIComponent(selected.location || '')}`,
-      { replace: true, state: { event: selected } }
-    );
+    const params = new URLSearchParams({
+      eventId: selected.id,
+      eventName: selected.name || '',
+      eventDate: selected.date || '',
+      eventLocation: selected.location || '',
+    });
+    if (layoutFromUrl) params.set('layout', layoutFromUrl);
+    navigate(`/green-room?${params.toString()}`, { replace: true, state: { event: selected } });
+  };
+
+  const setLayoutParam = (next: GreenRoomLayoutId) => {
+    const params = new URLSearchParams(location.search);
+    params.set('layout', next);
+    navigate(`/green-room?${params.toString()}`, { replace: true, state: location.state });
   };
 
   return (
     <>
-      <div className="w-full h-screen text-white relative" style={{ aspectRatio: '9/16' }}>
-      {/* Video Background - overflow hidden only on video so event dropdown can expand */}
+      <div
+        className={`w-full h-screen text-white relative ${isRos ? 'bg-slate-900' : ''}`}
+        style={{ aspectRatio: '9/16' }}
+      >
+      {isRos ? null : (
       <video
         autoPlay
         loop
         muted
         playsInline
         className="absolute inset-0 w-full h-full object-cover"
-        style={{
-          objectFit: 'cover'
-        }}
       >
         <source src="/pointed_crop_loop.webm" type="video/webm" />
         Your browser does not support the video tag.
       </video>
-      
-      {/* Content Overlay */}
-      <div className="relative z-10 overflow-visible">
-        {/* Back to Event List, Event Selector, Fullscreen, Day - Hidden in Fullscreen */}
+      )}
+
+      <div className="relative z-10 overflow-visible h-full flex flex-col">
         {!isFullscreen && (
-          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[180px] overflow-visible z-50">
-            {/* Event selector (like PhotoViewPage) - overflow-visible so native dropdown can expand */}
+          <div className={`absolute top-4 left-4 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[180px] overflow-visible z-50 ${isRos ? 'bg-slate-900/90 border border-slate-600' : 'bg-black/50'}`}>
             {events.length > 1 && (
               <div className="space-y-1 overflow-visible">
                 {showEventSelector ? (
@@ -1657,7 +1680,36 @@ const GreenRoomPage: React.FC = () => {
               </div>
             )}
 
-            {/* Fullscreen Button */}
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setLayoutParam('classic')}
+                className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-wide rounded border ${
+                  layout === 'classic'
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+                title="Classic video Green Room — this display only"
+              >
+                Classic
+              </button>
+              <button
+                type="button"
+                onClick={() => setLayoutParam('ros')}
+                className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-wide rounded border ${
+                  layout === 'ros'
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+                title="ROS colors — this display only"
+              >
+                ROS
+              </button>
+            </div>
+            <p className="text-[10px] leading-tight text-slate-400">
+              This screen only. Default is set in Admin → Branding.
+            </p>
+
             <button
               onClick={() => {
                 document.documentElement.requestFullscreen();
@@ -1668,7 +1720,6 @@ const GreenRoomPage: React.FC = () => {
               Fullscreen
             </button>
 
-            {/* Day Selector for Multiday Events */}
             {numberOfDays > 1 && (
               <select
                 value={selectedDay}
@@ -1679,7 +1730,7 @@ const GreenRoomPage: React.FC = () => {
                     setMasterStartTime(dayStartTimes[day]);
                   }
                 }}
-                className="w-full bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-lg"
+                className="w-full bg-slate-800 text-white px-3 py-2 rounded border border-slate-600 text-lg"
               >
                 {Array.from({ length: numberOfDays }, (_, i) => i + 1).map(day => (
                   <option key={day} value={day}>
@@ -1690,11 +1741,8 @@ const GreenRoomPage: React.FC = () => {
             )}
           </div>
         )}
-        {/* Drift Status Indicator - Top Left Corner */}
-        
-        {/* Header - Event Name and Timer */}
+
         <div className="p-6 flex items-center">
-          {/* Event Name - Centered in available space */}
           <div 
             className="text-white font-bold flex-1 text-center"
             style={{
@@ -1709,57 +1757,68 @@ const GreenRoomPage: React.FC = () => {
             {event?.name || 'Current Event'}
           </div>
           
-          {/* Timer */}
-          <div className={`rounded-lg p-4 text-center flex-shrink-0 ${isOvertime() ? 'bg-red-800' : 'bg-red-600'}`}>
-          <div className="text-white text-xl font-semibold mb-2">
-            {isOvertime() ? 'OVER TIME' : 'Stage Timer'}
+          <div className={`rounded-lg p-4 text-center flex-shrink-0 ${
+            isRos
+              ? isOvertime()
+                ? 'bg-red-950 border border-red-500'
+                : timerState === 'running'
+                ? 'bg-slate-800 border border-red-500'
+                : timerState === 'loaded'
+                ? 'bg-slate-800 border border-emerald-500'
+                : 'bg-slate-800 border border-slate-600'
+              : isOvertime()
+              ? 'bg-red-800'
+              : 'bg-red-600'
+          }`}>
+          <div className={`font-semibold mb-2 ${isRos ? 'text-slate-300 text-xl' : 'text-white text-xl'}`}>
+            {isOvertime() ? 'OVER TIME' : timerState === 'loaded' ? 'LOADED' : timerState === 'running' ? 'RUNNING' : 'Stage Timer'}
           </div>
-          <div className={`text-5xl font-bold mb-2 ${isOvertime() ? 'text-red-200' : 'text-white'}`}>
+          <div className={`font-bold mb-2 tabular-nums text-5xl ${isOvertime() ? (isRos ? 'text-red-300' : 'text-red-200') : 'text-white'}`}>
             {getRemainingTime()}
           </div>
-          <div className="text-white text-base">
+          <div className={`${isRos ? 'text-slate-300 text-base' : 'text-white text-base'}`}>
             Expected Finish: {getExpectedFinishTime()}
           </div>
-          <div className="text-white/70 text-xs mt-2" title="Start/end times update every 20 seconds">
+          <div className={`${isRos ? 'text-slate-500' : 'text-white/70'} text-xs mt-2`} title="Start/end times update every 20 seconds">
             Sync in: {syncCountdown}s
           </div>
         </div>
       </div>
 
-        {/* Schedule List - Shows only current and future items (max 8) */}
-        <div className="flex-1 overflow-y-auto p-6 max-h-[calc(100vh-200px)] [&::-webkit-scrollbar]:hidden"
+        <div className="flex-1 overflow-y-auto p-6 min-h-0 [&::-webkit-scrollbar]:hidden"
           style={{
-            scrollbarWidth: 'none', /* Firefox */
-            msOverflowStyle: 'none', /* Internet Explorer 10+ */
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
           }}
         >
-        <div className="space-y-4">
+        <div className="space-y-3">
         {publicSchedule.length === 0 ? (
-          <div className="text-center text-gray-400 text-lg py-12">
+          <div className={`text-center text-lg py-12 ${isRos ? 'text-slate-400' : 'text-gray-400'}`}>
             No public schedule items available
           </div>
         ) : (
           <>
-            {publicSchedule.slice(0, 8).map((item, index) => {
+            {publicSchedule.slice(0, 8).map((item) => {
               const isLoaded = loadedItems[item.id];
               const isRunning = timerState === 'running' && String(activeItemId) === String(item.id);
-              const isActive = String(activeItemId) === String(item.id);
-              
-              // Removed verbose logging to prevent console spam
               
               return (
             <div
               key={item.id}
               className={`p-4 rounded-lg transition-all duration-300 ${
                 isRunning
-                  ? 'bg-red-600 text-white' // Red for running items
+                  ? 'bg-red-600 text-white'
                   : isLoaded
-                  ? 'bg-green-600 text-white' // Green for loaded items (not running)
-                  : 'bg-gray-300 text-gray-700' // Gray for items that are not loaded
+                  ? isRos
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-green-600 text-white'
+                  : isRos
+                    ? 'bg-slate-800 border border-slate-600 text-slate-100'
+                    : 'bg-gray-300 text-gray-700'
               }`}
             >
               <div className="font-bold text-xl mb-2 uppercase">{item.segmentName}</div>
-              <div className="text-sm space-y-1">
+              <div className={`text-sm space-y-1 ${isRos && !isRunning && !isLoaded ? 'text-slate-400' : ''}`}>
                 <div>Start: {item.startTime}</div>
                 <div>End: {item.endTime}</div>
               </div>
@@ -1773,10 +1832,8 @@ const GreenRoomPage: React.FC = () => {
       </div>
       </div>
       
-      {/* Disconnect Timer Modal */}
       {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
       
-      {/* Disconnect Notification */}
       {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
       
     </>

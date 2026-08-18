@@ -965,7 +965,11 @@ const RunOfShowMobilePage: React.FC = () => {
                   onChange={(e) => setSegmentDraft(e.target.value)}
                   disabled={!canEditEditorOnlyFields}
                   title={!canEditEditorOnlyFields ? 'Only Editors can edit segment names (desktop ROS)' : undefined}
-                  className="mt-1 w-full rounded border border-slate-600 bg-slate-950 px-2.5 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                  className={`mt-1 w-full rounded px-2.5 py-2 text-sm text-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
+                    needsRecordingDraft
+                      ? 'border-2 border-red-500 bg-red-950/40 ring-2 ring-red-400/80 focus:border-red-400'
+                      : 'border border-slate-600 bg-slate-950 focus:border-cyan-500'
+                  }`}
                 />
               </div>
               <div className="border-t border-slate-700 pt-2 space-y-1">
@@ -1585,11 +1589,6 @@ const RunOfShowMobilePage: React.FC = () => {
                 >
                   <div className="flex items-center gap-1.5">
                     <span>{cueLabel(item)}</span>
-                    {item.needsRecording ? (
-                      <span className="inline-flex items-center rounded-full bg-red-600 px-1 py-px text-[9px] font-black tracking-wide text-white">
-                        REC
-                      </span>
-                    ) : null}
                   </div>
                 </button>
               );

@@ -211,7 +211,7 @@ const CommsEventPage: React.FC = () => {
             </button>
             <h1 className="text-xl sm:text-2xl font-bold text-white">{eventName || 'Comms'}</h1>
             <p className="text-slate-400 text-sm mt-1">
-              Mark cues that need to be recorded. Editors see the same REC flag on the run of show.
+              Mark cues that need to be recorded. Those cues are outlined on the run of show.
             </p>
           </div>
           <div className="rounded-lg border border-red-700/50 bg-red-950/40 px-3 py-2 text-sm">
@@ -272,19 +272,11 @@ const CommsEventPage: React.FC = () => {
                   return (
                     <div
                       key={item.id}
-                      className={`p-4 ${item.isIndented ? 'pl-8' : ''} ${recording ? 'bg-red-950/30' : ''}`}
+                      className={`p-4 ${item.isIndented ? 'pl-8' : ''}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-sm font-semibold text-white">{formatCue(item)}</span>
-                            {recording ? (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-black tracking-wide text-white">
-                                <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                                REC
-                              </span>
-                            ) : null}
-                          </div>
+                          <div className="font-mono text-sm font-semibold text-white">{formatCue(item)}</div>
                           <div className="text-white font-medium mt-1">{item.segmentName || '—'}</div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
                             <span
@@ -331,20 +323,10 @@ const CommsEventPage: React.FC = () => {
                       return (
                         <tr
                           key={item.id}
-                          className={`border-t border-slate-700 ${recording ? 'bg-red-950/25' : ''} ${
-                            item.isIndented ? 'opacity-95' : ''
-                          }`}
+                          className={`border-t border-slate-700 ${item.isIndented ? 'opacity-95' : ''}`}
                         >
                           <td className={`px-3 py-2 font-mono text-sm text-white ${item.isIndented ? 'pl-8' : ''}`}>
-                            <span className="inline-flex items-center gap-2">
-                              {formatCue(item)}
-                              {recording ? (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-black tracking-wide text-white">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                                  REC
-                                </span>
-                              ) : null}
-                            </span>
+                            {formatCue(item)}
                           </td>
                           <td className="px-3 py-2 text-sm text-white">{item.segmentName || '—'}</td>
                           <td className="px-3 py-2">
@@ -367,7 +349,7 @@ const CommsEventPage: React.FC = () => {
                                   : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
                               } disabled:opacity-50`}
                             >
-                              {recording ? 'Recording' : 'Mark to record'}
+                              {recording ? 'Recording' : 'Record'}
                             </button>
                           </td>
                         </tr>

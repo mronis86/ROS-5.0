@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { apiClient, type PreflightChecklistItemRow } from '../services/api-client';
 import {
@@ -46,10 +46,23 @@ const PreFlightChecklistModal: React.FC<PreFlightChecklistModalProps> = ({
   const [addSection, setAddSection] = useState<PreflightSection>('Lighting');
   const [addLabel, setAddLabel] = useState('');
   const [adding, setAdding] = useState(false);
+  const [activeSection, setActiveSection] = useState<PreflightSection>('Lighting');
+  const listRef = useRef<HTMLDivElement>(null);
 
   const dayNum = Math.max(1, Math.floor(Number(day) || 1));
   const multiDay = Math.max(1, Math.floor(Number(numberOfDays) || 1)) > 1;
   const progress = useMemo(() => summarizePreflightProgress(items), [items]);
+  const sectionIndex = PREFLIGHT_SECTIONS.indexOf(activeSection);
+  const prevSection = sectionIndex > 0 ? PREFLIGHT_SECTIONS[sectionIndex - 1] : null;
+  const nextSection =
+    sectionIndex >= 0 && sectionIndex < PREFLIGHT_SECTIONS.length - 1
+      ? PREFLIGHT_SECTIONS[sectionIndex + 1]
+      : null;
+  const activeItems = useMemo(
+    () => items.filter((i) => i.section === activeSection),
+    [items, activeSection]
+  );
+  const activeDone = activeItems.filter((i) => i.is_checked).length;
 
   const load = async () => {
     if (!eventId) return;
@@ -75,6 +88,10 @@ const PreFlightChecklistModal: React.FC<PreFlightChecklistModalProps> = ({
   useEffect(() => {
     onProgressChange?.(progress);
   }, [progress, onProgressChange]);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [activeSection]);
 
   if (!isOpen) return null;
 
@@ -113,6 +130,7 @@ const PreFlightChecklistModal: React.FC<PreFlightChecklistModalProps> = ({
       });
       setItems((prev) => [...prev, created]);
       setAddLabel('');
+      setActiveSection(addSection);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add item');
     } finally {
@@ -138,17 +156,17 @@ const PreFlightChecklistModal: React.FC<PreFlightChecklistModalProps> = ({
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 px-4 py-6">
       <div
-        className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-600 bg-slate-800 shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-600 bg-slate-800 shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="preflight-checklist-title"
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-700 px-5 py-4">
           <div>
-            <h2 id="preflight-checklist-title" className="text-lg font-semibold text-white">
+            <h2 id="preflight-checklist-title" className="text-xl font-semibold text-white">
               Pre-Flight / Show Checklist
             </h2>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="mt-1 text-sm text-slate-400">
               {eventName || 'Event'}
               {multiDay ? ` · Day ${dayNum}` : ''} · {progress.checked}/{progress.total} complete
               {progress.complete ? ' · Ready' : ''}
@@ -164,91 +182,141 @@ const PreFlightChecklistModal: React.FC<PreFlightChecklistModalProps> = ({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {loading ? <p className="text-sm text-slate-400">Loading checklist…</p> : null}
-          {error ? <p className="mb-3 text-sm text-red-300">{error}</p> : null}
+        <div className="border-b border-slate-700 px-4 pt-3">
+          <div className="flex gap-1 overflow-x-auto pb-px">
+            {PREFLIGHT_SECTIONS.map((section) => {
+              const sectionItems = items.filter((i) => i.section === section);
+              const done = sectionItems.filter((i) => i.is_checked).length;
+              const selected = activeSection === section;
+              return (
+                <button
+                  key={section}
+                  type="button"
+                  onClick={() => {
+                    setActiveSection(section);
+                    setAddSection(section);
+                  }}
+                  className={`shrink-0 rounded-t-lg border-b-2 px-3 py-2.5 text-left transition-colors ${
+                    selected
+                      ? 'border-blue-400 bg-slate-900/70 text-white'
+                      : 'border-transparent text-slate-400 hover:bg-slate-700/50 hover:text-white'
+                  }`}
+                >
+                  <div className="text-sm font-semibold sm:text-base">{section}</div>
+                  <div className={`text-xs ${selected ? 'text-slate-300' : 'text-slate-500'}`}>
+                    {sectionItems.length ? `${done}/${sectionItems.length}` : '—'}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {loading ? <p className="text-base text-slate-400">Loading checklist…</p> : null}
+          {error ? <p className="mb-3 text-base text-red-300">{error}</p> : null}
 
           {!loading ? (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {PREFLIGHT_SECTIONS.map((section) => {
-                const sectionItems = items.filter((i) => i.section === section);
-                const done = sectionItems.filter((i) => i.is_checked).length;
-                return (
-                  <section
-                    key={section}
-                    className="rounded-lg border border-slate-600 bg-slate-900/60 p-3"
-                  >
-                    <div className="mb-2 flex items-baseline justify-between gap-2 border-b border-slate-700 pb-2">
-                      <h3 className="text-sm font-semibold text-white">{section}</h3>
-                      <span className="text-xs text-slate-400">
-                        {done}/{sectionItems.length}
-                      </span>
-                    </div>
-                    {sectionItems.length === 0 ? (
-                      <p className="text-xs text-slate-500">No items in this category.</p>
-                    ) : (
-                      <ul className="space-y-1.5">
-                        {sectionItems.map((item) => (
-                          <li key={item.id} className="flex items-start gap-2">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 h-4 w-4 accent-blue-500"
-                              checked={item.is_checked}
-                              disabled={savingId === item.id}
-                              onChange={() => void toggleItem(item)}
-                              aria-label={item.label}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div
-                                className={`text-sm ${
-                                  item.is_checked ? 'text-slate-400 line-through' : 'text-slate-200'
-                                }`}
-                              >
-                                {item.label}
-                                {item.is_custom ? (
-                                  <span className="ml-1.5 text-[10px] font-medium uppercase text-amber-400">
-                                    Event
-                                  </span>
-                                ) : null}
-                              </div>
-                              {item.is_checked && item.checked_by_name ? (
-                                <div className="text-[11px] text-slate-500">
-                                  {item.checked_by_name}
-                                  {item.checked_at ? ` · ${formatWhen(item.checked_at)}` : ''}
-                                </div>
-                              ) : null}
-                            </div>
+            <section className="rounded-lg border border-slate-600 bg-slate-900/60 p-4">
+              <div className="mb-4 flex items-center justify-between gap-2 border-b border-slate-700 pb-3">
+                <h3 className="text-lg font-semibold text-white sm:text-xl">{activeSection}</h3>
+                <span className="text-sm text-slate-400">
+                  {activeDone}/{activeItems.length}
+                </span>
+              </div>
+              {activeItems.length === 0 ? (
+                <p className="py-6 text-base text-slate-500">No items in this category.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {activeItems.map((item) => (
+                    <li key={item.id}>
+                      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-700/80 bg-slate-800/50 px-3 py-3 hover:border-slate-500">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-6 w-6 shrink-0 accent-blue-500"
+                          checked={item.is_checked}
+                          disabled={savingId === item.id}
+                          onChange={() => void toggleItem(item)}
+                          aria-label={item.label}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div
+                            className={`text-base leading-snug sm:text-lg ${
+                              item.is_checked ? 'text-slate-400 line-through' : 'text-white'
+                            }`}
+                          >
+                            {item.label}
                             {item.is_custom ? (
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteCustom(item)}
-                                disabled={savingId === item.id}
-                                className="rounded p-1 text-slate-500 hover:bg-slate-700 hover:text-red-300"
-                                title="Remove event-specific item"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              <span className="ml-2 align-middle text-xs font-medium uppercase text-amber-400">
+                                Event
+                              </span>
                             ) : null}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
-                );
-              })}
-            </div>
+                          </div>
+                          {item.is_checked && item.checked_by_name ? (
+                            <div className="mt-1 text-sm text-slate-500">
+                              {item.checked_by_name}
+                              {item.checked_at ? ` · ${formatWhen(item.checked_at)}` : ''}
+                            </div>
+                          ) : null}
+                        </div>
+                        {item.is_custom ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              void handleDeleteCustom(item);
+                            }}
+                            disabled={savingId === item.id}
+                            className="rounded p-1.5 text-slate-500 hover:bg-slate-700 hover:text-red-300"
+                            title="Remove event-specific item"
+                          >
+                            <Trash2 className="h-5 w-5" />
+                          </button>
+                        ) : null}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-5 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  disabled={!prevSection}
+                  onClick={() => {
+                    if (!prevSection) return;
+                    setActiveSection(prevSection);
+                    setAddSection(prevSection);
+                  }}
+                  className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ← {prevSection || 'Previous'}
+                </button>
+                <button
+                  type="button"
+                  disabled={!nextSection}
+                  onClick={() => {
+                    if (!nextSection) return;
+                    setActiveSection(nextSection);
+                    setAddSection(nextSection);
+                  }}
+                  className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {nextSection || 'Next'} →
+                </button>
+              </div>
+            </section>
           ) : null}
 
           <form
             onSubmit={(e) => void handleAdd(e)}
-            className="mt-4 rounded-lg border border-slate-600 bg-slate-900/40 p-3"
+            className="mt-4 rounded-lg border border-slate-600 bg-slate-900/40 p-4"
           >
-            <p className="mb-2 text-xs font-medium text-slate-400">Add item for this event only</p>
+            <p className="mb-2 text-sm font-medium text-slate-400">Add item for this event only</p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <select
                 value={addSection}
                 onChange={(e) => setAddSection(e.target.value as PreflightSection)}
-                className="rounded-lg border border-slate-600 bg-slate-700 px-2 py-2 text-sm text-white"
+                className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2.5 text-base text-white"
               >
                 {PREFLIGHT_SECTIONS.map((s) => (
                   <option key={s} value={s}>
@@ -261,14 +329,14 @@ const PreFlightChecklistModal: React.FC<PreFlightChecklistModalProps> = ({
                 value={addLabel}
                 onChange={(e) => setAddLabel(e.target.value)}
                 placeholder="e.g. Panel of 4 lavs"
-                className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-400"
+                className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-2.5 text-base text-white placeholder:text-slate-400"
               />
               <button
                 type="submit"
                 disabled={adding}
-                className="inline-flex items-center justify-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-1 rounded-lg bg-blue-600 px-4 py-2.5 text-base font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
-                <Plus className="h-4 w-4" />
+                <Plus className="h-5 w-5" />
                 Add
               </button>
             </div>

@@ -127,6 +127,7 @@ Copy-DeployZip 'companion-module-runofshow-resolume-full.zip'
 Copy-DeployZip 'offline-show.zip'
 Copy-DeployZip 'ros-led-spout.zip'
 Copy-DeployZip 'ros-vmix-datasource-bridge.zip'
+Copy-DeployZip 'ros-hyperdeck-ingest.zip'
 
 $BuildInfo = @"
 build_date=$(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
@@ -147,6 +148,7 @@ $RedirectsContent = @"
 /offline-show.zip                               /offline-show.zip                               200
 /ros-led-spout.zip                              /ros-led-spout.zip                              200
 /ros-vmix-datasource-bridge.zip                 /ros-vmix-datasource-bridge.zip                 200
+/ros-hyperdeck-ingest.zip                       /ros-hyperdeck-ingest.zip                       200
 
 /*    /index.html   200
 "@
@@ -210,6 +212,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/ros-vmix-datasource-bridge.zip"
   to = "/ros-vmix-datasource-bridge.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ros-hyperdeck-ingest.zip"
+  to = "/ros-hyperdeck-ingest.zip"
   status = 200
   force = true
 
