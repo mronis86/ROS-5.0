@@ -1,8 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import FullScreenTimer from '../components/FullScreenTimer';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
 
 const FullScreenTimerPage: React.FC = () => {
   const location = useLocation();
@@ -32,6 +38,9 @@ const FullScreenTimerPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+  /** False after auto-disconnect until user reconnects — blocks socket reconnect. */
+  const connectionEnabledRef = useRef(true);
+  const [reconnectKey, setReconnectKey] = useState(0);
 
   useEffect(() => {
     if (eventIdFromUrl !== null && eventIdFromUrl !== eventId) {
@@ -100,8 +109,10 @@ const FullScreenTimerPage: React.FC = () => {
   // WebSocket-based real-time updates for timer messages and direct RunOfShowPage communication
   useEffect(() => {
     if (!eventId) return;
+    connectionEnabledRef.current = true;
 
     const loadMessage = async () => {
+      if (!connectionEnabledRef.current) return;
       try {
         const message = await DatabaseService.getTimerMessage(eventId);
         setSupabaseMessage(message);
@@ -231,25 +242,24 @@ const FullScreenTimerPage: React.FC = () => {
       }
     };
 
-    socketClient.connect(eventId, callbacks);
-    
-    // Show disconnect timer modal only on first connect
-    if (!hasShownModalOnce) {
+    if (connectionEnabledRef.current) {
+      socketClient.connect(eventId, callbacks);
+    }
+
+    if (!hasShownModalOnce && connectionEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
 
-    // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
+      if (!connectionEnabledRef.current) return;
       if (document.hidden) {
         console.log('👁️ FullScreenTimer: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(eventId);
-        // Timer keeps running in background
       } else if (!socketClient.isConnected()) {
         console.log('👁️ FullScreenTimer: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(eventId, callbacks);
-        loadMessage(); // Reload message on reconnect
-        // Modal won't show again - timer still running
+        loadMessage();
       }
     };
 
@@ -261,7 +271,7 @@ const FullScreenTimerPage: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
     };
-  }, [eventId]);
+  }, [eventId, reconnectKey]);
 
   // Update timer data from parent window if available
   useEffect(() => {
@@ -291,12 +301,13 @@ const FullScreenTimerPage: React.FC = () => {
     const totalMinutes = (hours * 60) + minutes;
     
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
     
     if (disconnectTimer) clearTimeout(disconnectTimer);
-    
+    connectionEnabledRef.current = true;
+
     const ms = totalMinutes * 60 * 1000;
     const timer = setTimeout(() => {
       let timeText = '';
@@ -305,7 +316,8 @@ const FullScreenTimerPage: React.FC = () => {
       
       console.log(`⏰ FullScreenTimerPage: Auto-disconnect timer expired (${timeText.trim()})`);
       console.log('📢 FullScreenTimerPage: Showing disconnect notification...');
-      
+
+      connectionEnabledRef.current = false;
       setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
       console.log('✅ FullScreenTimerPage: Notification state set to true');
@@ -325,25 +337,21 @@ const FullScreenTimerPage: React.FC = () => {
     if (hours > 0) timeText += `${hours}h `;
     if (minutes > 0) timeText += `${minutes}m`;
     console.log(`⏰ FullScreenTimerPage: Disconnect timer set to ${timeText.trim()}`);
+
+    if (eventId && !socketClient.isConnected()) {
+      setReconnectKey((k) => k + 1);
+    }
   };
   
   const handleNeverDisconnect = () => {
-    if (disconnectTimer) clearTimeout(disconnectTimer);
-    setDisconnectTimer(null);
-    setShowDisconnectModal(false);
-    console.log('⏰ FullScreenTimerPage: Disconnect timer set to Never');
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
   
   const handleReconnect = () => {
+    connectionEnabledRef.current = true;
     setShowDisconnectNotification(false);
     if (eventId) {
-      socketClient.connect(eventId, {
-        onTimerMessageUpdated: (data: any) => {
-          if (data && data.event_id === eventId) {
-            setSupabaseMessage(data.enabled ? data : null);
-          }
-        }
-      });
+      setReconnectKey((k) => k + 1);
       setShowDisconnectModal(true);
     }
   };
@@ -441,10 +449,10 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
         
         <div className="flex gap-3">
           <button onClick={() => onConfirm(hours, minutes)} className="flex-1 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-600/30">✓ Confirm</button>
-          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">∞ Never Disconnect</button>
+          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">{DISPLAY_SESSION_MAX_LABEL}</button>
         </div>
         
-        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );

@@ -5,6 +5,12 @@ import { socketClient } from '../services/socket-client';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { Event } from '../types/Event';
 import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
+import {
   formatNameForTwoLines,
   formatSpeakerLocation,
 } from '../showcase/photoShowcaseHelpers';
@@ -163,6 +169,9 @@ const MicManagerPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+  const [reconnectKey, setReconnectKey] = useState(0);
+  /** False after auto-disconnect until user reconnects — blocks API refresh and socket reconnect. */
+  const connectionEnabledRef = useRef(true);
 
   const assignmentsRef = useRef(assignments);
   const eventIdRef = useRef(event?.id);
@@ -289,10 +298,12 @@ const MicManagerPage: React.FC = () => {
 
   useEffect(() => {
     if (!event?.id) return;
+    connectionEnabledRef.current = true;
     let cancelled = false;
     const eventId = event.id;
 
     const refreshActive = async () => {
+      if (!connectionEnabledRef.current) return;
       try {
         const active = await DatabaseService.getActiveTimer(eventId);
         if (!cancelled) applyActiveTimer(active);
@@ -316,14 +327,14 @@ const MicManagerPage: React.FC = () => {
         applyActiveTimer(running);
       },
       onRunOfShowDataUpdated: () => {
-        if (eventIdRef.current) void loadSchedule(eventIdRef.current);
+        if (eventIdRef.current && connectionEnabledRef.current) void loadSchedule(eventIdRef.current);
       },
       onMicAssignmentsUpdate: (data: any) => {
         if (!data || data.event_id !== eventIdRef.current) return;
         setAssignments(parseMicAssignmentsPayload(data).assignments);
       },
       onInitialSync: async () => {
-        if (!eventIdRef.current) return;
+        if (!eventIdRef.current || !connectionEnabledRef.current) return;
         await loadSchedule(eventIdRef.current);
         await loadAssignments(eventIdRef.current);
         await refreshActive();
@@ -331,15 +342,18 @@ const MicManagerPage: React.FC = () => {
     };
     socketCallbacksRef.current = callbacks;
 
-    void refreshActive();
-    socketClient.connect(eventId, callbacks);
+    if (connectionEnabledRef.current) {
+      void refreshActive();
+      socketClient.connect(eventId, callbacks);
+    }
 
-    if (!hasShownModalOnce) {
+    if (!hasShownModalOnce && connectionEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
 
     const handleVisibilityChange = () => {
+      if (!connectionEnabledRef.current) return;
       if (document.hidden) {
         socketClient.disconnect(eventId);
       } else if (!socketClient.isConnected()) {
@@ -356,7 +370,7 @@ const MicManagerPage: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
     };
-  }, [event?.id, loadSchedule, loadAssignments, applyActiveTimer]);
+  }, [event?.id, reconnectKey, loadSchedule, loadAssignments, applyActiveTimer]);
 
   // After schedule + assignments load, auto-seed Lectern/Podium for Podium speakers
   useEffect(() => {
@@ -498,17 +512,19 @@ const MicManagerPage: React.FC = () => {
   const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
     const totalMinutes = hours * 60 + minutes;
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
 
     if (disconnectTimer) clearTimeout(disconnectTimer);
+    connectionEnabledRef.current = true;
 
     const ms = totalMinutes * 60 * 1000;
     const timer = setTimeout(() => {
       let timeText = '';
       if (hours > 0) timeText += `${hours}h `;
       if (minutes > 0) timeText += `${minutes}m`;
+      connectionEnabledRef.current = false;
       setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
       setTimeout(() => {
@@ -518,22 +534,23 @@ const MicManagerPage: React.FC = () => {
 
     setDisconnectTimer(timer);
     setShowDisconnectModal(false);
+
+    const eventId = eventIdRef.current;
+    if (eventId && !socketClient.isConnected()) {
+      setReconnectKey((k) => k + 1);
+    }
   };
 
   const handleNeverDisconnect = () => {
-    if (disconnectTimer) clearTimeout(disconnectTimer);
-    setDisconnectTimer(null);
-    setShowDisconnectModal(false);
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
 
   const handleReconnect = () => {
+    connectionEnabledRef.current = true;
     setShowDisconnectNotification(false);
     const eventId = eventIdRef.current;
     if (!eventId) return;
-    const callbacks = socketCallbacksRef.current;
-    if (callbacks) {
-      socketClient.connect(eventId, callbacks);
-    }
+    setReconnectKey((k) => k + 1);
     setShowDisconnectModal(true);
   };
 
@@ -1202,11 +1219,11 @@ const DisconnectTimerModal: React.FC<{
             onClick={onNever}
             className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30"
           >
-            ∞ Never Disconnect
+            {DISPLAY_SESSION_MAX_LABEL}
           </button>
         </div>
 
-        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ &quot;Never&quot; may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );

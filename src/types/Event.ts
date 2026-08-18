@@ -12,6 +12,8 @@ export interface Event {
   /** Hidden backend row for Quick Mode timers — shown on Quick Mode tab */
   isQuickMode?: boolean;
   calendarId?: string;
+  /** When false, follower pages (Green Room, Photo, etc.) stop syncing. Default true. */
+  displaySyncEnabled?: boolean;
 }
 
 export interface EventFormData {

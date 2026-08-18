@@ -43,6 +43,7 @@ const {
   ensureEventCueFilesSchema,
 } = require('./lib/event-cue-files');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
+const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
 const {
   ensureCalendarSoftDeleteSchema,
   softDeleteCalendarEvent,
@@ -2549,6 +2550,49 @@ app.put('/api/calendar-events/:id', async (req, res) => {
   }
 });
 
+// Per-event display/follower sync (Green Room, Photo View, etc.) — admin only
+app.patch('/api/calendar-events/:id/display-sync', async (req, res) => {
+  try {
+    if (!req.auth?.isAdmin && !requireAdminAccess(req, res)) return;
+
+    const { id } = req.params;
+    const { displaySyncEnabled } = req.body || {};
+    if (typeof displaySyncEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'displaySyncEnabled (boolean) is required' });
+    }
+
+    const result = await setDisplaySyncEnabled(pool, id, displaySyncEnabled);
+    if (!result.ok) {
+      return res.status(result.status || 500).json({ error: result.error || 'Update failed' });
+    }
+
+    const eventId = String(id);
+    broadcastUpdate(eventId, 'displaySyncUpdate', {
+      event_id: eventId,
+      displaySyncEnabled: displaySyncEnabled === true,
+    });
+
+    res.json({
+      id: eventId,
+      displaySyncEnabled: displaySyncEnabled === true,
+    });
+  } catch (error) {
+    console.error('❌ Error updating display sync:', error);
+    res.status(500).json({ error: 'Failed to update display sync' });
+  }
+});
+
+app.get('/api/display-sync/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const displaySyncEnabled = await loadDisplaySyncEnabled(pool, eventId);
+    res.json({ eventId, displaySyncEnabled });
+  } catch (error) {
+    console.error('❌ Error fetching display sync:', error);
+    res.status(500).json({ error: 'Failed to fetch display sync' });
+  }
+});
+
 // Soft-delete calendar event by default; admins may pass ?permanent=1 to purge fully
 app.delete('/api/calendar-events/:id', async (req, res) => {
   try {
@@ -2640,6 +2684,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
         trackWasDurations: false,
         rehearsalBaseline: null,
         lockedStartTimes: null,
+        displaySyncEnabled: await loadDisplaySyncEnabled(pool, eventId),
       });
     }
     const settings = result.rows[0].settings || {};
@@ -2655,7 +2700,8 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       settings.locked_start_times && typeof settings.locked_start_times === 'object'
         ? settings.locked_start_times
         : null;
-    res.json({ showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes });
+    const displaySyncEnabled = await loadDisplaySyncEnabled(pool, eventId);
+    res.json({ showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, displaySyncEnabled });
   } catch (error) {
     console.error('Error fetching show mode:', error);
     res.status(500).json({ error: 'Failed to fetch show mode' });

@@ -462,6 +462,7 @@ export class DatabaseService {
     trackWasDurations: boolean;
     rehearsalBaseline: any | null;
     lockedStartTimes: Record<string, string> | null;
+    displaySyncEnabled: boolean;
   }> {
     try {
       const result = await apiClient.getShowMode(eventId);
@@ -470,6 +471,7 @@ export class DatabaseService {
         trackWasDurations: result?.trackWasDurations === true,
         rehearsalBaseline: result?.rehearsalBaseline ?? null,
         lockedStartTimes: result?.lockedStartTimes ?? null,
+        displaySyncEnabled: result?.displaySyncEnabled !== false,
       };
     } catch (error) {
       console.error('❌ Exception getting show settings:', error);
@@ -478,7 +480,27 @@ export class DatabaseService {
         trackWasDurations: false,
         rehearsalBaseline: null,
         lockedStartTimes: null,
+        displaySyncEnabled: true,
       };
+    }
+  }
+
+  static async getDisplaySyncEnabled(eventId: string): Promise<boolean> {
+    try {
+      return await apiClient.getDisplaySyncEnabled(eventId);
+    } catch (error) {
+      console.error('❌ Exception getting display sync:', error);
+      return true;
+    }
+  }
+
+  static async setDisplaySyncEnabled(calendarEventId: string, enabled: boolean): Promise<boolean> {
+    try {
+      await apiClient.patchDisplaySyncEnabled(calendarEventId, enabled);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception updating display sync:', error);
+      return false;
     }
   }
 

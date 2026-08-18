@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Event, DAYS_OPTIONS, LOCATION_OPTIONS } from '../../types/Event';
 import QuickModeBoltIcon from '../QuickModeBoltIcon';
 import EventListRowActions from '../EventListRowActions';
+import EventDisplaySyncToggle from '../EventDisplaySyncToggle';
 
 type Tab = 'upcoming' | 'past' | 'quickMode';
 type MobileSortKey = 'date_asc' | 'date_desc' | 'name_asc';
@@ -39,6 +40,9 @@ type EventListMobileViewProps = {
   getEventTypeShortLabel: (eventType: string) => string;
   getRecordStreamingColor: (recordStreaming: string) => string;
   getRecordStreamingShort: (recordStreaming: string) => { label: string; title: string };
+  isAdminUser?: boolean;
+  displaySyncSavingId?: string | null;
+  onToggleDisplaySync?: (event: Event) => void;
 };
 
 const EventListMobileView: React.FC<EventListMobileViewProps> = ({
@@ -66,7 +70,10 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   getEventTypeColor,
   getEventTypeShortLabel,
   getRecordStreamingColor,
-  getRecordStreamingShort
+  getRecordStreamingShort,
+  isAdminUser = false,
+  displaySyncSavingId = null,
+  onToggleDisplaySync,
 }) => {
   const [sortKey, setSortKey] = useState<MobileSortKey>(() => (activeTab === 'past' ? 'date_desc' : 'date_asc'));
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -337,7 +344,15 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                     {selected ? 'Hide actions' : 'Select'}
                   </button>
                   {selected ? (
-                    <div className="mt-2">
+                    <div className="mt-2 space-y-2">
+                      {isAdminUser && activeTab !== 'quickMode' && onToggleDisplaySync ? (
+                        <EventDisplaySyncToggle
+                          variant="inline"
+                          enabled={event.displaySyncEnabled !== false}
+                          saving={displaySyncSavingId === event.id}
+                          onToggle={() => onToggleDisplaySync(event)}
+                        />
+                      ) : null}
                       <EventListRowActions
                         layout="mobile"
                         mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}

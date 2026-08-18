@@ -12,6 +12,8 @@ import { isQuickModeCalendarEvent, clearQuickModeNewSessionDedupe } from '../lib
 import QuickModeBoltIcon from '../components/QuickModeBoltIcon';
 import EventListRowActions from '../components/EventListRowActions';
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
+import { parseDisplaySyncEnabled, DISPLAY_SYNC_COLUMN_LABEL } from '../lib/displaySync';
+import EventDisplaySyncToggle from '../components/EventDisplaySyncToggle';
 
 type EventListTab = 'upcoming' | 'past' | 'quickMode';
 
@@ -59,11 +61,32 @@ const EventListPage: React.FC = () => {
   const [quickModeSelectedIds, setQuickModeSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<Event[]>([]);
   const [permanentDelete, setPermanentDelete] = useState(false);
+  const [displaySyncSavingId, setDisplaySyncSavingId] = useState<string | null>(null);
   const isAdminUser = canAccessAdmin(user);
 
   const openNewQuickMode = () => {
     clearQuickModeNewSessionDedupe();
     navigate('/quick-mode?new=1');
+  };
+
+  const toggleDisplaySync = async (event: Event) => {
+    if (!isAdminUser || event.isQuickMode) return;
+    const calendarId = event.calendarId || event.id;
+    const nextEnabled = event.displaySyncEnabled === false;
+    setDisplaySyncSavingId(event.id);
+    setEvents((prev) =>
+      prev.map((e) => (e.id === event.id ? { ...e, displaySyncEnabled: nextEnabled } : e))
+    );
+    const ok = await DatabaseService.setDisplaySyncEnabled(calendarId, nextEnabled);
+    setDisplaySyncSavingId(null);
+    if (!ok) {
+      setEvents((prev) =>
+        prev.map((e) =>
+          e.id === event.id ? { ...e, displaySyncEnabled: !nextEnabled } : e
+        )
+      );
+      alert('Failed to update display sync for this event.');
+    }
   };
 
   const generateDeleteCode = () => {
@@ -150,6 +173,7 @@ const EventListPage: React.FC = () => {
             eventType: calEvent.schedule_data?.eventType || 'Staged Production',
             recordStreaming: calEvent.schedule_data?.recordStreaming || 'None',
             isQuickMode: isQuickModeCalendarEvent(calEvent),
+            displaySyncEnabled: parseDisplaySyncEnabled(calEvent.schedule_data),
             created_at: calEvent.created_at || new Date().toISOString(),
             updated_at: calEvent.updated_at || new Date().toISOString()
           };
@@ -905,6 +929,14 @@ const EventListPage: React.FC = () => {
                     <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]" title="Broadcast Options">Broadcast</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Duration</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
+                    {isAdminUser && (
+                      <th
+                        className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]"
+                        title="Green Room, Photo View, and other follower displays"
+                      >
+                        {DISPLAY_SYNC_COLUMN_LABEL}
+                      </th>
+                    )}
                       </>
                     )}
                     {activeTab === 'quickMode' && (
@@ -916,7 +948,7 @@ const EventListPage: React.FC = () => {
                 <tbody>
                   {filteredEvents.length === 0 ? (
                     <tr>
-                      <td colSpan={activeTab === 'quickMode' ? 5 : 8} className="px-4 py-12 text-center">
+                      <td colSpan={activeTab === 'quickMode' ? 5 : isAdminUser ? 9 : 8} className="px-4 py-12 text-center">
                         <div className="mb-4 flex justify-center">
                           {activeTab === 'upcoming' ? (
                             <span className="text-6xl">📅</span>
@@ -998,6 +1030,15 @@ const EventListPage: React.FC = () => {
                             {event.timezone || 'America/New_York'}
                           </span>
                         </td>
+                        {isAdminUser && (
+                          <td className="px-2 py-2 border-r border-slate-600 text-center">
+                            <EventDisplaySyncToggle
+                              enabled={event.displaySyncEnabled !== false}
+                              saving={displaySyncSavingId === event.id}
+                              onToggle={() => void toggleDisplaySync(event)}
+                            />
+                          </td>
+                        )}
                           </>
                         )}
                         {activeTab === 'quickMode' && (
@@ -1052,6 +1093,9 @@ const EventListPage: React.FC = () => {
             getEventTypeShortLabel={getEventTypeShortLabel}
             getRecordStreamingColor={getRecordStreamingColor}
             getRecordStreamingShort={getRecordStreamingShort}
+            isAdminUser={isAdminUser}
+            displaySyncSavingId={displaySyncSavingId}
+            onToggleDisplaySync={(event) => void toggleDisplaySync(event)}
           />
         )}
       </div>

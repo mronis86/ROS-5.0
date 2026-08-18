@@ -41,6 +41,7 @@ interface SocketCallbacks {
     rehearsalBaseline?: any;
     lockedStartTimes?: Record<string, string> | null;
   }) => void; // Global show mode and track-was-durations / rehearsal baseline / locked starts
+  onDisplaySyncUpdate?: (data: { event_id: string; displaySyncEnabled: boolean }) => void;
   onMicAssignmentsUpdate?: (data: { event_id: string; assignments?: Record<string, any>; changes?: any[] }) => void;
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
   onForceDisconnect?: () => void; // Admin forced disconnect – show message and do not reconnect
@@ -194,6 +195,9 @@ class SocketClient {
           break;
         case 'showModeUpdate': // Global show mode (rehearsal vs in-show)
           this.callbacks.onShowModeUpdate?.(message.data);
+          break;
+        case 'displaySyncUpdate':
+          this.callbacks.onDisplaySyncUpdate?.(message.data);
           break;
         case 'micAssignmentsUpdate':
           this.callbacks.onMicAssignmentsUpdate?.(message.data);

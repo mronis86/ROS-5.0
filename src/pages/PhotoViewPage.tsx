@@ -11,6 +11,14 @@ import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
 } from '../lib/scheduleStartTime';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 
 interface ScheduleItem {
   id: number;
@@ -393,6 +401,7 @@ const PhotoViewPage: React.FC = () => {
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** False after auto-disconnect until user clicks Reconnect — blocks silent socket/API reconnect. */
   const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(event?.id);
   const scheduleRef = useRef(schedule);
   scheduleRef.current = schedule;
   /** Bumped on Reconnect so the WebSocket effect re-runs and connects again. */
@@ -1046,7 +1055,7 @@ const PhotoViewPage: React.FC = () => {
       const id = eventIdRef.current;
       if (!id) return;
       // After auto-disconnect timer, stop polling until user reconnects
-      if (!connectionEnabledRef.current) return;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         apiClient.invalidateSyncDataCache(id);
         console.log('🔄 PhotoView: sync - fetching schedule, overtime, START cue');
@@ -1652,19 +1661,19 @@ const PhotoViewPage: React.FC = () => {
     };
 
     // Connect only while the auto-disconnect session is active
-    if (connectionEnabledRef.current) {
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
       socketClient.connect(event.id, callbacks);
     }
     
     // Show disconnect timer modal only on first connect
-    if (!hasShownModalOnce && connectionEnabledRef.current) {
+    if (!hasShownModalOnce && connectionEnabledRef.current && displaySyncEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
 
     // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
-      if (!connectionEnabledRef.current) return;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
         console.log('👁️ PhotoView: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(event.id);
@@ -2193,7 +2202,7 @@ const PhotoViewPage: React.FC = () => {
     const totalMinutes = (hours * 60) + minutes;
     
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
     
@@ -2243,16 +2252,7 @@ const PhotoViewPage: React.FC = () => {
   };
   
   const handleNeverDisconnect = () => {
-    if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
-    disconnectTimerRef.current = null;
-    if (disconnectTimerState) clearTimeout(disconnectTimerState);
-    setDisconnectTimerState(null);
-    connectionEnabledRef.current = true;
-    setShowDisconnectModal(false);
-    console.log('⏰ PhotoViewPage: Disconnect timer set to Never');
-    if (event?.id && !socketClient.isConnected()) {
-      setConnectionEpoch((n) => n + 1);
-    }
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
   
   const handleReconnect = () => {
@@ -2659,6 +2659,7 @@ const PhotoViewPage: React.FC = () => {
 
   return (
     <>
+    {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
     <div className="min-h-screen bg-slate-900 text-white p-6">
     {/* Progress Bar and Countdown */}
     <div className="mb-8">
@@ -3323,10 +3324,10 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
         
         <div className="flex gap-3">
           <button onClick={() => onConfirm(hours, minutes)} className="flex-1 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-600/30">✓ Confirm</button>
-          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">∞ Never Disconnect</button>
+          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">{DISPLAY_SESSION_MAX_LABEL}</button>
         </div>
         
-        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );

@@ -304,6 +304,7 @@ class ApiClient {
     trackWasDurations: boolean;
     rehearsalBaseline: any | null;
     lockedStartTimes: Record<string, string> | null;
+    displaySyncEnabled: boolean;
   }> {
     const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
     return {
@@ -316,7 +317,32 @@ class ApiClient {
         result?.lockedStartTimes && typeof result.lockedStartTimes === 'object'
           ? result.lockedStartTimes
           : null,
+      displaySyncEnabled: result?.displaySyncEnabled !== false,
     };
+  }
+
+  async getDisplaySyncEnabled(eventId: string): Promise<boolean> {
+    const result = await this.request<{ displaySyncEnabled?: boolean }>(
+      `/api/display-sync/${eventId}`,
+      {},
+      `displaySync_${eventId}`,
+      30 * 1000
+    );
+    return result?.displaySyncEnabled !== false;
+  }
+
+  async patchDisplaySyncEnabled(calendarEventId: string, displaySyncEnabled: boolean) {
+    const result = await this.request<{ displaySyncEnabled?: boolean }>(
+      `/api/calendar-events/${encodeURIComponent(calendarEventId)}/display-sync`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ displaySyncEnabled }),
+      }
+    );
+    this.cache.delete(`displaySync_${calendarEventId}`);
+    this.cache.delete(`showMode_${calendarEventId}`);
+    this.invalidateCalendarEventsCache();
+    return result;
   }
 
   async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show') {

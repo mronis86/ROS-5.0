@@ -5,6 +5,12 @@ import { getApiBaseUrl } from '../services/api-client';
 import { apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
 
 type CommentType = 'GENERAL' | 'CUE' | 'AUDIO' | 'GFX' | 'VIDEO' | 'LIGHTING';
 
@@ -187,6 +193,9 @@ const ScriptsFollowPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState<string>('');
   const [disconnectTimerState, setDisconnectTimerState] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState<boolean>(false);
+  const [reconnectKey, setReconnectKey] = useState(0);
+  /** False after auto-disconnect until user reconnects — blocks socket reconnect. */
+  const connectionEnabledRef = useRef(true);
   
   const scriptRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -198,20 +207,20 @@ const ScriptsFollowPage: React.FC = () => {
     const totalMinutes = (hours * 60) + minutes;
     
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
     
     setShowDisconnectModal(false);
-    
-    // Clear existing timer
+    connectionEnabledRef.current = true;
+
     if (disconnectTimerState) {
       clearTimeout(disconnectTimerState);
     }
-    
-    // Set new timer
+
     const timeout = setTimeout(() => {
       console.log('⏰ Scripts Follow: Auto-disconnecting after timer');
+      connectionEnabledRef.current = false;
       socketClient.disconnect(eventId);
       setIsWebSocketConnected(false);
       setShowDisconnectNotification(true);
@@ -219,24 +228,26 @@ const ScriptsFollowPage: React.FC = () => {
     
     setDisconnectTimerState(timeout);
     
-    // Format duration for display
     let timeText = '';
     if (hours > 0) timeText += `${hours}h `;
     if (minutes > 0) timeText += `${minutes}m`;
     console.log(`⏰ Scripts Follow: Disconnect timer set to ${timeText.trim()}`);
+
+    if (eventId && !socketClient.isConnected()) {
+      setReconnectKey((k) => k + 1);
+    }
   };
   
   const handleNeverDisconnect = () => {
-    if (disconnectTimerState) clearTimeout(disconnectTimerState);
-    setDisconnectTimerState(null);
-    setShowDisconnectModal(false);
-    console.log('⏰ Scripts Follow: Disconnect timer set to Never');
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
 
   const handleReconnect = () => {
+    connectionEnabledRef.current = true;
     setShowDisconnectNotification(false);
     console.log('🔄 Scripts Follow: Reconnecting...');
-    socketClient.connect(eventId, {});
+    setReconnectKey((k) => k + 1);
+    setShowDisconnectModal(true);
   };
 
   // Load script data on mount
@@ -263,7 +274,7 @@ const ScriptsFollowPage: React.FC = () => {
 
   // Show disconnect timer modal only on first connect
   useEffect(() => {
-    if (eventId && !hasShownModalOnce) {
+    if (eventId && !hasShownModalOnce && connectionEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
@@ -305,11 +316,13 @@ const ScriptsFollowPage: React.FC = () => {
   // WebSocket setup for real-time scroll position sync
   useEffect(() => {
     if (!eventId) return;
+    connectionEnabledRef.current = true;
 
     console.log('🔌 Setting up WebSocket for Scripts Follow, role:', userRole);
 
-    // Connect to Socket.IO and join the event room (no callbacks to avoid conflicts)
-    socketClient.connect(eventId, {});
+    if (connectionEnabledRef.current) {
+      socketClient.connect(eventId, {});
+    }
 
     const socket = socketClient.getSocket();
     if (!socket) {
@@ -471,10 +484,10 @@ const ScriptsFollowPage: React.FC = () => {
 
     // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
+      if (!connectionEnabledRef.current) return;
       if (document.hidden) {
         console.log('👁️ Scripts Follow: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(eventId);
-        // Timer keeps running in background
       } else if (!socketClient.isConnected()) {
         console.log('👁️ Scripts Follow: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(eventId, {});
@@ -501,7 +514,7 @@ const ScriptsFollowPage: React.FC = () => {
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [eventId, userRole]);
+  }, [eventId, userRole, reconnectKey]);
 
   // Handle scroll events (Scroller only)
   const handleScroll = () => {
@@ -1763,10 +1776,10 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
         
         <div className="flex gap-3">
           <button onClick={() => onConfirm(hours, minutes)} className="flex-1 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-600/30">✓ Confirm</button>
-          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">∞ Never Disconnect</button>
+          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">{DISPLAY_SESSION_MAX_LABEL}</button>
         </div>
         
-        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );

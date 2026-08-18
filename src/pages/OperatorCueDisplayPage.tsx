@@ -10,6 +10,14 @@ import {
 } from '../lib/scheduleStartTime';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
 
 type ScheduleItem = {
   id: number;
@@ -250,6 +258,9 @@ const OperatorCueDisplayPage: React.FC = () => {
   const [disconnectTimerState, setDisconnectTimerState] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
   const [reconnectKey, setReconnectKey] = useState(0);
+  /** False after auto-disconnect until user reconnects — blocks HTTP poll and socket reconnect. */
+  const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(event?.id);
 
   const idRef = useRef(event?.id);
   idRef.current = event?.id;
@@ -352,15 +363,17 @@ const OperatorCueDisplayPage: React.FC = () => {
   const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
     const totalMinutes = hours * 60 + minutes;
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
     if (disconnectTimerState) clearTimeout(disconnectTimerState);
+    connectionEnabledRef.current = true;
     const ms = totalMinutes * 60 * 1000;
     const t = setTimeout(() => {
       let timeText = '';
       if (hours > 0) timeText += `${hours}h `;
       if (minutes > 0) timeText += `${minutes}m`;
+      connectionEnabledRef.current = false;
       setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
       setTimeout(() => {
@@ -369,15 +382,17 @@ const OperatorCueDisplayPage: React.FC = () => {
     }, ms);
     setDisconnectTimerState(t);
     setShowDisconnectModal(false);
+    if (event?.id && !socketClient.isConnected()) {
+      setReconnectKey((k) => k + 1);
+    }
   };
 
   const handleNeverDisconnect = () => {
-    if (disconnectTimerState) clearTimeout(disconnectTimerState);
-    setDisconnectTimerState(null);
-    setShowDisconnectModal(false);
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
 
   const handleReconnect = () => {
+    connectionEnabledRef.current = true;
     setShowDisconnectNotification(false);
     if (event?.id) {
       setReconnectKey((k) => k + 1);
@@ -476,6 +491,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       setLoading(false);
       return;
     }
+    if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
     try {
       apiClient.invalidateSyncDataCache(id);
       const data = await DatabaseService.getRunOfShowData(id);
@@ -541,6 +557,7 @@ const OperatorCueDisplayPage: React.FC = () => {
 
   useEffect(() => {
     if (!event?.id) return;
+    connectionEnabledRef.current = true;
     syncRef.current = reload;
     void reload();
     const iv = setInterval(() => void reload(), 20000);
@@ -556,6 +573,7 @@ const OperatorCueDisplayPage: React.FC = () => {
     const apply = (t: any) => setTimer(t?.item_id ? t : null);
 
     const boot = async () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         const res = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);
         if (!res || !res.ok || dead) return;
@@ -604,8 +622,11 @@ const OperatorCueDisplayPage: React.FC = () => {
       },
       onConnectionChange: () => {},
     };
-    socketClient.connect(event.id, cb);
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
+      socketClient.connect(event.id, cb);
+    }
     const vis = () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) socketClient.disconnect(event.id);
       else if (!socketClient.isConnected()) {
         socketClient.connect(event.id, cb);
@@ -927,6 +948,8 @@ const OperatorCueDisplayPage: React.FC = () => {
   };
 
   return (
+    <>
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
     <div
       className="fixed inset-0 bg-black grid place-items-center"
       onMouseMove={bumpChrome}
@@ -1176,6 +1199,7 @@ const OperatorCueDisplayPage: React.FC = () => {
         <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />
       )}
     </div>
+    </>
   );
 };
 
@@ -1264,10 +1288,10 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
             onClick={onNever}
             className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium"
           >
-            Never Disconnect
+            {DISPLAY_SESSION_MAX_LABEL}
           </button>
         </div>
-        <p className="mt-6 text-sm text-slate-500 text-center">Never may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">{DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );

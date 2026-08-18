@@ -17,6 +17,14 @@ import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
 } from '../lib/scheduleStartTime';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
 
 interface ScheduleItem {
   id: number;
@@ -217,6 +225,10 @@ const GreenRoomPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+  const [reconnectKey, setReconnectKey] = useState(0);
+  /** False after auto-disconnect until user reconnects — blocks HTTP poll and socket reconnect. */
+  const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(event?.id);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   // Listen for fullscreen changes
@@ -445,9 +457,11 @@ const GreenRoomPage: React.FC = () => {
 
   useEffect(() => {
     if (!event?.id) return;
+    connectionEnabledRef.current = true;
 
     const runDataSync = async () => {
       const id = event.id;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         apiClient.invalidateSyncDataCache(id);
         const data = await DatabaseService.getRunOfShowData(id);
@@ -839,26 +853,22 @@ const GreenRoomPage: React.FC = () => {
       }
     };
 
-    // Connect to WebSocket
-    socketClient.connect(event.id, callbacks);
-    
-    // Show disconnect timer modal only on first connect
-    if (!hasShownModalOnce) {
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
+      socketClient.connect(event.id, callbacks);
+    }
+
+    if (!hasShownModalOnce && connectionEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
 
-    // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
-        // Removed verbose logging to prevent console spam
         socketClient.disconnect(event.id);
-        // Timer keeps running in background
       } else if (!socketClient.isConnected()) {
-        // Removed verbose logging to prevent console spam
         socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
-        // Modal won't show again - timer still running
       }
     };
 
@@ -870,7 +880,7 @@ const GreenRoomPage: React.FC = () => {
       if (disconnectTimer) clearTimeout(disconnectTimer);
       if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
     };
-  }, [event?.id]);
+  }, [event?.id, reconnectKey]);
 
   // Always run local timer for smooth updates when timer is running
   useEffect(() => {
@@ -1352,16 +1362,15 @@ const GreenRoomPage: React.FC = () => {
       }
     };
 
-    // Connect to WebSocket for schedule updates
-    socketClient.connect(event.id, callbacks);
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
+      socketClient.connect(event.id, callbacks);
+    }
 
-    // Handle tab visibility changes - disconnect when hidden to save costs
     const handleScheduleVisibilityChange = () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
-        // Removed verbose logging to prevent console spam
         socketClient.disconnect(event.id);
       } else if (!socketClient.isConnected()) {
-        // Removed verbose logging to prevent console spam
         socketClient.connect(event.id, callbacks);
         callbacks.onInitialSync?.();
       }
@@ -1374,7 +1383,7 @@ const GreenRoomPage: React.FC = () => {
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleScheduleVisibilityChange);
     };
-  }, [event?.id]);
+  }, [event?.id, reconnectKey]);
 
   // No need for scroll logic - we're filtering the data instead
 
@@ -1525,14 +1534,13 @@ const GreenRoomPage: React.FC = () => {
     const totalMinutes = (hours * 60) + minutes;
     
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
-    
-    // Clear any existing timer
+
     if (disconnectTimer) clearTimeout(disconnectTimer);
-    
-    // Start new disconnect timer
+    connectionEnabledRef.current = true;
+
     const ms = totalMinutes * 60 * 1000;
     const timer = setTimeout(() => {
       let timeText = '';
@@ -1541,8 +1549,8 @@ const GreenRoomPage: React.FC = () => {
       
       console.log(`⏰ GreenRoomPage: Auto-disconnect timer expired (${timeText.trim()})`);
       console.log('📢 GreenRoomPage: Showing disconnect notification...');
-      
-      // Show notification and disconnect
+
+      connectionEnabledRef.current = false;
       setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
       console.log('✅ GreenRoomPage: Notification state set to true');
@@ -1562,18 +1570,20 @@ const GreenRoomPage: React.FC = () => {
     if (hours > 0) timeText += `${hours}h `;
     if (minutes > 0) timeText += `${minutes}m`;
     console.log(`⏰ GreenRoomPage: Disconnect timer set to ${timeText.trim()}`);
+
+    if (event?.id && !socketClient.isConnected()) {
+      setReconnectKey((k) => k + 1);
+    }
   };
   
   // Handle never disconnect
   const handleNeverDisconnect = () => {
-    if (disconnectTimer) clearTimeout(disconnectTimer);
-    setDisconnectTimer(null);
-    setShowDisconnectModal(false);
-    console.log('⏰ GreenRoomPage: Disconnect timer set to Never');
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
   
   // Handle reconnect from notification
   const handleReconnect = () => {
+    connectionEnabledRef.current = true;
     setShowDisconnectNotification(false);
     if (event?.id) {
       runDataSyncRef.current?.();
@@ -1604,6 +1614,7 @@ const GreenRoomPage: React.FC = () => {
 
   return (
     <>
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       <div
         className={`w-full h-screen text-white relative ${isRos ? 'bg-slate-900' : ''}`}
         style={{ aspectRatio: '9/16' }}
@@ -1906,10 +1917,10 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
         
         <div className="flex gap-3">
           <button onClick={() => onConfirm(hours, minutes)} className="flex-1 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-600/30">✓ Confirm</button>
-          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">∞ Never Disconnect</button>
+          <button onClick={onNever} className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30">{DISPLAY_SESSION_MAX_LABEL}</button>
         </div>
         
-        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );

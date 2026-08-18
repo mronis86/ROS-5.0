@@ -1,10 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Clock from '../components/Clock';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
 
 const ClockPage: React.FC = () => {
   const location = useLocation();
@@ -28,6 +36,10 @@ const ClockPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+  /** False after auto-disconnect until user reconnects — blocks schedule poll and socket reconnect. */
+  const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(eventId ?? undefined);
+  const [reconnectKey, setReconnectKey] = useState(0);
 
   // Event selector (same pattern as PhotoView / Green Room)
   const [events, setEvents] = useState<Event[]>([]);
@@ -113,6 +125,7 @@ const ClockPage: React.FC = () => {
     if (!eventId || !scheduleSyncEnabled) return;
     setScheduleSyncCountdown(60);
     const refetchInterval = setInterval(async () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         const data = await DatabaseService.getRunOfShowData(eventId);
         if (data?.schedule_items) {
@@ -206,8 +219,10 @@ const ClockPage: React.FC = () => {
   // Timer state is now handled exclusively by Clock component to prevent flickering
   useEffect(() => {
     if (!eventId) return;
+    connectionEnabledRef.current = true;
 
     const loadMessage = async () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         const message = await DatabaseService.getTimerMessage(eventId);
         // Enabled-only (or null) — never keep a disabled message as the active prop
@@ -239,19 +254,17 @@ const ClockPage: React.FC = () => {
       }
     };
 
-    socketClient.connect(eventId, callbacks, 'clockPage');
-    
-    // Show disconnect timer modal only on first connect
-    if (!hasShownModalOnce) {
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
+      socketClient.connect(eventId, callbacks, 'clockPage');
+    }
+
+    if (!hasShownModalOnce && connectionEnabledRef.current && displaySyncEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
 
-    // Keep WebSocket alive while this display page is open.
-    // Do NOT disconnect on document.hidden: browsers mark occluded / unfocused
-    // windows as hidden, which dropped messages until the user focused again.
-    // Cost control is handled by the auto-disconnect timer modal instead.
     const handleVisibilityChange = () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) return;
       if (!socketClient.isConnected()) {
         console.log('👁️ ClockPage: Tab visible - reconnecting WebSocket (no modal)');
@@ -268,7 +281,7 @@ const ClockPage: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
     };
-  }, [eventId]);
+  }, [eventId, reconnectKey]);
 
   // DISABLED: postMessage updates - now using WebSocket only to prevent conflicts
   // The postMessage method was causing timer flipping because it conflicted with WebSocket updates
@@ -306,14 +319,14 @@ const ClockPage: React.FC = () => {
     const totalMinutes = (hours * 60) + minutes;
     
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
     
     // Clear any existing timer
     if (disconnectTimer) clearTimeout(disconnectTimer);
-    
-    // Start new disconnect timer
+    connectionEnabledRef.current = true;
+
     const ms = totalMinutes * 60 * 1000;
     const timer = setTimeout(() => {
       let timeText = '';
@@ -322,8 +335,8 @@ const ClockPage: React.FC = () => {
       
       console.log(`⏰ ClockPage: Auto-disconnect timer expired (${timeText.trim()})`);
       console.log('📢 ClockPage: Showing disconnect notification...');
-      
-      // Show notification and disconnect
+
+      connectionEnabledRef.current = false;
       setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
       console.log('✅ ClockPage: Notification state set to true');
@@ -343,28 +356,23 @@ const ClockPage: React.FC = () => {
     if (hours > 0) timeText += `${hours}h `;
     if (minutes > 0) timeText += `${minutes}m`;
     console.log(`⏰ ClockPage: Disconnect timer set to ${timeText.trim()}`);
+
+    if (eventId && !socketClient.isConnected()) {
+      setReconnectKey((k) => k + 1);
+    }
   };
   
   // Handle never disconnect
   const handleNeverDisconnect = () => {
-    if (disconnectTimer) clearTimeout(disconnectTimer);
-    setDisconnectTimer(null);
-    setShowDisconnectModal(false);
-    console.log('⏰ ClockPage: Disconnect timer set to Never');
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
   
   // Handle reconnect from notification
   const handleReconnect = () => {
+    connectionEnabledRef.current = true;
     setShowDisconnectNotification(false);
     if (eventId) {
-      socketClient.connect(eventId, {
-        onTimerMessageUpdated: (data: any) => {
-          if (data && data.event_id === eventId) {
-            setSupabaseMessage(data.enabled ? data : null);
-          }
-        }
-      }, 'clockPage');
-      // Show modal again after timed disconnect to set new timer
+      setReconnectKey((k) => k + 1);
       setShowDisconnectModal(true);
     }
   };
@@ -377,6 +385,7 @@ const ClockPage: React.FC = () => {
 
   return (
     <>
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       <div className="relative w-full min-h-screen">
         <Clock
         onClose={handleClose}
@@ -591,11 +600,11 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
             onClick={onNever}
             className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30"
           >
-            ∞ Never Disconnect
+            {DISPLAY_SESSION_MAX_LABEL}
           </button>
         </div>
         
-        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );
