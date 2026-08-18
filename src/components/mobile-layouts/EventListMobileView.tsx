@@ -26,7 +26,6 @@ type EventListMobileViewProps = {
   isLoading: boolean;
   onRefresh: () => void;
   onAddClick: () => void;
-  onQuickMode: () => void;
   onOpenQuickModeSession?: (event: Event) => void;
   quickModeEventCount?: number;
   onBulkDeleteQuickMode?: () => void;
@@ -58,7 +57,6 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   isLoading,
   onRefresh,
   onAddClick,
-  onQuickMode,
   onOpenQuickModeSession,
   quickModeEventCount = 0,
   onBulkDeleteQuickMode,
@@ -148,23 +146,13 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
             Quick{quickModeEventCount > 0 ? ` (${quickModeEventCount})` : ''}
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={onAddClick}
-            className="min-h-[44px] rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow hover:bg-blue-500"
-          >
-            + Add Event
-          </button>
-          <button
-            type="button"
-            onClick={onQuickMode}
-            className="min-h-[44px] rounded-lg bg-purple-600 px-3 py-2 text-sm font-bold text-white shadow hover:bg-purple-500"
-            title="Open Quick Mode for ad-hoc timers"
-          >
-            Open Quick Mode
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onAddClick}
+          className="min-h-[44px] w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow hover:bg-blue-500"
+        >
+          + Add Event
+        </button>
         {activeTab === 'quickMode' && onBulkDeleteQuickMode && displayedEvents.length > 0 ? (
           <button
             type="button"

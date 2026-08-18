@@ -310,9 +310,6 @@ export const EventListShowcaseContent: React.FC = () => {
           >
             + Add New Event
           </button>
-          <span className="px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg cursor-default">
-            Open Quick Mode
-          </span>
         </div>
 
         <div className="flex justify-center mb-4">

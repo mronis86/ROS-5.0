@@ -27,7 +27,24 @@ Admin → **Integration tokens** → create a token with **read**. Paste the ful
 
 This is **not** the old Python OSC GUI (that talked to the API before auth).
 
-## Run from source (dev PC with Python)
+## Portable download (show / ingest PC — no Python)
+
+The zip on **Graphics Links** contains a **PyInstaller exe** + `START.bat`. No Python on the target machine.
+
+On a dev machine with Python 3.10+:
+
+```bat
+cd hyperdeck-ingest
+build-portable.bat
+cd ..
+node scripts/zip-hyperdeck-ingest.js
+```
+
+Unzip on the ingest PC → run **START.bat**. Typical exe size is ~15–25 MB (one-file bundle).
+
+Settings live in `%LOCALAPPDATA%\ros-hyperdeck-ingest\config.json`.
+
+## Run from source (dev only)
 
 ```bat
 cd hyperdeck-ingest
@@ -35,21 +52,6 @@ run.bat
 ```
 
 Needs Python 3.10+ and `pip install -r requirements.txt`.
-
-## Portable exe (show / ingest PC — no Python)
-
-On a machine that has Python:
-
-```bat
-cd hyperdeck-ingest
-build-portable.bat
-```
-
-Copy `dist\ROS-HyperDeck-Ingest.exe` to the ingest PC and double-click. Typical size is tens of MB, not a 150+ MB Electron portable.
-
-Settings live in `%LOCALAPPDATA%\ros-hyperdeck-ingest\config.json`.
-
-In the ROS web app the zip is on **Graphics Links** (same download row as the vMix bridge): **HyperDeck Ingest**.
 
 ## Copy methods
 

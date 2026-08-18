@@ -55,6 +55,29 @@ const LABEL_META: Record<FieldLabel, {
 };
 const LABEL_KEYS: FieldLabel[] = ['time', 'segment', 'person'];
 
+/** Document preview height — matches the side panel so manual entry stays on screen. */
+const DOC_VIEWER_HEIGHT = 'min(480px, 52vh)';
+
+const LABEL_POPUP_WIDTH = 280;
+/** Room for header + 3 label rows (used for flip-above positioning). */
+const LABEL_POPUP_EST_HEIGHT = 228;
+
+function labelPopupPosition(viewportX: number, viewportY: number): { left: number; top: number } {
+  const margin = 8;
+  const belowTop = viewportY + 12;
+  const aboveTop = viewportY - LABEL_POPUP_EST_HEIGHT - 8;
+  const maxTop = window.innerHeight - LABEL_POPUP_EST_HEIGHT - margin;
+  let top = belowTop;
+  if (belowTop + LABEL_POPUP_EST_HEIGHT > window.innerHeight - margin) {
+    top = aboveTop >= margin ? aboveTop : Math.max(margin, maxTop);
+  }
+  const left = Math.min(
+    Math.max(margin, viewportX + 10),
+    window.innerWidth - LABEL_POPUP_WIDTH - margin
+  );
+  return { left, top };
+}
+
 const PROGRAM_TYPES = [
   'PreShow/End','Podium Transition','Panel Transition','Full-Stage/Ted-Talk','Sub Cue',
   'No Transition','Video','Panel+Remote','Remote Only','Break F&B/B2B','Breakout Session','TBD','KILLED',
@@ -79,7 +102,7 @@ interface DocViewerProps {
 // CSS injected into the Word/Excel iframe so tables look real
 const DOCX_STYLES = `
   body { font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1a1a1a;
-         line-height: 1.5; padding: 48px 56px; max-width: 820px; margin: 0 auto; }
+         line-height: 1.5; padding: 24px 28px; max-width: 100%; margin: 0 auto; }
   h1 { font-size: 18pt; font-weight: 700; margin: 0 0 12px; }
   h2 { font-size: 14pt; font-weight: 600; margin: 20px 0 8px; }
   h3 { font-size: 12pt; font-weight: 600; margin: 16px 0 6px; }
@@ -155,7 +178,7 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
   const [docHtml, setDocHtml]         = useState<string | null>(null);
   const [loading, setLoading]         = useState(true);
   const [loadErr, setLoadErr]         = useState<string | null>(null);
-  const [popup, setPopup]             = useState<{ x: number; y: number; text: string } | null>(null);
+  const [popup, setPopup]             = useState<{ viewportX: number; viewportY: number; text: string } | null>(null);
   const [manualText, setManualText]   = useState('');
   const [manualLabel, setManualLabel] = useState<FieldLabel>('time');
   const [pdfPages, setPdfPages]       = useState<string[]>([]); // data URLs per page
@@ -291,13 +314,11 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
         if (!sel || sel.isCollapsed) { setPopup(null); return; }
         const text = sel.toString().trim();
         if (!text || text.length > 300) { setPopup(null); return; }
-        // Convert iframe coords to outer viewport
+        // iframe mouse coords → viewport (fixed popup avoids viewer overflow clipping)
         const iRect = iframe.getBoundingClientRect();
-        const vRect = viewerRef.current?.getBoundingClientRect();
-        if (!vRect) return;
         setPopup({
-          x: e.clientX + iRect.left - vRect.left,
-          y: e.clientY + iRect.top  - vRect.top,
+          viewportX: e.clientX + iRect.left,
+          viewportY: e.clientY + iRect.top,
           text,
         });
       });
@@ -324,12 +345,16 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
     setManualText('');
   };
 
-  const VIEWER_H = 580;
+  const popupStyle = popup ? labelPopupPosition(popup.viewportX, popup.viewportY) : null;
 
   return (
-    <div className="space-y-3">
-      {/* Document viewer */}
-      <div className="relative rounded-xl overflow-hidden border border-slate-600 bg-slate-950" ref={viewerRef} style={{ height: VIEWER_H }}>
+    <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(220px,280px)] gap-3 items-start">
+      <div className="min-w-0">
+      <div
+        className="relative rounded-xl overflow-hidden border border-slate-600 bg-slate-950 min-w-0"
+        ref={viewerRef}
+        style={{ height: DOC_VIEWER_HEIGHT }}
+      >
 
         {/* Loading overlay */}
         {loading && (
@@ -345,7 +370,7 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
           <div className="absolute inset-0 flex items-center justify-center p-8 z-10">
             <div className="text-center space-y-2">
               <p className="text-red-300 text-sm">{loadErr}</p>
-              <p className="text-slate-500 text-xs">Use manual entry below to add labels</p>
+              <p className="text-slate-500 text-xs">Use manual entry beside the document to add labels</p>
             </div>
           </div>
         )}
@@ -356,7 +381,7 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
             <div className="text-center text-slate-500 text-xs mb-2">
               {pdfPageCount > 20 ? `Showing first 20 of ${pdfPageCount} pages` : `${pdfPageCount} page${pdfPageCount !== 1 ? 's' : ''}`}
               {' · '}
-              <span className="text-slate-400">Use <strong>manual entry</strong> below to label text from this PDF</span>
+              <span className="text-slate-400">Use <strong>manual entry</strong> on the right to label text from this PDF</span>
             </div>
             {pdfPages.map((src, i) => (
               <div key={i} className="mx-auto shadow-2xl" style={{ maxWidth: 760 }}>
@@ -370,44 +395,12 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
         {/* ── Word / Excel: sandboxed iframe with real table styles ── */}
         {usesIframeDoc && !loading && !loadErr && (
           <>
-            {popup && <div className="fixed inset-0 z-40" onClick={dismissPopup} />}
             <iframe
               ref={iframeRef}
               sandbox="allow-same-origin"
               className="w-full h-full bg-white border-0"
               title="Document preview"
             />
-            {/* Selection popup — positioned relative to viewerRef */}
-            {popup && (
-              <div
-                className="absolute z-50 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-hidden"
-                style={{
-                  left: Math.min(popup.x + 10, (viewerRef.current?.offsetWidth ?? 600) - 260),
-                  top:  Math.min(popup.y + 12, VIEWER_H - 160),
-                  width: 248,
-                }}
-                onMouseDown={e => e.stopPropagation()}
-              >
-                <div className="px-3 py-2.5 bg-slate-800 border-b border-slate-700">
-                  <p className="text-slate-400 text-xs">Label this as:</p>
-                  <p className="text-white text-xs font-mono mt-0.5 truncate">
-                    "{popup.text.slice(0,50)}{popup.text.length > 50 ? '…' : ''}"
-                  </p>
-                </div>
-                {LABEL_KEYS.map(lbl => {
-                  const m = LABEL_META[lbl];
-                  return (
-                    <button key={lbl} type="button" onClick={() => commitLabel(lbl)}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-sm text-left hover:bg-slate-700 border-b border-slate-800 last:border-0 transition-colors"
-                    >
-                      <span className={`w-2.5 h-2.5 rounded-full ${m.dot} shrink-0`} />
-                      <span className="text-white font-medium">{m.emoji} {m.label}</span>
-                      <span className="ml-auto text-slate-500 text-xs">{m.desc}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
             <div className="absolute bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-sm text-center text-slate-400 text-xs py-1.5 pointer-events-none">
               Select any text above → label it as Time, Segment, or Person
             </div>
@@ -415,33 +408,76 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
         )}
       </div>
 
-      {/* Manual entry — always shown, especially important for PDFs */}
-      <div className={`border rounded-xl p-4 space-y-3 ${isPdf ? 'bg-slate-700/40 border-slate-500' : 'bg-slate-800/40 border-slate-700'}`}>
+      {/* Selection popup — fixed to viewport so it is never clipped by the viewer */}
+      {popup && popupStyle && (
+        <>
+          <div className="fixed inset-0 z-[60]" onClick={dismissPopup} aria-hidden />
+          <div
+            className="fixed z-[70] bg-slate-900 border border-slate-600 rounded-xl shadow-2xl flex flex-col max-h-[min(280px,50vh)]"
+            style={{ left: popupStyle.left, top: popupStyle.top, width: LABEL_POPUP_WIDTH }}
+            onMouseDown={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Label selected text"
+          >
+            <div className="px-3 py-2.5 bg-slate-800 border-b border-slate-700 shrink-0">
+              <p className="text-slate-400 text-xs">Label this as:</p>
+              <p className="text-white text-xs font-mono mt-0.5 truncate">
+                "{popup.text.slice(0, 50)}{popup.text.length > 50 ? '…' : ''}"
+              </p>
+            </div>
+            <div className="overflow-y-auto min-h-0">
+              {LABEL_KEYS.map((lbl) => {
+                const m = LABEL_META[lbl];
+                return (
+                  <button
+                    key={lbl}
+                    type="button"
+                    onClick={() => commitLabel(lbl)}
+                    className="w-full flex flex-col items-start gap-0.5 px-4 py-2.5 text-left hover:bg-slate-700 border-b border-slate-800 last:border-0 transition-colors"
+                  >
+                    <span className="flex items-center gap-2 text-sm text-white font-medium">
+                      <span className={`w-2.5 h-2.5 rounded-full ${m.dot} shrink-0`} />
+                      {m.emoji} {m.label}
+                    </span>
+                    <span className="pl-[18px] text-slate-500 text-xs leading-snug">{m.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+      </div>
+
+      <div
+        className={`border rounded-xl p-3 space-y-3 overflow-y-auto ${isPdf ? 'bg-slate-700/40 border-slate-500' : 'bg-slate-800/40 border-slate-700'}`}
+        style={{ height: DOC_VIEWER_HEIGHT }}
+      >
         <div className="flex items-start gap-2">
           {isPdf && <span className="text-lg mt-0.5">✍️</span>}
           <div>
             <p className="text-slate-300 text-sm font-medium">{isPdf ? 'Label text from the PDF' : 'Add label manually'}</p>
             <p className="text-slate-500 text-xs mt-0.5">
               {isPdf
-                ? 'PDF text can\'t be highlighted directly — type exactly what you see above, e.g. "9:00 AM" or "Opening Keynote"'
-                : 'Type an example exactly as it appears in the doc, then pick a label'
+                ? 'PDF text can\'t be highlighted — type it here, e.g. "9:00 AM" or "Opening Keynote"'
+                : 'Type an example as it appears in the doc, then pick a label'
               }
             </p>
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <input
-            value={manualText}
-            onChange={e => setManualText(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addManual()}
-            placeholder={isPdf ? 'Type text exactly as shown in the document…' : 'e.g.  9:00 AM  or  Opening Remarks'}
-            className="flex-1 min-w-48 px-3 py-2 bg-slate-900 text-white text-sm border border-slate-700 rounded-lg focus:ring-1 focus:ring-blue-500 placeholder-slate-600"
-          />
+        <input
+          value={manualText}
+          onChange={e => setManualText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && addManual()}
+          placeholder={isPdf ? 'Type text from the document…' : 'e.g.  9:00 AM'}
+          className="w-full px-3 py-2 bg-slate-900 text-white text-sm border border-slate-700 rounded-lg focus:ring-1 focus:ring-blue-500 placeholder-slate-600"
+        />
+        <div className="flex flex-col gap-1.5">
           {LABEL_KEYS.map(lbl => {
             const m = LABEL_META[lbl];
             return (
               <button key={lbl} type="button" onClick={() => setManualLabel(lbl)}
-                className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap ${
+                className={`w-full px-3 py-2 rounded-lg text-xs font-medium border transition-colors text-left ${
                   manualLabel === lbl ? `${m.activeBg} ${m.border} text-white` : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white'
                 }`}
               >
@@ -449,11 +485,11 @@ function DocViewer({ file, samples, onAddSample }: DocViewerProps) {
               </button>
             );
           })}
-          <button type="button" onClick={addManual} disabled={!manualText.trim()}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm rounded-lg font-medium">
-            Add
-          </button>
         </div>
+        <button type="button" onClick={addManual} disabled={!manualText.trim()}
+          className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm rounded-lg font-medium">
+          Add
+        </button>
       </div>
     </div>
   );

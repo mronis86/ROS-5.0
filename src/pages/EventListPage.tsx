@@ -8,7 +8,7 @@ import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, i
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import { useNarrowViewport } from '../hooks/useNarrowViewport';
-import { isQuickModeCalendarEvent, clearQuickModeNewSessionDedupe } from '../lib/quickModeEvent';
+import { isQuickModeCalendarEvent } from '../lib/quickModeEvent';
 import QuickModeBoltIcon from '../components/QuickModeBoltIcon';
 import EventListRowActions from '../components/EventListRowActions';
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
@@ -63,11 +63,6 @@ const EventListPage: React.FC = () => {
   const [permanentDelete, setPermanentDelete] = useState(false);
   const [displaySyncSavingId, setDisplaySyncSavingId] = useState<string | null>(null);
   const isAdminUser = canAccessAdmin(user);
-
-  const openNewQuickMode = () => {
-    clearQuickModeNewSessionDedupe();
-    navigate('/quick-mode?new=1');
-  };
 
   const toggleDisplaySync = async (event: Event) => {
     if (!isAdminUser || event.isQuickMode) return;
@@ -748,7 +743,7 @@ const EventListPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className={`mx-auto w-full ${isNarrowViewport ? 'max-w-lg px-3' : 'max-w-6xl px-6'}`}>
+      <div className={`mx-auto w-full ${isNarrowViewport ? 'max-w-lg px-3' : isAdminUser ? 'max-w-7xl px-6' : 'max-w-6xl px-6'}`}>
         {!isNarrowViewport ? (
           <>
         {/* Tabs + Add New Event on one row */}
@@ -794,14 +789,6 @@ const EventListPage: React.FC = () => {
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
           >
             + Add New Event
-          </button>
-          <button
-            type="button"
-            onClick={openNewQuickMode}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-colors"
-            title="Open Quick Mode for ad-hoc timers"
-          >
-            Open Quick Mode
           </button>
         </div>
 
@@ -1079,7 +1066,6 @@ const EventListPage: React.FC = () => {
             isLoading={isLoading}
             onRefresh={() => loadEventsFromSupabase()}
             onAddClick={() => setShowAddModal(true)}
-            onQuickMode={openNewQuickMode}
             onOpenQuickModeSession={(event) => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
             quickModeEventCount={quickModeEventCount}
             onBulkDeleteQuickMode={() => openBulkDeleteConfirm(filteredEvents)}

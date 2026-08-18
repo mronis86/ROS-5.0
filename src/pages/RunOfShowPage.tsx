@@ -11710,10 +11710,7 @@ const RunOfShowPage: React.FC = () => {
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                           </svg>
-                          <span className="flex-1">
-                            Pre-Flight Checklist
-                            {(event?.numberOfDays || 1) > 1 ? ` · Day ${selectedDay}` : ''}
-                          </span>
+                          <span className="flex-1">Pre-Flight Checklist</span>
                           {preflightProgress && !preflightProgress.complete ? (
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">
                               {preflightProgress.checked}/{preflightProgress.total}
