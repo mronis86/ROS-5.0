@@ -9,7 +9,7 @@ import os
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
+from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
 
 from config_store import load_config, save_config
@@ -41,8 +41,8 @@ class HyperDeckIngestApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("ROS HyperDeck Ingest")
-        self.root.geometry("1040x700")
-        self.root.minsize(920, 620)
+        self.root.geometry("1040x760")
+        self.root.minsize(920, 660)
         self.root.configure(bg=BG)
 
         self.cfg = load_config()
@@ -52,6 +52,9 @@ class HyperDeckIngestApp:
             int(self.cfg.get("hyperdeck_port") or 9993),
         )
         self.events: list[dict] = []
+        self.filtered_events: list[dict] = []
+        self.event_list_rows: list[dict | None] = []
+        self._event_list_updating = False
         self.schedule: list[dict] = []
         self.clips: list[ClipInfo] = []
         self.following = False
@@ -257,12 +260,66 @@ class HyperDeckIngestApp:
         ttk.Button(btn_row, text="Test API", command=self._test_api).pack(side="left")
         ttk.Button(btn_row, text="Load events", command=self._load_events).pack(side="left", padx=(6, 0))
         self._grid_label(ros, 4, "Event")
-        self.event_combo = ttk.Combobox(ros, state="readonly")
-        self.event_combo.grid(row=4, column=1, sticky="ew", pady=4)
-        self.event_combo.bind("<<ComboboxSelected>>", self._on_event_chosen)
-        self.event_id_hint = ttk.Label(ros, text="", style="CardMuted.TLabel")
-        self.event_id_hint.grid(row=5, column=1, sticky="w")
-        self.event_id_var.trace_add("write", lambda *_: self._refresh_event_hint())
+        event_pick = tk.Frame(ros, bg=CARD)
+        event_pick.grid(row=4, column=1, sticky="ew", pady=4)
+        event_pick.columnconfigure(0, weight=1)
+        ttk.Label(
+            event_pick,
+            text="Search by name, date, or event ID",
+            style="CardMuted.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        self.event_search_var = tk.StringVar()
+        search_row = tk.Frame(event_pick, bg=CARD)
+        search_row.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        search_row.columnconfigure(0, weight=1)
+        self.event_search_entry = ttk.Entry(
+            search_row,
+            textvariable=self.event_search_var,
+        )
+        self.event_search_entry.grid(row=0, column=0, sticky="ew")
+        self.event_search_entry.bind("<KeyRelease>", self._on_event_search)
+        self.event_search_entry.bind("<Return>", self._on_event_search_enter)
+        ttk.Button(search_row, text="Clear", width=7, command=self._clear_event_search).grid(
+            row=0, column=1, padx=(6, 0)
+        )
+        self.event_range_var = tk.StringVar(value="upcoming")
+        filter_row = tk.Frame(event_pick, bg=CARD)
+        filter_row.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        for label, value in (("Upcoming", "upcoming"), ("Past", "past"), ("All", "all")):
+            ttk.Radiobutton(
+                filter_row,
+                text=label,
+                variable=self.event_range_var,
+                value=value,
+                command=self._render_event_list,
+            ).pack(side="left", padx=(0, 12))
+        list_wrap = tk.Frame(event_pick, bg=LINE)
+        list_wrap.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        list_wrap.columnconfigure(0, weight=1)
+        self.event_list = tk.Listbox(
+            list_wrap,
+            height=7,
+            activestyle="none",
+            bg="#0b1220",
+            fg=FG,
+            selectbackground=ACCENT,
+            selectforeground="#fff",
+            highlightthickness=0,
+            borderwidth=0,
+            exportselection=False,
+            font=("Segoe UI", 10),
+        )
+        self.event_list.grid(row=0, column=0, sticky="ew")
+        event_scroll = ttk.Scrollbar(list_wrap, orient="vertical", command=self.event_list.yview)
+        self.event_list.configure(yscrollcommand=event_scroll.set)
+        event_scroll.grid(row=0, column=1, sticky="ns")
+        self.event_list.bind("<<ListboxSelect>>", self._on_event_list_select)
+        self.event_list.bind("<Double-Button-1>", self._on_event_list_select)
+        self.event_count_label = ttk.Label(event_pick, text="Load events to browse", style="CardMuted.TLabel")
+        self.event_count_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
+        self.event_selected_label = ttk.Label(event_pick, text="", style="Card.TLabel", wraplength=360)
+        self.event_selected_label.grid(row=5, column=0, sticky="w", pady=(2, 0))
+        self.event_id_var.trace_add("write", lambda *_: self._refresh_event_selection_label())
 
         deck = self._card(left, "HyperDeck")
         deck.columnconfigure(1, weight=1)
@@ -382,9 +439,233 @@ class HyperDeckIngestApp:
         self.log_text.tag_config("error", foreground=ERR)
         self.log_text.tag_config("ok", foreground=OK)
 
-    def _refresh_event_hint(self) -> None:
+    @staticmethod
+    def _event_date_str(ev: dict) -> str:
+        date = str(ev.get("date") or "")
+        if "T" in date:
+            date = date.split("T", 1)[0]
+        return date.strip()
+
+    @classmethod
+    def _parse_event_date(cls, ev: dict) -> date | None:
+        raw = cls._event_date_str(ev)
+        if not raw:
+            return None
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    @classmethod
+    def _event_sort_key(cls, ev: dict) -> str:
+        return cls._event_date_str(ev) or "9999-99-99"
+
+    def _split_events(self) -> tuple[list[dict], list[dict], list[dict]]:
+        today = date.today()
+        upcoming: list[dict] = []
+        past: list[dict] = []
+        undated: list[dict] = []
+        for ev in self.events:
+            when = self._parse_event_date(ev)
+            if when is None:
+                undated.append(ev)
+            elif when >= today:
+                upcoming.append(ev)
+            else:
+                past.append(ev)
+        upcoming.sort(key=self._event_sort_key)
+        past.sort(key=self._event_sort_key, reverse=True)
+        undated.sort(key=lambda ev: str(ev.get("name") or "").lower())
+        return upcoming, past, undated
+
+    def _matches_event_search(self, ev: dict, query: str) -> bool:
+        return not query or query in self._event_search_blob(ev)
+
+    def _events_for_view(self) -> list[tuple[str, dict | str]]:
+        query = self.event_search_var.get().strip().lower()
+        upcoming, past, undated = self._split_events()
+        mode = self.event_range_var.get()
+
+        def filt(items: list[dict]) -> list[dict]:
+            return [ev for ev in items if self._matches_event_search(ev, query)]
+
+        def grouped(u: list[dict], n: list[dict], p: list[dict]) -> list[tuple[str, dict | str]]:
+            rows: list[tuple[str, dict | str]] = []
+            if u:
+                rows.append(("header", f"Upcoming ({len(u)})"))
+                rows.extend(("event", ev) for ev in u)
+            if n:
+                rows.append(("header", f"No date ({len(n)})"))
+                rows.extend(("event", ev) for ev in n)
+            if p:
+                rows.append(("header", f"Past ({len(p)})"))
+                rows.extend(("event", ev) for ev in p)
+            return rows
+
+        u = filt(upcoming)
+        n = filt(undated)
+        p = filt(past)
+
+        if query:
+            return grouped(u, n, p)
+
+        rows: list[tuple[str, dict | str]] = []
+        if mode == "upcoming":
+            for ev in u + n:
+                rows.append(("event", ev))
+        elif mode == "past":
+            for ev in p:
+                rows.append(("event", ev))
+        else:
+            rows = grouped(u, n, p)
+        return rows
+
+    def _auto_range_for_event(self, eid: str) -> None:
+        ev = next((e for e in self.events if str(e.get("id")) == eid), None)
+        if not ev:
+            return
+        when = self._parse_event_date(ev)
+        if when is None:
+            if self.event_range_var.get() == "past":
+                self.event_range_var.set("upcoming")
+            return
+        if when >= date.today():
+            if self.event_range_var.get() == "past":
+                self.event_range_var.set("upcoming")
+        elif self.event_range_var.get() == "upcoming":
+            self.event_range_var.set("past")
+
+    def _event_count_text(self) -> str:
+        if not self.events:
+            return "Load events to browse"
+        query = self.event_search_var.get().strip().lower()
+        upcoming, past, undated = self._split_events()
+        u = len([ev for ev in upcoming if self._matches_event_search(ev, query)])
+        p = len([ev for ev in past if self._matches_event_search(ev, query)])
+        n = len([ev for ev in undated if self._matches_event_search(ev, query)])
+        shown = len(self.filtered_events)
+        total = len(self.events)
+        mode = self.event_range_var.get()
+        if query:
+            return f"{shown} match(es)  ·  {u} upcoming · {p} past · {n} undated"
+        if mode == "upcoming":
+            return f"{shown} upcoming  ·  {p} past · {n} undated"
+        if mode == "past":
+            return f"{shown} past  ·  {u} upcoming · {n} undated"
+        return f"{total} total  ·  {u} upcoming · {p} past · {n} undated"
+
+    @classmethod
+    def _event_label(cls, ev: dict) -> str:
+        name = str(ev.get("name") or "Untitled")
+        date = cls._event_date_str(ev)
+        return f"{date}  ·  {name}" if date else name
+
+    @classmethod
+    def _event_search_blob(cls, ev: dict) -> str:
+        eid = str(ev.get("id") or "")
+        return " ".join(
+            [
+                cls._event_date_str(ev),
+                str(ev.get("name") or ""),
+                eid,
+                eid.replace("-", ""),
+            ]
+        ).lower()
+
+    def _refresh_event_selection_label(self) -> None:
         eid = self.event_id_var.get().strip()
-        self.event_id_hint.configure(text=f"ID  {eid}" if eid else "Load events, then pick one")
+        if not eid:
+            self.event_selected_label.configure(text="")
+            return
+        ev = next((e for e in self.events if str(e.get("id")) == eid), None)
+        if ev:
+            short = eid[:8] + "…" if len(eid) > 8 else eid
+            self.event_selected_label.configure(
+                text=f"Selected: {ev.get('name') or 'Untitled'}  ·  {short}"
+            )
+        else:
+            self.event_selected_label.configure(text=f"Selected ID: {eid}")
+
+    def _render_event_list(self, select_id: str | None = None) -> None:
+        rows = self._events_for_view()
+        self.filtered_events = []
+        self.event_list_rows = []
+        self.event_list.delete(0, "end")
+        for kind, payload in rows:
+            if kind == "header":
+                self.event_list.insert("end", f"— {payload} —")
+                idx = self.event_list.size() - 1
+                self.event_list.itemconfig(idx, fg=MUTED)
+                self.event_list_rows.append(None)
+            else:
+                self.event_list.insert("end", self._event_label(payload))
+                self.event_list_rows.append(payload)
+                self.filtered_events.append(payload)
+
+        self.event_count_label.configure(text=self._event_count_text())
+
+        pick = select_id or self.event_id_var.get().strip()
+        self._event_list_updating = True
+        try:
+            if pick:
+                for i, ev in enumerate(self.event_list_rows):
+                    if ev is not None and str(ev.get("id")) == pick:
+                        self.event_list.selection_set(i)
+                        self.event_list.see(i)
+                        break
+        finally:
+            self._event_list_updating = False
+        self._refresh_event_selection_label()
+
+    def _on_event_search(self, _evt=None) -> None:
+        self._render_event_list()
+
+    def _on_event_search_enter(self, _evt=None) -> None:
+        if not self.filtered_events:
+            return
+        ev = self.filtered_events[0]
+        for i, row in enumerate(self.event_list_rows):
+            if row is ev:
+                self._event_list_updating = True
+                try:
+                    self.event_list.selection_clear(0, "end")
+                    self.event_list.selection_set(i)
+                    self.event_list.see(i)
+                finally:
+                    self._event_list_updating = False
+                break
+        self._choose_event(ev)
+
+    def _clear_event_search(self) -> None:
+        self.event_search_var.set("")
+        self._render_event_list()
+
+    def _choose_event(self, ev: dict) -> None:
+        eid = str(ev.get("id") or "")
+        if self.event_id_var.get().strip() == eid:
+            self._refresh_event_selection_label()
+            return
+        self.event_id_var.set(eid)
+        self._bg(self._refresh_schedule)
+
+    def _on_event_list_select(self, _evt=None) -> None:
+        if self._event_list_updating:
+            return
+        sel = self.event_list.curselection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.event_list_rows):
+            return
+        ev = self.event_list_rows[idx]
+        if ev is None:
+            self._event_list_updating = True
+            try:
+                self.event_list.selection_clear(0, "end")
+            finally:
+                self._event_list_updating = False
+            return
+        self._choose_event(ev)
 
     def _sync_copy_method_ui(self) -> None:
         if self.copy_method_var.get() == "folder":
@@ -429,7 +710,7 @@ class HyperDeckIngestApp:
         self.only_marked_var.set(c.get("record_only_marked") is not False)
         self.auto_copy_var.set(c.get("auto_copy") is not False)
         self._sync_copy_method_ui()
-        self._refresh_event_hint()
+        self._refresh_event_selection_label()
 
     def _snapshot_config(self) -> dict:
         return {
@@ -500,35 +781,18 @@ class HyperDeckIngestApp:
             api = self._apply_api_from_fields()
             events = api.list_events()
             self.events = events
-            labels = []
-            for ev in events:
-                date = str(ev.get("date") or "")
-                if "T" in date:
-                    date = date.split("T", 1)[0]
-                labels.append(f"{date}  {ev.get('name') or 'Untitled'}  ({ev.get('id')})")
             current = self.event_id_var.get().strip()
 
             def apply():
-                self.event_combo["values"] = labels
                 if current:
-                    for i, ev in enumerate(events):
-                        if str(ev.get("id")) == current:
-                            self.event_combo.current(i)
-                            break
+                    self._auto_range_for_event(current)
+                self._render_event_list(select_id=current or None)
                 self.status_ros.set(f"Loaded {len(events)} event(s)")
                 self.log(f"Loaded {len(events)} events", "ok")
 
             self.root.after(0, apply)
 
         self._bg(work)
-
-    def _on_event_chosen(self, _evt=None) -> None:
-        idx = self.event_combo.current()
-        if idx < 0 or idx >= len(self.events):
-            return
-        ev = self.events[idx]
-        self.event_id_var.set(str(ev.get("id") or ""))
-        self._bg(self._refresh_schedule)
 
     def _current_event(self) -> dict:
         eid = self.event_id_var.get().strip()
