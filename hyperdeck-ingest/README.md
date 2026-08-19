@@ -53,10 +53,10 @@ run.bat
 
 Needs Python 3.10+ and `pip install -r requirements.txt`.
 
-## Copy methods
+## Copy method
 
-- **FTP from HyperDeck** — after stop, pull the last clip (enable FTP on the deck; many models cannot share the disk *while* recording).
-- **Folder on this PC** — if the SSD is mounted as a drive, point Source folder at it.
+- **FTP from HyperDeck** only — after stop, pull the last clip (enable FTP on the deck; many models cannot share the disk *while* recording).
+- Default FTP login is prefilled as `anonymous` with blank password. If your deck is locked down, enter the custom credentials provided by engineering.
 
 Always set **Target folder** (editor watch folder / share).
 

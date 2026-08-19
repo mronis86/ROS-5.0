@@ -13,7 +13,7 @@ from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
 
 from config_store import AUTO_STOP_MINUTES, load_config, save_config
-from copy_util import CopyError, copy_from_folder, copy_from_ftp, unique_dest
+from copy_util import CopyError, copy_from_ftp, unique_dest
 from hyperdeck_client import ClipInfo, HyperDeckClient, HyperDeckError
 from names import (
     DEFAULT_PATTERN,
@@ -150,11 +150,9 @@ class HyperDeckIngestApp:
         self.event_id_var = tk.StringVar()
         self.deck_host_var = tk.StringVar()
         self.deck_port_var = tk.StringVar()
-        self.copy_method_var = tk.StringVar(value="ftp")
         self.ftp_port_var = tk.StringVar()
         self.ftp_user_var = tk.StringVar()
         self.ftp_pass_var = tk.StringVar()
-        self.source_folder_var = tk.StringVar()
         self.target_folder_var = tk.StringVar()
         self.pattern_var = tk.StringVar()
         self.only_marked_var = tk.BooleanVar(value=True)
@@ -371,21 +369,15 @@ class HyperDeckIngestApp:
 
         dest = self._card(left, "Copy after stop")
         dest.columnconfigure(1, weight=1)
-        self._grid_label(dest, 0, "Source mode")
-        method = tk.Frame(dest, bg=CARD)
-        method.grid(row=0, column=1, sticky="w", pady=4)
-        ttk.Radiobutton(method, text="FTP from HyperDeck", variable=self.copy_method_var, value="ftp").pack(side="left")
-        ttk.Radiobutton(method, text="Mounted deck folder", variable=self.copy_method_var, value="folder").pack(
-            side="left", padx=(14, 0)
-        )
+        self._grid_label(dest, 0, "Source")
         ttk.Label(
             dest,
-            text="FTP mode reads from the connected deck. Mounted mode is only for SSD/network shares already mapped on this PC.",
+            text="FTP from HyperDeck. Typical default login is user 'anonymous' with blank password.",
             style="CardMuted.TLabel",
-        ).grid(row=1, column=1, sticky="w")
+        ).grid(row=0, column=1, sticky="w")
 
         self.ftp_row = tk.Frame(dest, bg=CARD)
-        self.ftp_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
+        self.ftp_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
         self.ftp_row.columnconfigure(1, weight=1)
         ttk.Label(self.ftp_row, text="FTP", style="CardMuted.TLabel").grid(row=0, column=0, sticky="nw", padx=(0, 10), pady=4)
         ftp_fields = tk.Frame(self.ftp_row, bg=CARD)
@@ -401,38 +393,24 @@ class HyperDeckIngestApp:
             row=1, column=1, columnspan=3, sticky="ew", padx=(6, 0), pady=2
         )
 
-        self.src_row = tk.Frame(dest, bg=CARD)
-        self.src_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
-        self.src_row.columnconfigure(1, weight=1)
-        ttk.Label(self.src_row, text="Mounted source folder", style="CardMuted.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(0, 10)
-        )
-        src_fields = tk.Frame(self.src_row, bg=CARD)
-        src_fields.grid(row=0, column=1, sticky="ew")
-        ttk.Entry(src_fields, textvariable=self.source_folder_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(src_fields, text="Browse", command=lambda: self._browse(self.source_folder_var)).pack(
-            side="left", padx=(6, 0)
-        )
-
-        self._grid_label(dest, 3, "Target copy folder")
+        self._grid_label(dest, 2, "Target copy folder")
         tgt = tk.Frame(dest, bg=CARD)
-        tgt.grid(row=3, column=1, sticky="ew", pady=4)
+        tgt.grid(row=2, column=1, sticky="ew", pady=4)
         ttk.Entry(tgt, textvariable=self.target_folder_var).pack(side="left", fill="x", expand=True)
         ttk.Button(tgt, text="Browse", command=lambda: self._browse(self.target_folder_var)).pack(
             side="left", padx=(6, 0)
         )
-        self._grid_label(dest, 4, "Name")
-        ttk.Entry(dest, textvariable=self.pattern_var).grid(row=4, column=1, sticky="ew", pady=4)
+        self._grid_label(dest, 3, "Name")
+        ttk.Entry(dest, textvariable=self.pattern_var).grid(row=3, column=1, sticky="ew", pady=4)
         ttk.Label(
             dest,
             text="{date} {event} {segment} {cue}  ·  date is event YYMMDD",
             style="CardMuted.TLabel",
-        ).grid(row=5, column=1, sticky="w")
+        ).grid(row=4, column=1, sticky="w")
         flags = tk.Frame(dest, bg=CARD)
-        flags.grid(row=6, column=1, sticky="w", pady=(8, 0))
+        flags.grid(row=5, column=1, sticky="w", pady=(8, 0))
         ttk.Checkbutton(flags, text="Only marked Record cues", variable=self.only_marked_var).pack(anchor="w")
         ttk.Checkbutton(flags, text="Auto-copy after stop", variable=self.auto_copy_var).pack(anchor="w", pady=(4, 0))
-        self.copy_method_var.trace_add("write", lambda *_: self._sync_copy_method_ui())
 
         clips = self._card(right, "HyperDeck clips", fill="both")
         tree_wrap = tk.Frame(clips, bg=CARD)
@@ -704,14 +682,6 @@ class HyperDeckIngestApp:
             return
         self._choose_event(ev)
 
-    def _sync_copy_method_ui(self) -> None:
-        if self.copy_method_var.get() == "folder":
-            self.ftp_row.grid_remove()
-            self.src_row.grid()
-        else:
-            self.src_row.grid_remove()
-            self.ftp_row.grid()
-
     def _set_pill(self, kind: str) -> None:
         styles = {
             "stopped": ("Stopped", PILL_STOP),
@@ -900,16 +870,13 @@ class HyperDeckIngestApp:
         self.event_id_var.set(c.get("event_id") or "")
         self.deck_host_var.set(c.get("hyperdeck_host") or "")
         self.deck_port_var.set(str(c.get("hyperdeck_port") or 9993))
-        self.copy_method_var.set(c.get("copy_method") or "ftp")
         self.ftp_port_var.set(str(c.get("ftp_port") or 21))
-        self.ftp_user_var.set(c.get("ftp_user") or "")
+        self.ftp_user_var.set(c.get("ftp_user") or "anonymous")
         self.ftp_pass_var.set(c.get("ftp_password") or "")
-        self.source_folder_var.set(c.get("source_folder") or "")
         self.target_folder_var.set(c.get("target_folder") or "")
         self.pattern_var.set(c.get("name_pattern") or DEFAULT_PATTERN)
         self.only_marked_var.set(c.get("record_only_marked") is not False)
         self.auto_copy_var.set(c.get("auto_copy") is not False)
-        self._sync_copy_method_ui()
         self._refresh_event_selection_label()
 
     def _snapshot_config(self) -> dict:
@@ -920,10 +887,10 @@ class HyperDeckIngestApp:
             "hyperdeck_host": self.deck_host_var.get().strip(),
             "hyperdeck_port": int(self.deck_port_var.get() or 9993),
             "ftp_port": int(self.ftp_port_var.get() or 21),
-            "ftp_user": self.ftp_user_var.get(),
+            "ftp_user": (self.ftp_user_var.get() or "anonymous").strip(),
             "ftp_password": self.ftp_pass_var.get(),
-            "copy_method": self.copy_method_var.get(),
-            "source_folder": self.source_folder_var.get(),
+            "copy_method": "ftp",
+            "source_folder": "",
             "target_folder": self.target_folder_var.get(),
             "name_pattern": self.pattern_var.get().strip() or DEFAULT_PATTERN,
             "record_only_marked": bool(self.only_marked_var.get()),
@@ -1070,19 +1037,15 @@ class HyperDeckIngestApp:
             raise CopyError("Set a target folder")
         stem = self._dest_name(item, clip.name)
         dest = unique_dest(target, stem + ".mov")
-        method = self.copy_method_var.get()
-        if method == "folder":
-            path = copy_from_folder(self.source_folder_var.get(), clip.name, dest, log=self.log)
-        else:
-            path = copy_from_ftp(
-                self.deck_host_var.get().strip(),
-                clip.name,
-                dest,
-                port=int(self.ftp_port_var.get() or 21),
-                user=self.ftp_user_var.get(),
-                password=self.ftp_pass_var.get(),
-                log=self.log,
-            )
+        path = copy_from_ftp(
+            self.deck_host_var.get().strip(),
+            clip.name,
+            dest,
+            port=int(self.ftp_port_var.get() or 21),
+            user=(self.ftp_user_var.get() or "anonymous").strip(),
+            password=self.ftp_pass_var.get(),
+            log=self.log,
+        )
         self.copied_keys.add(self._clip_key(clip))
         save_config(self._snapshot_config())
         self.root.after(0, lambda: self.status_copy.set(os.path.basename(path)))
