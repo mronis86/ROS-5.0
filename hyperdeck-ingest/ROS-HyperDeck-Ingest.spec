@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['c:\\Users\\audre\\OneDrive\\Desktop\\ROS-5.0\\hyperdeck-ingest\\app.py'],
+    ['app.py'],
     pathex=[],
     binaries=[],
     datas=[],

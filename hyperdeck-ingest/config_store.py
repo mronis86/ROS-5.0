@@ -117,4 +117,6 @@ def _clamp_auto_stop_minutes(value: Any) -> int:
         minutes = int(value)
     except (TypeError, ValueError):
         minutes = 0
-    return minutes if minutes in AUTO_STOP_MINUTES else 0
+    if minutes in AUTO_STOP_MINUTES:
+        return minutes
+    return min(AUTO_STOP_MINUTES, key=lambda m: abs(m - minutes))
