@@ -161,6 +161,7 @@ class HyperDeckIngestApp:
         self.status_deck = tk.StringVar(value="Disconnected")
         self.status_cue = tk.StringVar(value="—")
         self.status_copy = tk.StringVar(value="—")
+        self.auto_stop_default_var = tk.StringVar(value="")
 
         header = tk.Frame(self.root, bg=BG)
         header.pack(fill="x", padx=14, pady=(12, 8))
@@ -193,12 +194,23 @@ class HyperDeckIngestApp:
             padx=10,
             pady=3,
         )
+        self.auto_stop_default_label = tk.Label(
+            brand,
+            textvariable=self.auto_stop_default_var,
+            bg=BG,
+            fg=MUTED,
+            font=("Segoe UI", 9),
+            padx=10,
+            pady=3,
+        )
+        self.auto_stop_default_label.pack(side="left", padx=(8, 0))
         actions = tk.Frame(header, bg=BG)
         actions.pack(side="right")
         ttk.Button(actions, text="Start follow", style="Accent.TButton", command=self.start_follow).pack(
             side="left"
         )
         ttk.Button(actions, text="Stop", command=self.stop_follow).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Set timer", command=self.configure_auto_stop_defaults).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Save", command=self._save).pack(side="left", padx=(6, 0))
 
         self.notice_frame = tk.Frame(self.root, bg="#78350f", highlightbackground="#f59e0b", highlightthickness=1)
@@ -711,6 +723,16 @@ class HyperDeckIngestApp:
             parts.append(f"{minutes}m")
         return " ".join(parts) or "0m"
 
+    def _default_auto_stop_text(self) -> str:
+        if bool(self.cfg.get("auto_stop_never")):
+            return "Default auto-stop: Never"
+        hours = int(self.cfg.get("auto_stop_hours") or 0)
+        minutes = int(self.cfg.get("auto_stop_minutes") or 0)
+        return f"Default auto-stop: {self._auto_stop_label_text(hours, minutes)}"
+
+    def _refresh_auto_stop_default_label(self) -> None:
+        self.auto_stop_default_var.set(self._default_auto_stop_text())
+
     def _clear_auto_stop_timer(self) -> None:
         if self._auto_stop_tick is not None:
             try:
@@ -858,6 +880,16 @@ class HyperDeckIngestApp:
         self.root.wait_window(dlg)
         return result
 
+    def configure_auto_stop_defaults(self) -> None:
+        choice = self._ask_auto_stop()
+        if choice is None:
+            return
+        self.cfg["auto_stop_hours"] = int(choice.get("hours") or self.cfg.get("auto_stop_hours") or 2)
+        self.cfg["auto_stop_minutes"] = int(choice.get("minutes") or 0)
+        self.cfg["auto_stop_never"] = bool(choice.get("never"))
+        self._save()
+        self._refresh_auto_stop_default_label()
+
     def _browse(self, var: tk.StringVar) -> None:
         path = filedialog.askdirectory()
         if path:
@@ -877,6 +909,7 @@ class HyperDeckIngestApp:
         self.pattern_var.set(c.get("name_pattern") or DEFAULT_PATTERN)
         self.only_marked_var.set(c.get("record_only_marked") is not False)
         self.auto_copy_var.set(c.get("auto_copy") is not False)
+        self._refresh_auto_stop_default_label()
         self._refresh_event_selection_label()
 
     def _snapshot_config(self) -> dict:
