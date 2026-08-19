@@ -65,6 +65,7 @@ class HyperDeckIngestApp:
         self._recording_item_id = None
         self._recording_clip_name = ""
         self._recording_meta: dict = {}
+        self._completed_record_item_ids: set[str] = set()
         self.copied_keys = set(str(x) for x in (self.cfg.get("copied_keys") or []))
         self._auto_stop_never = False
         self._auto_stop_ends_at: float | None = None
@@ -162,6 +163,8 @@ class HyperDeckIngestApp:
         self.status_cue = tk.StringVar(value="—")
         self.status_copy = tk.StringVar(value="—")
         self.auto_stop_default_var = tk.StringVar(value="")
+        self.event_locked_var = tk.BooleanVar(value=False)
+        self.event_rec_summary_var = tk.StringVar(value="Record-marked cues: —")
 
         header = tk.Frame(self.root, bg=BG)
         header.pack(fill="x", padx=14, pady=(12, 8))
@@ -361,6 +364,18 @@ class HyperDeckIngestApp:
         self.event_count_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
         self.event_selected_label = ttk.Label(event_pick, text="", style="Card.TLabel", wraplength=360)
         self.event_selected_label.grid(row=5, column=0, sticky="w", pady=(2, 0))
+        lock_row = tk.Frame(event_pick, bg=CARD)
+        lock_row.grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(
+            lock_row,
+            text="Lock selected event",
+            variable=self.event_locked_var,
+            command=self._on_event_lock_toggled,
+        ).pack(side="left")
+        ttk.Button(lock_row, text="Confirm event", command=self._confirm_event_selection).pack(side="left", padx=(8, 0))
+        ttk.Label(event_pick, textvariable=self.event_rec_summary_var, style="CardMuted.TLabel").grid(
+            row=7, column=0, sticky="w", pady=(4, 0)
+        )
         self.event_id_var.trace_add("write", lambda *_: self._refresh_event_selection_label())
 
         deck = self._card(left, "HyperDeck")
@@ -667,8 +682,33 @@ class HyperDeckIngestApp:
         self.event_search_var.set("")
         self._render_event_list()
 
+    def _on_event_lock_toggled(self) -> None:
+        if self.event_locked_var.get():
+            eid = self.event_id_var.get().strip()
+            if not eid:
+                self.event_locked_var.set(False)
+                messagebox.showinfo("Event lock", "Select an event first, then lock it.")
+                return
+            self.log(f"Event locked: {eid}", "ok")
+        else:
+            self.log("Event unlocked")
+
+    def _confirm_event_selection(self) -> None:
+        eid = self.event_id_var.get().strip()
+        if not eid:
+            messagebox.showinfo("Event", "Select an event first.")
+            return
+        self.event_locked_var.set(True)
+        self.log(f"Event confirmed and locked: {eid}", "ok")
+        self._bg(self._refresh_schedule)
+
     def _choose_event(self, ev: dict) -> None:
         eid = str(ev.get("id") or "")
+        if self.event_locked_var.get() and self.event_id_var.get().strip() and self.event_id_var.get().strip() != eid:
+            self.log(f"Ignored event switch to {eid} (event is locked)")
+            messagebox.showinfo("Event locked", "Unlock the selected event before switching.")
+            self._render_event_list(select_id=self.event_id_var.get().strip())
+            return
         if self.event_id_var.get().strip() == eid:
             self._refresh_event_selection_label()
             return
@@ -909,6 +949,8 @@ class HyperDeckIngestApp:
         self.pattern_var.set(c.get("name_pattern") or DEFAULT_PATTERN)
         self.only_marked_var.set(c.get("record_only_marked") is not False)
         self.auto_copy_var.set(c.get("auto_copy") is not False)
+        self.event_locked_var.set(False)
+        self.event_rec_summary_var.set("Record-marked cues: —")
         self._refresh_auto_stop_default_label()
         self._refresh_event_selection_label()
 
@@ -1005,6 +1047,11 @@ class HyperDeckIngestApp:
                 return ev
         return {"id": eid, "name": "", "date": ""}
 
+    def _update_record_cue_summary(self) -> None:
+        total = len(self.schedule)
+        marked = sum(1 for item in self.schedule if item_needs_recording(item))
+        self.event_rec_summary_var.set(f"Record-marked cues: {marked} / {total}")
+
     def _refresh_schedule(self) -> None:
         eid = self.event_id_var.get().strip()
         if not eid:
@@ -1012,6 +1059,7 @@ class HyperDeckIngestApp:
         api = self._apply_api_from_fields()
         self.schedule = api.schedule_items(eid)
         self.log(f"Schedule: {len(self.schedule)} cues")
+        self.root.after(0, self._update_record_cue_summary)
 
     def _item_by_id(self, item_id) -> dict | None:
         sid = str(item_id)
@@ -1123,7 +1171,10 @@ class HyperDeckIngestApp:
         self.root.after(0, lambda: self.status_deck.set("Stopped"))
         self._set_pill("following" if self.following else "stopped")
         item = self._recording_meta or self._item_by_id(self._recording_item_id)
+        finished_item_id = str(self._recording_item_id) if self._recording_item_id is not None else ""
         self._recording_item_id = None
+        if finished_item_id:
+            self._completed_record_item_ids.add(finished_item_id)
         if not self.auto_copy_var.get():
             self._refresh_clips_sync()
             return
@@ -1166,6 +1217,7 @@ class HyperDeckIngestApp:
             return
         self._hide_auto_stop_notice()
         self._save()
+        self._completed_record_item_ids = set()
         self.following = True
         self._set_pill("following")
         self._schedule_auto_stop(
@@ -1242,7 +1294,8 @@ class HyperDeckIngestApp:
             return
 
         item_id = timer.get("item_id")
-        running = timer.get("is_running") is True or str(timer.get("timer_state") or "") == "running"
+        state = str(timer.get("timer_state") or "").lower()
+        running = timer.get("is_running") is True or state == "running"
         item = self._item_by_id(item_id)
         if item is None:
             try:
@@ -1251,14 +1304,14 @@ class HyperDeckIngestApp:
             except Exception:
                 pass
         marked = item_needs_recording(item)
-        should = running and (marked or not self.only_marked_var.get())
+        should = bool(item_id) and (marked or not self.only_marked_var.get())
         cue = cue_label(item)
         segment = str((item or {}).get("segmentName") or "")
         rec = "REC" if marked else "—"
-        state = "running" if running else str(timer.get("timer_state") or "loaded")
+        state_label = "running" if running else (state or "loaded")
         self.root.after(
             0,
-            lambda: self.status_cue.set(f"{cue or item_id}  {segment}  [{state}]  {rec}"),
+            lambda: self.status_cue.set(f"{cue or item_id}  {segment}  [{state_label}]  {rec}"),
         )
         self.root.after(0, lambda: self.status_ros.set("Polling OK"))
 
@@ -1267,10 +1320,14 @@ class HyperDeckIngestApp:
         self._last_item_id = item_id
         self._last_running = running
 
-        if self._recording_item_id is not None and (stopped or (changed and running)):
+        if self._recording_item_id is not None and (
+            stopped
+            or changed
+            or (state in ("stopped", "done", "ended") and str(self._recording_item_id) == str(item_id))
+        ):
             self._stop_and_maybe_copy()
 
-        if should and self._recording_item_id is None:
+        if should and self._recording_item_id is None and str(item_id) not in self._completed_record_item_ids:
             name = hyperdeck_record_name(cue=cue, segment=segment or "clip")
             self.deck.record(name)
             self._recording_item_id = item_id
