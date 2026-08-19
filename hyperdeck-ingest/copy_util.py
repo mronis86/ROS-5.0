@@ -9,6 +9,7 @@ from ftplib import FTP, error_perm
 from typing import Callable
 
 LogFn = Callable[[str], None]
+MEDIA_EXTS = {".mov", ".mp4", ".mxf", ".m4v"}
 
 
 class CopyError(Exception):
@@ -82,6 +83,10 @@ def _ftp_get(
         ftp.login(user or "anonymous", password or "")
         ftp.set_pasv(True)
         names = _list_remote_files(ftp)
+        if not any(_is_media_file_name(n) for n in names):
+            switched = _switch_to_media_subdir(ftp, log=log)
+            if switched:
+                names = _list_remote_files(ftp)
         remote = _match_remote_name(names, clip_name)
         if not remote:
             fallback = _pick_latest_remote_name(ftp, names)
@@ -156,6 +161,73 @@ def _match_remote_name(listing: list[str], clip_name: str) -> str | None:
     return None
 
 
+def _is_media_file_name(name: str) -> bool:
+    return os.path.splitext(str(name))[1].lower() in MEDIA_EXTS
+
+
+def _switch_to_media_subdir(ftp: FTP, log: LogFn | None = None) -> bool:
+    """
+    Some HyperDeck FTP servers expose a root folder like `usb` and store clips inside it.
+    If root has no media files, try common/visible subdirs and stay in the one that contains media.
+    """
+    original = ftp.pwd()
+    preferred = ["usb", "sd", "media", "disk1", "disk2", "slot1", "slot2"]
+    discovered = _list_remote_dirs(ftp)
+    candidates = []
+    seen = set()
+    for d in preferred + discovered:
+        key = d.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        candidates.append(d.strip())
+
+    for dirname in candidates:
+        try:
+            ftp.cwd(original)
+            ftp.cwd(dirname)
+        except Exception:
+            continue
+        names = _list_remote_files(ftp)
+        if any(_is_media_file_name(n) for n in names):
+            if log:
+                log(f"FTP media directory detected: /{dirname}")
+            return True
+
+    try:
+        ftp.cwd(original)
+    except Exception:
+        pass
+    return False
+
+
+def _list_remote_dirs(ftp: FTP) -> list[str]:
+    dirs: list[str] = []
+    try:
+        for name, facts in ftp.mlsd():
+            if str(facts.get("type", "")).lower() == "dir":
+                dirs.append(name)
+        if dirs:
+            return _normalize_remote_names(dirs)
+    except Exception:
+        pass
+    try:
+        for token in ftp.nlst():
+            name = str(token).strip()
+            if not name or name in (".", ".."):
+                continue
+            try:
+                cur = ftp.pwd()
+                ftp.cwd(name)
+                ftp.cwd(cur)
+                dirs.append(name)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return _normalize_remote_names(dirs)
+
+
 def _normalize_remote_names(listing: list[str]) -> list[str]:
     cleaned: list[str] = []
     for line in listing:
@@ -216,9 +288,9 @@ def _parse_mdtm(value: str) -> datetime | None:
 def _pick_latest_remote_name(ftp: FTP, names: list[str]) -> str | None:
     if not names:
         return None
-    media_ext = {".mov", ".mp4", ".mxf", ".m4v"}
-    media = [n for n in names if os.path.splitext(n)[1].lower() in media_ext]
-    candidates = media or names
+    candidates = [n for n in names if _is_media_file_name(n)]
+    if not candidates:
+        return None
 
     dated: list[tuple[datetime, str]] = []
     for name in candidates:
