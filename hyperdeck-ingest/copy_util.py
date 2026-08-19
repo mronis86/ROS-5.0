@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from datetime import datetime
 from ftplib import FTP, error_perm
 from typing import Callable
 
@@ -80,14 +81,20 @@ def _ftp_get(
         ftp.connect(host, int(port or 21), timeout=20)
         ftp.login(user or "anonymous", password or "")
         ftp.set_pasv(True)
-        names = []
-        try:
-            names = ftp.nlst()
-        except error_perm:
-            ftp.retrlines("LIST", names.append)
+        names = _list_remote_files(ftp)
         remote = _match_remote_name(names, clip_name)
         if not remote:
-            raise CopyError(f"No FTP file matching “{clip_name}” (saw {len(names)} file(s))")
+            fallback = _pick_latest_remote_name(ftp, names)
+            if fallback:
+                if log:
+                    log(
+                        f"FTP fallback: no exact match for “{clip_name}”; using latest file “{fallback}”."
+                    )
+                remote = fallback
+        if not remote:
+            sample = ", ".join(sorted(names)[:6])
+            extra = f" Seen: {sample}" if sample else ""
+            raise CopyError(f"No FTP file matching “{clip_name}” (saw {len(names)} file(s)).{extra}")
         dest_path = _with_source_ext(dest_path, remote)
         os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
         if log:
@@ -138,13 +145,7 @@ def _find_local_file(folder: str, clip_name: str) -> str | None:
 
 
 def _match_remote_name(listing: list[str], clip_name: str) -> str | None:
-    cleaned = []
-    for line in listing:
-        token = line.strip().split()[-1] if line.strip() else ""
-        if token and token not in (".", ".."):
-            cleaned.append(token)
-        elif line.strip() and " " not in line.strip():
-            cleaned.append(line.strip())
+    cleaned = _normalize_remote_names(listing)
     want = _norm(clip_name)
     for name in cleaned:
         if _norm(name) == want:
@@ -153,3 +154,83 @@ def _match_remote_name(listing: list[str], clip_name: str) -> str | None:
         if _norm(name).startswith(want) or want.startswith(_norm(name)):
             return name
     return None
+
+
+def _normalize_remote_names(listing: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for line in listing:
+        token = line.strip()
+        if not token:
+            continue
+        # LIST fallback line: permissions/date/size filename -> filename is the final token.
+        if " " in token:
+            token = token.split()[-1]
+        if token and token not in (".", ".."):
+            cleaned.append(os.path.basename(token))
+    # Preserve order and uniqueness.
+    seen = set()
+    out: list[str] = []
+    for name in cleaned:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(name)
+    return out
+
+
+def _list_remote_files(ftp: FTP) -> list[str]:
+    # Prefer MLSD when available (reliable filenames, no LIST parsing).
+    try:
+        names = []
+        for name, facts in ftp.mlsd():
+            if str(facts.get("type", "")).lower() == "file":
+                names.append(name)
+        if names:
+            return _normalize_remote_names(names)
+    except Exception:
+        pass
+
+    names: list[str] = []
+    try:
+        names = ftp.nlst()
+    except error_perm:
+        names = []
+        ftp.retrlines("LIST", names.append)
+    return _normalize_remote_names(names)
+
+
+def _parse_mdtm(value: str) -> datetime | None:
+    # RFC3659 MDTM replies: "213 YYYYMMDDHHMMSS"
+    raw = value.strip()
+    if raw.startswith("213 "):
+        raw = raw[4:].strip()
+    if len(raw) < 14 or not raw[:14].isdigit():
+        return None
+    try:
+        return datetime.strptime(raw[:14], "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+def _pick_latest_remote_name(ftp: FTP, names: list[str]) -> str | None:
+    if not names:
+        return None
+    media_ext = {".mov", ".mp4", ".mxf", ".m4v"}
+    media = [n for n in names if os.path.splitext(n)[1].lower() in media_ext]
+    candidates = media or names
+
+    dated: list[tuple[datetime, str]] = []
+    for name in candidates:
+        try:
+            dt = _parse_mdtm(ftp.sendcmd(f"MDTM {name}"))
+            if dt is not None:
+                dated.append((dt, name))
+        except Exception:
+            continue
+    if dated:
+        dated.sort(key=lambda item: item[0])
+        return dated[-1][1]
+
+    # Last resort: lexical sort (many HyperDeck files are timestamped in name).
+    return sorted(candidates)[-1]

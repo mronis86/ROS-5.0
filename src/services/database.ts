@@ -1527,6 +1527,32 @@ export class DatabaseService {
     }
   }
 
+  static async uploadContentReviewCreativeFile(
+    eventId: string,
+    file: File
+  ): Promise<{ creative_pdf_url: string | null; file?: { id: string; original_name: string } } | null> {
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const headers = apiJsonHeaders();
+      delete (headers as Record<string, string>)['Content-Type'];
+      const response = await fetch(`${API_BASE_URL}/api/content-review/${eventId}/creative-file`, {
+        method: 'POST',
+        headers,
+        body: form,
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        console.error('Failed to upload content review creative file:', response.status, body);
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error uploading content review creative file:', error);
+      return null;
+    }
+  }
+
   // INDENTED CUES METHODS - Similar to completed cues but for indented/sub-cue relationships
 
   // Get indented cues for an event

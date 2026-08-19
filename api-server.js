@@ -8,10 +8,13 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const crypto = require('crypto');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { Pool } = require('pg');
 const multer = require('multer');
+const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
 const XLSX = require('xlsx');
@@ -41,6 +44,10 @@ const {
   registerEventCueFileRoutes,
   startEventCueFileCleanup,
   ensureEventCueFilesSchema,
+  isBucketConfigured,
+  getBucketConfig,
+  getS3,
+  safeOriginalName,
 } = require('./lib/event-cue-files');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
@@ -679,6 +686,98 @@ const agendaUpload = multer({
     if (ok) cb(null, true);
     else cb(new Error('Only PDF, Word (.docx), or Excel (.xlsx/.xls) files are allowed'));
   }
+});
+
+const CREATIVE_REVIEW_MAX_FILE_BYTES = 50 * 1024 * 1024;
+const CREATIVE_REVIEW_SIGNED_URL_TTL_SEC = 60 * 60;
+const CREATIVE_REVIEW_ALLOWED_EXT = new Set(['pdf', 'doc', 'docx', 'ppt', 'pptx']);
+const CREATIVE_FILE_REF_PREFIX = 'rosfile://';
+
+function creativeFileExt(name = '') {
+  const m = String(name).toLowerCase().match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : '';
+}
+
+function creativeFileAllowed(file) {
+  if (!file) return false;
+  const ext = creativeFileExt(file.originalname || '');
+  if (CREATIVE_REVIEW_ALLOWED_EXT.has(ext)) return true;
+  const mime = String(file.mimetype || '').toLowerCase();
+  return (
+    mime === 'application/pdf' ||
+    mime === 'application/msword' ||
+    mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mime === 'application/vnd.ms-powerpoint' ||
+    mime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  );
+}
+
+function isCreativeFileRef(value) {
+  return typeof value === 'string' && value.startsWith(CREATIVE_FILE_REF_PREFIX);
+}
+
+function creativeFileIdFromRef(value) {
+  if (!isCreativeFileRef(value)) return null;
+  const id = value.slice(CREATIVE_FILE_REF_PREFIX.length).trim();
+  return id || null;
+}
+
+function creativeFileRef(fileId) {
+  return `${CREATIVE_FILE_REF_PREFIX}${fileId}`;
+}
+
+function isLikelySignedStorageUrl(value) {
+  const v = String(value || '');
+  return (
+    v.includes('X-Amz-Algorithm=') ||
+    v.includes('X-Amz-Credential=') ||
+    v.includes('X-Amz-Signature=') ||
+    v.includes('AWSAccessKeyId=')
+  );
+}
+
+async function buildCreativeEmbedUrlFromRow(row) {
+  if (!row || !row.object_key || !isBucketConfigured()) return null;
+  const s3 = getS3();
+  const { bucket } = getBucketConfig();
+  if (!s3 || !bucket) return null;
+  const signed = await getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: row.object_key,
+    }),
+    { expiresIn: CREATIVE_REVIEW_SIGNED_URL_TTL_SEC }
+  );
+  const ext = creativeFileExt(row.original_name || '');
+  if (ext === 'doc' || ext === 'docx' || ext === 'ppt' || ext === 'pptx') {
+    return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(signed)}`;
+  }
+  return signed;
+}
+
+async function resolveCreativePdfUrl(eventId, rawUrl) {
+  if (!isCreativeFileRef(rawUrl)) return rawUrl || null;
+  const fileId = creativeFileIdFromRef(rawUrl);
+  if (!fileId) return null;
+  await ensureEventCueFilesSchema(pool);
+  const r = await pool.query(
+    `SELECT * FROM public.event_cue_files WHERE id = $1 AND event_id = $2 LIMIT 1`,
+    [fileId, eventId]
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null;
+  return buildCreativeEmbedUrlFromRow(row);
+}
+
+const creativeReviewUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: CREATIVE_REVIEW_MAX_FILE_BYTES },
+  fileFilter: (req, file, cb) => {
+    if (creativeFileAllowed(file)) cb(null, true);
+    else cb(new Error('Only PDF, Word (.doc/.docx), or PowerPoint (.ppt/.pptx) files are allowed.'));
+  },
 });
 
 // Health check endpoint - lightweight version to reduce Neon queries
@@ -4548,11 +4647,12 @@ app.get('/api/content-review/:eventId', async (req, res) => {
       });
     }
     const row = result.rows[0];
+    const creativePdfUrl = await resolveCreativePdfUrl(eventId, row.creative_pdf_url || null);
     res.json({
       event_id: row.event_id,
       reviews: row.reviews || {},
       stream_url: row.stream_url || null,
-      creative_pdf_url: row.creative_pdf_url || null,
+      creative_pdf_url: creativePdfUrl,
       active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
       side_rail_width_px: row.side_rail_width_px ?? null,
       last_modified_by: row.last_modified_by,
@@ -4583,6 +4683,18 @@ app.put('/api/content-review/:eventId', async (req, res) => {
       last_modified_by_name,
     } = req.body || {};
 
+    let nextCreativePdfValue = creative_pdf_url ?? null;
+    if (nextCreativePdfValue && !isCreativeFileRef(nextCreativePdfValue) && isLikelySignedStorageUrl(nextCreativePdfValue)) {
+      const current = await pool.query(
+        'SELECT creative_pdf_url FROM content_review_data WHERE event_id = $1 LIMIT 1',
+        [eventId]
+      );
+      const currentRef = current.rows[0]?.creative_pdf_url || null;
+      if (isCreativeFileRef(currentRef)) {
+        nextCreativePdfValue = currentRef;
+      }
+    }
+
     const reviewsJson =
       reviews != null && typeof reviews === 'object' ? JSON.stringify(reviews) : '{}';
     const stage = active_stage === 'ros' ? 'ros' : 'creative';
@@ -4606,7 +4718,7 @@ app.put('/api/content-review/:eventId', async (req, res) => {
         eventId,
         reviewsJson,
         stream_url ?? null,
-        creative_pdf_url ?? null,
+        nextCreativePdfValue,
         stage,
         side_rail_width_px != null ? parseInt(side_rail_width_px, 10) : null,
         last_modified_by || null,
@@ -4615,11 +4727,12 @@ app.put('/api/content-review/:eventId', async (req, res) => {
     );
 
     const row = result.rows[0];
+    const creativePdfUrl = await resolveCreativePdfUrl(eventId, row.creative_pdf_url || null);
     const payload = {
       event_id: row.event_id,
       reviews: row.reviews || {},
       stream_url: row.stream_url || null,
-      creative_pdf_url: row.creative_pdf_url || null,
+      creative_pdf_url: creativePdfUrl,
       active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
       side_rail_width_px: row.side_rail_width_px ?? null,
       updated_at: row.updated_at,
@@ -4636,6 +4749,124 @@ app.put('/api/content-review/:eventId', async (req, res) => {
     res.status(500).json({ error: 'Failed to save content review data' });
   }
 });
+
+app.post(
+  '/api/content-review/:eventId/creative-file',
+  (req, res, next) => {
+    creativeReviewUpload.single('file')(req, res, (err) => {
+      if (!err) return next();
+      const msg = err.message || 'Upload failed';
+      const status = /file too large/i.test(msg) ? 413 : 400;
+      return res.status(status).json({
+        error:
+          status === 413
+            ? `File is too large. Max size is ${Math.round(CREATIVE_REVIEW_MAX_FILE_BYTES / (1024 * 1024))} MB.`
+            : msg,
+      });
+    });
+  },
+  async (req, res) => {
+    try {
+      if (!isBucketConfigured()) {
+        return res.status(503).json({
+          error: 'Platform file storage is not configured yet. Use a URL until bucket credentials are available.',
+        });
+      }
+      const { eventId } = req.params;
+      if (!eventId) {
+        return res.status(400).json({ error: 'eventId is required' });
+      }
+      if (req.auth && !userCanAccessEvent(req.auth, eventId)) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      if (!req.file?.buffer || !creativeFileAllowed(req.file)) {
+        return res.status(400).json({ error: 'No file uploaded or unsupported file type.' });
+      }
+
+      await ensureEventCueFilesSchema(pool);
+      const originalName = safeOriginalName(req.file.originalname || 'creative-file');
+      const fileId = crypto.randomUUID();
+      const objectKey = `content-review/${eventId}/${fileId}/${originalName}`;
+      const createdAt = new Date();
+      const expiresAt = new Date(createdAt.getTime());
+      expiresAt.setMonth(expiresAt.getMonth() + 4);
+      const auth = req.auth || {};
+      const uploaderId = auth.userId || auth.email || auth.accessId || null;
+      const uploaderName = auth.fullName || auth.email || auth.userName || null;
+
+      const s3 = getS3();
+      const { bucket } = getBucketConfig();
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: objectKey,
+          Body: req.file.buffer,
+          ContentType: req.file.mimetype || 'application/octet-stream',
+        })
+      );
+
+      await pool.query(
+        `INSERT INTO public.event_cue_files (
+           id, event_id, item_id, object_key, original_name, mime_type, size_bytes,
+           uploaded_by, uploaded_by_name, created_at, expires_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          fileId,
+          eventId,
+          0,
+          objectKey,
+          originalName,
+          req.file.mimetype || null,
+          req.file.size || req.file.buffer.length,
+          uploaderId,
+          uploaderName,
+          createdAt.toISOString(),
+          expiresAt.toISOString(),
+        ]
+      );
+
+      const fileRef = creativeFileRef(fileId);
+      const upsert = await pool.query(
+        `INSERT INTO content_review_data (
+           event_id, reviews, stream_url, creative_pdf_url, active_stage, side_rail_width_px,
+           last_modified_by, last_modified_by_name, updated_at
+         ) VALUES ($1, '{}'::jsonb, NULL, $2, 'creative', NULL, $3, $4, NOW())
+         ON CONFLICT (event_id) DO UPDATE SET
+           creative_pdf_url = EXCLUDED.creative_pdf_url,
+           last_modified_by = EXCLUDED.last_modified_by,
+           last_modified_by_name = EXCLUDED.last_modified_by_name,
+           updated_at = NOW()
+         RETURNING *`,
+        [eventId, fileRef, uploaderId, uploaderName]
+      );
+      const row = upsert.rows[0];
+      const creativePdfUrl = await resolveCreativePdfUrl(eventId, row.creative_pdf_url || null);
+      const payload = {
+        event_id: row.event_id,
+        reviews: row.reviews || {},
+        stream_url: row.stream_url || null,
+        creative_pdf_url: creativePdfUrl,
+        active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
+        side_rail_width_px: row.side_rail_width_px ?? null,
+        updated_at: row.updated_at,
+      };
+      broadcastUpdate(eventId, 'contentReviewDataUpdated', payload);
+      res.status(201).json({
+        ok: true,
+        creative_pdf_url: creativePdfUrl,
+        file: {
+          id: fileId,
+          original_name: originalName,
+          mime_type: req.file.mimetype || null,
+          size_bytes: req.file.size || req.file.buffer.length,
+        },
+      });
+    } catch (error) {
+      console.error('Error uploading content review creative file:', error);
+      res.status(500).json({ error: error.message || 'Failed to upload creative file' });
+    }
+  }
+);
 
 // Indented Cues endpoints
 app.get('/api/indented-cues/:eventId', async (req, res) => {

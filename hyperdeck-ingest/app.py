@@ -371,16 +371,21 @@ class HyperDeckIngestApp:
 
         dest = self._card(left, "Copy after stop")
         dest.columnconfigure(1, weight=1)
-        self._grid_label(dest, 0, "Method")
+        self._grid_label(dest, 0, "Source mode")
         method = tk.Frame(dest, bg=CARD)
         method.grid(row=0, column=1, sticky="w", pady=4)
-        ttk.Radiobutton(method, text="FTP from deck", variable=self.copy_method_var, value="ftp").pack(side="left")
-        ttk.Radiobutton(method, text="Folder on this PC", variable=self.copy_method_var, value="folder").pack(
+        ttk.Radiobutton(method, text="FTP from HyperDeck", variable=self.copy_method_var, value="ftp").pack(side="left")
+        ttk.Radiobutton(method, text="Mounted deck folder", variable=self.copy_method_var, value="folder").pack(
             side="left", padx=(14, 0)
         )
+        ttk.Label(
+            dest,
+            text="FTP mode reads from the connected deck. Mounted mode is only for SSD/network shares already mapped on this PC.",
+            style="CardMuted.TLabel",
+        ).grid(row=1, column=1, sticky="w")
 
         self.ftp_row = tk.Frame(dest, bg=CARD)
-        self.ftp_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
+        self.ftp_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
         self.ftp_row.columnconfigure(1, weight=1)
         ttk.Label(self.ftp_row, text="FTP", style="CardMuted.TLabel").grid(row=0, column=0, sticky="nw", padx=(0, 10), pady=4)
         ftp_fields = tk.Frame(self.ftp_row, bg=CARD)
@@ -397,9 +402,9 @@ class HyperDeckIngestApp:
         )
 
         self.src_row = tk.Frame(dest, bg=CARD)
-        self.src_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
+        self.src_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
         self.src_row.columnconfigure(1, weight=1)
-        ttk.Label(self.src_row, text="Source", style="CardMuted.TLabel").grid(
+        ttk.Label(self.src_row, text="Mounted source folder", style="CardMuted.TLabel").grid(
             row=0, column=0, sticky="w", padx=(0, 10)
         )
         src_fields = tk.Frame(self.src_row, bg=CARD)
@@ -409,22 +414,22 @@ class HyperDeckIngestApp:
             side="left", padx=(6, 0)
         )
 
-        self._grid_label(dest, 2, "Target")
+        self._grid_label(dest, 3, "Target copy folder")
         tgt = tk.Frame(dest, bg=CARD)
-        tgt.grid(row=2, column=1, sticky="ew", pady=4)
+        tgt.grid(row=3, column=1, sticky="ew", pady=4)
         ttk.Entry(tgt, textvariable=self.target_folder_var).pack(side="left", fill="x", expand=True)
         ttk.Button(tgt, text="Browse", command=lambda: self._browse(self.target_folder_var)).pack(
             side="left", padx=(6, 0)
         )
-        self._grid_label(dest, 3, "Name")
-        ttk.Entry(dest, textvariable=self.pattern_var).grid(row=3, column=1, sticky="ew", pady=4)
+        self._grid_label(dest, 4, "Name")
+        ttk.Entry(dest, textvariable=self.pattern_var).grid(row=4, column=1, sticky="ew", pady=4)
         ttk.Label(
             dest,
             text="{date} {event} {segment} {cue}  ·  date is event YYMMDD",
             style="CardMuted.TLabel",
-        ).grid(row=4, column=1, sticky="w")
+        ).grid(row=5, column=1, sticky="w")
         flags = tk.Frame(dest, bg=CARD)
-        flags.grid(row=5, column=1, sticky="w", pady=(8, 0))
+        flags.grid(row=6, column=1, sticky="w", pady=(8, 0))
         ttk.Checkbutton(flags, text="Only marked Record cues", variable=self.only_marked_var).pack(anchor="w")
         ttk.Checkbutton(flags, text="Auto-copy after stop", variable=self.auto_copy_var).pack(anchor="w", pady=(4, 0))
         self.copy_method_var.trace_add("write", lambda *_: self._sync_copy_method_ui())

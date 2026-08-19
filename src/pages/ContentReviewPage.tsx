@@ -724,6 +724,9 @@ const ContentReviewPage: React.FC = () => {
   const [savedCreativePdfUrl, setSavedCreativePdfUrl] = useState<string | null>(null);
   const [creativePdfUrlDraft, setCreativePdfUrlDraft] = useState('');
   const [creativePdfSetupOpen, setCreativePdfSetupOpen] = useState(true);
+  const [isUploadingCreativeFile, setIsUploadingCreativeFile] = useState(false);
+  const [creativeFileUploadError, setCreativeFileUploadError] = useState<string | null>(null);
+  const creativeFileInputRef = useRef<HTMLInputElement>(null);
   /** When set, main creative iframe shows this cue asset instead of the event PDF */
   const [creativeEmbedOverride, setCreativeEmbedOverride] = useState<string | null>(null);
   const [creativeEmbedOverrideLabel, setCreativeEmbedOverrideLabel] = useState<string | null>(null);
@@ -1097,6 +1100,50 @@ const ContentReviewPage: React.FC = () => {
     );
     setCreativePdfSetupOpen(true);
   }, [creativePdfStorageKey, setSearchParams]);
+
+  const uploadCreativeFile = useCallback(
+    async (file: File) => {
+      if (!eventId) return;
+      setCreativeFileUploadError(null);
+      setIsUploadingCreativeFile(true);
+      try {
+        const result = await DatabaseService.uploadContentReviewCreativeFile(eventId, file);
+        if (!result?.creative_pdf_url) {
+          setCreativeFileUploadError('Upload failed. Please try again.');
+          return;
+        }
+        const normalized = normalizeCreativeEmbedUrl(result.creative_pdf_url);
+        if (!normalized) {
+          setCreativeFileUploadError('File uploaded, but embed URL was invalid.');
+          return;
+        }
+        setSavedCreativePdfUrl(normalized);
+        setCreativePdfUrlDraft(normalized);
+        if (creativePdfStorageKey) {
+          try {
+            localStorage.setItem(creativePdfStorageKey, normalized);
+          } catch {
+            /* ignore quota */
+          }
+        }
+        setSearchParams(
+          (prev) => {
+            const p = new URLSearchParams(prev);
+            p.set('creativePdf', normalized);
+            return p;
+          },
+          { replace: true }
+        );
+        setCreativePdfSetupOpen(false);
+        setCreativeEmbedOverride(null);
+        setCreativeEmbedOverrideLabel(null);
+      } finally {
+        setIsUploadingCreativeFile(false);
+        if (creativeFileInputRef.current) creativeFileInputRef.current.value = '';
+      }
+    },
+    [eventId, creativePdfStorageKey, setSearchParams]
+  );
 
   const applyStreamUrl = useCallback(() => {
     const next = sanitizeStreamEmbedUrl(streamUrlDraft);
@@ -2620,6 +2667,29 @@ const ContentReviewPage: React.FC = () => {
                         className="w-full rounded border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-violet-400"
                       />
                       <div className="flex flex-wrap gap-2">
+                        <input
+                          ref={creativeFileInputRef}
+                          type="file"
+                          accept=".pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file || isUploadingCreativeFile) return;
+                            void uploadCreativeFile(file);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => creativeFileInputRef.current?.click()}
+                          disabled={isUploadingCreativeFile}
+                          className={`rounded px-3 py-1.5 text-xs font-semibold text-white ${
+                            isUploadingCreativeFile
+                              ? 'cursor-wait bg-slate-600'
+                              : 'bg-emerald-600 hover:bg-emerald-500'
+                          }`}
+                        >
+                          {isUploadingCreativeFile ? 'Uploading…' : 'Upload File'}
+                        </button>
                         <button
                           type="button"
                           onClick={applyCreativePdfUrl}
@@ -2647,9 +2717,12 @@ const ContentReviewPage: React.FC = () => {
                         ) : null}
                       </div>
                       <p className="text-[10px] leading-snug text-slate-500">
-                        Direct .pdf links work best. Google Drive file links are converted to preview embeds. Some hosts
-                        block iframes—use Open tab if the viewer is blank.
+                        Upload PDF/Word/PowerPoint from your computer, or paste a URL. Google Drive file links are
+                        converted to preview embeds. Some hosts block iframes—use Open tab if the viewer is blank.
                       </p>
+                      {creativeFileUploadError ? (
+                        <p className="text-[10px] leading-snug text-rose-300">{creativeFileUploadError}</p>
+                      ) : null}
                     </div>
                   )}
                 </div>
