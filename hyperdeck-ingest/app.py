@@ -65,7 +65,9 @@ class HyperDeckIngestApp:
         self._recording_item_id = None
         self._recording_clip_name = ""
         self._recording_meta: dict = {}
+        self._recording_seen_running = False
         self._completed_record_item_ids: set[str] = set()
+        self._session_timer_configured = False
         self.copied_keys = set(str(x) for x in (self.cfg.get("copied_keys") or []))
         self._auto_stop_never = False
         self._auto_stop_ends_at: float | None = None
@@ -78,6 +80,7 @@ class HyperDeckIngestApp:
         self._build_ui()
         self._load_fields_from_config()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(300, self._prompt_startup_session)
 
     def _build_style(self) -> None:
         style = ttk.Style(self.root)
@@ -436,7 +439,7 @@ class HyperDeckIngestApp:
         ).grid(row=4, column=1, sticky="w")
         flags = tk.Frame(dest, bg=CARD)
         flags.grid(row=5, column=1, sticky="w", pady=(8, 0))
-        ttk.Checkbutton(flags, text="Only marked Record cues", variable=self.only_marked_var).pack(anchor="w")
+        ttk.Checkbutton(flags, text="Only Record-marked cues (required)", variable=self.only_marked_var, state="disabled").pack(anchor="w")
         ttk.Checkbutton(flags, text="Auto-copy after stop", variable=self.auto_copy_var).pack(anchor="w", pady=(4, 0))
 
         clips = self._card(right, "HyperDeck clips", fill="both")
@@ -700,7 +703,26 @@ class HyperDeckIngestApp:
             return
         self.event_locked_var.set(True)
         self.log(f"Event confirmed and locked: {eid}", "ok")
-        self._bg(self._refresh_schedule)
+
+        def work():
+            try:
+                self._refresh_schedule()
+                ev = self._current_event()
+                marked = sum(1 for item in self.schedule if item_needs_recording(item))
+                self.root.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Event locked",
+                        f"{ev.get('name') or 'Event'}\n\n"
+                        f"Record-marked cues: {marked}\n\n"
+                        "Click Start follow when ready. The app will record when a "
+                        "Record-marked cue is loaded and stop when that cue's timer stops.",
+                    ),
+                )
+            except Exception as exc:
+                self.root.after(0, lambda: messagebox.showerror("Event", str(exc)))
+
+        self._bg(work)
 
     def _choose_event(self, ev: dict) -> None:
         eid = str(ev.get("id") or "")
@@ -841,7 +863,12 @@ class HyperDeckIngestApp:
         self._auto_stop_notice = ""
         self.notice_frame.pack_forget()
 
-    def _ask_auto_stop(self) -> dict | None:
+    def _ask_auto_stop(
+        self,
+        *,
+        title: str = "Auto-stop timer",
+        subtitle: str = "Limits Railway polling if this PC is left running after the show.",
+    ) -> dict | None:
         hours = int(self.cfg.get("auto_stop_hours") or 2)
         minutes = int(self.cfg.get("auto_stop_minutes") or 0)
         if hours == 0 and minutes == 0:
@@ -849,7 +876,7 @@ class HyperDeckIngestApp:
         result: dict | None = None
 
         dlg = tk.Toplevel(self.root)
-        dlg.title("Auto-stop timer")
+        dlg.title(title)
         dlg.configure(bg=CARD)
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -857,14 +884,14 @@ class HyperDeckIngestApp:
 
         tk.Label(
             dlg,
-            text="Stop follow after",
+            text=title,
             bg=CARD,
             fg=FG,
             font=("Segoe UI", 12, "bold"),
         ).pack(anchor="w", padx=16, pady=(16, 4))
         tk.Label(
             dlg,
-            text="Limits Railway polling if this PC is left running after the show.",
+            text=subtitle,
             bg=CARD,
             fg=MUTED,
             wraplength=360,
@@ -920,15 +947,45 @@ class HyperDeckIngestApp:
         self.root.wait_window(dlg)
         return result
 
-    def configure_auto_stop_defaults(self) -> None:
-        choice = self._ask_auto_stop()
-        if choice is None:
-            return
+    def _apply_auto_stop_choice(self, choice: dict) -> None:
         self.cfg["auto_stop_hours"] = int(choice.get("hours") or self.cfg.get("auto_stop_hours") or 2)
         self.cfg["auto_stop_minutes"] = int(choice.get("minutes") or 0)
         self.cfg["auto_stop_never"] = bool(choice.get("never"))
+        self._session_timer_configured = True
         self._save()
         self._refresh_auto_stop_default_label()
+
+    def _prompt_startup_session(self) -> None:
+        choice = self._ask_auto_stop(
+            title="Railway session timer",
+            subtitle=(
+                "Set how long this app should keep polling Railway before it disconnects. "
+                "You can change this later with Set timer."
+            ),
+        )
+        if choice is None:
+            self._session_timer_configured = True
+            self._refresh_auto_stop_default_label()
+            self.log("Using saved Railway session timer from settings.")
+            return
+        self._apply_auto_stop_choice(choice)
+        if self.cfg.get("auto_stop_never"):
+            self.log("Railway session timer: no auto-stop (until you restart the app)", "ok")
+        else:
+            label = self._auto_stop_label_text(
+                int(self.cfg.get("auto_stop_hours") or 0),
+                int(self.cfg.get("auto_stop_minutes") or 0),
+            )
+            self.log(f"Railway session timer set: {label}", "ok")
+
+    def configure_auto_stop_defaults(self) -> None:
+        choice = self._ask_auto_stop(
+            title="Railway session timer",
+            subtitle="How long should this app keep polling Railway before disconnecting?",
+        )
+        if choice is None:
+            return
+        self._apply_auto_stop_choice(choice)
 
     def _browse(self, var: tk.StringVar) -> None:
         path = filedialog.askdirectory()
@@ -1175,6 +1232,7 @@ class HyperDeckIngestApp:
         self._recording_item_id = None
         if finished_item_id:
             self._completed_record_item_ids.add(finished_item_id)
+        self._recording_seen_running = False
         if not self.auto_copy_var.get():
             self._refresh_clips_sync()
             return
@@ -1197,12 +1255,12 @@ class HyperDeckIngestApp:
         if not self.event_id_var.get().strip():
             messagebox.showinfo("Event", "Load events and select one first.")
             return
-        choice = self._ask_auto_stop()
-        if choice is None:
+        if not self.event_locked_var.get():
+            messagebox.showinfo(
+                "Event",
+                "Confirm and lock the event first (Confirm event button), then Start follow.",
+            )
             return
-        self.cfg["auto_stop_hours"] = int(choice.get("hours") or self.cfg.get("auto_stop_hours") or 2)
-        self.cfg["auto_stop_minutes"] = int(choice.get("minutes") or 0)
-        self.cfg["auto_stop_never"] = bool(choice.get("never"))
         try:
             self._apply_api_from_fields()
             if not self.deck.connected:
@@ -1218,6 +1276,7 @@ class HyperDeckIngestApp:
         self._hide_auto_stop_notice()
         self._save()
         self._completed_record_item_ids = set()
+        self._recording_seen_running = False
         self.following = True
         self._set_pill("following")
         self._schedule_auto_stop(
@@ -1226,9 +1285,9 @@ class HyperDeckIngestApp:
             bool(self.cfg.get("auto_stop_never")),
         )
         if self._auto_stop_never:
-            self.log("Follow started — polling until you click Stop", "ok")
+            self.log("Follow started — polling until session timer expires or you click Stop", "ok")
         else:
-            self.log(f"Follow started — auto-stop in {self._auto_stop_label}", "ok")
+            self.log(f"Follow started — Railway auto-stop in {self._auto_stop_label}", "ok")
         self._follow_thread = threading.Thread(target=self._follow_loop, daemon=True)
         self._follow_thread.start()
 
@@ -1282,13 +1341,33 @@ class HyperDeckIngestApp:
                 self.root.after(0, lambda m=str(exc): self.status_ros.set(m))
             time.sleep(poll)
 
+    def _cue_timer_stopped(self, timer: dict | None, item_id) -> bool:
+        """True when the given cue's timer has stopped/completed (not merely unloaded)."""
+        if timer is None:
+            return False
+        if str(timer.get("item_id")) != str(item_id):
+            return False
+        state = str(timer.get("timer_state") or "").lower()
+        running = timer.get("is_running") is True or state == "running"
+        if state in ("stopped", "done", "ended", "completed"):
+            return True
+        if self._recording_seen_running and not running:
+            return True
+        return False
+
     def _follow_tick(self) -> None:
         eid = self.event_id_var.get().strip()
         timer = self.api.get_active_timer(eid)
+
+        if self._recording_item_id is not None and timer is None:
+            self._stop_and_maybe_copy()
+            self._last_running = False
+            self._last_item_id = None
+            self.root.after(0, lambda: self.status_cue.set("None"))
+            return
+
         if not timer:
             self.root.after(0, lambda: self.status_cue.set("None"))
-            if self._recording_item_id is not None:
-                self._stop_and_maybe_copy()
             self._last_running = False
             self._last_item_id = None
             return
@@ -1304,38 +1383,42 @@ class HyperDeckIngestApp:
             except Exception:
                 pass
         marked = item_needs_recording(item)
-        should = bool(item_id) and (marked or not self.only_marked_var.get())
         cue = cue_label(item)
         segment = str((item or {}).get("segmentName") or "")
         rec = "REC" if marked else "—"
         state_label = "running" if running else (state or "loaded")
+        if self._recording_item_id is not None and str(self._recording_item_id) == str(item_id):
+            state_label = f"{state_label} · recording"
         self.root.after(
             0,
             lambda: self.status_cue.set(f"{cue or item_id}  {segment}  [{state_label}]  {rec}"),
         )
         self.root.after(0, lambda: self.status_ros.set("Polling OK"))
 
-        changed = str(item_id) != str(self._last_item_id)
-        stopped = self._last_running and not running
-        self._last_item_id = item_id
-        self._last_running = running
+        if self._recording_item_id is not None and str(self._recording_item_id) == str(item_id):
+            if running:
+                self._recording_seen_running = True
+            if self._cue_timer_stopped(timer, self._recording_item_id):
+                self._stop_and_maybe_copy()
 
-        if self._recording_item_id is not None and (
-            stopped
-            or changed
-            or (state in ("stopped", "done", "ended") and str(self._recording_item_id) == str(item_id))
+        if (
+            marked
+            and self._recording_item_id is None
+            and state in ("loaded", "running")
+            and str(item_id) not in self._completed_record_item_ids
         ):
-            self._stop_and_maybe_copy()
-
-        if should and self._recording_item_id is None and str(item_id) not in self._completed_record_item_ids:
             name = hyperdeck_record_name(cue=cue, segment=segment or "clip")
             self.deck.record(name)
             self._recording_item_id = item_id
             self._recording_clip_name = name
             self._recording_meta = item or {}
-            self.log(f"Auto-record {name}", "ok")
+            self._recording_seen_running = running
+            self.log(f"Auto-record on load: {name}", "ok")
             self.root.after(0, lambda: self.status_deck.set(f"Recording {name}"))
             self._set_pill("recording")
+
+        self._last_item_id = item_id
+        self._last_running = running
 
 
 def main() -> None:

@@ -41,7 +41,15 @@ def cue_label(item: dict | None) -> str:
 def item_needs_recording(item: dict | None) -> bool:
     if not item:
         return False
-    return item.get("needsRecording") is True or item.get("needs_recording") is True
+    if item.get("needsRecording") is True or item.get("needs_recording") is True:
+        return True
+    if item.get("recording") is True:
+        return True
+    fields = item.get("customFields") or {}
+    if isinstance(fields, dict):
+        if fields.get("needsRecording") is True or fields.get("recording") is True:
+            return True
+    return False
 
 
 def sanitize_filename(value: str, max_len: int = 120) -> str:

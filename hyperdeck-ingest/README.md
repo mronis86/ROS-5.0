@@ -62,10 +62,12 @@ Always set **Target folder** (editor watch folder / share).
 
 ## Follow rules
 
-- Records on **timer start / running**, not on Comms toggle alone.
-- **Only record cues marked Record** is on by default (Comms / Rec column).
-- **Start follow** asks for an auto-stop timer (default 2 hours, max 24, or Never). When it ends, follow stops, the current clip is copied if auto-copy is on, and the HyperDeck disconnects.
-- Manual Record / Stop / Copy last clip are always available.
+1. On launch, set the **Railway session timer** (how long the app keeps polling before disconnect).
+2. Load events, select one, click **Confirm event** to lock it.
+3. Click **Start follow**.
+4. When a cue marked **Record** is **loaded**, HyperDeck starts recording.
+5. Recording stops (and copies if enabled) when **that cue's timer stops** — not when the next cue loads.
+6. Manual Record / Stop / Copy last clip are always available.
 
 ## Tokens
 
