@@ -528,6 +528,8 @@ const RunOfShowMobilePage: React.FC = () => {
   const canEditCueOrDuration = isEditor || isOperator;
   /** Program, segment, shot, notes, assets, speakers, PPT/Q&A — editor only on desktop grid. */
   const canEditEditorOnlyFields = isEditor;
+  /** REC flag — editor + operator (matches desktop ScheduleRow). */
+  const canEditRecording = isEditor || isOperator;
 
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [rosData, setRosData] = useState<RunOfShowData | null>(null);
@@ -1488,8 +1490,8 @@ const RunOfShowMobilePage: React.FC = () => {
                     type="checkbox"
                     checked={needsRecordingDraft}
                     onChange={(e) => setNeedsRecordingDraft(e.target.checked)}
-                    disabled={!canEditEditorOnlyFields}
-                    title={!canEditEditorOnlyFields ? 'Only Editors can mark cues for recording' : undefined}
+                    disabled={!canEditRecording}
+                    title={!canEditRecording ? 'Viewers cannot mark cues for recording' : undefined}
                   />
                   Record
                 </label>

@@ -66,11 +66,14 @@ function personalNoteKey(itemId: number): string {
 
 const CUE_COLUMN: RosColumnSpec = { type: 'cue', id: 'cue', name: 'Cue' };
 
+type ViewMode = 'plan' | 'follow';
+
 const PinNotesPopoutPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const eventIdFromUrl = searchParams.get('eventId') || '';
 
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>('plan');
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [lastLoadedCueId, setLastLoadedCueId] = useState<number | null>(null);
   const [columns, setColumns] = useState<RosColumnSpec[]>([]);
@@ -403,6 +406,7 @@ const PinNotesPopoutPage: React.FC = () => {
 
   const displayRows = React.useMemo(() => {
     if (schedule.length === 0) return [];
+    if (viewMode === 'plan') return schedule;
     const currentId = activeItemId;
     const idx =
       currentId != null
@@ -412,7 +416,19 @@ const PinNotesPopoutPage: React.FC = () => {
     return [schedule[start], schedule[start + 1], schedule[start + 2], schedule[start + 3]].filter(
       Boolean
     ) as ScheduleItem[];
-  }, [schedule, activeItemId]);
+  }, [schedule, activeItemId, viewMode]);
+
+  const isActiveCue = useCallback(
+    (item: ScheduleItem) =>
+      activeItemId != null && (item.id === activeItemId || item.id === Number(activeItemId)),
+    [activeItemId]
+  );
+
+  useEffect(() => {
+    if (viewMode !== 'follow' || activeItemId == null) return;
+    const el = document.getElementById(`pin-notes-row-${activeItemId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [viewMode, activeItemId, displayRows]);
 
   const getSharedCellValue = (item: ScheduleItem, col: RosColumnSpec): string => {
     if (col.type === 'notes') return item.notes || '';
@@ -683,6 +699,29 @@ const PinNotesPopoutPage: React.FC = () => {
             {saveStatus === 'saving' && <span className="text-amber-300 text-sm">Saving…</span>}
             {saveStatus === 'saved' && <span className="text-emerald-400 text-sm">Saved</span>}
             {saveStatus === 'error' && <span className="text-red-400 text-sm">Save failed — is the API deployed?</span>}
+
+            <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
+              <button
+                type="button"
+                onClick={() => setViewMode('plan')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md ${
+                  viewMode === 'plan' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Browse and edit notes for every cue"
+              >
+                Plan
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('follow')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md ${
+                  viewMode === 'follow' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Show current cue plus the next three"
+              >
+                Follow
+              </button>
+            </div>
 
             {!myNotesEnabled ? (
               operatorName ? (
@@ -972,7 +1011,7 @@ const PinNotesPopoutPage: React.FC = () => {
               className="grid min-w-0 w-full"
               style={{
                 gridTemplateColumns,
-                gridTemplateRows: 'auto auto auto auto auto',
+                gridTemplateRows: `repeat(${displayRows.length + 1}, auto)`,
                 width: '100%',
                 minWidth: 0,
                 boxSizing: 'border-box',
@@ -1017,14 +1056,22 @@ const PinNotesPopoutPage: React.FC = () => {
 
               {displayRows.map((item, rowIndex) =>
                 displayColumns.map((col, colIndex) => {
-                  const isCurrent = rowIndex === 0;
-                  const label = isCurrent ? 'Current' : `Next ${rowIndex}`;
+                  const isCurrent = isActiveCue(item);
+                  const followLabel =
+                    viewMode === 'follow'
+                      ? rowIndex === 0 || isCurrent
+                        ? 'Current'
+                        : `Next ${rowIndex}`
+                      : isCurrent
+                        ? 'Current'
+                        : '';
 
                   if (col.type === 'cue') {
                     const value = getSharedCellValue(item, col);
                     return (
                       <div
                         key={item.id + '-' + colKey(col)}
+                        id={colIndex === 0 ? `pin-notes-row-${item.id}` : undefined}
                         style={{ gridColumn: getGridColumn(colIndex), gridRow: rowIndex + 2 }}
                         className={`flex items-center p-3 border-b border-r border-slate-600 ${
                           isCurrent ? 'bg-slate-800/90 ring-inset ring-2 ring-amber-500' : 'bg-slate-800/50'
@@ -1052,15 +1099,19 @@ const PinNotesPopoutPage: React.FC = () => {
                       }`}
                     >
                       <div className="flex flex-row items-stretch gap-0 flex-shrink-0 mb-6">
-                        <span
-                          className={`text-xs font-bold uppercase px-2 py-1.5 rounded-l flex-shrink-0 flex items-center ${
-                            isCurrent ? 'bg-amber-600 text-white' : 'bg-slate-600 text-slate-300'
-                          }`}
-                        >
-                          {label}
-                        </span>
+                        {followLabel ? (
+                          <span
+                            className={`text-xs font-bold uppercase px-2 py-1.5 rounded-l flex-shrink-0 flex items-center ${
+                              isCurrent ? 'bg-amber-600 text-white' : 'bg-slate-600 text-slate-300'
+                            }`}
+                          >
+                            {followLabel}
+                          </span>
+                        ) : null}
                         <h3
-                          className={`flex-1 min-w-0 text-base font-semibold text-white leading-tight truncate pl-3 py-1.5 rounded-r flex items-center ${
+                          className={`flex-1 min-w-0 text-base font-semibold text-white leading-tight truncate pl-3 py-1.5 flex items-center ${
+                            followLabel ? 'rounded-r' : 'rounded'
+                          } ${
                             isCurrent
                               ? 'border-l-2 border-amber-500 bg-amber-950/40'
                               : 'border-l-2 border-slate-500 bg-slate-700/50'

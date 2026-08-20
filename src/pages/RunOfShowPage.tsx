@@ -9672,10 +9672,13 @@ const RunOfShowPage: React.FC = () => {
     setActiveRowMenu(null);
   };
 
-  // Move-rows modal: boundary = index of current loaded or running row (in filtered schedule). Only rows BELOW that can be reordered.
-  // movable = all rows below boundary; movableParents = only top-level (non-indented) rows for selection; indented move with parent.
+  // Move-rows modal: boundary = current loaded/running cue; freeze that cue's consecutive indented
+  // children with it. Only rows BELOW the frozen block can be reordered. Selection lists main cues
+  // only; indented sub-cues move with their parent (via isIndentedScheduleItem + indentedCues).
   const moveRowsBoundaryAndMovable = useMemo(() => {
     const filtered = schedule.filter(item => (item.day || 1) === selectedDay);
+    const itemIsIndented = (item: ScheduleItem) => isIndentedScheduleItem(item, indentedCues);
+
     let boundaryIndex = -1;
     if (activeItemId != null) {
       const idx = filtered.findIndex(item => item.id === activeItemId);
@@ -9687,19 +9690,53 @@ const RunOfShowPage: React.FC = () => {
         if (idx !== -1) boundaryIndex = Math.max(boundaryIndex, idx);
       }
     });
-    const movable = boundaryIndex >= 0 ? filtered.slice(boundaryIndex + 1) : [];
-    const movableParents = movable.filter(item => !item.isIndented);
-    // Blocks: each block = [parent, ...consecutive indented] for reordering
+
+    // Keep consecutive indented children of the current cue locked with it
+    let freezeEnd = boundaryIndex;
+    if (boundaryIndex >= 0) {
+      for (let i = boundaryIndex + 1; i < filtered.length; i++) {
+        if (itemIsIndented(filtered[i])) freezeEnd = i;
+        else break;
+      }
+    }
+
+    const movable = freezeEnd >= 0 ? filtered.slice(freezeEnd + 1) : [];
+
+    // Rare data edge case: leading indented rows with no parent in the movable zone stay pinned
+    const leadingOrphans: ScheduleItem[] = [];
+    let movableStart = 0;
+    while (movableStart < movable.length && itemIsIndented(movable[movableStart])) {
+      leadingOrphans.push(movable[movableStart]);
+      movableStart += 1;
+    }
+    const movableForBlocks = movable.slice(movableStart);
+
+    const movableParents = movableForBlocks.filter(item => !itemIsIndented(item));
     const blocks: ScheduleItem[][] = [];
-    for (const item of movable) {
-      if (!item.isIndented) blocks.push([item]);
+    for (const item of movableForBlocks) {
+      if (!itemIsIndented(item)) blocks.push([item]);
       else if (blocks.length > 0) blocks[blocks.length - 1].push(item);
     }
-    return { boundaryIndex, movable, movableParents, blocks, filtered };
-  }, [schedule, selectedDay, activeItemId, activeTimers]);
+    return {
+      boundaryIndex,
+      freezeEnd,
+      movable,
+      leadingOrphans,
+      movableParents,
+      blocks,
+      filtered,
+    };
+  }, [schedule, selectedDay, activeItemId, activeTimers, indentedCues]);
 
   const applyMoveRowsReorder = () => {
-    const { blocks, movable, movableParents, boundaryIndex, filtered } = moveRowsBoundaryAndMovable;
+    const {
+      blocks,
+      movable,
+      leadingOrphans,
+      movableParents,
+      freezeEnd,
+      filtered,
+    } = moveRowsBoundaryAndMovable;
     if (blocks.length === 0 || moveRowsSelectedIds.size === 0) return;
     const targetPos = Math.max(0, Math.min(moveRowsTargetPosition, movableParents.length));
     const selectedBlocks = blocks.filter(block => moveRowsSelectedIds.has(block[0].id));
@@ -9707,13 +9744,13 @@ const RunOfShowPage: React.FC = () => {
     const beforeBlocks = blocks.slice(0, targetPos).filter(block => !moveRowsSelectedIds.has(block[0].id));
     const afterBlocks = blocks.slice(targetPos).filter(block => !moveRowsSelectedIds.has(block[0].id));
     const reorderedBlocks = [...beforeBlocks, ...selectedBlocks, ...afterBlocks];
-    const reordered = reorderedBlocks.flat();
+    const reordered = [...leadingOrphans, ...reorderedBlocks.flat()];
     const movableIds = new Set(movable.map(m => m.id));
     const scheduleWithoutMovable = schedule.filter(s => !((s.day || 1) === selectedDay && movableIds.has(s.id)));
-    const boundaryItemId = boundaryIndex >= 0 ? filtered[boundaryIndex].id : null;
+    const freezeItemId = freezeEnd >= 0 ? filtered[freezeEnd].id : null;
     let insertAt: number;
-    if (boundaryItemId != null) {
-      const idx = scheduleWithoutMovable.findIndex(s => s.id === boundaryItemId);
+    if (freezeItemId != null) {
+      const idx = scheduleWithoutMovable.findIndex(s => s.id === freezeItemId);
       insertAt = idx === -1 ? 0 : idx + 1;
     } else {
       insertAt = scheduleWithoutMovable.findIndex(s => (s.day || 1) === selectedDay);
@@ -10727,17 +10764,18 @@ const RunOfShowPage: React.FC = () => {
 
       {/* Move Rows modal - reorder rows below current loaded/running cue (step 1: select, step 2: confirm) */}
       {showMoveRowsModal && (() => {
-        const { boundaryIndex, filtered, movable, movableParents, blocks } = moveRowsBoundaryAndMovable;
+        const { boundaryIndex, freezeEnd, filtered, movable, movableParents, blocks } = moveRowsBoundaryAndMovable;
         const selectedBlocks = blocks.filter(block => moveRowsSelectedIds.has(block[0].id));
         const totalRowsToMove = selectedBlocks.reduce((sum, b) => sum + b.length, 0);
+        const rowBase = freezeEnd >= 0 ? freezeEnd : boundaryIndex;
         const targetLabel = movableParents.length === 0
           ? ''
           : moveRowsTargetPosition === 0
             ? 'at start (before first row below cue)'
             : moveRowsTargetPosition >= movableParents.length
-              ? `at end (after row ${boundaryIndex + 1 + movable.length})`
+              ? `at end (after row ${rowBase + 1 + movable.length})`
               : (() => {
-                  const rowNum = boundaryIndex + 2 + blocks.slice(0, moveRowsTargetPosition).reduce((acc, b) => acc + b.length, 0);
+                  const rowNum = rowBase + 2 + blocks.slice(0, moveRowsTargetPosition).reduce((acc, b) => acc + b.length, 0);
                   const parent = movableParents[moveRowsTargetPosition - 1];
                   const cuePart = parent?.customFields?.cue ? ` CUE ${parent.customFields.cue}` : '';
                   return `after row ${rowNum}${cuePart}`;
@@ -10749,7 +10787,7 @@ const RunOfShowPage: React.FC = () => {
                 <h3 className="text-lg font-bold text-white">Move Rows {moveRowsStep === 2 ? '— Confirm' : ''}</h3>
                 <p className="text-slate-400 text-sm mt-1">
                   {moveRowsStep === 1
-                    ? 'Reorder rows below the current loaded/running cue. Select one or more rows (indented sub-cues move with their parent), then choose where to move them.'
+                    ? 'Reorder main cues below the current loaded/running cue. Indented sub-cues stay with their parent and are not listed separately.'
                     : 'You are moving rows during a live program. This will reorder the run of show for everyone. Confirm below.'}
                 </p>
                 {boundaryIndex >= 0 && filtered[boundaryIndex] && (() => {
@@ -10782,9 +10820,9 @@ const RunOfShowPage: React.FC = () => {
                     <p className="text-slate-400">No rows below the current cue to reorder.</p>
                   ) : (
                     <div className="space-y-2">
-                      <p className="text-slate-300 text-sm font-medium">Select row(s) to move (indented sub-cues move with parent):</p>
+                      <p className="text-slate-300 text-sm font-medium">Select main cue(s) to move — sub-cues stay with parent:</p>
                       {movableParents.map((item, i) => {
-                        const displayRow = boundaryIndex + 2 + blocks.slice(0, i).reduce((acc, b) => acc + b.length, 0);
+                        const displayRow = rowBase + 2 + blocks.slice(0, i).reduce((acc, b) => acc + b.length, 0);
                         const cueLabel = item.customFields?.cue ? `CUE ${item.customFields.cue}` : '—';
                         const subCount = blocks[i]?.length > 1 ? blocks[i].length - 1 : 0;
                         return (
@@ -10858,14 +10896,14 @@ const RunOfShowPage: React.FC = () => {
                     >
                       <option value={0}>At start (before first row below cue)</option>
                       {movableParents.slice(0, -1).map((item, i) => {
-                        const rowNum = boundaryIndex + 2 + blocks.slice(0, i + 1).reduce((acc, b) => acc + b.length, 0) - 1;
+                        const rowNum = rowBase + 2 + blocks.slice(0, i + 1).reduce((acc, b) => acc + b.length, 0) - 1;
                         const cueLabel = item.customFields?.cue ? ` CUE ${item.customFields.cue}` : '';
                         return (
                           <option key={item.id} value={i + 1}>After row {rowNum}{cueLabel}</option>
                         );
                       })}
                       {movableParents.length > 0 && (
-                        <option value={movableParents.length}>At end (after row {boundaryIndex + 1 + movable.length})</option>
+                        <option value={movableParents.length}>At end (after row {rowBase + 1 + movable.length})</option>
                       )}
                     </select>
                   </div>

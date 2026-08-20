@@ -181,14 +181,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     onRowEditStart?.(item.id);
   };
 
-  const canEditRecording = currentUserRole !== 'VIEWER' && currentUserRole !== 'OPERATOR';
+  const canEditRecording = currentUserRole !== 'VIEWER';
 
   const setNeedsRecording = (next: boolean) => {
     if (isLockedByOther) return;
     claimRowLock();
     handleUserEditing();
     if (!canEditRecording) {
-      alert('Only EDITORs can mark cues for recording. Please change your role to EDITOR.');
+      alert('Viewers cannot mark cues for recording. Please change your role to EDITOR or OPERATOR.');
       return;
     }
     const oldValue = !!item.needsRecording;
@@ -783,9 +783,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               type="checkbox"
               checked={!!item.needsRecording}
               onChange={(e) => setNeedsRecording(e.target.checked)}
-              disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER'}
               className={`w-6 h-6 rounded border-2 ${item.needsRecording ? 'border-red-400 bg-red-700' : isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
-              title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can mark cues for recording' : 'Mark this cue for recording'}
+              title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot mark cues for recording' : 'Mark this cue for recording'}
             />
             <span className={`text-xs font-black tracking-wide ${item.needsRecording ? 'text-red-400' : 'text-slate-300'}`}>REC</span>
           </label>
