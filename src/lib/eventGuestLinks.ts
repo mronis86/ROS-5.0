@@ -7,6 +7,8 @@ export interface GuestEventSummary {
   date: string;
   location?: string;
   numberOfDays?: number;
+  masterStartTime?: string;
+  dayStartTimes?: Record<number | string, string>;
 }
 
 export interface GuestScheduleItem {
@@ -19,11 +21,13 @@ export interface GuestScheduleItem {
   durationMinutes: number;
   durationSeconds: number;
   speakers: string;
+  speakersText: string;
   notes: string;
   cue: string;
   isIndented: boolean;
   hasPPT: boolean;
   hasQA: boolean;
+  needsRecording: boolean;
 }
 
 export interface GuestActiveTimer {
@@ -109,11 +113,8 @@ export function formatGuestDuration(item: GuestScheduleItem): string {
   const h = Number(item.durationHours) || 0;
   const m = Number(item.durationMinutes) || 0;
   const s = Number(item.durationSeconds) || 0;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0 && s > 0) return `${m}m ${s}s`;
-  if (m > 0) return `${m}m`;
-  if (s > 0) return `${s}s`;
-  return '—';
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 export function stripHtmlNotes(html: string): string {
@@ -127,4 +128,63 @@ export function stripHtmlNotes(html: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .trim();
+}
+
+function formatSpeakerSlots(raw: string): string {
+  if (!raw) return '';
+  try {
+    const speakers = JSON.parse(raw);
+    if (!Array.isArray(speakers) || speakers.length === 0) return '';
+    return speakers
+      .slice()
+      .sort((a: { slot?: number }, b: { slot?: number }) => (a.slot || 0) - (b.slot || 0))
+      .filter((speaker: { fullName?: string }) => speaker.fullName && String(speaker.fullName).trim())
+      .map((speaker: { location?: string; slot?: number; fullName?: string; title?: string }) => {
+        const loc =
+          speaker.location === 'Podium'
+            ? 'P'
+            : speaker.location === 'Seat'
+              ? 'S'
+              : speaker.location === 'Virtual'
+                ? 'V'
+                : 'M';
+        const title = speaker.title ? ` (${speaker.title})` : '';
+        return `${loc}${speaker.slot ?? ''} · ${speaker.fullName}${title}`;
+      })
+      .join('\n');
+  } catch {
+    return raw;
+  }
+}
+
+/** Prefer Speakers column (speakersText); fall back to Participants (speakers). */
+export function formatGuestSpeakers(item: GuestScheduleItem): string {
+  return formatSpeakerSlots(item.speakersText) || formatSpeakerSlots(item.speakers) || '';
+}
+
+export const GUEST_PROGRAM_TYPE_COLORS: Record<string, string> = {
+  'PreShow/End': '#8B5CF6',
+  'Podium Transition': '#8B4513',
+  'Panel Transition': '#404040',
+  'Sub Cue': '#F3F4F6',
+  'No Transition': '#059669',
+  Video: '#F59E0B',
+  'Panel+Remote': '#1E40AF',
+  'Remote Only': '#60A5FA',
+  'Break F&B/B2B': '#EC4899',
+  'Breakout Session': '#20B2AA',
+  'Delay Block': '#7C3AED',
+  TBD: '#6B7280',
+  KILLED: '#DC2626',
+  'Full-Stage/Ted-Talk': '#EA580C',
+};
+
+export function guestRowTint(programType: string): string | undefined {
+  const hex = GUEST_PROGRAM_TYPE_COLORS[programType];
+  if (!hex) return undefined;
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, 0.22)`;
 }

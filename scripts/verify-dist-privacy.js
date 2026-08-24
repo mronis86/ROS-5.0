@@ -16,7 +16,8 @@ const patterns = [
   /C:\\Users\\/i,
   /C:\/Users\//i,
   /\/Users\/[^/]+\//,
-  /OneDrive/i,
+  // Absolute OneDrive user paths only — not the product name in UI copy
+  /(?:[A-Za-z]:[\\/]|\/)?Users[\\/][^\\/\s"']+[\\/]OneDrive/i,
   // Real path leaks under the project folder (not GitHub URLs like .../ROS-5.0/pulls)
   /ROS-5\.0[\\/](?:src|node_modules|dist|public|offline-show)\b/i,
   /src[\\/]pages[\\/]/i,
