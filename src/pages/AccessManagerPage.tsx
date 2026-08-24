@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { Users } from 'lucide-react';
+import { Calendar, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessAccessManager } from '../services/auth-service';
 import { getApiBaseUrl } from '../services/api-client';
 import { apiJsonHeaders } from '../lib/sessionAuth';
-import AccessEventAccessModal from '../components/AccessEventAccessModal';
+import AccessEventAccessModal, { type AccessEventAccessModalMode } from '../components/AccessEventAccessModal';
 
 type AccessStatus = 'pending' | 'approved' | 'rejected';
 
@@ -14,6 +14,8 @@ interface AccessRequestRow {
   email: string;
   full_name: string;
   status: AccessStatus;
+  is_admin?: boolean;
+  event_access_count?: number;
   requested_at: string;
   reviewed_at?: string | null;
   reviewed_by?: string | null;
@@ -42,7 +44,10 @@ export default function AccessManagerPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | AccessStatus>('pending');
   const [search, setSearch] = useState('');
-  const [approveModalUser, setApproveModalUser] = useState<AccessRequestRow | null>(null);
+  const [accessEventModal, setAccessEventModal] = useState<{
+    mode: AccessEventAccessModalMode;
+    user: AccessRequestRow;
+  } | null>(null);
 
   const fetchRequests = useCallback(async () => {
     setListLoading(true);
@@ -121,8 +126,8 @@ export default function AccessManagerPage() {
               Access manager
             </h1>
             <p className="mt-2 text-sm text-slate-400 max-w-2xl">
-              Review and approve user access requests. Choose calendar visibility when approving. You can
-              reject pending requests only — approved users must be managed by an administrator.
+              Review access requests and manage which events approved users can see. Use Events to add a show
+              that was not originally selected for them.
             </p>
           </div>
           <Link
@@ -185,6 +190,7 @@ export default function AccessManagerPage() {
                     <th className="px-3 py-2">Name</th>
                     <th className="px-3 py-2">Email</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Events</th>
                     <th className="px-3 py-2">Requested</th>
                     <th className="px-3 py-2">Reviewed</th>
                     <th className="px-3 py-2 text-right">Actions</th>
@@ -208,6 +214,15 @@ export default function AccessManagerPage() {
                           {row.status}
                         </span>
                       </td>
+                      <td className="px-3 py-2 text-slate-400 whitespace-nowrap">
+                        {row.status === 'approved'
+                          ? row.is_admin
+                            ? 'All (admin)'
+                            : (row.event_access_count ?? 0) === 0
+                              ? 'All events'
+                              : `${row.event_access_count} selected`
+                          : '—'}
+                      </td>
                       <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{formatDate(row.requested_at)}</td>
                       <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{formatDate(row.reviewed_at)}</td>
                       <td className="px-3 py-2">
@@ -215,10 +230,21 @@ export default function AccessManagerPage() {
                           {row.status !== 'approved' ? (
                             <button
                               type="button"
-                              onClick={() => setApproveModalUser(row)}
+                              onClick={() => setAccessEventModal({ mode: 'approve', user: row })}
                               className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-600"
                             >
                               Approve
+                            </button>
+                          ) : null}
+                          {row.status === 'approved' ? (
+                            <button
+                              type="button"
+                              onClick={() => setAccessEventModal({ mode: 'edit', user: row })}
+                              className="inline-flex items-center gap-1 rounded bg-violet-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-violet-700"
+                              title="Choose which events this user can access"
+                            >
+                              <Calendar className="h-3 w-3" />
+                              Events
                             </button>
                           ) : null}
                           {row.status === 'pending' ? (
@@ -242,12 +268,19 @@ export default function AccessManagerPage() {
       </div>
 
       <AccessEventAccessModal
-        open={approveModalUser != null}
-        mode="approve"
-        user={approveModalUser}
+        open={accessEventModal != null}
+        mode={accessEventModal?.mode ?? 'edit'}
+        user={accessEventModal?.user ?? null}
         fetchFn={accessManagerFetch}
-        onClose={() => setApproveModalUser(null)}
-        onApproved={() => void fetchRequests()}
+        onClose={() => setAccessEventModal(null)}
+        onApproved={() => {
+          setAccessEventModal(null);
+          void fetchRequests();
+        }}
+        onSaved={() => {
+          setAccessEventModal(null);
+          void fetchRequests();
+        }}
       />
     </div>
   );

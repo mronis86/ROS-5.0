@@ -14,6 +14,7 @@ import EventListRowActions from '../components/EventListRowActions';
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import { parseDisplaySyncEnabled, DISPLAY_SYNC_COLUMN_LABEL } from '../lib/displaySync';
 import EventDisplaySyncToggle from '../components/EventDisplaySyncToggle';
+import ShareEventAccessModal from '../components/ShareEventAccessModal';
 
 type EventListTab = 'upcoming' | 'past' | 'quickMode';
 
@@ -25,6 +26,7 @@ const EventListPage: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [activeTab, setActiveTab] = useState<EventListTab>('upcoming');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [shareAccessEvent, setShareAccessEvent] = useState<Event | null>(null);
   const [filterLocation, setFilterLocation] = useState<string>('all');
   const [filterDays, setFilterDays] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -1033,12 +1035,15 @@ const EventListPage: React.FC = () => {
                             {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
                           </td>
                         )}
-                        <td className="px-2 py-2 min-w-[9.5rem] text-center">
+                        <td className="px-2 py-2 min-w-[10.5rem] text-center">
                           <EventListRowActions
                             layout="table"
                             mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}
                             onLaunch={() => launchRunOfShow(event)}
                             onEdit={() => openEditModal(event)}
+                            onShareAccess={
+                              activeTab === 'quickMode' ? undefined : () => setShareAccessEvent(event)
+                            }
                             onDelete={() => openDeleteConfirmModal(event)}
                             onOpenQuickMode={() => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
                           />
@@ -1072,6 +1077,7 @@ const EventListPage: React.FC = () => {
             onClearQuickModeSelection={clearQuickModeSelection}
             onLaunch={launchRunOfShow}
             onEdit={openEditModal}
+            onShareAccess={setShareAccessEvent}
             onDelete={openDeleteConfirmModal}
             formatDate={formatDate}
             getLocationColor={getLocationColor}
@@ -1429,6 +1435,12 @@ const EventListPage: React.FC = () => {
         }}
         onRoleSelected={handleRoleSelected}
         eventId={selectedEvent?.id || ''}
+      />
+
+      <ShareEventAccessModal
+        open={shareAccessEvent != null}
+        event={shareAccessEvent}
+        onClose={() => setShareAccessEvent(null)}
       />
 
     </div>

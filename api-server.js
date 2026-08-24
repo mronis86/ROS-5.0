@@ -52,6 +52,25 @@ const {
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
 const {
+  isMissingShareTableError,
+  ensureEventShareSchema,
+  ensureEventShareToken,
+  lookupShareByToken,
+  touchShareTokenUsed,
+  appendEventToUserAllowlist,
+  loadEventSummary,
+  isShareToken,
+} = require('./lib/event-share-access');
+const {
+  isMissingGuestTableError,
+  ensureGuestLinkSchema,
+  ensureGuestLink,
+  lookupGuestByToken,
+  touchGuestLinkUsed,
+  loadGuestEventPayload,
+  isGuestToken,
+} = require('./lib/event-guest-links');
+const {
   ensureCalendarSoftDeleteSchema,
   softDeleteCalendarEvent,
   restoreCalendarEvent,
@@ -2595,6 +2614,228 @@ app.get('/api/calendar-events/:id', async (req, res) => {
   } catch (error) {
     console.error('Error fetching calendar event:', error);
     res.status(500).json({ error: 'Failed to fetch calendar event' });
+  }
+});
+
+/** Create or reuse a share-access invite link for an event the caller can already see. */
+app.post('/api/calendar-events/:id/share-access', async (req, res) => {
+  try {
+    if (!req.auth || (req.auth.type !== 'user' && req.auth.type !== 'neon_user')) {
+      return res.status(401).json({ error: 'Sign in required.' });
+    }
+    const eventId = String(req.params.id || '').trim();
+    if (!eventId) return res.status(400).json({ error: 'Event id required.' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'You do not have access to this event.' });
+    }
+    await ensureEventShareSchema(pool);
+    const summary = await loadEventSummary(pool, eventId);
+    if (!summary) return res.status(404).json({ error: 'Event not found.' });
+
+    const rotate = req.body?.rotate === true;
+    const token = await ensureEventShareToken(pool, {
+      eventId,
+      accessId: req.auth.accessId,
+      req,
+      rotate,
+    });
+    res.json({
+      ok: true,
+      event: summary,
+      shareUrl: token.shareUrl,
+      reused: !!token.reused,
+      createdAt: token.createdAt,
+    });
+  } catch (error) {
+    if (isMissingShareTableError(error)) {
+      return res.status(503).json({
+        error: 'Run migration 051_create_event_share_access.sql on Neon to enable share access links.',
+        needsMigration: true,
+      });
+    }
+    console.error('[share-access create]', error);
+    res.status(500).json({ error: error.message || 'Failed to create share link' });
+  }
+});
+
+/** Preview a share-access invite (signed-in approved users). */
+app.get('/api/event-share/:token', async (req, res) => {
+  try {
+    if (!req.auth || (req.auth.type !== 'user' && req.auth.type !== 'neon_user')) {
+      return res.status(401).json({ error: 'Sign in required.' });
+    }
+    const rawToken = String(req.params.token || '').trim();
+    if (!isShareToken(rawToken)) {
+      return res.status(404).json({ error: 'Invalid or expired invite link.' });
+    }
+    await ensureEventShareSchema(pool);
+    const share = await lookupShareByToken(pool, rawToken);
+    if (!share || share.revoked_at) {
+      return res.status(404).json({ error: 'Invalid or expired invite link.' });
+    }
+    const event = await loadEventSummary(pool, share.event_id);
+    if (!event) {
+      return res.status(404).json({ error: 'This event is no longer available.' });
+    }
+
+    let accessStatus = 'needs_add';
+    let message = 'Add this event to your list to see it on the Event List.';
+    if (req.auth.isAdmin) {
+      accessStatus = 'already';
+      message = 'Administrators already have access to all events.';
+    } else if (!req.auth.allowedEventIds) {
+      accessStatus = 'unrestricted';
+      message = 'You already have access to all events.';
+    } else if (req.auth.allowedEventIds.has(String(event.id))) {
+      accessStatus = 'already';
+      message = 'This event is already on your list.';
+    }
+
+    res.json({
+      ok: true,
+      event,
+      accessStatus,
+      message,
+      canAdd: accessStatus === 'needs_add',
+    });
+  } catch (error) {
+    if (isMissingShareTableError(error)) {
+      return res.status(503).json({
+        error: 'Run migration 051_create_event_share_access.sql on Neon to enable share access links.',
+        needsMigration: true,
+      });
+    }
+    console.error('[event-share GET]', error);
+    res.status(500).json({ error: error.message || 'Failed to load invite' });
+  }
+});
+
+/** Accept share invite: append event to the signed-in user's selected-events list. */
+app.post('/api/event-share/:token/accept', async (req, res) => {
+  try {
+    if (!req.auth || (req.auth.type !== 'user' && req.auth.type !== 'neon_user')) {
+      return res.status(401).json({ error: 'Sign in required.' });
+    }
+    if (!req.auth.accessId) {
+      return res.status(403).json({ error: 'Your account is not set up for event access yet.' });
+    }
+    const rawToken = String(req.params.token || '').trim();
+    if (!isShareToken(rawToken)) {
+      return res.status(404).json({ error: 'Invalid or expired invite link.' });
+    }
+    await ensureEventShareSchema(pool);
+    const share = await lookupShareByToken(pool, rawToken);
+    if (!share || share.revoked_at) {
+      return res.status(404).json({ error: 'Invalid or expired invite link.' });
+    }
+    const event = await loadEventSummary(pool, share.event_id);
+    if (!event) {
+      return res.status(404).json({ error: 'This event is no longer available.' });
+    }
+
+    if (req.auth.isAdmin || !req.auth.allowedEventIds) {
+      await touchShareTokenUsed(pool, share.id);
+      return res.json({
+        ok: true,
+        status: req.auth.isAdmin ? 'already' : 'unrestricted',
+        event,
+        message: req.auth.isAdmin
+          ? 'Administrators already have access to all events.'
+          : 'You already have access to all events.',
+      });
+    }
+
+    const result = await appendEventToUserAllowlist(pool, req.auth.accessId, event.id);
+    await touchShareTokenUsed(pool, share.id);
+    if (result.status === 'added' && req.auth.allowedEventIds) {
+      req.auth.allowedEventIds.add(String(event.id));
+    }
+    res.json({
+      ok: true,
+      status: result.status,
+      event,
+      message: result.message,
+    });
+  } catch (error) {
+    if (isMissingShareTableError(error)) {
+      return res.status(503).json({
+        error: 'Run migration 051_create_event_share_access.sql on Neon to enable share access links.',
+        needsMigration: true,
+      });
+    }
+    console.error('[event-share accept]', error);
+    res.status(500).json({ error: error.message || 'Failed to accept invite' });
+  }
+});
+
+/** Create or reuse a public guest view link for an event the caller can already see. */
+app.post('/api/calendar-events/:id/guest-link', async (req, res) => {
+  try {
+    if (!req.auth || (req.auth.type !== 'user' && req.auth.type !== 'neon_user')) {
+      return res.status(401).json({ error: 'Sign in required.' });
+    }
+    const eventId = String(req.params.id || '').trim();
+    if (!eventId) return res.status(400).json({ error: 'Event id required.' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'You do not have access to this event.' });
+    }
+    await ensureGuestLinkSchema(pool);
+    const summary = await loadEventSummary(pool, eventId);
+    if (!summary) return res.status(404).json({ error: 'Event not found.' });
+
+    const rotate = req.body?.rotate === true;
+    const link = await ensureGuestLink(pool, {
+      eventId,
+      accessId: req.auth.accessId,
+      req,
+      rotate,
+    });
+    res.json({
+      ok: true,
+      event: summary,
+      guestUrl: link.guestUrl,
+      reused: !!link.reused,
+      createdAt: link.createdAt,
+    });
+  } catch (error) {
+    if (isMissingGuestTableError(error)) {
+      return res.status(503).json({
+        error: 'Run migration 052_create_event_guest_links.sql on Neon to enable guest links.',
+        needsMigration: true,
+      });
+    }
+    console.error('[guest-link create]', error);
+    res.status(500).json({ error: error.message || 'Failed to create guest link' });
+  }
+});
+
+/** Public guest view payload — no sign-in. Token grants read-only schedule + live timer. */
+app.get('/api/guest-event/:token', async (req, res) => {
+  try {
+    const rawToken = String(req.params.token || '').trim();
+    if (!isGuestToken(rawToken)) {
+      return res.status(404).json({ error: 'Invalid or expired guest link.' });
+    }
+    await ensureGuestLinkSchema(pool);
+    const guest = await lookupGuestByToken(pool, rawToken);
+    if (!guest || guest.revoked_at) {
+      return res.status(404).json({ error: 'Invalid or expired guest link.' });
+    }
+    const payload = await loadGuestEventPayload(pool, guest.event_id);
+    if (!payload) {
+      return res.status(404).json({ error: 'This event is no longer available.' });
+    }
+    await touchGuestLinkUsed(pool, guest.id);
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    if (isMissingGuestTableError(error)) {
+      return res.status(503).json({
+        error: 'Guest links are not available yet.',
+        needsMigration: true,
+      });
+    }
+    console.error('[guest-event GET]', error);
+    res.status(500).json({ error: error.message || 'Failed to load guest view' });
   }
 });
 

@@ -812,6 +812,8 @@ const RunOfShowPage: React.FC = () => {
   const [tempSpeakersText, setTempSpeakersText] = useState<Speaker[]>([]);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [editingAssetsItem, setEditingAssetsItem] = useState<number | null>(null);
+  /** Pre-assigned cue id while Add Item modal is open (enables ROS file upload before Save). */
+  const [modalDraftItemId, setModalDraftItemId] = useState<number | null>(null);
   /** In-progress assets while the modal is open (survives schedule sync). */
   const [tempAssets, setTempAssets] = useState<Array<{ id: string; name: string; link: string; showLink: boolean }>>([]);
   const [platformUploadConfigured, setPlatformUploadConfigured] = useState(false);
@@ -1955,7 +1957,12 @@ const RunOfShowPage: React.FC = () => {
     let activeModalRow: number | null = null;
     if (showNotesModal && editingNotesItem != null && editingNotesItem > 0) {
       activeModalRow = editingNotesItem;
-    } else if (showAssetsModal && editingAssetsItem != null && editingAssetsItem > 0) {
+    } else if (
+      showAssetsModal &&
+      editingAssetsItem != null &&
+      editingAssetsItem > 0 &&
+      !showAddModal
+    ) {
       activeModalRow = editingAssetsItem;
     } else if (showSpeakersModal && editingSpeakersItem != null && editingSpeakersItem > 0) {
       activeModalRow = editingSpeakersItem;
@@ -1981,6 +1988,7 @@ const RunOfShowPage: React.FC = () => {
     editingNotesItem,
     showAssetsModal,
     editingAssetsItem,
+    showAddModal,
     showSpeakersModal,
     editingSpeakersItem,
     showParticipantsModal,
@@ -4486,8 +4494,12 @@ const RunOfShowPage: React.FC = () => {
       .filter((entry): entry is string => Boolean(entry));
 
     const assetsString = assetsArray.join('||');
+    const draftCue =
+      editingAssetsItem === -1 ||
+      (showAddModal && modalDraftItemId != null && editingAssetsItem === modalDraftItemId) ||
+      !schedule.some((row) => row.id === editingAssetsItem);
 
-    if (editingAssetsItem === -1) {
+    if (draftCue) {
       setModalForm((prev) => ({ ...prev, assets: assetsString }));
     } else {
       const oldValue = schedule.find((item) => item.id === editingAssetsItem)?.assets || '';
@@ -6054,7 +6066,11 @@ const RunOfShowPage: React.FC = () => {
     if (!showAssetsModal || editingAssetsItem === null) return;
 
     let assetsData = '';
-    if (editingAssetsItem === -1) {
+    const draftCue =
+      editingAssetsItem === -1 ||
+      (showAddModal && modalDraftItemId != null && editingAssetsItem === modalDraftItemId) ||
+      !schedule.some((row) => row.id === editingAssetsItem);
+    if (draftCue) {
       assetsData = modalForm.assets || '';
     } else {
       const item = schedule.find((row) => row.id === editingAssetsItem);
@@ -8298,7 +8314,7 @@ const RunOfShowPage: React.FC = () => {
 
 
 
-  const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string }) => {
+  const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string; id?: number }) => {
     // Generate random Timer ID
     const generateRandomTimerId = () => {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -8311,7 +8327,7 @@ const RunOfShowPage: React.FC = () => {
     
     const item: ScheduleItem = {
       ...newItem,
-      id: Date.now(),
+      id: newItem.id && newItem.id > 0 ? newItem.id : modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now(),
       timerId: generateRandomTimerId(),
       isIndented: newItem.isIndented || false,
       customFields: {
@@ -8371,6 +8387,7 @@ const RunOfShowPage: React.FC = () => {
     });
     
     setShowAddModal(false);
+    setModalDraftItemId(null);
     handleModalClosed();
     // Reset form
     setModalForm({
@@ -13191,6 +13208,8 @@ const RunOfShowPage: React.FC = () => {
                   }
                   // Pause syncing when adding new item
                   handleModalEditing();
+                  const draftId = Date.now();
+                  setModalDraftItemId(draftId);
                   setShowAddModal(true);
                   // Reset form to defaults
                   setModalForm({
@@ -13423,6 +13442,7 @@ const RunOfShowPage: React.FC = () => {
                           // Pause syncing when inserting new row
                           handleModalEditing();
                           setInsertRowPosition(index);
+                          setModalDraftItemId(Date.now());
                           setShowAddModal(true);
                         }}
                         className={`w-5 h-5 text-white rounded flex items-center justify-center text-xs font-bold transition-colors ${
@@ -14516,7 +14536,10 @@ const RunOfShowPage: React.FC = () => {
                 onClick={() => {
                   // Pause syncing when assets modal opens
                   handleModalEditing();
-                  setEditingAssetsItem(-1); // Use -1 to indicate modal form editing
+                  // Prefer draft cue id so ROS file upload works before Add Item is saved
+                  const draftId = modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now();
+                  if (!modalDraftItemId || modalDraftItemId <= 0) setModalDraftItemId(draftId);
+                  setEditingAssetsItem(draftId);
                   setShowAssetsModal(true);
                 }}
               >
@@ -14568,6 +14591,7 @@ const RunOfShowPage: React.FC = () => {
                 <button
                   onClick={() => {
                     setShowAddModal(false);
+                    setModalDraftItemId(null);
                     handleModalClosed();
                   }}
                   className="flex-1 px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded transition-colors text-sm"

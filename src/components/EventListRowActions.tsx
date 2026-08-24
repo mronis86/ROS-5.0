@@ -5,6 +5,7 @@ type EventListRowActionsProps = {
   mode: 'standard' | 'quickMode';
   onLaunch?: () => void;
   onEdit?: () => void;
+  onShareAccess?: () => void;
   onDelete: () => void;
   onOpenQuickMode?: () => void;
 };
@@ -31,6 +32,12 @@ const TrashIcon = () => (
   </svg>
 );
 
+const ShareIcon = () => (
+  <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+    <path d="M13 4.5a2.5 2.5 0 11.702 1.737L8.37 9.03a2.518 2.518 0 010 1.94l5.332 2.793a2.5 2.5 0 11-.671 1.28l-5.332-2.792a2.5 2.5 0 110-4.502l5.332-2.793A2.49 2.49 0 0113 4.5z" />
+  </svg>
+);
+
 const iconButtonClass =
   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70';
 
@@ -39,6 +46,7 @@ const EventListRowActions: React.FC<EventListRowActionsProps> = ({
   mode,
   onLaunch,
   onEdit,
+  onShareAccess,
   onDelete,
   onOpenQuickMode,
 }) => {
@@ -113,6 +121,16 @@ const EventListRowActions: React.FC<EventListRowActionsProps> = ({
             Delete
           </button>
         </div>
+        {onShareAccess ? (
+          <button
+            type="button"
+            onClick={onShareAccess}
+            className="inline-flex min-h-[36px] w-full items-center justify-center gap-1.5 rounded-md border border-violet-700/50 bg-violet-950/30 px-2 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-900/40"
+          >
+            <ShareIcon />
+            Share
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -138,6 +156,17 @@ const EventListRowActions: React.FC<EventListRowActionsProps> = ({
         >
           <PencilIcon />
         </button>
+        {onShareAccess ? (
+          <button
+            type="button"
+            onClick={onShareAccess}
+            className={`${iconButtonClass} text-violet-300 hover:bg-violet-950/60 hover:text-violet-100`}
+            title="Share event"
+            aria-label="Share event"
+          >
+            <ShareIcon />
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onDelete}
