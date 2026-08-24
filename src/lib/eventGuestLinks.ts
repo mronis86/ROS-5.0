@@ -23,11 +23,14 @@ export interface GuestScheduleItem {
   speakers: string;
   speakersText: string;
   notes: string;
+  assets?: string;
+  customFields?: Record<string, unknown>;
   cue: string;
   isIndented: boolean;
   hasPPT: boolean;
   hasQA: boolean;
   needsRecording: boolean;
+  isPublic?: boolean;
 }
 
 export interface GuestActiveTimer {
