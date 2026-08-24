@@ -68,7 +68,10 @@ const {
   lookupGuestByToken,
   touchGuestLinkUsed,
   loadGuestEventPayload,
+  loadGuestLiveState,
   isGuestToken,
+  guestEventRoom,
+  emitGuestSocketUpdate,
 } = require('./lib/event-guest-links');
 const {
   ensureCalendarSoftDeleteSchema,
@@ -233,6 +236,7 @@ function broadcastTimerUpdated(eventId, timerRow) {
   let data = applyResolumeMeta(eventId, timerRow, { isSubCue: false });
   data = applyMittiMeta(eventId, data, { isSubCue: false });
   io.to(`event:${eventId}`).emit('update', { type: 'timerUpdated', data });
+  emitGuestSocketUpdate(io, eventId, 'timerUpdated', data);
   return data;
 }
 
@@ -2820,6 +2824,10 @@ app.get('/api/guest-event/:token', async (req, res) => {
     const guest = await lookupGuestByToken(pool, rawToken);
     if (!guest || guest.revoked_at) {
       return res.status(404).json({ error: 'Invalid or expired guest link.' });
+    }
+    if (String(req.query.scope || '') === 'live') {
+      const live = await loadGuestLiveState(pool, guest.event_id);
+      return res.json({ ok: true, ...live });
     }
     const payload = await loadGuestEventPayload(pool, guest.event_id);
     if (!payload) {
@@ -6218,6 +6226,7 @@ function broadcastUpdate(eventId, updateType, data) {
   // Send via WebSocket (Socket.IO) - ONLY method now
   if (io) {
     io.to(`event:${eventId}`).emit('update', message);
+    emitGuestSocketUpdate(io, eventId, updateType, data);
     console.log(`🔌 WebSocket broadcast sent for event ${eventId}: ${updateType}`);
   }
 }
@@ -7188,6 +7197,58 @@ io.on('connection', (socket) => {
     console.log(`🔌 Socket.IO client ${socket.id} left event:${eventId}`);
   });
 
+  /** Public guest view — token validates access; joins guest-event room only. */
+  socket.on('joinGuestEvent', async (rawToken) => {
+    const token = String(rawToken || '').trim();
+    if (!isGuestToken(token)) {
+      socket.emit('guestJoinError', { error: 'Invalid or expired guest link.' });
+      return;
+    }
+    try {
+      await ensureGuestLinkSchema(pool);
+      const guest = await lookupGuestByToken(pool, token);
+      if (!guest || guest.revoked_at) {
+        socket.emit('guestJoinError', { error: 'Invalid or expired guest link.' });
+        return;
+      }
+      const eventId = String(guest.event_id);
+      const room = guestEventRoom(eventId);
+      if (socket.data.guestEventId && socket.data.guestEventId !== eventId) {
+        socket.leave(guestEventRoom(socket.data.guestEventId));
+      }
+      socket.join(room);
+      socket.data.guestEventId = eventId;
+      socket.data.guestLinkId = guest.id;
+      console.log(`👤 Guest socket ${socket.id} joined ${room}`);
+
+      const payload = await loadGuestEventPayload(pool, eventId);
+      if (!payload) {
+        socket.emit('guestJoinError', { error: 'This event is no longer available.' });
+        return;
+      }
+      await touchGuestLinkUsed(pool, guest.id);
+      socket.emit('guestInitialSync', { ok: true, ...payload });
+      socket.emit('serverTime', { serverTime: new Date().toISOString() });
+    } catch (error) {
+      if (isMissingGuestTableError(error)) {
+        socket.emit('guestJoinError', { error: 'Guest links are not available yet.', needsMigration: true });
+        return;
+      }
+      console.error('[joinGuestEvent]', error);
+      socket.emit('guestJoinError', { error: 'Failed to join guest view.' });
+    }
+  });
+
+  socket.on('leaveGuestEvent', () => {
+    const eventId = socket.data.guestEventId;
+    if (eventId) {
+      socket.leave(guestEventRoom(eventId));
+      delete socket.data.guestEventId;
+      delete socket.data.guestLinkId;
+      console.log(`👤 Guest socket ${socket.id} left ${guestEventRoom(eventId)}`);
+    }
+  });
+
   // Presence: user viewing Run of Show for this event
   socket.on('presenceJoin', (data) => {
     const { eventId, userId, userName, userEmail, userRole } = data || {};
@@ -7506,6 +7567,9 @@ io.on('connection', (socket) => {
   // Handle disconnection
   socket.on('disconnect', () => {
     releaseSocketRowLocks(socket.id);
+    if (socket.data.guestEventId) {
+      socket.leave(guestEventRoom(socket.data.guestEventId));
+    }
     const eventId = socketToEvent.get(socket.id);
     if (eventId) {
       const m = presenceByEvent.get(eventId);

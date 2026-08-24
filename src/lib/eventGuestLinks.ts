@@ -41,6 +41,14 @@ export interface GuestActiveTimer {
   durationSeconds?: number;
   elapsedSeconds?: number;
   cueIs?: string;
+  startedAt?: string | null;
+}
+
+export interface GuestLivePayload {
+  ok: boolean;
+  activeTimer?: GuestActiveTimer | null;
+  serverTime?: string;
+  error?: string;
 }
 
 export interface GuestEventPayload {
@@ -86,6 +94,56 @@ export async function fetchGuestEvent(token: string): Promise<GuestEventPayload>
     };
   }
   return { ok: true, ...data };
+}
+
+/** Lightweight live poll — active timer only (~1.5s interval). */
+export async function fetchGuestEventLive(token: string): Promise<GuestLivePayload> {
+  const base = getApiBaseUrl();
+  const res = await fetch(
+    `${base}/api/guest-event/${encodeURIComponent(token)}?scope=live`
+  );
+  const data = (await res.json().catch(() => ({}))) as GuestLivePayload & { error?: string };
+  if (!res.ok) {
+    return { ok: false, error: data.error || `HTTP ${res.status}` };
+  }
+  return { ok: true, ...data };
+}
+
+/** Merge server timer into local sync anchor (smooth countdown between polls). */
+export function mergeGuestActiveTimer(
+  incoming: GuestActiveTimer | null | undefined,
+  syncRef: { current: { itemId: number | null; elapsed: number; clientAt: number } }
+): GuestActiveTimer | null {
+  if (!incoming) {
+    syncRef.current = { itemId: null, elapsed: 0, clientAt: 0 };
+    return null;
+  }
+  const itemId = Number(incoming.itemId);
+  const incomingElapsed = Number(incoming.elapsedSeconds) || 0;
+  const prev = syncRef.current;
+
+  if (prev.itemId !== itemId || !incoming.isRunning) {
+    syncRef.current = { itemId, elapsed: incomingElapsed, clientAt: Date.now() };
+  } else {
+    const localElapsed = prev.elapsed + Math.floor((Date.now() - prev.clientAt) / 1000);
+    if (Math.abs(localElapsed - incomingElapsed) > 2) {
+      syncRef.current = { itemId, elapsed: incomingElapsed, clientAt: Date.now() };
+    }
+  }
+  return { ...incoming, itemId };
+}
+
+export function guestTimerElapsedSeconds(
+  activeTimer: GuestActiveTimer | null,
+  syncRef: { current: { itemId: number | null; elapsed: number; clientAt: number } }
+): number {
+  if (!activeTimer) return 0;
+  const itemId = Number(activeTimer.itemId);
+  const anchor = syncRef.current;
+  if (activeTimer.isRunning && anchor.itemId === itemId) {
+    return anchor.elapsed + Math.floor((Date.now() - anchor.clientAt) / 1000);
+  }
+  return Number(activeTimer.elapsedSeconds) || 0;
 }
 
 export async function createGuestEventLink(
