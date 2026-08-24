@@ -5,11 +5,9 @@ import {
   buildIndentedLookup,
   displaySpeakersText,
   estimateRowHeightRem,
-  formatCueDisplay,
   cueFieldValue,
   GUEST_COLUMN_WIDTHS,
   GUEST_VISIBLE_COLUMNS,
-  getRowBackgroundColor,
   noop,
   ROS_PROGRAM_TYPES,
   ROS_PROGRAM_TYPE_COLORS,
@@ -30,12 +28,27 @@ function dayStartFor(
   return masterStartTime || '';
 }
 
+function guestRowClass(
+  itemId: number,
+  index: number,
+  activeItemId: number | null | undefined,
+  timerRunning: boolean,
+  timerLoaded: boolean
+): string {
+  const isLive = activeItemId != null && itemId === activeItemId;
+  if (isLive && timerRunning) return 'bg-green-950';
+  if (isLive && timerLoaded) return 'bg-blue-950';
+  return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
+}
+
 export interface GuestRunOfShowGridProps {
   schedule: GuestScheduleItem[];
   filteredItems: GuestScheduleItem[];
   masterStartTime?: string;
   dayStartTimes?: Record<number | string, string>;
   activeItemId?: number | null;
+  timerRunning?: boolean;
+  timerLoaded?: boolean;
   onOpenSpeakers: (itemId: number) => void;
 }
 
@@ -45,6 +58,8 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   masterStartTime,
   dayStartTimes,
   activeItemId,
+  timerRunning = false,
+  timerLoaded = false,
   onOpenSpeakers,
 }) => {
   const scheduleRows = useMemo(() => schedule.map(toScheduleRowItem), [schedule]);
@@ -117,6 +132,10 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     []
   );
 
+  const rowHeightStyle = (item: GuestScheduleItem): React.CSSProperties => ({
+    minHeight: getRowHeight(item.notes || '', item.speakersText),
+  });
+
   if (filteredItems.length === 0) {
     return (
       <div className="h-24 flex items-center justify-center text-slate-500 text-xl bg-slate-900 rounded-lg border border-slate-600">
@@ -125,73 +144,83 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     );
   }
 
+  const headerCell = 'h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center flex-shrink-0';
+
   return (
-    <div className="bg-slate-800 rounded-xl p-4 shadow-2xl">
-      <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
-        {/* Row numbers */}
-        <div className="w-12 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
-          <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
-            <span className="text-white font-bold text-xs">#</span>
-          </div>
-          {filteredItems.map((item, index) => {
-            const isLive = activeItemId != null && item.id === activeItemId;
-            return (
+    <div className="bg-slate-800 rounded-xl p-3 sm:p-4 shadow-2xl flex flex-col min-h-0 flex-1">
+      <div
+        id="guest-schedule-scroll"
+        className="flex-1 min-h-0 overflow-auto rounded-lg border-2 border-slate-600"
+        style={{ scrollbarWidth: 'thin' }}
+      >
+        <div className="flex min-w-max bg-slate-900">
+          {/* Row numbers — sticky left */}
+          <div className="sticky left-0 z-20 w-12 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
+            <div className={`${headerCell} sticky top-0 z-30`}>
+              <span className="text-white font-bold text-xs">#</span>
+            </div>
+            {filteredItems.map((item, index) => (
               <div
                 key={`num-${item.id}`}
-                className={`border-b-2 border-slate-600 flex items-center justify-center text-sm font-bold ${
-                  isLive ? 'bg-emerald-950/50 text-emerald-300' : 'text-slate-400'
-                }`}
-                style={{ minHeight: getRowHeight(item.notes || '', item.speakersText) }}
+                className={`border-b-2 border-slate-600 flex items-center justify-center text-sm font-bold text-slate-400 ${guestRowClass(
+                  item.id,
+                  index,
+                  activeItemId,
+                  timerRunning,
+                  timerLoaded
+                )}`}
+                style={rowHeightStyle(item)}
               >
                 {index + 1}
               </div>
-            );
-          })}
-        </div>
-
-        {/* CUE column — read-only, matches ROS chrome */}
-        <div className="w-40 flex-shrink-0 bg-slate-900" style={{ borderRight: '6px solid #475569' }}>
-          <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
-            <span className="text-white font-bold text-lg">CUE</span>
+            ))}
           </div>
-          {filteredItems.map((item) => {
-            const rowItem = toScheduleRowItem(item);
-            const cue = formatCueDisplay(String((rowItem.customFields as { cue?: string })?.cue || ''));
-            const isLive = activeItemId != null && item.id === activeItemId;
-            return (
-              <div
-                key={`cue-${item.id}`}
-                className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 px-2 ${
-                  isLive ? 'bg-emerald-950/40' : ''
-                }`}
-                style={{
-                  minHeight: getRowHeight(item.notes || '', item.speakersText),
-                  backgroundColor: isLive ? undefined : getRowBackgroundColor(item.programType || '', item.id),
-                }}
-              >
-                <div className="flex w-full max-w-[9rem]">
-                  <div className="flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-sm font-medium bg-slate-600">
-                    CUE
-                  </div>
-                  <div
-                    className="flex-1 px-2 py-1 border border-slate-600 rounded-r text-white text-sm font-bold bg-slate-700 text-center truncate"
-                    title={cue}
-                  >
-                    {cueFieldValue(String((rowItem.customFields as { cue?: string })?.cue || '')) || '—'}
+
+          {/* CUE column — sticky left */}
+          <div
+            className="sticky left-12 z-20 w-40 flex-shrink-0 bg-slate-900"
+            style={{ borderRight: '6px solid #475569' }}
+          >
+            <div className={`${headerCell} sticky top-0 z-30`}>
+              <span className="text-white font-bold text-lg">CUE</span>
+            </div>
+            {filteredItems.map((item, index) => {
+              const rowItem = toScheduleRowItem(item);
+              const cueVal = cueFieldValue(String((rowItem.customFields as { cue?: string })?.cue || ''));
+              return (
+                <div
+                  key={`cue-${item.id}`}
+                  className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 px-2 ${guestRowClass(
+                    item.id,
+                    index,
+                    activeItemId,
+                    timerRunning,
+                    timerLoaded
+                  )}`}
+                  style={rowHeightStyle(item)}
+                >
+                  <div className="flex w-full max-w-[9rem]">
+                    <div className="flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-sm font-medium bg-slate-600">
+                      CUE
+                    </div>
+                    <div
+                      className="flex-1 px-2 py-1 border border-slate-600 rounded-r text-white text-sm font-bold bg-slate-700 text-center truncate"
+                      title={cueVal || '—'}
+                    >
+                      {cueVal || '—'}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
 
-        {/* Main schedule columns — real ScheduleRow in VIEWER mode */}
-        <div className="flex-1 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-          <div className="min-w-max">
-            <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex">
+          {/* Main schedule columns */}
+          <div className="flex-shrink-0">
+            <div className={`${headerCell} sticky top-0 z-30 flex min-w-max`}>
               {GUEST_VISIBLE_COLUMNS.start && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.start }}
                 >
                   <span className="text-white font-bold">Start</span>
@@ -199,7 +228,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               )}
               {GUEST_VISIBLE_COLUMNS.programType && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.programType }}
                 >
                   <span className="text-white font-bold">Program Type</span>
@@ -207,7 +236,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               )}
               {GUEST_VISIBLE_COLUMNS.duration && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.duration }}
                 >
                   <div className="text-center">
@@ -218,7 +247,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               )}
               {GUEST_VISIBLE_COLUMNS.segmentName && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.segmentName }}
                 >
                   <span className="text-white font-bold">Segment Name</span>
@@ -226,7 +255,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               )}
               {GUEST_VISIBLE_COLUMNS.shotType && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.shotType }}
                 >
                   <span className="text-white font-bold">Shot Type</span>
@@ -234,7 +263,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               )}
               {GUEST_VISIBLE_COLUMNS.pptQA && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.pptQA }}
                 >
                   <span className="text-white font-bold">PPT/Q&A</span>
@@ -242,7 +271,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               )}
               {GUEST_VISIBLE_COLUMNS.notes && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.notes }}
                 >
                   <span className="text-white font-bold">Notes</span>
@@ -250,7 +279,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               )}
               {GUEST_VISIBLE_COLUMNS.speakers && (
                 <div
-                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                  className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 h-full"
                   style={{ width: GUEST_COLUMN_WIDTHS.speakers }}
                 >
                   <span className="text-white font-bold">Speakers</span>
@@ -262,17 +291,20 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               const originalIndex = schedule.findIndex((s) => s.id === item.id);
               const rowIndex = originalIndex >= 0 ? originalIndex : index;
               const rowItem = scheduleRows[rowIndex] || toScheduleRowItem(item);
-              const isLive = activeItemId != null && item.id === activeItemId;
 
               return (
                 <div
                   key={item.id}
                   data-item-id={item.id}
-                  className={`border-b-2 border-slate-600 flex relative ${
-                    isLive ? 'ring-2 ring-inset ring-emerald-500/60' : ''
-                  }`}
+                  className={`border-b-2 border-slate-600 flex relative ${guestRowClass(
+                    item.id,
+                    index,
+                    activeItemId,
+                    timerRunning,
+                    timerLoaded
+                  )}`}
                   style={{
-                    backgroundColor: getRowBackgroundColor(item.programType || '', rowIndex),
+                    ...rowHeightStyle(item),
                     textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
                     color: item.programType === 'KILLED' ? '#9CA3AF' : 'inherit',
                   }}

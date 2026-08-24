@@ -99,76 +99,81 @@ const GuestEventPage: React.FC = () => {
   const activeItem = allItems.find((item) => item.id === activeItemId) || null;
   const speakersItem = allItems.find((item) => item.id === speakersItemId) || null;
 
+  const timerRunning = Boolean(payload?.activeTimer?.isRunning && activeItemId);
+  const timerLoaded = Boolean(payload?.activeTimer && activeItemId && !payload.activeTimer.isRunning);
+
   const remaining = useMemo(() => {
     const timer = payload?.activeTimer;
     if (!timer) return null;
     return (Number(timer.durationSeconds) || 0) - tickElapsed;
   }, [payload?.activeTimer, tickElapsed]);
 
+  const statusLabel = timerRunning ? 'RUNNING' : timerLoaded ? 'LOADED' : 'STANDBY';
+  const statusClass = timerRunning
+    ? 'text-green-400'
+    : timerLoaded
+      ? 'text-yellow-400'
+      : 'text-slate-400';
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
-      <header className="border-b border-slate-700/80 bg-slate-900/90 backdrop-blur sticky top-0 z-20">
-        <div className="mx-auto max-w-[1800px] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+    <div className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
+      {/* Sticky top: branding + live cue + controls */}
+      <div className="shrink-0 sticky top-0 z-40 border-b border-slate-700/80 bg-slate-900/95 backdrop-blur">
+        <div className="mx-auto max-w-[1800px] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <AppLogo size="sm" />
             <div className="min-w-0">
-              <AppBrandTitle titleClassName="text-base font-semibold text-white leading-tight" showTagline={false} />
-              <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                Guest view · read-only run of show
-              </p>
+              <AppBrandTitle titleClassName="text-sm font-semibold text-white leading-tight" showTagline={false} />
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">Guest view · read only</p>
             </div>
           </div>
           {payload?.event ? (
             <div className="text-right min-w-0">
-              <p className="font-semibold text-white truncate max-w-[min(100vw-2rem,32rem)] text-lg">
+              <p className="font-semibold text-white truncate max-w-[min(100vw-2rem,28rem)]">
                 {payload.event.name}
               </p>
-              <p className="text-xs text-slate-400">
+              <p className="text-[11px] text-slate-400">
                 {[payload.event.date, payload.event.location].filter(Boolean).join(' · ')}
               </p>
             </div>
           ) : null}
         </div>
-      </header>
 
-      <main className="mx-auto max-w-[1800px] px-4 py-5 space-y-4">
-        {loading && !payload ? (
-          <p className="text-slate-400 text-sm">Loading run of show…</p>
-        ) : error && !payload ? (
-          <div className="rounded-xl border border-red-700/50 bg-red-950/40 px-4 py-3 text-sm text-red-200">
-            {error}
-          </div>
-        ) : payload ? (
+        {payload ? (
           <>
-            {(activeItem || payload.activeTimer) && (
-              <section className="rounded-xl border border-emerald-700/40 bg-emerald-950/30 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Live cue</p>
-                  <p className="text-lg font-semibold text-white truncate">
-                    {activeItem?.segmentName || payload.activeTimer?.cueIs || '—'}
-                  </p>
-                  <p className="text-sm text-emerald-200/80 font-mono">
-                    {activeItem?.cue ? `CUE ${activeItem.cue}` : '—'}
-                  </p>
-                </div>
-                {remaining != null && payload.activeTimer ? (
-                  <div className="text-right">
+            <div className="mx-auto max-w-[1800px] px-4 pb-2.5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">Current cue</p>
+                <p className="text-base sm:text-lg font-semibold text-white truncate">
+                  {activeItem?.segmentName || payload.activeTimer?.cueIs || 'No cue loaded'}
+                </p>
+                <p className="text-xs text-slate-400 font-mono truncate">
+                  {activeItem?.cue ? `CUE ${activeItem.cue}` : '—'}
+                  {activeItem?.programType ? ` · ${activeItem.programType}` : ''}
+                </p>
+              </div>
+              <div className="flex items-center gap-4 shrink-0">
+                <div className="text-right">
+                  <p className={`text-sm font-bold ${statusClass}`}>{statusLabel}</p>
+                  {remaining != null && payload.activeTimer ? (
                     <p
-                      className={`text-3xl font-mono font-bold tabular-nums ${
+                      className={`text-2xl sm:text-3xl font-mono font-bold tabular-nums leading-none mt-0.5 ${
                         remaining < 0 ? 'text-red-300' : 'text-white'
                       }`}
                     >
                       {remaining < 0 ? `+${formatClock(Math.abs(remaining))}` : formatClock(remaining)}
                     </p>
-                    <p className="text-xs text-slate-400">
-                      {payload.activeTimer.isRunning ? 'Remaining' : 'Timer'}
-                    </p>
-                  </div>
-                ) : null}
-              </section>
-            )}
+                  ) : (
+                    <p className="text-2xl font-mono font-bold text-slate-600 mt-0.5">—:—</p>
+                  )}
+                  <p className="text-[10px] text-slate-500">
+                    {timerRunning ? 'Remaining' : timerLoaded ? 'Timer loaded' : 'Counter'}
+                  </p>
+                </div>
+              </div>
+            </div>
 
-            <div className="flex flex-wrap items-center gap-2 justify-between">
+            <div className="mx-auto max-w-[1800px] px-4 pb-2.5 flex flex-wrap items-center gap-2 justify-between border-t border-slate-800/60 pt-2">
               <div className="flex flex-wrap items-center gap-2">
                 {daysFromItems > 1
                   ? Array.from({ length: daysFromItems }, (_, i) => i + 1).map((day) => (
@@ -193,24 +198,37 @@ const GuestEventPage: React.FC = () => {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search schedule…"
-                className="min-w-[12rem] max-w-sm flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                className="min-w-[10rem] max-w-xs flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
               />
             </div>
+          </>
+        ) : null}
+      </div>
 
+      <main className="flex-1 min-h-0 flex flex-col mx-auto w-full max-w-[1800px] px-4 py-3">
+        {loading && !payload ? (
+          <p className="text-slate-400 text-sm">Loading run of show…</p>
+        ) : error && !payload ? (
+          <div className="rounded-xl border border-red-700/50 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+            {error}
+          </div>
+        ) : payload ? (
+          <>
             <GuestRunOfShowGrid
               schedule={allItems}
               filteredItems={dayItems}
               masterStartTime={payload.event?.masterStartTime}
               dayStartTimes={payload.event?.dayStartTimes}
               activeItemId={activeItemId}
+              timerRunning={timerRunning}
+              timerLoaded={timerLoaded}
               onOpenSpeakers={(itemId) => {
                 setSpeakersItemId(itemId);
                 setSpeakerPanel('photos');
               }}
             />
-
-            <p className="text-center text-[11px] text-slate-500 pb-2">
-              View only · same layout as Run of Show · click Speakers for photos or info · updates every few seconds
+            <p className="shrink-0 text-center text-[10px] text-slate-500 pt-2 pb-1">
+              Scroll to view all columns · click Speakers for photos or info
             </p>
           </>
         ) : null}
