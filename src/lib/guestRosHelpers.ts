@@ -109,37 +109,64 @@ export function getRowBackgroundColor(programType: string, index: number): strin
   return `rgba(${r}, ${g}, ${b}, 0.3)`;
 }
 
+/** Match RunOfShowPage getRowHeight — DOM-measure notes when possible so CUE/# rows align. */
 export function estimateRowHeightRem(
   notes: string,
   speakersText?: string,
-  _participants?: string,
+  participants?: string,
   _customFields?: unknown,
   _customColumns?: unknown[],
-  voCueCount = 0
+  voCueCount = 0,
+  notesColumnWidthPx = GUEST_COLUMN_WIDTHS.notes
 ): string {
   let maxHeight = 6.5;
   if (voCueCount > 0) maxHeight = Math.max(maxHeight, 7);
 
   if (notes && notes.trim()) {
-    const plain = stripHtmlNotes(notes);
-    const lineCount = plain.split('\n').filter(Boolean).length;
-    const wrapped = Math.ceil(plain.length / 42);
-    maxHeight = Math.max(maxHeight, 4 + Math.max(lineCount, wrapped) * 1.35);
-  }
-
-  if (speakersText && speakersText.trim()) {
-    try {
-      const parsed = JSON.parse(speakersText);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        maxHeight = Math.max(maxHeight, 4 + parsed.length * 1.5);
-      }
-    } catch {
-      const lines = speakersText.split('\n').filter(Boolean).length;
-      maxHeight = Math.max(maxHeight, 4 + lines * 1.5);
+    if (typeof document !== 'undefined') {
+      const tempDiv = document.createElement('div');
+      tempDiv.style.position = 'absolute';
+      tempDiv.style.visibility = 'hidden';
+      const availableWidthPx = notesColumnWidthPx - 32 - 1;
+      tempDiv.style.width = `${availableWidthPx / 16}rem`;
+      tempDiv.style.padding = '0.75rem';
+      tempDiv.style.fontSize = '1rem';
+      tempDiv.style.lineHeight = '1.5';
+      tempDiv.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+      tempDiv.style.whiteSpace = 'pre-wrap';
+      tempDiv.style.wordWrap = 'break-word';
+      tempDiv.innerHTML = notes;
+      document.body.appendChild(tempDiv);
+      const contentHeightRem = tempDiv.scrollHeight / 16;
+      document.body.removeChild(tempDiv);
+      maxHeight = Math.max(maxHeight, contentHeightRem + 3);
+    } else {
+      const plain = stripHtmlNotes(notes);
+      const lineCount = plain.split('\n').filter(Boolean).length;
+      const wrapped = Math.ceil(plain.length / 42);
+      maxHeight = Math.max(maxHeight, 4 + Math.max(lineCount, wrapped) * 1.35);
     }
   }
 
-  return `${Math.min(maxHeight, 28)}rem`;
+  const measureSpeakerish = (raw?: string) => {
+    if (!raw || !raw.trim()) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const valid = parsed.filter(
+          (s: { fullName?: string }) => s.fullName && String(s.fullName).trim()
+        );
+        if (valid.length > 0) maxHeight = Math.max(maxHeight, 4 + valid.length * 1.5);
+      }
+    } catch {
+      const lines = raw.split('\n').filter((l) => l.trim()).length;
+      if (lines > 0) maxHeight = Math.max(maxHeight, 4 + lines * 1.5);
+    }
+  };
+  measureSpeakerish(speakersText);
+  measureSpeakerish(participants);
+
+  return `${Math.min(maxHeight, 40)}rem`;
 }
 
 export function formatCueDisplay(cue?: string): string {

@@ -16,6 +16,23 @@ import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 
 const REST_FALLBACK_MS = 12000;
+const ZOOM_STORAGE_KEY = 'guest-event-zoom';
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 1.25;
+const ZOOM_STEP = 0.1;
+const ZOOM_DEFAULT = 0.85;
+
+function getStoredZoom(): number {
+  try {
+    const raw = localStorage.getItem(ZOOM_STORAGE_KEY);
+    if (raw == null) return ZOOM_DEFAULT;
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= ZOOM_MIN && value <= ZOOM_MAX) return value;
+  } catch {
+    /* ignore */
+  }
+  return ZOOM_DEFAULT;
+}
 
 function formatClock(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -35,9 +52,11 @@ const GuestEventPage: React.FC = () => {
   const [payload, setPayload] = useState<GuestEventPayload | null>(null);
   const [activeTimer, setActiveTimer] = useState<GuestActiveTimer | null>(null);
   const [socketConnected, setSocketConnected] = useState(false);
+  const [liveSynced, setLiveSynced] = useState(false);
   const [selectedDay, setSelectedDay] = useState(1);
   const [clockTick, setClockTick] = useState(0);
   const [query, setQuery] = useState('');
+  const [zoomLevel, setZoomLevel] = useState<number>(getStoredZoom);
   const [speakersItemId, setSpeakersItemId] = useState<number | null>(null);
   const [speakerPanel, setSpeakerPanel] = useState<SpeakerPanel>('photos');
 
@@ -50,17 +69,32 @@ const GuestEventPage: React.FC = () => {
   const gotSyncRef = useRef(false);
   const restFallbackAttemptedRef = useRef(false);
 
+  const setZoom = useCallback((value: number) => {
+    const clamped = Math.max(
+      ZOOM_MIN,
+      Math.min(ZOOM_MAX, Math.round(value / ZOOM_STEP) * ZOOM_STEP)
+    );
+    const next = Number(clamped.toFixed(2));
+    setZoomLevel(next);
+    try {
+      localStorage.setItem(ZOOM_STORAGE_KEY, String(next));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const applyTimer = useCallback((incoming: GuestActiveTimer | null | undefined) => {
     setActiveTimer(mergeGuestActiveTimer(incoming, timerSyncRef));
   }, []);
 
   const applyInitialPayload = useCallback(
-    (data: GuestEventPayload) => {
+    (data: GuestEventPayload, fromSocket = false) => {
       gotSyncRef.current = true;
       setPayload(data);
       setError(null);
       setLoading(false);
       applyTimer(data.activeTimer);
+      if (fromSocket) setLiveSynced(true);
     },
     [applyTimer]
   );
@@ -78,7 +112,7 @@ const GuestEventPage: React.FC = () => {
         }
         return;
       }
-      applyInitialPayload(data);
+      applyInitialPayload(data, false);
     } catch (e) {
       if (!gotSyncRef.current) {
         setError(e instanceof Error ? e.message : 'Failed to load guest view.');
@@ -99,10 +133,12 @@ const GuestEventPage: React.FC = () => {
     restFallbackAttemptedRef.current = false;
     setLoading(true);
     setError(null);
+    setLiveSynced(false);
 
     guestSocketClient.connect(token, {
-      onInitialSync: applyInitialPayload,
+      onInitialSync: (data) => applyInitialPayload(data, true),
       onJoinError: (message, needsMigration) => {
+        setLiveSynced(false);
         setError(
           needsMigration
             ? `${message} Run migration 052 on Neon.`
@@ -111,7 +147,10 @@ const GuestEventPage: React.FC = () => {
         setPayload(null);
         setLoading(false);
       },
-      onConnectionChange: setSocketConnected,
+      onConnectionChange: (connected) => {
+        setSocketConnected(connected);
+        if (!connected) setLiveSynced(false);
+      },
       onTimerUpdated: applyTimer,
       onScheduleUpdated: (data) => {
         setPayload((prev) => {
@@ -213,6 +252,7 @@ const GuestEventPage: React.FC = () => {
     : timerLoaded
       ? 'text-yellow-400'
       : 'text-slate-400';
+  const isLive = liveSynced && socketConnected;
 
   useEffect(() => {
     if (activeItemId == null || activeItemId === lastActiveItemIdRef.current) return;
@@ -233,6 +273,27 @@ const GuestEventPage: React.FC = () => {
               <AppBrandTitle titleClassName="text-sm font-semibold text-white leading-tight" showTagline={false} />
               <p className="text-[10px] uppercase tracking-wide text-slate-500">Guest view · read only</p>
             </div>
+            {payload ? (
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wide ${
+                  isLive
+                    ? 'bg-emerald-600/25 text-emerald-300 ring-1 ring-emerald-500/50'
+                    : 'bg-amber-600/25 text-amber-200 ring-1 ring-amber-500/50'
+                }`}
+                title={
+                  isLive
+                    ? 'Connected to Railway live updates (WebSocket)'
+                    : 'Not connected to live WebSocket — cue changes may lag'
+                }
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    isLive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                  }`}
+                />
+                {isLive ? 'LIVE' : 'OFFLINE'}
+              </span>
+            ) : null}
           </div>
           {payload?.event ? (
             <div className="text-right min-w-0">
@@ -303,6 +364,37 @@ const GuestEventPage: React.FC = () => {
                     ))
                   : null}
                 <span className="text-xs text-slate-500">{dayItems.length} cues</span>
+                <div
+                  className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 overflow-hidden"
+                  title="Zoom schedule to fit more on screen"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setZoom(zoomLevel - ZOOM_STEP)}
+                    disabled={zoomLevel <= ZOOM_MIN}
+                    className="px-2.5 py-1.5 text-sm font-bold text-slate-200 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label="Zoom out"
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setZoom(1)}
+                    className="px-2 py-1.5 text-xs font-semibold tabular-nums text-slate-300 hover:bg-slate-800 border-x border-slate-700 min-w-[3.25rem]"
+                    title="Reset to 100%"
+                  >
+                    {Math.round(zoomLevel * 100)}%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setZoom(zoomLevel + ZOOM_STEP)}
+                    disabled={zoomLevel >= ZOOM_MAX}
+                    className="px-2.5 py-1.5 text-sm font-bold text-slate-200 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label="Zoom in"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
               <input
                 type="search"
@@ -325,23 +417,28 @@ const GuestEventPage: React.FC = () => {
           </div>
         ) : payload ? (
           <>
-            <GuestRunOfShowGrid
-              schedule={allItems}
-              filteredItems={dayItems}
-              masterStartTime={payload.event?.masterStartTime}
-              dayStartTimes={payload.event?.dayStartTimes}
-              activeItemId={activeItemId}
-              timerRunning={timerRunning}
-              timerLoaded={timerLoaded}
-              onOpenSpeakers={(itemId) => {
-                setSpeakersItemId(itemId);
-                setSpeakerPanel('photos');
-              }}
-            />
-            <p className="shrink-0 text-center text-[10px] text-slate-500 pt-2 pb-1">
-              {socketConnected
-                ? 'Live updates via WebSocket'
-                : 'Reconnecting… schedule loaded, live cue may lag briefly'}
+            <div
+              className="flex-1 min-h-0 flex flex-col"
+              style={{ zoom: zoomLevel } as React.CSSProperties}
+            >
+              <GuestRunOfShowGrid
+                schedule={allItems}
+                filteredItems={dayItems}
+                masterStartTime={payload.event?.masterStartTime}
+                dayStartTimes={payload.event?.dayStartTimes}
+                activeItemId={activeItemId}
+                timerRunning={timerRunning}
+                timerLoaded={timerLoaded}
+                onOpenSpeakers={(itemId) => {
+                  setSpeakersItemId(itemId);
+                  setSpeakerPanel('photos');
+                }}
+              />
+            </div>
+            <p className="shrink-0 text-center text-[11px] text-slate-400 pt-2 pb-1">
+              {isLive
+                ? 'LIVE · WebSocket connected to Railway (instant cue updates)'
+                : 'OFFLINE · reconnecting to live updates — cue changes may lag'}
             </p>
           </>
         ) : null}
