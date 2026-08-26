@@ -273,27 +273,6 @@ const GuestEventPage: React.FC = () => {
               <AppBrandTitle titleClassName="text-sm font-semibold text-white leading-tight" showTagline={false} />
               <p className="text-[10px] uppercase tracking-wide text-slate-500">Guest view · read only</p>
             </div>
-            {payload ? (
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wide ${
-                  isLive
-                    ? 'bg-emerald-600/25 text-emerald-300 ring-1 ring-emerald-500/50'
-                    : 'bg-amber-600/25 text-amber-200 ring-1 ring-amber-500/50'
-                }`}
-                title={
-                  isLive
-                    ? 'Connected to Railway live updates (WebSocket)'
-                    : 'Not connected to live WebSocket — cue changes may lag'
-                }
-              >
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    isLive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                  }`}
-                />
-                {isLive ? 'LIVE' : 'OFFLINE'}
-              </span>
-            ) : null}
           </div>
           {payload?.event ? (
             <div className="text-right min-w-0">

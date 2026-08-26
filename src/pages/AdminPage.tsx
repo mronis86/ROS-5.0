@@ -25,6 +25,7 @@ import {
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import AccessEventAccessModal, { type ApproveAccessResult } from '../components/AccessEventAccessModal';
+import TrainingAdminPanel from '../components/training/TrainingAdminPanel';
 import {
   approvedDomainInputHint,
   normalizeApprovedDomainInput,
@@ -254,6 +255,7 @@ const ADMIN_NAV: { id: string; label: string }[] = [
   { id: 'preflight', label: 'Pre-Flight' },
   { id: 'backup', label: 'Backup' },
   { id: 'branding', label: 'Branding' },
+  { id: 'training', label: 'Training' },
 ];
 
 type PlatformCheckLevel = 'ok' | 'warning' | 'critical' | 'unknown';
@@ -4188,6 +4190,10 @@ export default function AdminPage() {
               })}
             </div>
           </div>
+        </section>
+
+        <section id="training" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <TrainingAdminPanel />
         </section>
 
         <AccessEventAccessModal

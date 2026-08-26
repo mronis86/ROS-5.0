@@ -74,6 +74,20 @@ const {
   emitGuestSocketUpdate,
 } = require('./lib/event-guest-links');
 const {
+  isMissingTrainingTableError,
+  ensureTrainingSchema,
+  listAvailableSlots,
+  createBooking,
+  getBookingById,
+  listBookingsAdmin,
+  cancelBooking,
+  listBlockedDatesAdmin,
+  blockDate,
+  unblockDate,
+  buildIcsDownloadMeta,
+  trainingTimezone,
+} = require('./lib/training-booking');
+const {
   ensureCalendarSoftDeleteSchema,
   softDeleteCalendarEvent,
   restoreCalendarEvent,
@@ -2844,6 +2858,128 @@ app.get('/api/guest-event/:token', async (req, res) => {
     }
     console.error('[guest-event GET]', error);
     res.status(500).json({ error: error.message || 'Failed to load guest view' });
+  }
+});
+
+/** Public — available Mon–Fri hourly training slots (excludes booked + blocked days). */
+app.get('/api/training/slots', async (req, res) => {
+  try {
+    await ensureTrainingSchema(pool);
+    const data = await listAvailableSlots(pool, {
+      fromDateKey: req.query.from,
+      days: req.query.days,
+    });
+    res.json({ ok: true, ...data });
+  } catch (error) {
+    if (isMissingTrainingTableError(error)) {
+      return res.status(503).json({ error: 'Training booking is not available yet.', needsMigration: true });
+    }
+    console.error('[training/slots]', error);
+    res.status(500).json({ error: error.message || 'Failed to load training slots' });
+  }
+});
+
+/** Public — book a slot (unique starts_at prevents double booking). */
+app.post('/api/training/book', async (req, res) => {
+  try {
+    await ensureTrainingSchema(pool);
+    const booking = await createBooking(pool, req.body || {});
+    const ics = buildIcsDownloadMeta(booking, req);
+    res.status(201).json({
+      ok: true,
+      booking,
+      timezone: trainingTimezone(),
+      icsUrl: `/api/training/booking/${booking.id}/ics`,
+      icsFilename: ics.filename,
+    });
+  } catch (error) {
+    if (isMissingTrainingTableError(error)) {
+      return res.status(503).json({ error: 'Training booking is not available yet.', needsMigration: true });
+    }
+    const status = error.status || 500;
+    if (status >= 500) console.error('[training/book]', error);
+    res.status(status).json({ error: error.message || 'Failed to book training' });
+  }
+});
+
+/** Public — download .ics for a booking (add to personal calendar). */
+app.get('/api/training/booking/:id/ics', async (req, res) => {
+  try {
+    await ensureTrainingSchema(pool);
+    const booking = await getBookingById(pool, req.params.id);
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+    const ics = buildIcsDownloadMeta(booking, req);
+    res.setHeader('Content-Type', ics.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${ics.filename}"`);
+    res.send(ics.body);
+  } catch (error) {
+    console.error('[training/ics]', error);
+    res.status(500).json({ error: error.message || 'Failed to build calendar file' });
+  }
+});
+
+app.get('/api/admin/training/bookings', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureTrainingSchema(pool);
+    const bookings = await listBookingsAdmin(pool, {
+      includeCancelled: String(req.query.includeCancelled || '') === '1',
+    });
+    res.json({ ok: true, timezone: trainingTimezone(), bookings });
+  } catch (error) {
+    console.error('[admin training bookings]', error);
+    res.status(500).json({ error: error.message || 'Failed to list bookings' });
+  }
+});
+
+app.post('/api/admin/training/bookings/:id/cancel', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureTrainingSchema(pool);
+    const booking = await cancelBooking(pool, req.params.id);
+    if (!booking) return res.status(404).json({ error: 'Booking not found or already cancelled.' });
+    res.json({ ok: true, booking });
+  } catch (error) {
+    console.error('[admin training cancel]', error);
+    res.status(500).json({ error: error.message || 'Failed to cancel booking' });
+  }
+});
+
+app.get('/api/admin/training/blocked-dates', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureTrainingSchema(pool);
+    const blockedDates = await listBlockedDatesAdmin(pool);
+    res.json({ ok: true, blockedDates });
+  } catch (error) {
+    console.error('[admin training blocked]', error);
+    res.status(500).json({ error: error.message || 'Failed to list blocked dates' });
+  }
+});
+
+app.post('/api/admin/training/blocked-dates', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureTrainingSchema(pool);
+    const row = await blockDate(pool, req.body?.date, req.body?.reason);
+    res.status(201).json({ ok: true, blocked: row });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[admin training block]', error);
+    res.status(status).json({ error: error.message || 'Failed to block date' });
+  }
+});
+
+app.delete('/api/admin/training/blocked-dates/:date', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureTrainingSchema(pool);
+    const result = await unblockDate(pool, req.params.date);
+    res.json(result);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[admin training unblock]', error);
+    res.status(status).json({ error: error.message || 'Failed to unblock date' });
   }
 });
 
