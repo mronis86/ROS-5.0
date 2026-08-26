@@ -7,7 +7,7 @@ import {
   adminUnblockTrainingDate,
   formatTrainingWhen,
   type TrainingBooking,
-} from '../lib/trainingBooking';
+} from '../../lib/trainingBooking';
 
 const TrainingAdminPanel: React.FC = () => {
   const [loading, setLoading] = useState(true);
