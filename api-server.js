@@ -82,11 +82,17 @@ const {
   getBookingById,
   listBookingsAdmin,
   cancelBooking,
+  cancelBookingsForSlot,
   listBlockedDatesAdmin,
+  listBlockedHoursAdmin,
   blockDate,
   unblockDate,
+  blockHour,
+  unblockHour,
   buildIcsDownloadMeta,
   trainingTimezone,
+  SLOT_START_HOUR,
+  SLOT_END_HOUR,
 } = require('./lib/training-booking');
 const {
   ensureCalendarSoftDeleteSchema,
@@ -2956,12 +2962,35 @@ app.post('/api/admin/training/bookings/:id/cancel', async (req, res) => {
   }
 });
 
+/** Cancel everyone booked in the same hour block. */
+app.post('/api/admin/training/slots/cancel', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    await ensureTrainingSchema(pool);
+    const bookings = await cancelBookingsForSlot(pool, req.body?.startsAt);
+    res.json({ ok: true, cancelled: bookings.length, bookings });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[admin training cancel slot]', error);
+    res.status(status).json({ error: error.message || 'Failed to cancel slot bookings' });
+  }
+});
+
 app.get('/api/admin/training/blocked-dates', async (req, res) => {
   if (!requireAdminAccess(req, res)) return;
   try {
     await ensureTrainingSchema(pool);
-    const blockedDates = await listBlockedDatesAdmin(pool);
-    res.json({ ok: true, blockedDates });
+    const [blockedDates, blockedHours] = await Promise.all([
+      listBlockedDatesAdmin(pool),
+      listBlockedHoursAdmin(pool),
+    ]);
+    res.json({
+      ok: true,
+      blockedDates,
+      blockedHours,
+      slotHours: { start: SLOT_START_HOUR, end: SLOT_END_HOUR },
+      timezone: trainingTimezone(),
+    });
   } catch (error) {
     console.error('[admin training blocked]', error);
     res.status(500).json({ error: error.message || 'Failed to list blocked dates' });
@@ -2972,8 +3001,13 @@ app.post('/api/admin/training/blocked-dates', async (req, res) => {
   if (!requireAdminAccess(req, res)) return;
   try {
     await ensureTrainingSchema(pool);
+    const hour = req.body?.hour;
+    if (hour != null && hour !== '' && Number.isFinite(Number(hour))) {
+      const row = await blockHour(pool, req.body?.date, Number(hour), req.body?.reason);
+      return res.status(201).json({ ok: true, blocked: row, kind: 'hour' });
+    }
     const row = await blockDate(pool, req.body?.date, req.body?.reason);
-    res.status(201).json({ ok: true, blocked: row });
+    res.status(201).json({ ok: true, blocked: row, kind: 'day' });
   } catch (error) {
     const status = error.status || 500;
     if (status >= 500) console.error('[admin training block]', error);
@@ -2985,6 +3019,11 @@ app.delete('/api/admin/training/blocked-dates/:date', async (req, res) => {
   if (!requireAdminAccess(req, res)) return;
   try {
     await ensureTrainingSchema(pool);
+    const hour = req.query.hour;
+    if (hour != null && hour !== '') {
+      const result = await unblockHour(pool, req.params.date, Number(hour));
+      return res.json(result);
+    }
     const result = await unblockDate(pool, req.params.date);
     res.json(result);
   } catch (error) {

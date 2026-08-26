@@ -120,6 +120,16 @@ export async function adminCancelTrainingBooking(id: string) {
   return res.json();
 }
 
+/** Cancel every active booking that shares this hour start time. */
+export async function adminCancelTrainingSlot(startsAt: string) {
+  const res = await adminFetch('/api/admin/training/slots/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startsAt }),
+  });
+  return res.json();
+}
+
 export async function adminListBlockedDates() {
   const res = await adminFetch('/api/admin/training/blocked-dates');
   return res.json();
@@ -134,9 +144,36 @@ export async function adminBlockTrainingDate(date: string, reason?: string) {
   return res.json();
 }
 
+export async function adminBlockTrainingHour(date: string, hour: number, reason?: string) {
+  const res = await adminFetch('/api/admin/training/blocked-dates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, hour, reason }),
+  });
+  return res.json();
+}
+
 export async function adminUnblockTrainingDate(date: string) {
   const res = await adminFetch(`/api/admin/training/blocked-dates/${encodeURIComponent(date)}`, {
     method: 'DELETE',
   });
   return res.json();
+}
+
+export async function adminUnblockTrainingHour(date: string, hour: number) {
+  const res = await adminFetch(
+    `/api/admin/training/blocked-dates/${encodeURIComponent(date)}?hour=${encodeURIComponent(String(hour))}`,
+    { method: 'DELETE' }
+  );
+  return res.json();
+}
+
+export function formatTrainingHourLabel(hour: number): string {
+  const end = hour + 1;
+  const fmt = (h: number) => {
+    const ampm = h >= 12 ? 'pm' : 'am';
+    const h12 = h % 12 || 12;
+    return `${h12}${ampm}`;
+  };
+  return `${fmt(hour)}–${fmt(end)}`;
 }
