@@ -2862,7 +2862,7 @@ app.get('/api/guest-event/:token', async (req, res) => {
   }
 });
 
-/** Public — available Mon–Fri hourly training slots (excludes booked + blocked days). */
+/** Public — available Mon–Fri hourly training slots (excludes blocked days; booked hours stay listed). */
 app.get('/api/training/slots', async (req, res) => {
   try {
     await ensureTrainingSchema(pool);
@@ -2870,6 +2870,7 @@ app.get('/api/training/slots', async (req, res) => {
       fromDateKey: req.query.from,
       days: req.query.days,
     });
+    res.setHeader('Cache-Control', 'no-store');
     res.json({ ok: true, ...data });
   } catch (error) {
     if (isMissingTrainingTableError(error)) {

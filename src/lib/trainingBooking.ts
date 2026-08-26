@@ -34,7 +34,9 @@ export interface TrainingSlotsResponse {
 
 export async function fetchTrainingSlots(days = 45): Promise<TrainingSlotsResponse> {
   const base = getApiBaseUrl();
-  const res = await fetch(`${base}/api/training/slots?days=${days}`);
+  const res = await fetch(`${base}/api/training/slots?days=${days}`, {
+    cache: 'no-store',
+  });
   const data = (await res.json().catch(() => ({}))) as TrainingSlotsResponse;
   if (!res.ok) {
     return { ok: false, error: data.error || `HTTP ${res.status}`, needsMigration: data.needsMigration };

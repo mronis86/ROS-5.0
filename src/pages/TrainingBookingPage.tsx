@@ -170,28 +170,47 @@ const TrainingBookingPage: React.FC = () => {
                       </button>
                     ))}
                   </div>
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 rounded-sm bg-slate-600 border border-slate-500" />
+                      Open
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 rounded-sm bg-amber-500/80 border border-amber-400" />
+                      Others already booked — still available
+                    </span>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {daySlots.map((slot) => (
-                      <button
-                        key={slot.startsAt}
-                        type="button"
-                        onClick={() => onPickSlot(slot)}
-                        className="rounded-xl border border-slate-600 bg-slate-800/80 px-3 py-3 text-sm font-medium text-white hover:border-blue-500 hover:bg-slate-700 transition-colors"
-                      >
-                        <span className="block">
-                          {new Intl.DateTimeFormat('en-US', {
-                            timeZone: timezone,
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          }).format(new Date(slot.startsAt))}
-                        </span>
-                        {slot.bookingCount > 0 ? (
-                          <span className="block text-[10px] text-slate-400 mt-0.5">
-                            {slot.bookingCount} already booked
+                    {daySlots.map((slot) => {
+                      const hasBookings = (slot.bookingCount || 0) > 0;
+                      return (
+                        <button
+                          key={slot.startsAt}
+                          type="button"
+                          onClick={() => onPickSlot(slot)}
+                          className={`rounded-xl px-3 py-3 text-sm font-medium transition-colors text-left ${
+                            hasBookings
+                              ? 'border-2 border-amber-400/80 bg-amber-950/50 text-amber-50 hover:bg-amber-900/60 hover:border-amber-300'
+                              : 'border border-slate-600 bg-slate-800/80 text-white hover:border-blue-500 hover:bg-slate-700'
+                          }`}
+                        >
+                          <span className="block font-semibold">
+                            {new Intl.DateTimeFormat('en-US', {
+                              timeZone: timezone,
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            }).format(new Date(slot.startsAt))}
                           </span>
-                        ) : null}
-                      </button>
-                    ))}
+                          {hasBookings ? (
+                            <span className="block text-[11px] text-amber-200/90 mt-1 font-medium">
+                              {slot.bookingCount} booked · still open
+                            </span>
+                          ) : (
+                            <span className="block text-[11px] text-slate-400 mt-1">Available</span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                   {daySlots.length === 0 ? (
                     <p className="text-sm text-slate-500">No open hours on this day.</p>
