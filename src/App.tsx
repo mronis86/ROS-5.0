@@ -45,6 +45,7 @@ import AccessPortalPage from './pages/AccessPortalPage';
 import JoinEventAccessPage from './pages/JoinEventAccessPage';
 import GuestEventPage from './pages/GuestEventPage';
 import TrainingBookingPage from './pages/TrainingBookingPage';
+import TrainingManagePage from './pages/TrainingManagePage';
 import LedLayoutsPage from './pages/LedLayoutsPage';
 import LedOutputPage from './pages/LedOutputPage';
 import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
@@ -74,7 +75,8 @@ function AppContent() {
   const isResetPassword = location.pathname === '/reset-password';
   const isAccessPortal = location.pathname === '/access';
   const isGuestEvent = location.pathname === '/guest';
-  const isTraining = location.pathname === '/training';
+  const isTraining =
+    location.pathname === '/training' || location.pathname.startsWith('/training/');
   const isLedOutput = location.pathname === '/led-output';
   const isReports =
     location.pathname === '/reports' || location.pathname === '/post-show-report';
@@ -168,6 +170,7 @@ function AppContent() {
         <Route path="/access" element={<AccessPortalPage />} />
         <Route path="/guest" element={<GuestEventPage />} />
         <Route path="/training" element={<TrainingBookingPage />} />
+        <Route path="/training/manage" element={<TrainingManagePage />} />
         <Route path="/lower-thirds-xml" element={<LowerThirdsXMLPage />} />
         <Route path="/netlify-lower-thirds-xml" element={<NetlifyLowerThirdsXMLPage />} />
         <Route path="/schedule-xml" element={<ScheduleXMLPage />} />

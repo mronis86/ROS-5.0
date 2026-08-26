@@ -110,11 +110,6 @@ const TrainingBookingPage: React.FC = () => {
       });
       if (!result.ok || !result.booking) {
         setError(result.error || 'Could not complete booking.');
-        if (/just booked|already/i.test(result.error || '')) {
-          await loadSlots();
-          setStep('pick');
-          setSelectedSlot(null);
-        }
         return;
       }
       setBooking(result.booking);
@@ -142,7 +137,7 @@ const TrainingBookingPage: React.FC = () => {
           <h1 className="text-xl sm:text-2xl font-semibold text-white mb-1">Schedule a training session</h1>
           <p className="text-sm text-slate-400 mb-6">
             Available Monday–Friday, 9:00 AM – 5:00 PM ({timezone.replace(/_/g, ' ')}). Each session is one hour.
-            Once someone books a time, it is no longer available.
+            Several people can book the same time if needed.
           </p>
 
           {error ? (
@@ -183,11 +178,18 @@ const TrainingBookingPage: React.FC = () => {
                         onClick={() => onPickSlot(slot)}
                         className="rounded-xl border border-slate-600 bg-slate-800/80 px-3 py-3 text-sm font-medium text-white hover:border-blue-500 hover:bg-slate-700 transition-colors"
                       >
-                        {new Intl.DateTimeFormat('en-US', {
-                          timeZone: timezone,
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        }).format(new Date(slot.startsAt))}
+                        <span className="block">
+                          {new Intl.DateTimeFormat('en-US', {
+                            timeZone: timezone,
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          }).format(new Date(slot.startsAt))}
+                        </span>
+                        {slot.bookingCount > 0 ? (
+                          <span className="block text-[10px] text-slate-400 mt-0.5">
+                            {slot.bookingCount} already booked
+                          </span>
+                        ) : null}
                       </button>
                     ))}
                   </div>

@@ -13,12 +13,11 @@ CREATE TABLE IF NOT EXISTS public.training_bookings (
   cancelled_at TIMESTAMPTZ
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_training_bookings_starts_at_active
-  ON public.training_bookings (starts_at)
-  WHERE cancelled_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_training_bookings_starts_at
   ON public.training_bookings (starts_at);
+
+-- Allow multiple people to book the same hour (drop exclusive unique index if present).
+DROP INDEX IF EXISTS public.idx_training_bookings_starts_at_active;
 
 CREATE TABLE IF NOT EXISTS public.training_blocked_dates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

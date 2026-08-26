@@ -90,10 +90,9 @@ const TrainingAdminPanel: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-white">Training bookings</h2>
+          <h2 className="text-lg font-semibold text-white">Bookings & blocked days</h2>
           <p className="text-sm text-slate-400 mt-1">
-            Public page: <span className="text-slate-300">/training</span> · Hours Mon–Fri 9–5 (
-            {timezone.replace(/_/g, ' ')}) · one person per slot
+            Hours: Mon–Fri 9–5 ({timezone.replace(/_/g, ' ')}). Multiple people may book the same hour.
           </p>
         </div>
         <button

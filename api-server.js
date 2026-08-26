@@ -36,7 +36,8 @@ const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, c
 const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
-const { isAdminEmailNotifyConfigured } = require('./lib/admin-notify-email');
+const { isAdminEmailNotifyConfigured, notifyTrainingBooking } = require('./lib/admin-notify-email');
+const { getAppPublicOrigin } = require('./lib/access-portal');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
@@ -2879,12 +2880,21 @@ app.get('/api/training/slots', async (req, res) => {
   }
 });
 
-/** Public — book a slot (unique starts_at prevents double booking). */
+/** Public — book a slot (multiple people may book the same hour). */
 app.post('/api/training/book', async (req, res) => {
   try {
     await ensureTrainingSchema(pool);
     const booking = await createBooking(pool, req.body || {});
     const ics = buildIcsDownloadMeta(booking, req);
+    const origin = getAppPublicOrigin(req);
+    try {
+      await notifyTrainingBooking(pool, booking, {
+        timezone: trainingTimezone(),
+        manageUrl: `${origin}/training/manage`,
+      });
+    } catch (mailErr) {
+      console.error('[training/book] notify email failed:', mailErr.message || mailErr);
+    }
     res.status(201).json({
       ok: true,
       booking,

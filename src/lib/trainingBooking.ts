@@ -7,6 +7,7 @@ export interface TrainingSlot {
   date: string;
   hour: number;
   label: string;
+  bookingCount?: number;
 }
 
 export interface TrainingBooking {
