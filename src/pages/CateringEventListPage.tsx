@@ -3,15 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessCatering, isCateringOnlyUser } from '../services/auth-service';
 import { DatabaseService } from '../services/database';
-import { LOCATION_OPTIONS } from '../types/Event';
+import { LOCATION_OPTIONS, normalizeDayLocations, parseDayLocations, type DayLocations } from '../types/Event';
 import { isQuickModeCalendarEvent } from '../lib/quickModeEvent';
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
+import EventLocationCell from '../components/EventLocationCell';
 
 type EventRow = {
   id: string;
   name: string;
   date: string;
   location: string;
+  dayLocations?: DayLocations;
   numberOfDays: number;
   timezone: string;
   eventType: string;
@@ -82,6 +84,11 @@ const CateringEventListPage: React.FC = () => {
                 ? e.date.slice(0, 10)
                 : String(e.date || ''),
             location: String(sd.location || e.location || ''),
+            dayLocations: normalizeDayLocations(
+              String(sd.location || e.location || 'Great Hall'),
+              Number(sd.numberOfDays) || 1,
+              parseDayLocations(sd.dayLocations)
+            ),
             numberOfDays: Number(sd.numberOfDays) || 1,
             timezone: String(sd.timezone || 'America/New_York'),
             eventType: String(sd.eventType || 'Staged Production'),
@@ -235,8 +242,13 @@ const CateringEventListPage: React.FC = () => {
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1.5 text-sm text-slate-300">
                     <span>{event.date}</span>
                     <span className="inline-flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${locationDotClass(event.location)}`} />
-                      {event.location || '—'}
+                      <EventLocationCell
+                        location={event.location || 'Great Hall'}
+                        numberOfDays={event.numberOfDays}
+                        dayLocations={event.dayLocations}
+                        getLocationColor={locationDotClass}
+                        compact
+                      />
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -308,9 +320,13 @@ const CateringEventListPage: React.FC = () => {
                           {event.date}
                         </td>
                         <td className="px-3 py-3 text-center border-r border-slate-700">
-                          <div className="inline-flex items-center gap-2 text-sm text-slate-200">
-                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${locationDotClass(event.location)}`} />
-                            {event.location || '—'}
+                          <div className="inline-flex justify-center text-sm text-slate-200">
+                            <EventLocationCell
+                              location={event.location || 'Great Hall'}
+                              numberOfDays={event.numberOfDays}
+                              dayLocations={event.dayLocations}
+                              getLocationColor={locationDotClass}
+                            />
                           </div>
                         </td>
                         <td className="px-3 py-3 text-center border-r border-slate-700">

@@ -1,8 +1,13 @@
+/** Per-day room map (day number 1..N → location). Day 1 mirrors `location`. */
+export type DayLocations = Record<number, string>;
+
 export interface Event {
   id: string;
   name: string;
   date: string; // ISO date string
   location: string;
+  /** When set and days differ, Event List shows each day's room. */
+  dayLocations?: DayLocations;
   numberOfDays: number;
   timezone?: string; // Event timezone
   eventType?: string;
@@ -20,10 +25,67 @@ export interface EventFormData {
   name: string;
   date: string;
   location: string;
+  dayLocations?: DayLocations;
   numberOfDays: number;
   timezone?: string;
   eventType?: string;
   recordStreaming?: string;
+}
+
+export function parseDayLocations(raw: unknown): DayLocations | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: DayLocations = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const day = Number(key);
+    if (!Number.isInteger(day) || day < 1 || typeof value !== 'string' || !value.trim()) continue;
+    out[day] = value.trim();
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Fill every day 1..numberOfDays; missing days inherit primary `location`. */
+export function normalizeDayLocations(
+  location: string,
+  numberOfDays: number,
+  dayLocations?: DayLocations | null
+): DayLocations {
+  const days = Math.max(1, Number(numberOfDays) || 1);
+  const primary = (location || 'Great Hall').trim() || 'Great Hall';
+  const result: DayLocations = {};
+  for (let day = 1; day <= days; day++) {
+    const fromMap = dayLocations?.[day];
+    result[day] = (typeof fromMap === 'string' && fromMap.trim()) || primary;
+  }
+  return result;
+}
+
+export function eventUsesMultipleLocations(event: {
+  location: string;
+  numberOfDays: number;
+  dayLocations?: DayLocations;
+}): boolean {
+  if ((event.numberOfDays || 1) <= 1) return false;
+  const locs = normalizeDayLocations(event.location, event.numberOfDays, event.dayLocations);
+  const values = Object.values(locs);
+  return new Set(values).size > 1;
+}
+
+export function eventMatchesLocationFilter(
+  event: { location: string; numberOfDays: number; dayLocations?: DayLocations },
+  filterLocation: string
+): boolean {
+  if (filterLocation === 'all') return true;
+  const locs = normalizeDayLocations(event.location, event.numberOfDays, event.dayLocations);
+  return Object.values(locs).includes(filterLocation);
+}
+
+export function eventLocationSearchText(event: {
+  location: string;
+  numberOfDays: number;
+  dayLocations?: DayLocations;
+}): string {
+  const locs = normalizeDayLocations(event.location, event.numberOfDays, event.dayLocations);
+  return Object.values(locs).join(' ');
 }
 
 export const EVENT_TYPE_OPTIONS = [

@@ -3,6 +3,7 @@ import { Event, DAYS_OPTIONS, LOCATION_OPTIONS } from '../../types/Event';
 import QuickModeBoltIcon from '../QuickModeBoltIcon';
 import EventListRowActions from '../EventListRowActions';
 import EventDisplaySyncToggle from '../EventDisplaySyncToggle';
+import EventLocationCell from '../EventLocationCell';
 
 type Tab = 'upcoming' | 'past' | 'quickMode';
 type MobileSortKey = 'date_asc' | 'date_desc' | 'name_asc';
@@ -306,10 +307,15 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                 <div className="space-y-2 px-3 py-2.5">
                   <h2 className="min-w-0 truncate text-[15px] font-semibold leading-tight text-white">{event.name}</h2>
                   <p className="text-[11px] text-slate-400">{formatDate(event.date)}</p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5 items-start">
                     <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-200">
-                      <span className={`h-2 w-2 rounded-full ${getLocationColor(event.location)}`} />
-                      {event.location}
+                      <EventLocationCell
+                        location={event.location}
+                        numberOfDays={event.numberOfDays}
+                        dayLocations={event.dayLocations}
+                        getLocationColor={getLocationColor}
+                        compact
+                      />
                     </span>
                     <span className={`inline-flex rounded px-2 py-0.5 text-[11px] text-white ${getEventTypeColor(event.eventType || 'Staged Production')}`}>
                       {getEventTypeShortLabel(event.eventType || 'Staged Production')}
