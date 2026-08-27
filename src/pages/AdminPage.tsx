@@ -34,6 +34,13 @@ import {
   buildApprovalEmailDraft,
   buildApprovalMailtoUrl,
 } from '../lib/accessPortalMessages';
+import {
+  PLATFORM_ROLE_OPTIONS,
+  flagsForPlatformRole,
+  platformRoleFromFlags,
+  platformRoleLabel,
+  type PlatformRoleId,
+} from '../lib/platformRoles';
 
 import {
   adminFetch,
@@ -465,6 +472,8 @@ export default function AdminPage() {
     user: AccessRequestRow;
     makeAdmin?: boolean;
   } | null>(null);
+  const [accessRoleModalUser, setAccessRoleModalUser] = useState<AccessRequestRow | null>(null);
+  const [accessRoleModalBusy, setAccessRoleModalBusy] = useState(false);
   const [accessEmailDraft, setAccessEmailDraft] = useState<{
     email: string;
     fullName: string;
@@ -1549,7 +1558,7 @@ export default function AdminPage() {
 
   const accessActionBtn =
     'flex w-full items-center justify-center h-5 px-1 text-[10px] leading-none font-medium rounded-[3px] whitespace-nowrap';
-  const accessActionsCol = 'w-[7rem] min-w-[7rem] max-w-[7rem]';
+  const accessActionsCol = 'w-[7.5rem] min-w-[7.5rem] max-w-[7.5rem]';
   const accessTableBorder = 'border-r border-slate-700/80';
   const accessActionsHeadClass = `px-1 py-1.5 text-center text-[11px] font-semibold text-slate-400 whitespace-nowrap sticky top-0 right-0 z-30 ${accessActionsCol} bg-slate-900 border-b-2 border-b-slate-600 border-l-2 border-l-slate-600 ${accessTableBorder}`;
   const accessActionsCellClass = `px-1 py-1 align-top sticky right-0 z-10 ${accessActionsCol} bg-slate-800 border-b border-b-slate-700/80 border-l-2 border-l-slate-600 ${accessTableBorder}`;
@@ -1557,205 +1566,146 @@ export default function AdminPage() {
   const accessTableRowClass = 'hover:bg-slate-900/40 group';
   const accessTableCellClass = `px-2 py-1.5 align-middle text-xs border-b border-b-slate-700/80 ${accessTableBorder}`;
 
+  const setAccessUserRole = useCallback(
+    async (row: AccessRequestRow, role: PlatformRoleId) => {
+      if (platformRoleFromFlags(row) === role) {
+        setAccessRoleModalUser(null);
+        return;
+      }
+      setAccessRoleModalBusy(true);
+      setAccessRequestsError(null);
+      try {
+        const res = await adminFetch(`/api/admin/access-requests/${row.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...flagsForPlatformRole(role),
+            notify_user: false,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setAccessRequestsError((data as { error?: string }).error || `HTTP ${res.status}`);
+          return;
+        }
+        setAccessRoleModalUser(null);
+        await fetchAccessRequests();
+      } catch (e) {
+        setAccessRequestsError(e instanceof Error ? e.message : 'Request failed');
+      } finally {
+        setAccessRoleModalBusy(false);
+      }
+    },
+    [fetchAccessRequests]
+  );
+
   const renderAccessActions = (r: AccessRequestRow) => (
-    <div className="flex flex-col gap-px w-full">
-      {r.status !== 'approved' && (
-        <button
-          type="button"
-          onClick={() => openApproveAccessModal(r, false)}
-          className={`${accessActionBtn} bg-emerald-700 hover:bg-emerald-600 text-white`}
-        >
-          Approve
-        </button>
-      )}
-      {!r.is_admin && r.status !== 'approved' && (
-        <button
-          type="button"
-          onClick={() =>
-            void updateAccessUser(r.id, r.email, {
-              is_event_manager: !(r.is_event_manager === true),
-              notify_user: false,
-            })
-          }
-          className={`${accessActionBtn} bg-amber-800 hover:bg-amber-700 text-white`}
-        >
-          {r.is_event_manager ? 'Revoke event mgr' : 'Event manager'}
-        </button>
-      )}
-      {!r.is_admin && r.status !== 'approved' && (
-        <button
-          type="button"
-          onClick={() =>
-            void updateAccessUser(r.id, r.email, {
-              is_bts_crew: !(r.is_bts_crew === true),
-              notify_user: false,
-            })
-          }
-          className={`${accessActionBtn} ${r.is_bts_crew ? 'bg-teal-800 hover:bg-teal-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
-          title="BTS Crew: Event Manager–level access + Pre-Flight / Show Checklist"
-        >
-          {r.is_bts_crew ? 'Revoke BTS Crew' : 'BTS Crew'}
-        </button>
-      )}
-      {r.status !== 'approved' && (
-        <button
-          type="button"
-          onClick={() => openApproveAccessModal(r, true)}
-          className={`${accessActionBtn} bg-blue-700 hover:bg-blue-600 text-white`}
-        >
-          Approve admin
-        </button>
-      )}
-      {r.status !== 'pending' && (
-        <button
-          type="button"
-          onClick={() => {
-            if (confirm(`Set ${r.email} back to pending?`)) {
-              void updateAccessUser(r.id, r.email, { status: 'pending', reset_account: true, notify_user: false });
+      <div className="flex flex-col gap-px w-full">
+        {r.status !== 'approved' && (
+          <button
+            type="button"
+            onClick={() => openApproveAccessModal(r, false)}
+            className={`${accessActionBtn} bg-emerald-700 hover:bg-emerald-600 text-white`}
+          >
+            Approve
+          </button>
+        )}
+        {r.status !== 'pending' && (
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm(`Set ${r.email} back to pending?`)) {
+                void updateAccessUser(r.id, r.email, {
+                  status: 'pending',
+                  reset_account: true,
+                  notify_user: false,
+                });
+              }
+            }}
+            className={`${accessActionBtn} bg-slate-600 hover:bg-slate-500 text-white`}
+          >
+            Pending
+          </button>
+        )}
+        {r.status !== 'rejected' && (
+          <button
+            type="button"
+            onClick={() => rejectAccessRequest(r.id, r.email)}
+            className={`${accessActionBtn} bg-red-900/80 hover:bg-red-800 text-red-100`}
+          >
+            Reject
+          </button>
+        )}
+        {r.status === 'approved' && (
+          <button
+            type="button"
+            onClick={() => openEditEventAccessModal(r)}
+            className={`${accessActionBtn} gap-0.5 bg-violet-800 hover:bg-violet-700 text-white`}
+            title="Choose which events this user can access"
+          >
+            <Calendar className="w-2 h-2 shrink-0" />
+            Events
+          </button>
+        )}
+        {r.status === 'approved' && !r.is_admin && (
+          <button
+            type="button"
+            onClick={() =>
+              void updateAccessUser(r.id, r.email, {
+                dashboard_enabled: !(r.dashboard_enabled === true),
+                notify_user: false,
+              })
             }
-          }}
-          className={`${accessActionBtn} bg-slate-600 hover:bg-slate-500 text-white`}
-        >
-          Pending
-        </button>
-      )}
-      {r.status !== 'rejected' && (
+            disabled={dashboardNeedsMigration}
+            className={`${accessActionBtn} ${r.dashboard_enabled === true ? 'bg-cyan-800 hover:bg-cyan-700' : 'bg-slate-700 hover:bg-slate-600'} text-white disabled:opacity-50`}
+            title={
+              dashboardNeedsMigration
+                ? 'Run migration 032 on Neon first'
+                : 'Allow this user to open the Production Dashboard'
+            }
+          >
+            {r.dashboard_enabled === true ? 'Dashboard on' : 'Dashboard off'}
+          </button>
+        )}
+        {r.status === 'approved' && (
+          <button
+            type="button"
+            onClick={() => setAccessRoleModalUser(r)}
+            className={`${accessActionBtn} bg-indigo-800 hover:bg-indigo-700 text-white`}
+            title="Change platform role"
+          >
+            Role
+          </button>
+        )}
+        {r.portal_url && (
+          <button
+            type="button"
+            onClick={() => openApprovalEmailDraft(r)}
+            className={`${accessActionBtn} gap-0.5 bg-sky-800 hover:bg-sky-700 text-white`}
+            title="Open a draft email in your mail app"
+          >
+            <Mail className="w-2 h-2 shrink-0" />
+            Email
+          </button>
+        )}
+        {r.portal_url && (
+          <button
+            type="button"
+            onClick={() => void copyPortalLink(r.id, r.portal_url)}
+            className={`${accessActionBtn} bg-slate-600 hover:bg-slate-500 text-white`}
+            title="Copy portal link for this user"
+          >
+            {copiedPortalUserId === r.id ? 'Copied!' : 'Copy link'}
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => rejectAccessRequest(r.id, r.email)}
-          className={`${accessActionBtn} bg-red-900/80 hover:bg-red-800 text-red-100`}
+          onClick={() => deleteAccessUser(r.id, r.email)}
+          className={`${accessActionBtn} bg-slate-700 hover:bg-slate-600 text-slate-200`}
         >
-          Reject
+          Delete
         </button>
-      )}
-      {r.status === 'approved' && (
-        <button
-          type="button"
-          onClick={() => openEditEventAccessModal(r)}
-          className={`${accessActionBtn} gap-0.5 bg-violet-800 hover:bg-violet-700 text-white`}
-          title="Choose which events this user can access"
-        >
-          <Calendar className="w-2 h-2 shrink-0" />
-          Events
-        </button>
-      )}
-      {r.status === 'approved' && !r.is_admin && (
-        <button
-          type="button"
-          onClick={() =>
-            void updateAccessUser(r.id, r.email, {
-              dashboard_enabled: !(r.dashboard_enabled === true),
-              notify_user: false,
-            })
-          }
-          disabled={dashboardNeedsMigration}
-          className={`${accessActionBtn} ${r.dashboard_enabled === true ? 'bg-cyan-800 hover:bg-cyan-700' : 'bg-slate-700 hover:bg-slate-600'} text-white disabled:opacity-50`}
-          title={
-            dashboardNeedsMigration
-              ? 'Run migration 032 on Neon first'
-              : 'Allow this user to open the Production Dashboard'
-          }
-        >
-          {r.dashboard_enabled === true ? 'Dashboard on' : 'Dashboard off'}
-        </button>
-      )}
-      {!r.is_admin && r.status === 'approved' && (
-        <button
-          type="button"
-          onClick={() =>
-            void updateAccessUser(r.id, r.email, {
-              is_event_manager: !(r.is_event_manager === true),
-              notify_user: false,
-            })
-          }
-          className={`${accessActionBtn} bg-amber-800 hover:bg-amber-700 text-white`}
-        >
-          {r.is_event_manager ? 'Revoke event mgr' : 'Event manager'}
-        </button>
-      )}
-      {!r.is_admin && r.status === 'approved' && (
-        <button
-          type="button"
-          onClick={() =>
-            void updateAccessUser(r.id, r.email, {
-              is_bts_crew: !(r.is_bts_crew === true),
-              notify_user: false,
-            })
-          }
-          className={`${accessActionBtn} ${r.is_bts_crew ? 'bg-teal-800 hover:bg-teal-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
-          title="BTS Crew: Event Manager–level access + Pre-Flight / Show Checklist"
-        >
-          {r.is_bts_crew ? 'Revoke BTS Crew' : 'BTS Crew'}
-        </button>
-      )}
-      {!r.is_admin && r.status === 'approved' && (
-        <button
-          type="button"
-          onClick={() =>
-            void updateAccessUser(r.id, r.email, {
-              is_catering: !(r.is_catering === true),
-              notify_user: false,
-            })
-          }
-          className={`${accessActionBtn} ${r.is_catering ? 'bg-orange-800 hover:bg-orange-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
-          title="Catering users land on the catering event list (assign events via Event access)"
-        >
-          {r.is_catering ? 'Revoke catering' : 'Catering'}
-        </button>
-      )}
-      {!r.is_admin && r.status === 'approved' && (
-        <button
-          type="button"
-          onClick={() =>
-            void updateAccessUser(r.id, r.email, {
-              is_comms: !(r.is_comms === true),
-              notify_user: false,
-            })
-          }
-          className={`${accessActionBtn} ${r.is_comms ? 'bg-red-800 hover:bg-red-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
-          title="Comms users land on the Comms event list to mark cues for recording"
-        >
-          {r.is_comms ? 'Revoke Comms' : 'Comms'}
-        </button>
-      )}
-      {r.status === 'approved' && (
-        <button
-          type="button"
-          onClick={() => void updateAccessUser(r.id, r.email, { is_admin: !r.is_admin, notify_user: false })}
-          className={`${accessActionBtn} bg-indigo-800 hover:bg-indigo-700 text-white`}
-        >
-          {r.is_admin ? 'Revoke admin' : 'Make admin'}
-        </button>
-      )}
-      {r.portal_url && (
-        <button
-          type="button"
-          onClick={() => openApprovalEmailDraft(r)}
-          className={`${accessActionBtn} gap-0.5 bg-sky-800 hover:bg-sky-700 text-white`}
-          title="Open a draft email in your mail app"
-        >
-          <Mail className="w-2 h-2 shrink-0" />
-          Email
-        </button>
-      )}
-      {r.portal_url && (
-        <button
-          type="button"
-          onClick={() => void copyPortalLink(r.id, r.portal_url)}
-          className={`${accessActionBtn} bg-slate-600 hover:bg-slate-500 text-white`}
-          title="Copy portal link for this user"
-        >
-          {copiedPortalUserId === r.id ? 'Copied!' : 'Copy link'}
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={() => deleteAccessUser(r.id, r.email)}
-        className={`${accessActionBtn} bg-slate-700 hover:bg-slate-600 text-slate-200`}
-      >
-        Delete
-      </button>
-    </div>
+      </div>
   );
 
   const accessSortIndicator = (key: AccessSortKey) =>
@@ -3371,17 +3321,7 @@ export default function AdminPage() {
                           </span>
                         </td>
                         <td className={`${accessTableCellClass} text-slate-300`}>
-                          {r.is_admin
-                            ? 'Admin'
-                            : r.is_bts_crew
-                              ? 'BTS Crew'
-                              : r.is_event_manager
-                                ? 'Event manager'
-                                : r.is_catering
-                                  ? 'Catering'
-                                  : r.is_comms
-                                    ? 'Comms'
-                                    : 'User'}
+                          {platformRoleLabel(platformRoleFromFlags(r))}
                         </td>
                         <td className={`${accessTableCellClass} text-slate-400`}>
                           {r.status === 'approved' ? (
@@ -4195,19 +4135,89 @@ export default function AdminPage() {
           mode={accessEventModal?.mode ?? 'edit'}
           user={accessEventModal?.user ?? null}
           makeAdmin={accessEventModal?.makeAdmin}
+          allowRoleSelect
           fetchFn={adminFetch}
           onClose={closeAccessEventModal}
           onApproved={(result) => {
             if (accessEventModal?.mode === 'approve' && accessEventModal.user) {
               handleAccessApproved(
                 accessEventModal.user,
-                accessEventModal.makeAdmin === true,
+                result.role === 'admin' || accessEventModal.makeAdmin === true,
                 result
               );
             }
           }}
           onSaved={() => void fetchAccessRequests()}
         />
+
+        {accessRoleModalUser && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60">
+            <div
+              className="w-full max-w-md bg-slate-800 border border-slate-600 rounded-xl shadow-2xl"
+              role="dialog"
+              aria-labelledby="access-role-modal-title"
+            >
+              <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-700">
+                <div className="min-w-0">
+                  <h3 id="access-role-modal-title" className="text-lg font-semibold text-white">
+                    Change role
+                  </h3>
+                  <p className="text-slate-400 text-sm mt-1 truncate">
+                    {accessRoleModalUser.full_name || accessRoleModalUser.email}
+                  </p>
+                  <p className="text-slate-500 text-xs mt-0.5">
+                    Current: {platformRoleLabel(platformRoleFromFlags(accessRoleModalUser))}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !accessRoleModalBusy && setAccessRoleModalUser(null)}
+                  className="p-1 text-slate-400 hover:text-white shrink-0"
+                  aria-label="Close"
+                  disabled={accessRoleModalBusy}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-5 py-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {PLATFORM_ROLE_OPTIONS.map((opt) => {
+                    const active = platformRoleFromFlags(accessRoleModalUser) === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        disabled={accessRoleModalBusy || active}
+                        onClick={() => void setAccessUserRole(accessRoleModalUser, opt.id)}
+                        className={`text-left rounded-lg px-3 py-2.5 border transition-colors disabled:opacity-60 ${
+                          active
+                            ? 'border-indigo-500 bg-indigo-600/30 text-white'
+                            : 'border-slate-600 bg-slate-900/60 text-slate-200 hover:border-slate-500 hover:bg-slate-700/60'
+                        }`}
+                        title={opt.description}
+                      >
+                        <span className="block text-sm font-semibold">{opt.label}</span>
+                        <span className="block text-xs text-slate-400 mt-0.5 leading-snug">
+                          {opt.description}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="px-5 py-3 border-t border-slate-700 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setAccessRoleModalUser(null)}
+                  disabled={accessRoleModalBusy}
+                  className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-medium"
+                >
+                  {accessRoleModalBusy ? 'Saving…' : 'Cancel'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {accessEmailDraft && approvalEmailDraftContent && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60">

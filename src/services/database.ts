@@ -1478,6 +1478,7 @@ export class DatabaseService {
     reviews: Record<string, unknown>;
     stream_url: string | null;
     creative_pdf_url: string | null;
+    creative_cue_pages?: Record<string, number>;
     active_stage: 'creative' | 'ros';
     side_rail_width_px: number | null;
     updated_at?: string;
@@ -1504,6 +1505,7 @@ export class DatabaseService {
       reviews: Record<string, unknown>;
       stream_url?: string | null;
       creative_pdf_url?: string | null;
+      creative_cue_pages?: Record<string, number>;
       active_stage?: 'creative' | 'ros';
       side_rail_width_px?: number | null;
       last_modified_by?: string;

@@ -271,6 +271,7 @@ export default function AccessManagerPage() {
         open={accessEventModal != null}
         mode={accessEventModal?.mode ?? 'edit'}
         user={accessEventModal?.user ?? null}
+        allowRoleSelect={false}
         fetchFn={accessManagerFetch}
         onClose={() => setAccessEventModal(null)}
         onApproved={() => {

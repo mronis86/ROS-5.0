@@ -5067,16 +5067,28 @@ app.delete('/api/catering-notes/:id', async (req, res) => {
 app.get('/api/content-review/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
-    const result = await pool.query(
-      'SELECT * FROM content_review_data WHERE event_id = $1',
-      [eventId]
-    );
+    let result;
+    try {
+      result = await pool.query('SELECT * FROM content_review_data WHERE event_id = $1', [eventId]);
+    } catch (selectErr) {
+      if (selectErr.code === '42703' && /creative_cue_pages/i.test(String(selectErr.message || ''))) {
+        result = await pool.query(
+          `SELECT event_id, reviews, stream_url, creative_pdf_url, active_stage, side_rail_width_px,
+                  last_modified_by, last_modified_by_name, updated_at
+           FROM content_review_data WHERE event_id = $1`,
+          [eventId]
+        );
+      } else {
+        throw selectErr;
+      }
+    }
     if (result.rows.length === 0) {
       return res.json({
         event_id: eventId,
         reviews: {},
         stream_url: null,
         creative_pdf_url: null,
+        creative_cue_pages: {},
         active_stage: 'creative',
         side_rail_width_px: null,
       });
@@ -5088,6 +5100,7 @@ app.get('/api/content-review/:eventId', async (req, res) => {
       reviews: row.reviews || {},
       stream_url: row.stream_url || null,
       creative_pdf_url: creativePdfUrl,
+      creative_cue_pages: row.creative_cue_pages && typeof row.creative_cue_pages === 'object' ? row.creative_cue_pages : {},
       active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
       side_rail_width_px: row.side_rail_width_px ?? null,
       last_modified_by: row.last_modified_by,
@@ -5112,6 +5125,7 @@ app.put('/api/content-review/:eventId', async (req, res) => {
       reviews,
       stream_url,
       creative_pdf_url,
+      creative_cue_pages,
       active_stage,
       side_rail_width_px,
       last_modified_by,
@@ -5133,33 +5147,102 @@ app.put('/api/content-review/:eventId', async (req, res) => {
     const reviewsJson =
       reviews != null && typeof reviews === 'object' ? JSON.stringify(reviews) : '{}';
     const stage = active_stage === 'ros' ? 'ros' : 'creative';
+    const cuePagesJson =
+      creative_cue_pages != null && typeof creative_cue_pages === 'object'
+        ? JSON.stringify(creative_cue_pages)
+        : null;
 
-    const result = await pool.query(
-      `INSERT INTO content_review_data (
-         event_id, reviews, stream_url, creative_pdf_url, active_stage, side_rail_width_px,
-         last_modified_by, last_modified_by_name, updated_at
-       ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, NOW())
-       ON CONFLICT (event_id) DO UPDATE SET
-         reviews = EXCLUDED.reviews,
-         stream_url = EXCLUDED.stream_url,
-         creative_pdf_url = EXCLUDED.creative_pdf_url,
-         active_stage = EXCLUDED.active_stage,
-         side_rail_width_px = EXCLUDED.side_rail_width_px,
-         last_modified_by = EXCLUDED.last_modified_by,
-         last_modified_by_name = EXCLUDED.last_modified_by_name,
-         updated_at = NOW()
-       RETURNING *`,
-      [
-        eventId,
-        reviewsJson,
-        stream_url ?? null,
-        nextCreativePdfValue,
-        stage,
-        side_rail_width_px != null ? parseInt(side_rail_width_px, 10) : null,
-        last_modified_by || null,
-        last_modified_by_name || null,
-      ]
-    );
+    let result;
+    try {
+      if (cuePagesJson != null) {
+        result = await pool.query(
+          `INSERT INTO content_review_data (
+             event_id, reviews, stream_url, creative_pdf_url, creative_cue_pages, active_stage, side_rail_width_px,
+             last_modified_by, last_modified_by_name, updated_at
+           ) VALUES ($1, $2::jsonb, $3, $4, $5::jsonb, $6, $7, $8, $9, NOW())
+           ON CONFLICT (event_id) DO UPDATE SET
+             reviews = EXCLUDED.reviews,
+             stream_url = EXCLUDED.stream_url,
+             creative_pdf_url = EXCLUDED.creative_pdf_url,
+             creative_cue_pages = EXCLUDED.creative_cue_pages,
+             active_stage = EXCLUDED.active_stage,
+             side_rail_width_px = EXCLUDED.side_rail_width_px,
+             last_modified_by = EXCLUDED.last_modified_by,
+             last_modified_by_name = EXCLUDED.last_modified_by_name,
+             updated_at = NOW()
+           RETURNING *`,
+          [
+            eventId,
+            reviewsJson,
+            stream_url ?? null,
+            nextCreativePdfValue,
+            cuePagesJson,
+            stage,
+            side_rail_width_px != null ? parseInt(side_rail_width_px, 10) : null,
+            last_modified_by || null,
+            last_modified_by_name || null,
+          ]
+        );
+      } else {
+        result = await pool.query(
+          `INSERT INTO content_review_data (
+             event_id, reviews, stream_url, creative_pdf_url, active_stage, side_rail_width_px,
+             last_modified_by, last_modified_by_name, updated_at
+           ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, NOW())
+           ON CONFLICT (event_id) DO UPDATE SET
+             reviews = EXCLUDED.reviews,
+             stream_url = EXCLUDED.stream_url,
+             creative_pdf_url = EXCLUDED.creative_pdf_url,
+             active_stage = EXCLUDED.active_stage,
+             side_rail_width_px = EXCLUDED.side_rail_width_px,
+             last_modified_by = EXCLUDED.last_modified_by,
+             last_modified_by_name = EXCLUDED.last_modified_by_name,
+             updated_at = NOW()
+           RETURNING *`,
+          [
+            eventId,
+            reviewsJson,
+            stream_url ?? null,
+            nextCreativePdfValue,
+            stage,
+            side_rail_width_px != null ? parseInt(side_rail_width_px, 10) : null,
+            last_modified_by || null,
+            last_modified_by_name || null,
+          ]
+        );
+      }
+    } catch (updateErr) {
+      if (updateErr.code === '42703' && /creative_cue_pages/i.test(String(updateErr.message || ''))) {
+        result = await pool.query(
+          `INSERT INTO content_review_data (
+             event_id, reviews, stream_url, creative_pdf_url, active_stage, side_rail_width_px,
+             last_modified_by, last_modified_by_name, updated_at
+           ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, NOW())
+           ON CONFLICT (event_id) DO UPDATE SET
+             reviews = EXCLUDED.reviews,
+             stream_url = EXCLUDED.stream_url,
+             creative_pdf_url = EXCLUDED.creative_pdf_url,
+             active_stage = EXCLUDED.active_stage,
+             side_rail_width_px = EXCLUDED.side_rail_width_px,
+             last_modified_by = EXCLUDED.last_modified_by,
+             last_modified_by_name = EXCLUDED.last_modified_by_name,
+             updated_at = NOW()
+           RETURNING *`,
+          [
+            eventId,
+            reviewsJson,
+            stream_url ?? null,
+            nextCreativePdfValue,
+            stage,
+            side_rail_width_px != null ? parseInt(side_rail_width_px, 10) : null,
+            last_modified_by || null,
+            last_modified_by_name || null,
+          ]
+        );
+      } else {
+        throw updateErr;
+      }
+    }
 
     const row = result.rows[0];
     const creativePdfUrl = await resolveCreativePdfUrl(eventId, row.creative_pdf_url || null);
@@ -5168,6 +5251,7 @@ app.put('/api/content-review/:eventId', async (req, res) => {
       reviews: row.reviews || {},
       stream_url: row.stream_url || null,
       creative_pdf_url: creativePdfUrl,
+      creative_cue_pages: row.creative_cue_pages && typeof row.creative_cue_pages === 'object' ? row.creative_cue_pages : {},
       active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
       side_rail_width_px: row.side_rail_width_px ?? null,
       updated_at: row.updated_at,

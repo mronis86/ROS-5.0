@@ -11,12 +11,18 @@ import {
   loadEventAccessForUser,
   validateRestrictedSelection,
 } from '../lib/accessEventAccess';
+import {
+  PLATFORM_ROLE_OPTIONS,
+  type PlatformRoleId,
+  platformRoleLabel,
+} from '../lib/platformRoles';
 
 export type AccessEventAccessModalMode = 'approve' | 'edit';
 
 export interface ApproveAccessResult {
   portalUrl?: string;
   request?: { full_name?: string; is_admin?: boolean };
+  role?: PlatformRoleId;
 }
 
 interface AccessEventAccessModalProps {
@@ -24,6 +30,8 @@ interface AccessEventAccessModalProps {
   mode: AccessEventAccessModalMode;
   user: AccessEventAccessUser | null;
   makeAdmin?: boolean;
+  /** When false, role stays User (Access Manager approve). Default true for Admin. */
+  allowRoleSelect?: boolean;
   fetchFn: (path: string, init?: RequestInit) => Promise<Response>;
   onClose: () => void;
   onApproved?: (result: ApproveAccessResult) => void;
@@ -41,6 +49,7 @@ export default function AccessEventAccessModal({
   mode,
   user,
   makeAdmin = false,
+  allowRoleSelect = true,
   fetchFn,
   onClose,
   onApproved,
@@ -54,8 +63,17 @@ export default function AccessEventAccessModal({
   const [search, setSearch] = useState('');
   const [visibilityMode, setVisibilityMode] = useState<EventVisibilityMode>('all');
   const [eventTab, setEventTab] = useState<AccessEventListTab>('upcoming');
+  const [approveRole, setApproveRole] = useState<PlatformRoleId>(makeAdmin ? 'admin' : 'user');
 
-  const skipRestrictions = makeAdmin || user?.is_admin === true;
+  const skipRestrictions =
+    (mode === 'approve' ? approveRole === 'admin' : false) ||
+    makeAdmin ||
+    user?.is_admin === true;
+
+  useEffect(() => {
+    if (!open || !user) return;
+    setApproveRole(makeAdmin ? 'admin' : 'user');
+  }, [open, user, makeAdmin]);
 
   useEffect(() => {
     if (!open || !user) return;
@@ -92,11 +110,6 @@ export default function AccessEventAccessModal({
     [events, eventTab, search]
   );
 
-  const selectedInTabCount = useMemo(
-    () => filteredEvents.filter((event) => selected.has(event.id)).length,
-    [filteredEvents, selected]
-  );
-
   const toggleSelection = useCallback((eventId: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -129,13 +142,15 @@ export default function AccessEventAccessModal({
     setSubmitting(true);
     try {
       const event_ids = skipRestrictions ? [] : eventIdsForVisibility(visibilityMode, selected);
+      const role: PlatformRoleId = allowRoleSelect ? approveRole : 'user';
 
       if (mode === 'approve') {
         const res = await fetchFn(`/api/admin/access-requests/${user.id}/approve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            make_admin: makeAdmin,
+            role,
+            make_admin: role === 'admin',
             ...(event_ids !== null ? { event_ids } : {}),
           }),
         });
@@ -143,6 +158,7 @@ export default function AccessEventAccessModal({
           error?: string;
           portalUrl?: string;
           request?: { full_name?: string; is_admin?: boolean };
+          role?: PlatformRoleId;
         };
         if (!res.ok) {
           setError(data.error || `HTTP ${res.status}`);
@@ -151,6 +167,7 @@ export default function AccessEventAccessModal({
         onApproved?.({
           portalUrl: data.portalUrl,
           request: data.request,
+          role: data.role || role,
         });
         onClose();
         return;
@@ -180,7 +197,8 @@ export default function AccessEventAccessModal({
     selected,
     mode,
     fetchFn,
-    makeAdmin,
+    allowRoleSelect,
+    approveRole,
     onApproved,
     onClose,
     onSaved,
@@ -191,9 +209,9 @@ export default function AccessEventAccessModal({
   const title = mode === 'approve' ? 'Approve user' : 'Event access';
   const submitLabel =
     mode === 'approve'
-      ? makeAdmin
-        ? 'Approve as administrator'
-        : 'Approve user'
+      ? submitting
+        ? 'Approving…'
+        : `Approve as ${platformRoleLabel(allowRoleSelect ? approveRole : 'user')}`
       : submitting
         ? 'Saving…'
         : 'Save';
@@ -231,6 +249,37 @@ export default function AccessEventAccessModal({
               {error}
             </div>
           )}
+
+          {mode === 'approve' && allowRoleSelect ? (
+            <div className="shrink-0 rounded-lg border border-slate-600 bg-slate-900/50 p-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                Role
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {PLATFORM_ROLE_OPTIONS.map((opt) => {
+                  const active = approveRole === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setApproveRole(opt.id)}
+                      className={`text-left rounded-md px-2.5 py-2 border transition-colors ${
+                        active
+                          ? 'border-blue-500 bg-blue-600/30 text-white'
+                          : 'border-slate-600 bg-slate-800/80 text-slate-300 hover:border-slate-500 hover:bg-slate-700/80'
+                      }`}
+                      title={opt.description}
+                    >
+                      <span className="block text-xs font-semibold">{opt.label}</span>
+                      <span className="block text-[10px] text-slate-400 mt-0.5 leading-snug">
+                        {opt.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           {!skipRestrictions && (
             <>
@@ -316,35 +365,37 @@ export default function AccessEventAccessModal({
                     <p className="text-slate-400 text-sm">Loading events…</p>
                   ) : filteredEvents.length === 0 ? (
                     <p className="text-slate-400 text-sm">
-                      {search.trim()
-                        ? 'No events match your search in this tab.'
-                        : eventTab === 'upcoming'
-                          ? 'No upcoming events.'
-                          : eventTab === 'past'
-                            ? 'No past events.'
-                            : 'No Quick Mode events.'}
+                      {search.trim() ? 'No events match this search.' : 'No events in this list.'}
                     </p>
                   ) : (
-                    <ul className="divide-y divide-slate-700/60 border border-slate-700/80 rounded-lg overflow-y-auto flex-1 min-h-0">
-                      {filteredEvents.map((event) => (
-                        <li key={event.id}>
-                          <label className="flex items-center gap-2.5 px-2.5 py-1.5 hover:bg-slate-900/40 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={selected.has(event.id)}
-                              onChange={() => toggleSelection(event.id)}
-                              className="rounded border-slate-500 bg-slate-900 text-violet-500 focus:ring-violet-500 shrink-0"
-                            />
-                            <span className="min-w-0 flex-1 truncate text-white text-sm">
-                              {event.name}
-                            </span>
-                            <span className="shrink-0 text-slate-500 text-[11px] tabular-nums">
-                              {event.date || '—'}
-                              {event.isQuickMode ? ' · QM' : ''}
-                            </span>
-                          </label>
-                        </li>
-                      ))}
+                    <ul className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-0.5">
+                      {filteredEvents.map((event) => {
+                        const checked = selected.has(event.id);
+                        return (
+                          <li key={event.id}>
+                            <label
+                              className={`flex items-start gap-2 rounded-md border px-2.5 py-1.5 cursor-pointer ${
+                                checked
+                                  ? 'border-violet-500/60 bg-violet-950/30'
+                                  : 'border-slate-700 bg-slate-900/40 hover:border-slate-600'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleSelection(event.id)}
+                                className="mt-0.5 rounded border-slate-500"
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-xs text-white font-medium truncate">
+                                  {event.name}
+                                </span>
+                                <span className="block text-[10px] text-slate-400">{event.date}</span>
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
@@ -352,50 +403,29 @@ export default function AccessEventAccessModal({
             </>
           )}
 
-          {skipRestrictions && (
-            <p className="text-slate-400 text-sm">
-              {mode === 'approve'
-                ? 'This user will be approved with full access to all events on the calendar.'
-                : 'Administrators always have access to all events. No restrictions apply.'}
+          {skipRestrictions && mode === 'approve' ? (
+            <p className="text-slate-400 text-sm flex-1">
+              This role has full calendar visibility. Event restrictions are not applied.
             </p>
-          )}
+          ) : null}
         </div>
 
-        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-t border-slate-700 shrink-0">
-          <p className="text-[11px] text-slate-500 min-w-0 truncate">
-            {!skipRestrictions && visibilityMode === 'restricted'
-              ? selected.size === 0
-                ? 'Select at least one event.'
-                : `${selected.size} selected` +
-                  (selectedInTabCount > 0 ? ` · ${selectedInTabCount} in tab` : '')
-              : null}
-          </p>
-          <div className="flex justify-end gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm rounded-lg"
-            >
-              {mode === 'edit' && skipRestrictions ? 'Close' : 'Cancel'}
-            </button>
-            {!(mode === 'edit' && skipRestrictions) && (
-              <button
-                type="button"
-                onClick={() => void handleSubmit()}
-                disabled={submitting || loading}
-                className={`px-3 py-1.5 disabled:opacity-50 text-white text-sm font-medium rounded-lg ${
-                  mode === 'approve'
-                    ? makeAdmin
-                      ? 'bg-blue-600 hover:bg-blue-500'
-                      : 'bg-emerald-600 hover:bg-emerald-500'
-                    : 'bg-violet-600 hover:bg-violet-500'
-                }`}
-              >
-                {submitting ? (mode === 'approve' ? 'Approving…' : 'Saving…') : submitLabel}
-              </button>
-            )}
-          </div>
+        <div className="px-4 py-3 border-t border-slate-700 flex gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={submitting || loading}
+            className="flex-1 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-medium"
+          >
+            {submitLabel}
+          </button>
         </div>
       </div>
     </div>

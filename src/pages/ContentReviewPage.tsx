@@ -4,10 +4,38 @@ import { useAuth } from '../contexts/AuthContext';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
+import AssetRetentionNotice from '../components/AssetRetentionNotice';
+import CreativePdfCueViewer from '../components/CreativePdfCueViewer';
+import {
+  type CreativeCuePages,
+  isPdfJsNavigableUrl,
+  lookupCuePage,
+  parseCreativeCuePages,
+  scanPdfForCuePages,
+} from '../lib/creativeCuePdfPages';
 
 type ContentReviewFollowMode = 'solo' | 'drive' | 'follow';
 type ReviewStatus = 'pending' | 'needs_update' | 'approved';
 type ReviewStage = 'creative' | 'ros';
+
+const CREATIVE_FILE_ACCEPT =
+  '.pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
+const CREATIVE_FILE_EXT = new Set(['pdf', 'doc', 'docx', 'ppt', 'pptx']);
+
+function isAllowedCreativeUploadFile(file: File): boolean {
+  const name = String(file.name || '');
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
+  if (ext && CREATIVE_FILE_EXT.has(ext)) return true;
+  const mime = String(file.type || '').toLowerCase();
+  return (
+    mime === 'application/pdf' ||
+    mime === 'application/msword' ||
+    mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mime === 'application/vnd.ms-powerpoint' ||
+    mime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  );
+}
 
 interface StageReviewEntry {
   status: ReviewStatus;
@@ -726,6 +754,11 @@ const ContentReviewPage: React.FC = () => {
   const [creativePdfSetupOpen, setCreativePdfSetupOpen] = useState(true);
   const [isUploadingCreativeFile, setIsUploadingCreativeFile] = useState(false);
   const [creativeFileUploadError, setCreativeFileUploadError] = useState<string | null>(null);
+  const [creativeUploadDragOver, setCreativeUploadDragOver] = useState(false);
+  const [creativeCuePages, setCreativeCuePages] = useState<CreativeCuePages>({});
+  const [creativePdfPage, setCreativePdfPage] = useState(1);
+  const [isScanningCuePages, setIsScanningCuePages] = useState(false);
+  const [cuePageScanMessage, setCuePageScanMessage] = useState<string | null>(null);
   const creativeFileInputRef = useRef<HTMLInputElement>(null);
   /** When set, main creative iframe shows this cue asset instead of the event PDF */
   const [creativeEmbedOverride, setCreativeEmbedOverride] = useState<string | null>(null);
@@ -868,6 +901,7 @@ const ContentReviewPage: React.FC = () => {
         reviews: cueReviews as Record<string, unknown>,
         stream_url: savedStreamUrl,
         creative_pdf_url: savedCreativePdfUrl,
+        creative_cue_pages: creativeCuePages,
         active_stage: activeReviewStage,
         side_rail_width_px: sideRailWidthPx,
         last_modified_by: driverId,
@@ -881,6 +915,7 @@ const ContentReviewPage: React.FC = () => {
     cueReviews,
     savedStreamUrl,
     savedCreativePdfUrl,
+    creativeCuePages,
     activeReviewStage,
     sideRailWidthPx,
     driverId,
@@ -1083,6 +1118,9 @@ const ContentReviewPage: React.FC = () => {
   const clearCreativePdfUrl = useCallback(() => {
     setSavedCreativePdfUrl(null);
     setCreativePdfUrlDraft('');
+    setCreativeCuePages({});
+    setCreativePdfPage(1);
+    setCuePageScanMessage(null);
     if (creativePdfStorageKey) {
       try {
         localStorage.removeItem(creativePdfStorageKey);
@@ -1104,7 +1142,16 @@ const ContentReviewPage: React.FC = () => {
   const uploadCreativeFile = useCallback(
     async (file: File) => {
       if (!eventId) return;
+      if (!isAllowedCreativeUploadFile(file)) {
+        setCreativeFileUploadError('Use a PDF, Word, or PowerPoint file.');
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        setCreativeFileUploadError('File must be 50 MB or smaller.');
+        return;
+      }
       setCreativeFileUploadError(null);
+      setCuePageScanMessage(null);
       setIsUploadingCreativeFile(true);
       try {
         const result = await DatabaseService.uploadContentReviewCreativeFile(eventId, file);
@@ -1137,13 +1184,68 @@ const ContentReviewPage: React.FC = () => {
         setCreativePdfSetupOpen(false);
         setCreativeEmbedOverride(null);
         setCreativeEmbedOverrideLabel(null);
+
+        const isPdf =
+          /\.pdf$/i.test(file.name) || String(file.type || '').toLowerCase() === 'application/pdf';
+        if (isPdf) {
+          setIsScanningCuePages(true);
+          try {
+            const { pages, numPages } = await scanPdfForCuePages(await file.arrayBuffer());
+            setCreativeCuePages(pages);
+            setCreativePdfPage(1);
+            const matched = Object.keys(pages).length;
+            setCuePageScanMessage(
+              matched > 0
+                ? `Matched ${matched} cue label${matched === 1 ? '' : 's'} across ${numPages} page${numPages === 1 ? '' : 's'}. Selecting a cue jumps to its page.`
+                : `Scanned ${numPages} page${numPages === 1 ? '' : 's'} — no “CUE 1” style labels found. Add text like CUE 1 on the deck pages.`
+            );
+          } catch (scanErr) {
+            setCreativeCuePages({});
+            setCuePageScanMessage(
+              scanErr instanceof Error
+                ? `PDF uploaded, but cue scan failed: ${scanErr.message}`
+                : 'PDF uploaded, but cue scan failed.'
+            );
+          } finally {
+            setIsScanningCuePages(false);
+          }
+        } else {
+          setCreativeCuePages({});
+          setCuePageScanMessage(
+            'Cue→page sync works with PDF uploads. Convert Office decks to PDF for auto page jumps.'
+          );
+        }
       } finally {
         setIsUploadingCreativeFile(false);
+        setCreativeUploadDragOver(false);
         if (creativeFileInputRef.current) creativeFileInputRef.current.value = '';
       }
     },
     [eventId, creativePdfStorageKey, setSearchParams]
   );
+
+  const rescanCreativeCuePages = useCallback(async () => {
+    if (!savedCreativePdfUrl || !isPdfJsNavigableUrl(savedCreativePdfUrl)) {
+      setCuePageScanMessage('Cue scanning needs a PDF (not Google Drive or Office Online).');
+      return;
+    }
+    setIsScanningCuePages(true);
+    setCuePageScanMessage(null);
+    try {
+      const { pages, numPages } = await scanPdfForCuePages(savedCreativePdfUrl);
+      setCreativeCuePages(pages);
+      const matched = Object.keys(pages).length;
+      setCuePageScanMessage(
+        matched > 0
+          ? `Matched ${matched} cue label${matched === 1 ? '' : 's'} across ${numPages} page${numPages === 1 ? '' : 's'}.`
+          : `Scanned ${numPages} page${numPages === 1 ? '' : 's'} — no “CUE …” labels found in the PDF text.`
+      );
+    } catch (e) {
+      setCuePageScanMessage(e instanceof Error ? e.message : 'Cue scan failed');
+    } finally {
+      setIsScanningCuePages(false);
+    }
+  }, [savedCreativePdfUrl]);
 
   const applyStreamUrl = useCallback(() => {
     const next = sanitizeStreamEmbedUrl(streamUrlDraft);
@@ -1397,6 +1499,7 @@ const ContentReviewPage: React.FC = () => {
         setSavedCreativePdfUrl(pdf);
         setCreativePdfSetupOpen(!pdf);
       }
+      setCreativeCuePages(parseCreativeCuePages(reviewData?.creative_cue_pages));
       if (reviewData?.side_rail_width_px != null && Number.isFinite(reviewData.side_rail_width_px)) {
         setSideRailWidthPx(clampSideRailWidth(reviewData.side_rail_width_px));
       }
@@ -1493,6 +1596,16 @@ const ContentReviewPage: React.FC = () => {
     () => (selectedId == null ? null : schedule.find((r) => r.id === selectedId) ?? null),
     [schedule, selectedId]
   );
+
+  // Jump creative PDF to the page that contains this cue's "CUE N" label.
+  useEffect(() => {
+    if (!selectedRow || creativeEmbedOverride) return;
+    if (!Object.keys(creativeCuePages).length) return;
+    const label = formatCueDisplay(cueLabel(selectedRow));
+    const page = lookupCuePage(creativeCuePages, label);
+    if (page != null) setCreativePdfPage(page);
+  }, [selectedRow, creativeCuePages, creativeEmbedOverride, cueLabel]);
+
   const selectedReview = selectedRow ? cueReviews[selectedRow.id] : undefined;
   const selectedStageReview = getStageReview(selectedReview, activeReviewStage);
   const selectedStatus: ReviewStatus = selectedStageReview.status;
@@ -1648,6 +1761,14 @@ const ContentReviewPage: React.FC = () => {
     creativeCueItem && cueNeedsCreativeExtras(creativeCueItem) ? creativeCueItem : null;
   const creativeCueAssets = creativeCueItem ? creativeExtraAssetRows(creativeCueItem) : [];
   const creativeIframeSrc = creativeEmbedOverride ?? savedCreativePdfUrl;
+  const useCueSyncedPdfViewer =
+    !creativeEmbedOverride &&
+    !!savedCreativePdfUrl &&
+    isPdfJsNavigableUrl(savedCreativePdfUrl);
+  const matchedCuePage =
+    selectedRow && Object.keys(creativeCuePages).length
+      ? lookupCuePage(creativeCuePages, formatCueDisplay(cueLabel(selectedRow)))
+      : null;
 
   /** Sub-cues under the current parent (same group as sidebar), in run order — shown below parent in main column. */
   const subCuesUnderParent = useMemo(() => {
@@ -2632,33 +2753,140 @@ const ContentReviewPage: React.FC = () => {
 
                 <div className="shrink-0 rounded-lg border border-slate-600 bg-slate-800/80 p-2 md:p-3">
                   {savedCreativePdfUrl && !creativePdfSetupOpen ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-300" title={savedCreativePdfUrl}>
-                        {savedCreativePdfUrl}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCreativePdfUrlDraft(savedCreativePdfUrl);
-                          setCreativePdfSetupOpen(true);
-                        }}
-                        className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
-                      >
-                        Change PDF
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => window.open(savedCreativePdfUrl, '_blank', 'noopener,noreferrer')}
-                        className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
-                      >
-                        Open tab
-                      </button>
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-300"
+                          title={savedCreativePdfUrl}
+                        >
+                          {savedCreativePdfUrl}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreativePdfUrlDraft(savedCreativePdfUrl);
+                            setCreativePdfSetupOpen(true);
+                          }}
+                          className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
+                        >
+                          Change PDF
+                        </button>
+                        {useCueSyncedPdfViewer ? (
+                          <button
+                            type="button"
+                            onClick={() => void rescanCreativeCuePages()}
+                            disabled={isScanningCuePages}
+                            className="rounded border border-emerald-700/70 px-2 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-950/50 disabled:opacity-50"
+                            title="Find CUE 1, CUE 2… text in the PDF and map pages"
+                          >
+                            {isScanningCuePages ? 'Scanning…' : 'Scan cue pages'}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => window.open(savedCreativePdfUrl, '_blank', 'noopener,noreferrer')}
+                          className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
+                        >
+                          Open tab
+                        </button>
+                      </div>
+                      {cuePageScanMessage ? (
+                        <p className="text-[10px] leading-snug text-slate-400">{cuePageScanMessage}</p>
+                      ) : Object.keys(creativeCuePages).length > 0 ? (
+                        <p className="text-[10px] leading-snug text-emerald-300/90">
+                          {Object.keys(creativeCuePages).length} cue→page map
+                          {matchedCuePage != null && selectedRow
+                            ? ` · ${formatCueDisplay(cueLabel(selectedRow))} → page ${matchedCuePage}`
+                            : ''}
+                        </p>
+                      ) : useCueSyncedPdfViewer ? (
+                        <p className="text-[10px] leading-snug text-slate-500">
+                          Tip: put text like <span className="font-mono text-slate-400">CUE 1</span> on each
+                          deck page, then Scan cue pages — selecting a cue jumps the PDF.
+                        </p>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="space-y-2">
                       <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Creative PDF URL
+                        Creative deck for this event
                       </label>
+                      <input
+                        ref={creativeFileInputRef}
+                        type="file"
+                        accept={CREATIVE_FILE_ACCEPT}
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file || isUploadingCreativeFile) return;
+                          void uploadCreativeFile(file);
+                        }}
+                      />
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Upload creative PDF or Office file"
+                        onClick={() => {
+                          if (isUploadingCreativeFile || !eventId) return;
+                          creativeFileInputRef.current?.click();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            if (isUploadingCreativeFile || !eventId) return;
+                            creativeFileInputRef.current?.click();
+                          }
+                        }}
+                        onDragEnter={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (isUploadingCreativeFile || !eventId) return;
+                          setCreativeUploadDragOver(true);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (isUploadingCreativeFile || !eventId) return;
+                          e.dataTransfer.dropEffect = 'copy';
+                          setCreativeUploadDragOver(true);
+                        }}
+                        onDragLeave={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setCreativeUploadDragOver(false);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setCreativeUploadDragOver(false);
+                          if (isUploadingCreativeFile || !eventId) return;
+                          const file = e.dataTransfer.files?.[0];
+                          if (!file) return;
+                          void uploadCreativeFile(file);
+                        }}
+                        className={`rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors ${
+                          isUploadingCreativeFile || !eventId
+                            ? 'cursor-not-allowed border-slate-600 bg-slate-800/40 text-slate-500'
+                            : creativeUploadDragOver
+                              ? 'cursor-copy border-emerald-400 bg-emerald-900/40 text-emerald-100'
+                              : 'cursor-pointer border-slate-500 bg-slate-800/60 text-slate-200 hover:border-emerald-500 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="text-sm font-semibold">
+                          {isUploadingCreativeFile
+                            ? 'Uploading…'
+                            : 'Drag a PDF here, or click to upload'}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          PDF, Word, or PowerPoint · max 50 MB · linked to this event
+                        </div>
+                      </div>
+                      <AssetRetentionNotice className="text-[11px] !py-2" />
+                      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        <span className="h-px flex-1 bg-slate-600" />
+                        <span>or paste a URL</span>
+                        <span className="h-px flex-1 bg-slate-600" />
+                      </div>
                       <input
                         type="url"
                         value={creativePdfUrlDraft}
@@ -2667,29 +2895,6 @@ const ContentReviewPage: React.FC = () => {
                         className="w-full rounded border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-violet-400"
                       />
                       <div className="flex flex-wrap gap-2">
-                        <input
-                          ref={creativeFileInputRef}
-                          type="file"
-                          accept=".pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (!file || isUploadingCreativeFile) return;
-                            void uploadCreativeFile(file);
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => creativeFileInputRef.current?.click()}
-                          disabled={isUploadingCreativeFile}
-                          className={`rounded px-3 py-1.5 text-xs font-semibold text-white ${
-                            isUploadingCreativeFile
-                              ? 'cursor-wait bg-slate-600'
-                              : 'bg-emerald-600 hover:bg-emerald-500'
-                          }`}
-                        >
-                          {isUploadingCreativeFile ? 'Uploading…' : 'Upload File'}
-                        </button>
                         <button
                           type="button"
                           onClick={applyCreativePdfUrl}
@@ -2717,7 +2922,7 @@ const ContentReviewPage: React.FC = () => {
                         ) : null}
                       </div>
                       <p className="text-[10px] leading-snug text-slate-500">
-                        Upload PDF/Word/PowerPoint from your computer, or paste a URL. Google Drive file links are
+                        Uploads are stored with this event (same platform as cue assets). Google Drive links are
                         converted to preview embeds. Some hosts block iframes—use Open tab if the viewer is blank.
                       </p>
                       {creativeFileUploadError ? (
@@ -2745,19 +2950,33 @@ const ContentReviewPage: React.FC = () => {
                     </div>
                   ) : null}
                   {creativeIframeSrc && (!creativePdfSetupOpen || creativeEmbedOverride) ? (
-                    <iframe
-                      key={creativeIframeSrc}
-                      src={creativeIframeSrc}
-                      title={creativeEmbedOverrideLabel ? `Asset: ${creativeEmbedOverrideLabel}` : 'Creative content PDF'}
-                      className={`absolute inset-0 h-full w-full border-0 bg-white ${creativeEmbedOverrideLabel ? 'pt-7' : ''}`}
-                    />
+                    useCueSyncedPdfViewer && !creativeEmbedOverride ? (
+                      <CreativePdfCueViewer
+                        key={savedCreativePdfUrl || 'pdf'}
+                        url={savedCreativePdfUrl!}
+                        page={creativePdfPage}
+                        onPageChange={setCreativePdfPage}
+                        className="absolute inset-0"
+                      />
+                    ) : (
+                      <iframe
+                        key={creativeIframeSrc}
+                        src={creativeIframeSrc}
+                        title={
+                          creativeEmbedOverrideLabel
+                            ? `Asset: ${creativeEmbedOverrideLabel}`
+                            : 'Creative content PDF'
+                        }
+                        className={`absolute inset-0 h-full w-full border-0 bg-white ${creativeEmbedOverrideLabel ? 'pt-7' : ''}`}
+                      />
+                    )
                   ) : (
                     <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-500">
-                      <p>Add a PDF URL above to review creative content for this event.</p>
+                      <p>Drop a PDF above (or paste a URL) to review creative content for this event.</p>
                       <p className="text-xs text-slate-600">
                         {creativeCueExtras
                           ? 'Use asset links above, or set the event PDF.'
-                          : 'Cue list and approvals still work on the left.'}
+                          : 'Cue list and approvals still work on the left. Pages with “CUE 1” text sync when you select a cue.'}
                       </p>
                     </div>
                   )}
