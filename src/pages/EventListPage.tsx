@@ -16,7 +16,7 @@ import {
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
-import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, isCateringOnlyUser, isCommsOnlyUser } from '../services/auth-service';
+import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, isCateringOnlyUser, isCommsOnlyUser, isCreativeOnlyUser } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import EventLocationCell from '../components/EventLocationCell';
@@ -132,6 +132,8 @@ const EventListPage: React.FC = () => {
       navigate('/catering', { replace: true });
     } else if (isCommsOnlyUser(user)) {
       navigate('/comms', { replace: true });
+    } else if (isCreativeOnlyUser(user)) {
+      navigate('/creative', { replace: true });
     }
   }, [user, navigate]);
 

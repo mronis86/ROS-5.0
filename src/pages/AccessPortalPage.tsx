@@ -14,7 +14,7 @@ import {
   passwordPolicyError,
 } from '../lib/passwordPolicy';
 import { useAuth } from '../contexts/AuthContext';
-import { isCateringOnlyUser, isCommsOnlyUser } from '../services/auth-service';
+import { isCateringOnlyUser, isCommsOnlyUser, isCreativeOnlyUser } from '../services/auth-service';
 import ReportIssueButton from '../components/ReportIssueButton';
 
 const AccessPortalPage: React.FC = () => {
@@ -95,6 +95,7 @@ const AccessPortalPage: React.FC = () => {
         is_catering: result.is_catering,
         is_bts_crew: result.is_bts_crew,
         is_comms: result.is_comms,
+        is_creative: result.is_creative,
         dashboard_enabled: result.dashboard_enabled,
       });
       const portalUser = {
@@ -107,9 +108,16 @@ const AccessPortalPage: React.FC = () => {
         is_catering: result.is_catering,
         is_bts_crew: result.is_bts_crew,
         is_comms: result.is_comms,
+        is_creative: result.is_creative,
       };
       navigate(
-        isCateringOnlyUser(portalUser) ? '/catering' : isCommsOnlyUser(portalUser) ? '/comms' : '/',
+        isCateringOnlyUser(portalUser)
+          ? '/catering'
+          : isCommsOnlyUser(portalUser)
+            ? '/comms'
+            : isCreativeOnlyUser(portalUser)
+              ? '/creative'
+              : '/',
         { replace: true }
       );
     } catch (err) {

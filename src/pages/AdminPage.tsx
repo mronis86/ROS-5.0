@@ -73,6 +73,7 @@ interface AccessRequestRow {
   is_catering?: boolean;
   is_bts_crew?: boolean;
   is_comms?: boolean;
+  is_creative?: boolean;
   neon_user_id?: string | null;
   password_set_at?: string | null;
   portal_url?: string | null;
@@ -1451,7 +1452,7 @@ export default function AdminPage() {
     async (
       id: string,
       email: string,
-      patch: { status?: AccessStatus; is_admin?: boolean; is_event_manager?: boolean; is_catering?: boolean; is_bts_crew?: boolean; is_comms?: boolean; dashboard_enabled?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
+      patch: { status?: AccessStatus; is_admin?: boolean; is_event_manager?: boolean; is_catering?: boolean; is_bts_crew?: boolean; is_comms?: boolean; is_creative?: boolean; dashboard_enabled?: boolean; notes?: string; reset_account?: boolean; notify_user?: boolean }
     ) => {
       setAccessRequestsError(null);
       try {

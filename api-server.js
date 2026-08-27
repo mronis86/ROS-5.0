@@ -1480,6 +1480,18 @@ async function runCommsRoleColumnSync(db) {
   `);
 }
 
+async function runCreativeRoleColumnSync(db) {
+  await db.query(`
+    ALTER TABLE public.api_user_access
+      ADD COLUMN IF NOT EXISTS is_creative BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_api_user_access_creative
+      ON public.api_user_access (is_creative)
+      WHERE is_creative = TRUE
+  `);
+}
+
 async function runPreflightChecklistSyncTable(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS public.preflight_checklist_items (
@@ -2451,7 +2463,11 @@ function summarizeContentReviews(reviews, scheduleItems) {
     const ros = entry?.ros?.status || 'pending';
     if (creative === 'approved' && ros === 'approved') {
       approvedCues += 1;
-    } else if (creative === 'needs_update' || ros === 'needs_update') {
+    } else if (
+      creative === 'needs_update' ||
+      ros === 'needs_update' ||
+      creative === 'edits_made'
+    ) {
       needsUpdateCues += 1;
     } else {
       pendingCues += 1;
@@ -2865,6 +2881,34 @@ app.get('/api/guest-event/:token', async (req, res) => {
     }
     console.error('[guest-event GET]', error);
     res.status(500).json({ error: error.message || 'Failed to load guest view' });
+  }
+});
+
+/** Authenticated Creative role — guest-style read-only schedule + live timer for assigned events. */
+app.get('/api/creative-event/:eventId', async (req, res) => {
+  try {
+    const eventId = String(req.params.eventId || '').trim();
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    if (!canAccessCreativeAuth(req.auth)) {
+      return res.status(403).json({ error: 'Creative access required.' });
+    }
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (String(req.query.scope || '') === 'live') {
+      const live = await loadGuestLiveState(pool, eventId);
+      return res.json({ ok: true, ...live });
+    }
+    const payload = await loadGuestEventPayload(pool, eventId);
+    if (!payload) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    console.error('[creative-event GET]', error);
+    res.status(500).json({ error: error.message || 'Failed to load creative event view' });
   }
 });
 
@@ -3453,6 +3497,17 @@ function isCommsOnlyAuth(auth) {
   if (!auth) return false;
   if (auth.isAdmin || auth.isEventManager || auth.isBtsCrew) return false;
   return auth.isComms === true;
+}
+
+function isCreativeOnlyAuth(auth) {
+  if (!auth) return false;
+  if (auth.isAdmin || auth.isEventManager || auth.isBtsCrew) return false;
+  return auth.isCreative === true;
+}
+
+function canAccessCreativeAuth(auth) {
+  if (!auth) return false;
+  return !!(auth.isAdmin || auth.isEventManager || auth.isBtsCrew || auth.isCreative);
 }
 
 app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
@@ -4167,6 +4222,11 @@ app.post('/api/run-of-show-data', async (req, res) => {
       return res.status(403).json({
         error: 'Comms users can only update recording flags.',
         hint: 'PATCH /api/run-of-show-data/:eventId/recording',
+      });
+    }
+    if (isCreativeOnlyAuth(req.auth)) {
+      return res.status(403).json({
+        error: 'Creative users have read-only run of show access.',
       });
     }
 
@@ -5118,9 +5178,109 @@ app.get('/api/content-review/:eventId', async (req, res) => {
   }
 });
 
+/** Merge creative-only contributor updates into existing review JSON (creative.response + edits_made only). */
+function mergeCreativeContributorReviews(currentReviews, incomingReviews, modifierName, modifierId) {
+  const merged =
+    currentReviews && typeof currentReviews === 'object'
+      ? JSON.parse(JSON.stringify(currentReviews))
+      : {};
+  if (!incomingReviews || typeof incomingReviews !== 'object') {
+    return { error: 'reviews object is required.' };
+  }
+
+  const now = new Date().toISOString();
+  const by = String(modifierName || modifierId || 'creative').slice(0, 200);
+  let anyChanged = false;
+
+  for (const [key, val] of Object.entries(incomingReviews)) {
+    if (!val || typeof val !== 'object') continue;
+    const incomingCreative = val.creative;
+    if (!incomingCreative || typeof incomingCreative !== 'object') continue;
+
+    const storeKey = String(key);
+    const existing = merged[storeKey] || merged[key] || { creative: {}, ros: {} };
+    const creative =
+      existing.creative && typeof existing.creative === 'object' ? { ...existing.creative } : {};
+    const ros = existing.ros && typeof existing.ros === 'object' ? { ...existing.ros } : {};
+    let itemChanged = false;
+
+    if (incomingCreative.response !== undefined) {
+      const nextResponse = String(incomingCreative.response ?? '').slice(0, 10000);
+      if (nextResponse !== String(creative.response ?? '')) {
+        creative.response = nextResponse;
+        creative.updatedAt = now;
+        creative.updatedBy = by;
+        itemChanged = true;
+      }
+    }
+    if (incomingCreative.status === 'edits_made' && creative.status !== 'edits_made') {
+      creative.status = 'edits_made';
+      creative.updatedAt = now;
+      creative.updatedBy = by;
+      itemChanged = true;
+    }
+
+    if (itemChanged) {
+      merged[storeKey] = { creative, ros };
+      anyChanged = true;
+    }
+  }
+
+  if (!anyChanged) {
+    return { error: 'No allowed creative review updates in payload.' };
+  }
+  return { reviews: merged };
+}
+
 app.put('/api/content-review/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (isCreativeOnlyAuth(req.auth)) {
+      if (!userCanAccessEvent(req.auth, eventId)) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      const { reviews, last_modified_by, last_modified_by_name } = req.body || {};
+      const current = await pool.query('SELECT reviews FROM content_review_data WHERE event_id = $1 LIMIT 1', [
+        eventId,
+      ]);
+      const mergeResult = mergeCreativeContributorReviews(
+        current.rows[0]?.reviews,
+        reviews,
+        last_modified_by_name,
+        last_modified_by
+      );
+      if (mergeResult.error) {
+        return res.status(400).json({ error: mergeResult.error });
+      }
+      const reviewsJson = JSON.stringify(mergeResult.reviews);
+      const result = await pool.query(
+        `INSERT INTO content_review_data (
+           event_id, reviews, last_modified_by, last_modified_by_name, updated_at
+         ) VALUES ($1, $2::jsonb, $3, $4, NOW())
+         ON CONFLICT (event_id) DO UPDATE SET
+           reviews = EXCLUDED.reviews,
+           last_modified_by = EXCLUDED.last_modified_by,
+           last_modified_by_name = EXCLUDED.last_modified_by_name,
+           updated_at = NOW()
+         RETURNING *`,
+        [eventId, reviewsJson, last_modified_by || null, last_modified_by_name || null]
+      );
+      const row = result.rows[0];
+      const creativePdfUrl = await resolveCreativePdfUrl(eventId, row.creative_pdf_url || null);
+      const payload = {
+        event_id: row.event_id,
+        reviews: row.reviews || {},
+        stream_url: row.stream_url || null,
+        creative_pdf_url: creativePdfUrl,
+        creative_cue_pages:
+          row.creative_cue_pages && typeof row.creative_cue_pages === 'object' ? row.creative_cue_pages : {},
+        active_stage: row.active_stage === 'ros' ? 'ros' : 'creative',
+        side_rail_width_px: row.side_rail_width_px ?? null,
+        updated_at: row.updated_at,
+      };
+      broadcastUpdate(eventId, 'contentReviewDataUpdated', payload);
+      return res.json(payload);
+    }
     const {
       reviews,
       stream_url,
@@ -5297,6 +5457,9 @@ app.post(
       }
       if (req.auth && !userCanAccessEvent(req.auth, eventId)) {
         return res.status(403).json({ error: 'Forbidden' });
+      }
+      if (isCreativeOnlyAuth(req.auth)) {
+        return res.status(403).json({ error: 'Creative users cannot upload creative review files.' });
       }
       if (!req.file?.buffer || !creativeFileAllowed(req.file)) {
         return res.status(400).json({ error: 'No file uploaded or unsupported file type.' });
@@ -8608,6 +8771,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ api_user_access.is_comms column ready');
     } catch (err) {
       console.warn('⚠️ is_comms column sync skipped:', err.message || err);
+    }
+    try {
+      await runCreativeRoleColumnSync(pool);
+      console.log('✅ api_user_access.is_creative column ready');
+    } catch (err) {
+      console.warn('⚠️ is_creative column sync skipped:', err.message || err);
     }
     try {
       await runPreflightChecklistSyncTable(pool);

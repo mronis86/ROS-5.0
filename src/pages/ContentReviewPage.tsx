@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { isCreativeOnlyUser } from '../services/auth-service';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
@@ -15,8 +16,17 @@ import {
 } from '../lib/creativeCuePdfPages';
 
 type ContentReviewFollowMode = 'solo' | 'drive' | 'follow';
-type ReviewStatus = 'pending' | 'needs_update' | 'approved';
+type ReviewStatus = 'pending' | 'needs_update' | 'approved' | 'edits_made';
 type ReviewStage = 'creative' | 'ros';
+
+const REVIEW_STATUSES: ReviewStatus[] = ['pending', 'needs_update', 'approved', 'edits_made'];
+
+function parseReviewStatus(raw: unknown): ReviewStatus {
+  if (typeof raw === 'string' && REVIEW_STATUSES.includes(raw as ReviewStatus)) {
+    return raw as ReviewStatus;
+  }
+  return 'pending';
+}
 
 const CREATIVE_FILE_ACCEPT =
   '.pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation';
@@ -40,6 +50,8 @@ function isAllowedCreativeUploadFile(file: File): boolean {
 interface StageReviewEntry {
   status: ReviewStatus;
   note: string;
+  /** Creative-team reply to reviewer feedback (creative stage). */
+  response?: string;
   updatedAt: string;
   updatedBy: string;
 }
@@ -58,7 +70,18 @@ const REVIEW_STAGES: { id: ReviewStage; label: string; shortLabel: string }[] = 
 ];
 
 function emptyStageReviewEntry(): StageReviewEntry {
-  return { status: 'pending', note: '', updatedAt: '', updatedBy: '' };
+  return { status: 'pending', note: '', response: '', updatedAt: '', updatedBy: '' };
+}
+
+function stageEntryFromRaw(raw: Record<string, unknown> | StageReviewEntry | undefined): StageReviewEntry {
+  if (!raw || typeof raw !== 'object') return emptyStageReviewEntry();
+  return {
+    status: parseReviewStatus(raw.status),
+    note: (raw.note ?? '').toString(),
+    response: (raw.response ?? '').toString(),
+    updatedAt: (raw.updatedAt ?? '').toString(),
+    updatedBy: (raw.updatedBy ?? '').toString(),
+  };
 }
 
 function emptyCueReviewEntry(): CueReviewEntry {
@@ -88,31 +111,14 @@ function normalizeCueReviewMap(raw: unknown): CueReviewMap {
     if (!Number.isFinite(id) || !val || typeof val !== 'object') continue;
     const row = val as Record<string, unknown>;
     if ('creative' in row && 'ros' in row) {
-      const creative = row.creative as StageReviewEntry;
-      const ros = row.ros as StageReviewEntry;
       out[id] = {
-        creative: {
-          status: creative?.status ?? 'pending',
-          note: (creative?.note ?? '').toString(),
-          updatedAt: (creative?.updatedAt ?? '').toString(),
-          updatedBy: (creative?.updatedBy ?? '').toString()
-        },
-        ros: {
-          status: ros?.status ?? 'pending',
-          note: (ros?.note ?? '').toString(),
-          updatedAt: (ros?.updatedAt ?? '').toString(),
-          updatedBy: (ros?.updatedBy ?? '').toString()
-        }
+        creative: stageEntryFromRaw(row.creative as Record<string, unknown>),
+        ros: stageEntryFromRaw(row.ros as Record<string, unknown>),
       };
       continue;
     }
     if ('status' in row) {
-      const legacy: StageReviewEntry = {
-        status: (row.status as ReviewStatus) ?? 'pending',
-        note: (row.note ?? '').toString(),
-        updatedAt: (row.updatedAt ?? '').toString(),
-        updatedBy: (row.updatedBy ?? '').toString()
-      };
+      const legacy: StageReviewEntry = stageEntryFromRaw(row);
       out[id] = { creative: { ...legacy }, ros: emptyStageReviewEntry() };
     }
   }
@@ -147,6 +153,17 @@ function reviewStatusMeta(status: ReviewStatus) {
           'border-cyan-300 bg-amber-950 ring-2 ring-amber-300/70 shadow-[0_0_12px_rgba(251,191,36,0.35)]',
         cueLabelClass: 'text-amber-50',
         cardClass: 'border-amber-700/70 bg-amber-950/25 text-amber-100'
+      };
+    case 'edits_made':
+      return {
+        label: 'Edits made',
+        railClass: 'bg-violet-500/90 text-violet-50 border-violet-200 shadow-sm shadow-violet-900/50',
+        cueRailIdleClass:
+          'border-violet-400/90 bg-violet-950/90 shadow-[inset_0_0_0_1px_rgba(167,139,250,0.35)] hover:bg-violet-900/95',
+        cueRailActiveClass:
+          'border-cyan-300 bg-violet-950 ring-2 ring-violet-300/70 shadow-[0_0_12px_rgba(167,139,250,0.35)]',
+        cueLabelClass: 'text-violet-50',
+        cardClass: 'border-violet-700/70 bg-violet-950/25 text-violet-100'
       };
     default:
       return {
@@ -635,6 +652,8 @@ const ContentReviewPage: React.FC = () => {
   const urlParams = new URLSearchParams(location.search);
   const eventIdParam = urlParams.get('eventId');
   const eventNameParam = urlParams.get('eventName');
+  const creativeContributor = isCreativeOnlyUser(user);
+  const viewerOnly = !creativeContributor && searchParams.get('viewer') === '1';
 
   const [event, setEvent] = useState<Event>(() => {
     const fromState = location.state?.event as Event | undefined;
@@ -663,6 +682,18 @@ const ContentReviewPage: React.FC = () => {
   const numberOfDays = Math.max(1, Number(event?.numberOfDays) || 1);
 
   const goBackFromContentReview = useCallback(() => {
+    if (creativeContributor || searchParams.get('viewer') === '1') {
+      if (eventId) {
+        navigate(
+          `/creative/event?eventId=${encodeURIComponent(eventId)}&eventName=${encodeURIComponent(
+            event.name || eventNameParam || 'Event'
+          )}`
+        );
+        return;
+      }
+      navigate('/creative');
+      return;
+    }
     if (eventId) {
       navigate('/run-of-show', {
         state: {
@@ -676,7 +707,7 @@ const ContentReviewPage: React.FC = () => {
       return;
     }
     navigate('/');
-  }, [event, eventId, eventNameParam, navigate]);
+  }, [event, eventId, eventNameParam, navigate, creativeContributor, searchParams]);
 
   const streamFromQuery = useMemo(
     () => embedUrlFromSearchParam(searchParams.get('streamUrl')),
@@ -890,7 +921,7 @@ const ContentReviewPage: React.FC = () => {
   }, [reviewStorageKey, cueReviews]);
 
   useEffect(() => {
-    if (!eventId || !contentReviewHydrated) return;
+    if (!eventId || !contentReviewHydrated || viewerOnly) return;
     // Skip persist when cueReviews was just applied from a socket broadcast (avoid echo saves).
     if (suppressReviewPersistRef.current) {
       suppressReviewPersistRef.current = false;
@@ -903,15 +934,16 @@ const ContentReviewPage: React.FC = () => {
         creative_pdf_url: savedCreativePdfUrl,
         creative_cue_pages: creativeCuePages,
         active_stage: activeReviewStage,
-        side_rail_width_px: sideRailWidthPx,
-        last_modified_by: driverId,
-        last_modified_by_name: driverName,
-      });
+    side_rail_width_px: sideRailWidthPx,
+    last_modified_by: driverId,
+    last_modified_by_name: driverName,
+  });
     }, 900);
     return () => window.clearTimeout(t);
   }, [
     eventId,
     contentReviewHydrated,
+    viewerOnly,
     cueReviews,
     savedStreamUrl,
     savedCreativePdfUrl,
@@ -1141,6 +1173,7 @@ const ContentReviewPage: React.FC = () => {
 
   const uploadCreativeFile = useCallback(
     async (file: File) => {
+      if (viewerOnly) return;
       if (!eventId) return;
       if (!isAllowedCreativeUploadFile(file)) {
         setCreativeFileUploadError('Use a PDF, Word, or PowerPoint file.');
@@ -1610,12 +1643,14 @@ const ContentReviewPage: React.FC = () => {
   const selectedStageReview = getStageReview(selectedReview, activeReviewStage);
   const selectedStatus: ReviewStatus = selectedStageReview.status;
   const selectedNote = selectedStageReview.note;
+  const selectedResponse = getStageReview(selectedReview, 'creative').response ?? '';
   const selectedFullyApproved = isFullyApproved(selectedReview);
   const rosApproveBlocked =
     activeReviewStage === 'ros' && !canApproveRosStage(selectedReview);
 
   const setCueReviewStatus = useCallback(
     (itemId: number, stage: ReviewStage, status: ReviewStatus) => {
+      if (viewerOnly || creativeContributor) return;
       setCueReviews((prev) => {
         const before = prev[itemId] ?? emptyCueReviewEntry();
         if (stage === 'ros' && status === 'approved' && !canApproveRosStage(before)) {
@@ -1629,6 +1664,7 @@ const ContentReviewPage: React.FC = () => {
             [stage]: {
               status,
               note: stageBefore.note,
+              response: stageBefore.response ?? '',
               updatedAt: new Date().toISOString(),
               updatedBy: driverName
             }
@@ -1636,11 +1672,12 @@ const ContentReviewPage: React.FC = () => {
         };
       });
     },
-    [driverName]
+    [driverName, viewerOnly, creativeContributor]
   );
 
   const setCueReviewStatusesBulk = useCallback(
     (itemIds: number[], stage: ReviewStage, status: ReviewStatus) => {
+      if (viewerOnly || creativeContributor) return;
       if (!itemIds.length) return;
       const now = new Date().toISOString();
       setCueReviews((prev) => {
@@ -1661,6 +1698,7 @@ const ContentReviewPage: React.FC = () => {
             [stage]: {
               status,
               note: stageBefore.note,
+              response: stageBefore.response ?? '',
               updatedAt: now,
               updatedBy: driverName
             }
@@ -1669,7 +1707,53 @@ const ContentReviewPage: React.FC = () => {
         return changed ? next : prev;
       });
     },
-    [driverName]
+    [driverName, viewerOnly, creativeContributor]
+  );
+
+  const setCreativeResponse = useCallback(
+    (itemId: number, response: string) => {
+      if (!creativeContributor) return;
+      setCueReviews((prev) => {
+        const before = prev[itemId] ?? emptyCueReviewEntry();
+        const creativeBefore = getStageReview(before, 'creative');
+        return {
+          ...prev,
+          [itemId]: {
+            ...before,
+            creative: {
+              ...creativeBefore,
+              response,
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName
+            }
+          }
+        };
+      });
+    },
+    [creativeContributor, driverName]
+  );
+
+  const markCreativeEditsMade = useCallback(
+    (itemId: number) => {
+      if (!creativeContributor) return;
+      setCueReviews((prev) => {
+        const before = prev[itemId] ?? emptyCueReviewEntry();
+        const creativeBefore = getStageReview(before, 'creative');
+        return {
+          ...prev,
+          [itemId]: {
+            ...before,
+            creative: {
+              ...creativeBefore,
+              status: 'edits_made',
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName
+            }
+          }
+        };
+      });
+    },
+    [creativeContributor, driverName]
   );
 
   const toggleBulkSelected = useCallback((itemId: number) => {
@@ -1704,6 +1788,7 @@ const ContentReviewPage: React.FC = () => {
 
   const setCueReviewNote = useCallback(
     (itemId: number, stage: ReviewStage, note: string) => {
+      if (viewerOnly || creativeContributor) return;
       setCueReviews((prev) => {
         const before = prev[itemId] ?? emptyCueReviewEntry();
         const stageBefore = getStageReview(before, stage);
@@ -1714,6 +1799,7 @@ const ContentReviewPage: React.FC = () => {
             [stage]: {
               status: stageBefore.status,
               note,
+              response: stageBefore.response ?? '',
               updatedAt: new Date().toISOString(),
               updatedBy: driverName
             }
@@ -1721,7 +1807,7 @@ const ContentReviewPage: React.FC = () => {
         };
       });
     },
-    [driverName]
+    [driverName, viewerOnly, creativeContributor]
   );
 
   const ReviewStageSwitcher = ({ className = '' }: { className?: string }) => (
@@ -2316,6 +2402,7 @@ const ContentReviewPage: React.FC = () => {
             ))}
           </div>
           <ReviewStageSwitcher className="hidden md:flex" />
+          {!viewerOnly ? (
           <button
             type="button"
             aria-pressed={editModeEnabled}
@@ -2345,6 +2432,7 @@ const ContentReviewPage: React.FC = () => {
             </svg>
             <span className="hidden sm:inline">{editModeEnabled ? 'Edit On' : 'Edit'}</span>
           </button>
+          ) : null}
           <button
             type="button"
             aria-pressed={reviewPanelOpen}
@@ -2474,7 +2562,7 @@ const ContentReviewPage: React.FC = () => {
                   ) : null}
                 </div>
               ) : null}
-              {followMode !== 'follow' && bulkSelectedCount > 0 ? (
+              {followMode !== 'follow' && bulkSelectedCount > 0 && !viewerOnly && !creativeContributor ? (
                 <div className="flex flex-col gap-1 rounded border border-emerald-800/50 bg-emerald-950/25 p-1">
                   <div className="text-[8px] font-semibold uppercase tracking-wide text-emerald-200/90">
                     Bulk · {REVIEW_STAGES.find((s) => s.id === activeReviewStage)?.label}
@@ -2548,7 +2636,7 @@ const ContentReviewPage: React.FC = () => {
                           opacity: followMode === 'follow' ? 0.55 : killed ? 0.75 : undefined
                         }}
                       >
-                        {followMode !== 'follow' ? (
+                        {followMode !== 'follow' && !creativeContributor ? (
                           <label
                             className="flex shrink-0 cursor-pointer items-start pt-2 pl-1"
                             title="Select for bulk approve"
@@ -2763,6 +2851,14 @@ const ContentReviewPage: React.FC = () => {
                         </span>
                         <button
                           type="button"
+                          onClick={() => window.open(savedCreativePdfUrl, '_blank', 'noopener,noreferrer')}
+                          className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
+                        >
+                          Open tab
+                        </button>
+                        {!viewerOnly ? (
+                        <button
+                          type="button"
                           onClick={() => {
                             setCreativePdfUrlDraft(savedCreativePdfUrl);
                             setCreativePdfSetupOpen(true);
@@ -2771,7 +2867,8 @@ const ContentReviewPage: React.FC = () => {
                         >
                           Change PDF
                         </button>
-                        {useCueSyncedPdfViewer ? (
+                        ) : null}
+                        {!viewerOnly && useCueSyncedPdfViewer ? (
                           <button
                             type="button"
                             onClick={() => void rescanCreativeCuePages()}
@@ -2782,13 +2879,6 @@ const ContentReviewPage: React.FC = () => {
                             {isScanningCuePages ? 'Scanning…' : 'Scan cue pages'}
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          onClick={() => window.open(savedCreativePdfUrl, '_blank', 'noopener,noreferrer')}
-                          className="rounded border border-slate-500 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700"
-                        >
-                          Open tab
-                        </button>
                       </div>
                       {cuePageScanMessage ? (
                         <p className="text-[10px] leading-snug text-slate-400">{cuePageScanMessage}</p>
@@ -2806,6 +2896,8 @@ const ContentReviewPage: React.FC = () => {
                         </p>
                       ) : null}
                     </div>
+                  ) : viewerOnly ? (
+                    <p className="text-[11px] text-slate-400">No creative deck has been uploaded for this event yet.</p>
                   ) : (
                     <div className="space-y-2">
                       <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">
@@ -4219,53 +4311,142 @@ const ContentReviewPage: React.FC = () => {
                               approved.
                             </p>
                           ) : null}
-                          <div className="flex flex-wrap gap-1.5">
-                            {(
-                              [
-                                {
-                                  id: 'pending' as const,
-                                  label: 'Review',
-                                  activeClass: 'border-sky-100 bg-sky-500 text-white shadow-lg',
-                                  idleClass:
-                                    'border-sky-600 bg-sky-800 text-sky-50 hover:bg-sky-700 hover:border-sky-500'
-                                },
-                                {
-                                  id: 'needs_update' as const,
-                                  label: 'Needs Review',
-                                  activeClass: 'border-amber-50 bg-amber-500 text-white shadow-lg',
-                                  idleClass:
-                                    'border-amber-600 bg-amber-800 text-amber-50 hover:bg-amber-700 hover:border-amber-500'
-                                },
-                                {
-                                  id: 'approved' as const,
-                                  label: 'Approved',
-                                  activeClass: 'border-emerald-50 bg-emerald-500 text-white shadow-lg',
-                                  idleClass:
-                                    'border-emerald-600 bg-emerald-800 text-emerald-50 hover:bg-emerald-700 hover:border-emerald-500',
-                                  disabled: rosApproveBlocked
-                                }
-                              ] as const
-                            ).map((s) => (
+                          {creativeContributor && activeReviewStage === 'creative' ? (
+                            <>
+                              {getStageReview(selectedReview, 'creative').note ? (
+                                <div className="rounded border border-amber-700/50 bg-amber-950/30 px-2 py-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-200/90">
+                                    Reviewer feedback
+                                  </p>
+                                  <p className="mt-1 text-xs text-amber-50/95 whitespace-pre-wrap">
+                                    {getStageReview(selectedReview, 'creative').note}
+                                  </p>
+                                </div>
+                              ) : (
+                                <p className="text-[10px] text-slate-500">
+                                  No reviewer feedback on this cue yet.
+                                </p>
+                              )}
+                              {getStageReview(selectedReview, 'ros').note ? (
+                                <div className="rounded border border-slate-600/80 bg-slate-900/50 px-2 py-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                    ROS show notes
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-200 whitespace-pre-wrap">
+                                    {getStageReview(selectedReview, 'ros').note}
+                                  </p>
+                                </div>
+                              ) : null}
+                              <label className="text-[10px] font-semibold uppercase tracking-wide text-violet-200/90">
+                                Your response
+                              </label>
+                              <textarea
+                                value={selectedResponse}
+                                onChange={(e) => setCreativeResponse(selectedRow.id, e.target.value)}
+                                rows={5}
+                                placeholder="Describe what you changed or reply to the reviewer…"
+                                className="min-h-[6rem] w-full resize-y rounded border-2 border-violet-500/50 bg-white px-2 py-2 text-xs text-slate-900 shadow-inner outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-400/40"
+                              />
                               <button
-                                key={s.id}
                                 type="button"
-                                disabled={'disabled' in s && s.disabled}
-                                onClick={() => setCueReviewStatus(selectedRow.id, activeReviewStage, s.id)}
-                                className={`rounded border px-2 py-1 text-[11px] font-semibold ${
-                                  selectedStatus === s.id ? `${s.activeClass} shadow-sm` : s.idleClass
-                                } ${'disabled' in s && s.disabled ? 'cursor-not-allowed opacity-45' : ''}`}
+                                onClick={() => markCreativeEditsMade(selectedRow.id)}
+                                className="w-full rounded-lg border border-violet-400 bg-violet-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-violet-500"
                               >
-                                {s.label}
+                                Mark edits made — request re-review
                               </button>
-                            ))}
-                          </div>
-                          <textarea
-                            value={selectedNote}
-                            onChange={(e) => setCueReviewNote(selectedRow.id, activeReviewStage, e.target.value)}
-                            rows={6}
-                            placeholder={`${REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label} notes…`}
-                            className="min-h-[10rem] w-full flex-1 resize-y rounded border-2 border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 shadow-inner outline-none placeholder:text-slate-400 focus:border-orange-400 focus:ring-2 focus:ring-orange-400/40"
-                          />
+                              <p className="text-[10px] leading-snug text-slate-500">
+                                Sets this cue to <span className="font-semibold text-violet-300">Edits made</span> so
+                                production knows to review the creative content again.
+                              </p>
+                            </>
+                          ) : creativeContributor && activeReviewStage === 'ros' ? (
+                            selectedNote ? (
+                              <p className="min-h-[4rem] rounded border border-slate-600/80 bg-slate-900/50 px-2 py-2 text-xs text-slate-200 whitespace-pre-wrap">
+                                {selectedNote}
+                              </p>
+                            ) : (
+                              <p className="text-[10px] text-slate-500">No ROS show notes for this cue.</p>
+                            )
+                          ) : !viewerOnly ? (
+                            <>
+                              <div className="flex flex-wrap gap-1.5">
+                                {(
+                                  [
+                                    {
+                                      id: 'pending' as const,
+                                      label: 'Review',
+                                      activeClass: 'border-sky-100 bg-sky-500 text-white shadow-lg',
+                                      idleClass:
+                                        'border-sky-600 bg-sky-800 text-sky-50 hover:bg-sky-700 hover:border-sky-500'
+                                    },
+                                    {
+                                      id: 'needs_update' as const,
+                                      label: 'Needs Review',
+                                      activeClass: 'border-amber-50 bg-amber-500 text-white shadow-lg',
+                                      idleClass:
+                                        'border-amber-600 bg-amber-800 text-amber-50 hover:bg-amber-700 hover:border-amber-500'
+                                    },
+                                    {
+                                      id: 'approved' as const,
+                                      label: 'Approved',
+                                      activeClass: 'border-emerald-50 bg-emerald-500 text-white shadow-lg',
+                                      idleClass:
+                                        'border-emerald-600 bg-emerald-800 text-emerald-50 hover:bg-emerald-700 hover:border-emerald-500',
+                                      disabled: rosApproveBlocked
+                                    }
+                                  ] as const
+                                ).map((s) => (
+                                  <button
+                                    key={s.id}
+                                    type="button"
+                                    disabled={'disabled' in s && s.disabled}
+                                    onClick={() => setCueReviewStatus(selectedRow.id, activeReviewStage, s.id)}
+                                    className={`rounded border px-2 py-1 text-[11px] font-semibold ${
+                                      selectedStatus === s.id ? `${s.activeClass} shadow-sm` : s.idleClass
+                                    } ${'disabled' in s && s.disabled ? 'cursor-not-allowed opacity-45' : ''}`}
+                                  >
+                                    {s.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <textarea
+                                value={selectedNote}
+                                onChange={(e) => setCueReviewNote(selectedRow.id, activeReviewStage, e.target.value)}
+                                rows={6}
+                                placeholder={`${REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label} notes…`}
+                                className="min-h-[10rem] w-full flex-1 resize-y rounded border-2 border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 shadow-inner outline-none placeholder:text-slate-400 focus:border-orange-400 focus:ring-2 focus:ring-orange-400/40"
+                              />
+                              {activeReviewStage === 'creative' && selectedResponse ? (
+                                <div className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
+                                    Creative team response
+                                  </p>
+                                  <p className="mt-1 text-xs text-violet-100 whitespace-pre-wrap">
+                                    {selectedResponse}
+                                  </p>
+                                </div>
+                              ) : null}
+                            </>
+                          ) : selectedNote || selectedResponse ? (
+                            <div className="space-y-2">
+                              {selectedNote ? (
+                                <p className="min-h-[4rem] rounded border border-slate-600/80 bg-slate-900/50 px-2 py-2 text-xs text-slate-200 whitespace-pre-wrap">
+                                  <span className="block text-[10px] font-semibold uppercase text-slate-500 mb-1">
+                                    {REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label} notes
+                                  </span>
+                                  {selectedNote}
+                                </p>
+                              ) : null}
+                              {activeReviewStage === 'creative' && selectedResponse ? (
+                                <p className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2 text-xs text-violet-100 whitespace-pre-wrap">
+                                  <span className="block text-[10px] font-semibold uppercase text-violet-300/90 mb-1">
+                                    Creative response
+                                  </span>
+                                  {selectedResponse}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </>
                       ) : (
                         <p className="text-xs text-orange-200/80">Select a cue from the list to add review notes.</p>

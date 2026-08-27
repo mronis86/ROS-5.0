@@ -27,6 +27,7 @@ interface AuthContextType {
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
+    is_creative?: boolean;
     dashboard_enabled?: boolean;
   }) => void;
   signOut: () => Promise<void>;

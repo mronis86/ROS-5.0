@@ -34,6 +34,7 @@ interface User {
   is_catering?: boolean;
   is_bts_crew?: boolean;
   is_comms?: boolean;
+  is_creative?: boolean;
   dashboard_enabled?: boolean;
   accessStatus?: AccessStatus;
 }
@@ -93,6 +94,23 @@ export function isCommsOnlyUser(user: User | null | undefined): boolean {
   if (!user) return false;
   if (user.is_admin || user.is_event_manager || user.is_bts_crew) return false;
   return user.is_comms === true;
+}
+
+/** Creative UI: creative role, Event Managers, BTS Crew, or Admins. */
+export function canAccessCreative(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return true;
+  return user.is_creative === true;
+}
+
+/**
+ * Creative-only accounts: signed-in creative users who are not admin/EM/BTS.
+ * Used to route them to /creative instead of the full Event List / ROS.
+ */
+export function isCreativeOnlyUser(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return false;
+  return user.is_creative === true;
 }
 
 /** Run-of-show Operator session role: admins and event managers only. */
@@ -274,6 +292,7 @@ class AuthService {
       is_catering: data.is_catering,
       is_bts_crew: data.is_bts_crew,
       is_comms: data.is_comms,
+      is_creative: data.is_creative,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -363,6 +382,7 @@ class AuthService {
       is_catering: data.is_catering,
       is_bts_crew: data.is_bts_crew,
       is_comms: data.is_comms,
+      is_creative: data.is_creative,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -402,6 +422,7 @@ class AuthService {
       is_catering: data.is_catering,
       is_bts_crew: data.is_bts_crew,
       is_comms: data.is_comms,
+      is_creative: data.is_creative,
       neon_user_id: data.neon_user_id,
       dashboard_enabled: data.dashboard_enabled,
     };
@@ -444,6 +465,7 @@ class AuthService {
               is_catering: access.is_catering,
               is_bts_crew: access.is_bts_crew,
               is_comms: access.is_comms,
+              is_creative: access.is_creative,
               dashboard_enabled: access.dashboard_enabled,
               accessStatus: access.status,
             };
@@ -559,6 +581,7 @@ class AuthService {
           is_catering: exchange.is_catering,
           is_bts_crew: exchange.is_bts_crew,
           is_comms: exchange.is_comms,
+          is_creative: exchange.is_creative,
           dashboard_enabled: exchange.dashboard_enabled,
           accessStatus: exchange.status,
         };
@@ -673,6 +696,7 @@ class AuthService {
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
+    is_creative?: boolean;
     dashboard_enabled?: boolean;
   }) {
     setApiAccessToken(session.token);
@@ -686,6 +710,7 @@ class AuthService {
       is_catering: session.is_catering,
       is_bts_crew: session.is_bts_crew,
       is_comms: session.is_comms,
+      is_creative: session.is_creative,
       dashboard_enabled: session.dashboard_enabled ?? session.is_admin,
       accessStatus: session.status,
     };
@@ -822,6 +847,7 @@ class AuthService {
           this.authState.user.is_catering = exchange.is_catering;
           this.authState.user.is_bts_crew = exchange.is_bts_crew;
           this.authState.user.is_comms = exchange.is_comms;
+          this.authState.user.is_creative = exchange.is_creative;
           this.authState.user.dashboard_enabled = exchange.dashboard_enabled;
           this.persistUserSession(this.authState.user, exchange.status);
         }
@@ -838,6 +864,7 @@ class AuthService {
       this.authState.user.is_catering = access.is_catering;
       this.authState.user.is_bts_crew = access.is_bts_crew;
       this.authState.user.is_comms = access.is_comms;
+      this.authState.user.is_creative = access.is_creative;
       this.authState.user.dashboard_enabled = access.dashboard_enabled;
       this.persistUserSession(this.authState.user, access.status);
     }

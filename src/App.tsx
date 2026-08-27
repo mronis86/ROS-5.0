@@ -27,6 +27,8 @@ import CateringEventListPage from './pages/CateringEventListPage';
 import CateringEventPage from './pages/CateringEventPage';
 import CommsEventListPage from './pages/CommsEventListPage';
 import CommsEventPage from './pages/CommsEventPage';
+import CreativeEventListPage from './pages/CreativeEventListPage';
+import CreativeEventPage from './pages/CreativeEventPage';
 import ContentReviewPage from './pages/ContentReviewPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
@@ -148,6 +150,8 @@ function AppContent() {
             <Route path="/catering/event" element={<CateringEventPage />} />
             <Route path="/comms" element={<CommsEventListPage />} />
             <Route path="/comms/event" element={<CommsEventPage />} />
+            <Route path="/creative" element={<CreativeEventListPage />} />
+            <Route path="/creative/event" element={<CreativeEventPage />} />
             <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />

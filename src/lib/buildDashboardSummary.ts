@@ -50,6 +50,7 @@ export function summarizeContentReviews(
     const ros = entry?.ros?.status || 'pending';
     if (creative === 'approved' && ros === 'approved') approvedCues += 1;
     else if (creative === 'needs_update' || ros === 'needs_update') needsUpdateCues += 1;
+    else if (creative === 'edits_made') needsUpdateCues += 1;
     else pendingCues += 1;
   }
 
