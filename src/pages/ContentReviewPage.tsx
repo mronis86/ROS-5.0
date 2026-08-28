@@ -2520,19 +2520,45 @@ const ContentReviewPage: React.FC = () => {
             </svg>
           </button>
           <div className="hidden h-7 w-px shrink-0 bg-slate-600/80 sm:block" aria-hidden />
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="relative top-1 shrink-0 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-              Content review
-            </span>
-            <h1 className="min-w-0 truncate text-base font-bold leading-tight text-white sm:text-lg md:text-xl">
-              {event.name || eventNameParam || 'Event'}
-            </h1>
-            {followMode === 'drive' ? (
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400/90">
-                Driving — others can use Follow
+          <div className="flex min-w-0 flex-1 items-center gap-3 md:gap-4">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="relative top-1 shrink-0 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Content review
               </span>
+              <h1 className="min-w-0 truncate text-base font-bold leading-tight text-white sm:text-lg md:text-xl">
+                {event.name || eventNameParam || 'Event'}
+              </h1>
+              {followMode === 'drive' ? (
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400/90">
+                  Driving — others can use Follow
+                </span>
+              ) : null}
+            </div>
+            {canManageReviewTeam ? (
+              <button
+                type="button"
+                onClick={() => setAssigneesModalOpen(true)}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/70 px-2.5 py-2 text-xs font-semibold text-slate-200 hover:border-orange-500/50 hover:bg-slate-800"
+                title="Assign Creative and Production reviewers for this event"
+              >
+                <svg className="h-4 w-4 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+                  />
+                </svg>
+                <span className="hidden sm:inline">Team</span>
+                {reviewAssigneeCount > 0 ? (
+                  <span className="rounded-full bg-orange-600 px-1.5 py-0.5 text-[10px] tabular-nums text-white">
+                    {reviewAssigneeCount}
+                  </span>
+                ) : null}
+              </button>
             ) : null}
           </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 md:ml-3 md:gap-3 lg:ml-5">
           <div
             className="flex shrink-0 rounded-lg border border-slate-600 bg-slate-800/50 p-0.5"
             role="group"
@@ -2560,29 +2586,6 @@ const ContentReviewPage: React.FC = () => {
             ))}
           </div>
           <ReviewStageSwitcher className="hidden md:flex" />
-          {canManageReviewTeam ? (
-          <button
-            type="button"
-            onClick={() => setAssigneesModalOpen(true)}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/70 px-2.5 py-2 text-xs font-semibold text-slate-200 hover:border-orange-500/50 hover:bg-slate-800"
-            title="Assign Creative and Production reviewers for this event"
-          >
-            <svg className="h-4 w-4 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-              />
-            </svg>
-            <span className="hidden sm:inline">Team</span>
-            {reviewAssigneeCount > 0 ? (
-              <span className="rounded-full bg-orange-600 px-1.5 py-0.5 text-[10px] tabular-nums text-white">
-                {reviewAssigneeCount}
-              </span>
-            ) : null}
-          </button>
-          ) : null}
           {!viewerOnly ? (
           <button
             type="button"
@@ -2678,6 +2681,7 @@ const ContentReviewPage: React.FC = () => {
             </svg>
             <span className="hidden sm:inline">Refresh</span>
           </button>
+          </div>
         </div>
       </header>
 

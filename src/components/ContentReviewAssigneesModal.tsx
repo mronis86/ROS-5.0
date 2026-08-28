@@ -214,7 +214,7 @@ const ContentReviewAssigneesModal: React.FC<ContentReviewAssigneesModalProps> = 
               <div className="grid min-h-[320px] gap-4 md:grid-cols-2">
                 <CandidateList
                   title="Creative reviewers"
-                  hint="Users with the Creative role only."
+                  hint="Creative-only users (not admins, event managers, or BTS)."
                   candidates={payload.candidates.creative}
                   selected={creativeIds}
                   max={maxPerRole}
@@ -223,7 +223,7 @@ const ContentReviewAssigneesModal: React.FC<ContentReviewAssigneesModalProps> = 
                 />
                 <CandidateList
                   title="Production reviewers"
-                  hint="Production team who leave review notes and approve cues."
+                  hint="Production team, event managers, and admins — not Creative-only accounts."
                   candidates={payload.candidates.production}
                   selected={productionIds}
                   max={maxPerRole}

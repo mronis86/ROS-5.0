@@ -40,7 +40,6 @@ const {
   isAdminEmailNotifyConfigured,
   notifyTrainingBooking,
   notifyContentReviewAssignedBatch,
-  notifyContentReviewActivity,
 } = require('./lib/admin-notify-email');
 const { getAppPublicOrigin } = require('./lib/access-portal');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
@@ -113,9 +112,11 @@ const {
   listAssigneeCandidates,
   getEventAssignees,
   replaceEventAssignees,
+  isCreativeAssigneeCandidate,
+  isProductionAssigneeCandidate,
   MAX_ASSIGNEES_PER_ROLE,
 } = require('./lib/content-review-assignees');
-const { collectContentReviewNotificationJobs } = require('./lib/content-review-notify');
+const { scheduleContentReviewDigestNotifications, ensureNotifyPendingTable, startContentReviewDigestWorker } = require('./lib/content-review-notify-digest');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -1508,6 +1509,7 @@ async function runCreativeRoleColumnSync(db) {
 
 async function runContentReviewAssigneesSyncTable(db) {
   await ensureAssigneesTable(db);
+  await ensureNotifyPendingTable(db);
 }
 
 async function runPreflightChecklistSyncTable(db) {
@@ -5153,21 +5155,7 @@ async function loadCalendarEventName(pool, eventId) {
 }
 
 function queueContentReviewActivityEmails(pool, opts) {
-  if (!isAdminEmailNotifyConfigured()) return;
-  void (async () => {
-    try {
-      const eventName = await loadCalendarEventName(pool, opts.eventId);
-      const jobs = await collectContentReviewNotificationJobs(pool, {
-        ...opts,
-        eventName,
-      });
-      for (const job of jobs) {
-        await notifyContentReviewActivity(job);
-      }
-    } catch (err) {
-      console.warn('[content-review-notify] activity email failed:', err.message || err);
-    }
-  })();
+  scheduleContentReviewDigestNotifications(pool, opts);
 }
 
 app.get('/api/content-review/:eventId/assignees', async (req, res) => {
@@ -5182,8 +5170,8 @@ app.get('/api/content-review/:eventId/assignees', async (req, res) => {
     if (canManage) {
       const all = await listAssigneeCandidates(pool);
       candidates = {
-        creative: all.filter((u) => u.is_creative),
-        production: all.filter((u) => !u.is_creative),
+        creative: all.filter(isCreativeAssigneeCandidate),
+        production: all.filter(isProductionAssigneeCandidate),
       };
     }
     res.json({
@@ -8949,6 +8937,11 @@ server.listen(PORT, '0.0.0.0', async () => {
     try {
       await runContentReviewAssigneesSyncTable(pool);
       console.log('✅ event_content_review_assignees table synced');
+      if (isAdminEmailNotifyConfigured()) {
+        startContentReviewDigestWorker(pool);
+        const { debounceMinutes } = require('./lib/content-review-notify-digest');
+        console.log(`📧 Content review digests: assignees only, ${debounceMinutes()}-minute quiet period`);
+      }
     } catch (err) {
       console.warn('⚠️ event_content_review_assignees sync skipped:', err.message || err);
     }
