@@ -1810,6 +1810,49 @@ const ContentReviewPage: React.FC = () => {
     [driverName, viewerOnly, creativeContributor]
   );
 
+  const clearCueReviewNote = useCallback(
+    (itemId: number, stage: ReviewStage) => {
+      if (viewerOnly || creativeContributor) return;
+      const stageLabel = REVIEW_STAGES.find((s) => s.id === stage)?.label ?? 'Review';
+      if (!window.confirm(`Delete ${stageLabel} notes for this cue?`)) return;
+      setCueReviewNote(itemId, stage, '');
+    },
+    [creativeContributor, setCueReviewNote, viewerOnly]
+  );
+
+  const clearCreativeResponse = useCallback(
+    (itemId: number) => {
+      if (!creativeContributor) return;
+      if (!window.confirm('Delete your posted response for this cue?')) return;
+      setCreativeResponse(itemId, '');
+    },
+    [creativeContributor, setCreativeResponse]
+  );
+
+  const clearStageCreativeResponse = useCallback(
+    (itemId: number) => {
+      if (viewerOnly || creativeContributor) return;
+      if (!window.confirm('Delete the creative team response for this cue?')) return;
+      setCueReviews((prev) => {
+        const before = prev[itemId] ?? emptyCueReviewEntry();
+        const creativeBefore = getStageReview(before, 'creative');
+        return {
+          ...prev,
+          [itemId]: {
+            ...before,
+            creative: {
+              ...creativeBefore,
+              response: '',
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName
+            }
+          }
+        };
+      });
+    },
+    [creativeContributor, driverName, viewerOnly]
+  );
+
   const ReviewStageSwitcher = ({ className = '' }: { className?: string }) => (
     <div
       className={`flex rounded-lg border border-slate-600 bg-slate-800/50 p-0.5 ${className}`}
@@ -4347,6 +4390,15 @@ const ContentReviewPage: React.FC = () => {
                                 placeholder="Describe what you changed or reply to the reviewer…"
                                 className="min-h-[6rem] w-full resize-y rounded border-2 border-violet-500/50 bg-white px-2 py-2 text-xs text-slate-900 shadow-inner outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-400/40"
                               />
+                              {selectedResponse.trim() ? (
+                                <button
+                                  type="button"
+                                  onClick={() => clearCreativeResponse(selectedRow.id)}
+                                  className="w-full rounded-lg border border-rose-700/70 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-900/50"
+                                >
+                                  Delete response
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 onClick={() => markCreativeEditsMade(selectedRow.id)}
@@ -4409,6 +4461,20 @@ const ContentReviewPage: React.FC = () => {
                                   </button>
                                 ))}
                               </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                  Review notes
+                                </span>
+                                {selectedNote.trim() ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => clearCueReviewNote(selectedRow.id, activeReviewStage)}
+                                    className="rounded border border-rose-700/70 bg-rose-950/40 px-2 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-900/50"
+                                  >
+                                    Delete notes
+                                  </button>
+                                ) : null}
+                              </div>
                               <textarea
                                 value={selectedNote}
                                 onChange={(e) => setCueReviewNote(selectedRow.id, activeReviewStage, e.target.value)}
@@ -4418,9 +4484,18 @@ const ContentReviewPage: React.FC = () => {
                               />
                               {activeReviewStage === 'creative' && selectedResponse ? (
                                 <div className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2">
-                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
-                                    Creative team response
-                                  </p>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
+                                      Creative team response
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => clearStageCreativeResponse(selectedRow.id)}
+                                      className="shrink-0 rounded border border-rose-700/70 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-950/50"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
                                   <p className="mt-1 text-xs text-violet-100 whitespace-pre-wrap">
                                     {selectedResponse}
                                   </p>
