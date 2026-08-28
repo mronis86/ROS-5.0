@@ -5182,8 +5182,8 @@ app.get('/api/content-review/:eventId/assignees', async (req, res) => {
     if (canManage) {
       const all = await listAssigneeCandidates(pool);
       candidates = {
-        creative: all.filter((u) => u.is_creative || u.is_admin || u.is_event_manager),
-        production: all.filter((u) => !u.is_creative || u.is_admin || u.is_event_manager),
+        creative: all.filter((u) => u.is_creative),
+        production: all.filter((u) => !u.is_creative),
       };
     }
     res.json({

@@ -207,13 +207,14 @@ const ContentReviewAssigneesModal: React.FC<ContentReviewAssigneesModalProps> = 
           ) : payload?.can_manage ? (
             <>
               <p className="mb-4 text-xs leading-relaxed text-slate-400">
-                Assign up to {maxPerRole} Creative users and {maxPerRole} Production reviewers. Assigned users
-                receive email when they are added and when there are new comments or review updates on this event.
+                Assign up to {maxPerRole} Creative users and {maxPerRole} Production reviewers. Only admins and
+                Creative users can change this team. Assigned users receive email when added and when there are review
+                updates.
               </p>
               <div className="grid min-h-[320px] gap-4 md:grid-cols-2">
                 <CandidateList
                   title="Creative reviewers"
-                  hint="Creative-role users who respond to feedback."
+                  hint="Users with the Creative role only."
                   candidates={payload.candidates.creative}
                   selected={creativeIds}
                   max={maxPerRole}

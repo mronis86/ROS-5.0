@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { isCreativeOnlyUser } from '../services/auth-service';
+import { canManageContentReviewTeam, isCreativeOnlyUser } from '../services/auth-service';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
@@ -671,6 +671,7 @@ const ContentReviewPage: React.FC = () => {
   const eventIdParam = urlParams.get('eventId');
   const eventNameParam = urlParams.get('eventName');
   const creativeContributor = isCreativeOnlyUser(user);
+  const canManageReviewTeam = canManageContentReviewTeam(user);
   const viewerOnly = !creativeContributor && searchParams.get('viewer') === '1';
 
   const [event, setEvent] = useState<Event>(() => {
@@ -864,11 +865,11 @@ const ContentReviewPage: React.FC = () => {
   });
 
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || !canManageReviewTeam) return;
     void fetchContentReviewAssignees(eventId).then(({ data }) => {
       if (data?.assignees) setReviewAssignees(data.assignees);
     });
-  }, [eventId]);
+  }, [canManageReviewTeam, eventId]);
 
   const reviewStorageKey = eventId ? `ros.contentReview.cueReview.${eventId}` : null;
   const streamDragRef = useRef<{ active: boolean; offsetX: number; offsetY: number }>({
@@ -2559,11 +2560,12 @@ const ContentReviewPage: React.FC = () => {
             ))}
           </div>
           <ReviewStageSwitcher className="hidden md:flex" />
+          {canManageReviewTeam ? (
           <button
             type="button"
             onClick={() => setAssigneesModalOpen(true)}
             className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/70 px-2.5 py-2 text-xs font-semibold text-slate-200 hover:border-orange-500/50 hover:bg-slate-800"
-            title="Content review team and email notifications"
+            title="Assign Creative and Production reviewers for this event"
           >
             <svg className="h-4 w-4 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path
@@ -2580,6 +2582,7 @@ const ContentReviewPage: React.FC = () => {
               </span>
             ) : null}
           </button>
+          ) : null}
           {!viewerOnly ? (
           <button
             type="button"
@@ -4841,6 +4844,7 @@ const ContentReviewPage: React.FC = () => {
         />
       ) : null}
 
+      {canManageReviewTeam ? (
       <ContentReviewAssigneesModal
         open={assigneesModalOpen}
         eventId={eventId}
@@ -4848,6 +4852,7 @@ const ContentReviewPage: React.FC = () => {
         onClose={() => setAssigneesModalOpen(false)}
         onSaved={(assignees) => setReviewAssignees(assignees)}
       />
+      ) : null}
     </div>
   );
 };

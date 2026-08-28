@@ -113,6 +113,13 @@ export function isCreativeOnlyUser(user: User | null | undefined): boolean {
   return user.is_creative === true;
 }
 
+/** Content review team assignments: admins or Creative-role users only. */
+export function canManageContentReviewTeam(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin) return true;
+  return user.is_creative === true;
+}
+
 /** Run-of-show Operator session role: admins and event managers only. */
 export function canSelectOperatorRole(user: User | null | undefined): boolean {
   return canAccessAccessManager(user);
