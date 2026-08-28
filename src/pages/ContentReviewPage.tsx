@@ -10,10 +10,12 @@ import CreativePdfCueViewer from '../components/CreativePdfCueViewer';
 import ContentReviewCommentsPanel from '../components/ContentReviewCommentsPanel';
 import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
 import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
+import { creativeDisplaySessionStorageKey } from '../lib/creativeDisplaySession';
 import {
   type ReviewComment,
   generateReviewCommentId,
   getStageComments,
+  getStageResponseComments,
   normalizeStageEntry,
 } from '../lib/contentReviewComments';
 import {
@@ -59,7 +61,8 @@ function isAllowedCreativeUploadFile(file: File): boolean {
 interface StageReviewEntry {
   status: ReviewStatus;
   comments: ReviewComment[];
-  /** Creative-team reply to reviewer feedback (creative stage). */
+  responseComments?: ReviewComment[];
+  /** Creative-team reply to reviewer feedback (legacy single string). */
   response?: string;
   updatedAt: string;
   updatedBy: string;
@@ -79,7 +82,7 @@ const REVIEW_STAGES: { id: ReviewStage; label: string; shortLabel: string }[] = 
 ];
 
 function emptyStageReviewEntry(): StageReviewEntry {
-  return { status: 'pending', comments: [], response: '', updatedAt: '', updatedBy: '' };
+  return { status: 'pending', comments: [], responseComments: [], response: '', updatedAt: '', updatedBy: '' };
 }
 
 function stageEntryFromRaw(raw: Record<string, unknown> | StageReviewEntry | undefined): StageReviewEntry {
@@ -87,6 +90,7 @@ function stageEntryFromRaw(raw: Record<string, unknown> | StageReviewEntry | und
   return {
     status: parseReviewStatus(normalized.status),
     comments: normalized.comments ?? [],
+    responseComments: normalized.responseComments ?? [],
     response: normalized.response,
     updatedAt: normalized.updatedAt,
     updatedBy: normalized.updatedBy,
@@ -690,20 +694,6 @@ const ContentReviewPage: React.FC = () => {
   const eventId = event?.id || eventIdParam || '';
   const numberOfDays = Math.max(1, Number(event?.numberOfDays) || 1);
 
-  const {
-    connectionEnabledRef: creativeSessionConnectionRef,
-    reconnectKey: creativeSessionReconnectKey,
-    showDisconnectModal: showCreativeDisconnectModal,
-    showDisconnectNotification: showCreativeDisconnectNotification,
-    disconnectDuration: creativeDisconnectDuration,
-    handleDisconnectTimerConfirm: handleCreativeDisconnectTimerConfirm,
-    handleNeverDisconnect: handleCreativeNeverDisconnect,
-    handleReconnect: handleCreativeReconnect,
-  } = useDisplaySessionDisconnect({
-    enabled: creativeContributor && !!eventId,
-    eventId,
-  });
-
   const goBackFromContentReview = useCallback(() => {
     if (creativeContributor || searchParams.get('viewer') === '1') {
       if (eventId) {
@@ -841,6 +831,27 @@ const ContentReviewPage: React.FC = () => {
   const driverId = user?.id ?? 'guest';
   const driverName = (user?.full_name || user?.email || 'Guest').trim() || 'Guest';
   const isAdmin = user?.is_admin === true;
+
+  const creativeSessionStorageKey =
+    creativeContributor && eventId && driverId !== 'guest'
+      ? creativeDisplaySessionStorageKey(driverId, eventId)
+      : null;
+
+  const {
+    connectionEnabledRef: creativeSessionConnectionRef,
+    reconnectKey: creativeSessionReconnectKey,
+    showDisconnectModal: showCreativeDisconnectModal,
+    showDisconnectNotification: showCreativeDisconnectNotification,
+    disconnectDuration: creativeDisconnectDuration,
+    handleDisconnectTimerConfirm: handleCreativeDisconnectTimerConfirm,
+    handleNeverDisconnect: handleCreativeNeverDisconnect,
+    handleReconnect: handleCreativeReconnect,
+  } = useDisplaySessionDisconnect({
+    enabled: creativeContributor && !!eventId,
+    eventId,
+    persistSessionKey: creativeSessionStorageKey,
+  });
+
   const reviewStorageKey = eventId ? `ros.contentReview.cueReview.${eventId}` : null;
   const streamDragRef = useRef<{ active: boolean; offsetX: number; offsetY: number }>({
     active: false,
@@ -1690,7 +1701,7 @@ const ContentReviewPage: React.FC = () => {
   const selectedStageComments = getStageComments(selectedStageReview);
   const creativeStageComments = getStageComments(getStageReview(selectedReview, 'creative'));
   const rosStageComments = getStageComments(getStageReview(selectedReview, 'ros'));
-  const selectedResponse = getStageReview(selectedReview, 'creative').response ?? '';
+  const selectedResponseComments = getStageResponseComments(getStageReview(selectedReview, 'creative'));
   const selectedFullyApproved = isFullyApproved(selectedReview);
   const rosApproveBlocked =
     activeReviewStage === 'ros' && !canApproveRosStage(selectedReview);
@@ -1712,6 +1723,7 @@ const ContentReviewPage: React.FC = () => {
               ...stageBefore,
               status,
               response: stageBefore.response ?? '',
+              responseComments: stageBefore.responseComments ?? getStageResponseComments(stageBefore),
               updatedAt: new Date().toISOString(),
               updatedBy: driverName
             }
@@ -1746,6 +1758,7 @@ const ContentReviewPage: React.FC = () => {
               ...stageBefore,
               status,
               response: stageBefore.response ?? '',
+              responseComments: stageBefore.responseComments ?? getStageResponseComments(stageBefore),
               updatedAt: now,
               updatedBy: driverName
             }
@@ -1757,9 +1770,18 @@ const ContentReviewPage: React.FC = () => {
     [driverName, viewerOnly, creativeContributor]
   );
 
-  const setCreativeResponse = useCallback(
-    (itemId: number, response: string) => {
+  const addCreativeResponseComment = useCallback(
+    (itemId: number, text: string) => {
       if (!creativeContributor) return;
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const comment: ReviewComment = {
+        id: generateReviewCommentId(),
+        text: trimmed,
+        createdAt: new Date().toISOString(),
+        createdBy: driverName,
+        createdById: driverId,
+      };
       setCueReviews((prev) => {
         const before = prev[itemId] ?? emptyCueReviewEntry();
         const creativeBefore = getStageReview(before, 'creative');
@@ -1769,15 +1791,47 @@ const ContentReviewPage: React.FC = () => {
             ...before,
             creative: {
               ...creativeBefore,
-              response,
+              responseComments: [...getStageResponseComments(creativeBefore), comment],
+              response: '',
               updatedAt: new Date().toISOString(),
-              updatedBy: driverName
-            }
-          }
+              updatedBy: driverName,
+            },
+          },
         };
       });
     },
-    [creativeContributor, driverName]
+    [creativeContributor, driverId, driverName]
+  );
+
+  const deleteCreativeResponseComment = useCallback(
+    (itemId: number, commentId: string) => {
+      const before = cueReviewsRef.current[itemId] ?? emptyCueReviewEntry();
+      const creativeBefore = getStageReview(before, 'creative');
+      const target = getStageResponseComments(creativeBefore).find((c) => c.id === commentId);
+      if (!target) return;
+      const canDeleteAsCreative = creativeContributor && target.createdById === driverId;
+      const canDeleteAsModerator = isAdmin || (!viewerOnly && !creativeContributor);
+      if (!canDeleteAsCreative && !canDeleteAsModerator) return;
+      if (!window.confirm('Delete this response?')) return;
+      setCueReviews((prev) => {
+        const row = prev[itemId] ?? emptyCueReviewEntry();
+        const creativeRow = getStageReview(row, 'creative');
+        return {
+          ...prev,
+          [itemId]: {
+            ...row,
+            creative: {
+              ...creativeRow,
+              responseComments: getStageResponseComments(creativeRow).filter((c) => c.id !== commentId),
+              response: '',
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName,
+            },
+          },
+        };
+      });
+    },
+    [creativeContributor, driverId, driverName, isAdmin, viewerOnly]
   );
 
   const markCreativeEditsMade = useCallback(
@@ -1894,39 +1948,6 @@ const ContentReviewPage: React.FC = () => {
     },
     [creativeContributor, driverId, driverName, isAdmin, viewerOnly]
   );
-
-  const clearCreativeResponse = useCallback(
-    (itemId: number) => {
-      const canDeleteAsCreative = creativeContributor;
-      const canDeleteAsModerator = isAdmin || (!viewerOnly && !creativeContributor);
-      if (!canDeleteAsCreative && !canDeleteAsModerator) return;
-      const message = canDeleteAsCreative
-        ? 'Delete your posted response for this cue?'
-        : 'Delete the creative team response for this cue?';
-      if (!window.confirm(message)) return;
-      setCueReviews((prev) => {
-        const before = prev[itemId] ?? emptyCueReviewEntry();
-        const creativeBefore = getStageReview(before, 'creative');
-        return {
-          ...prev,
-          [itemId]: {
-            ...before,
-            creative: {
-              ...creativeBefore,
-              response: '',
-              updatedAt: new Date().toISOString(),
-              updatedBy: driverName,
-            },
-          },
-        };
-      });
-    },
-    [creativeContributor, driverName, isAdmin, viewerOnly]
-  );
-
-  const canDeleteCreativeResponse =
-    !!selectedResponse.trim() &&
-    (creativeContributor || isAdmin || (!viewerOnly && !creativeContributor));
 
   const ReviewStageSwitcher = ({ className = '' }: { className?: string }) => (
     <div
@@ -4454,25 +4475,20 @@ const ContentReviewPage: React.FC = () => {
                                   variant="default"
                                 />
                               ) : null}
-                              <label className="text-[10px] font-semibold uppercase tracking-wide text-violet-200/90">
-                                Your response
-                              </label>
-                              <textarea
-                                value={selectedResponse}
-                                onChange={(e) => setCreativeResponse(selectedRow.id, e.target.value)}
-                                rows={5}
-                                placeholder="Describe what you changed or reply to the reviewer…"
-                                className="min-h-[6rem] w-full resize-y rounded border-2 border-violet-500/50 bg-white px-2 py-2 text-xs text-slate-900 shadow-inner outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-400/40"
+                              <ContentReviewCommentsPanel
+                                key={`creative-response-${selectedRow.id}`}
+                                comments={selectedResponseComments}
+                                title="Your responses"
+                                canPost
+                                currentUserId={driverId}
+                                isAdmin={isAdmin}
+                                onAddComment={(text) => addCreativeResponseComment(selectedRow.id, text)}
+                                onDeleteComment={(commentId) =>
+                                  deleteCreativeResponseComment(selectedRow.id, commentId)
+                                }
+                                emptyMessage="No responses posted yet — add one when you reply to reviewer feedback."
+                                variant="violet"
                               />
-                              {selectedResponse.trim() ? (
-                                <button
-                                  type="button"
-                                  onClick={() => clearCreativeResponse(selectedRow.id)}
-                                  className="w-full rounded-lg border border-rose-700/70 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-900/50"
-                                >
-                                  Delete response
-                                </button>
-                              ) : null}
                               <button
                                 type="button"
                                 onClick={() => markCreativeEditsMade(selectedRow.id)}
@@ -4552,27 +4568,23 @@ const ContentReviewPage: React.FC = () => {
                                 emptyMessage="No comments yet — add one to track feedback on this cue."
                                 variant={activeReviewStage === 'creative' ? 'amber' : 'default'}
                               />
-                              {activeReviewStage === 'creative' && selectedResponse ? (
-                                <div className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
-                                      Creative team response
-                                    </p>
-                                    {canDeleteCreativeResponse ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => clearCreativeResponse(selectedRow.id)}
-                                        className="shrink-0 rounded border border-rose-700/70 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-950/50"
-                                      >
-                                        Delete
-                                      </button>
-                                    ) : null}
-                                  </div>
-                                  <p className="mt-1 text-xs text-violet-100 whitespace-pre-wrap">{selectedResponse}</p>
-                                </div>
+                              {activeReviewStage === 'creative' && selectedResponseComments.length > 0 ? (
+                                <ContentReviewCommentsPanel
+                                  comments={selectedResponseComments}
+                                  title="Creative team responses"
+                                  canPost={false}
+                                  currentUserId={driverId}
+                                  isAdmin={isAdmin}
+                                  onAddComment={() => {}}
+                                  onDeleteComment={(commentId) =>
+                                    deleteCreativeResponseComment(selectedRow.id, commentId)
+                                  }
+                                  emptyMessage="No creative responses yet."
+                                  variant="violet"
+                                />
                               ) : null}
                             </>
-                          ) : selectedStageComments.length > 0 || selectedResponse ? (
+                          ) : selectedStageComments.length > 0 || selectedResponseComments.length > 0 ? (
                             <div className="space-y-2">
                               {selectedStageComments.length > 0 ? (
                                 <ContentReviewCommentsPanel
@@ -4585,13 +4597,17 @@ const ContentReviewPage: React.FC = () => {
                                   onDeleteComment={() => {}}
                                 />
                               ) : null}
-                              {activeReviewStage === 'creative' && selectedResponse ? (
-                                <p className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2 text-xs text-violet-100 whitespace-pre-wrap">
-                                  <span className="block text-[10px] font-semibold uppercase text-violet-300/90 mb-1">
-                                    Creative response
-                                  </span>
-                                  {selectedResponse}
-                                </p>
+                              {activeReviewStage === 'creative' && selectedResponseComments.length > 0 ? (
+                                <ContentReviewCommentsPanel
+                                  comments={selectedResponseComments}
+                                  title="Creative responses"
+                                  canPost={false}
+                                  currentUserId={driverId}
+                                  isAdmin={isAdmin}
+                                  onAddComment={() => {}}
+                                  onDeleteComment={() => {}}
+                                  variant="violet"
+                                />
                               ) : null}
                             </div>
                           ) : null}

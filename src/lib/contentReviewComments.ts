@@ -11,6 +11,9 @@ export type StageReviewEntry = {
   /** @deprecated Migrated to `comments` on load; not written for new data. */
   note?: string;
   comments?: ReviewComment[];
+  /** Creative-team replies to reviewer feedback. */
+  responseComments?: ReviewComment[];
+  /** @deprecated Migrated to `responseComments` on load; not written for new data. */
   response?: string;
   updatedAt: string;
   updatedBy: string;
@@ -61,16 +64,36 @@ export function getStageComments(stage: StageReviewEntry | undefined | null): Re
   ];
 }
 
+export function getStageResponseComments(stage: StageReviewEntry | undefined | null): ReviewComment[] {
+  if (!stage) return [];
+  if (Array.isArray(stage.responseComments) && stage.responseComments.length > 0) {
+    return stage.responseComments.filter((c) => c && typeof c.text === 'string' && c.text.trim());
+  }
+  const legacy = String(stage.response ?? '').trim();
+  if (!legacy) return [];
+  return [
+    {
+      id: `legacy-response-${legacy.slice(0, 24)}`,
+      text: legacy,
+      createdAt: stage.updatedAt || '',
+      createdBy: stage.updatedBy || 'Creative',
+      createdById: '',
+    },
+  ];
+}
+
 export function normalizeStageEntry(raw: Record<string, unknown> | StageReviewEntry | undefined): StageReviewEntry {
   if (!raw || typeof raw !== 'object') {
-    return { status: 'pending', comments: [], response: '', updatedAt: '', updatedBy: '' };
+    return { status: 'pending', comments: [], responseComments: [], response: '', updatedAt: '', updatedBy: '' };
   }
   const comments = getStageComments(raw as StageReviewEntry);
+  const responseComments = getStageResponseComments(raw as StageReviewEntry);
   return {
     status: String(raw.status ?? 'pending'),
     comments,
+    responseComments,
     note: '',
-    response: (raw.response ?? '').toString(),
+    response: '',
     updatedAt: (raw.updatedAt ?? '').toString(),
     updatedBy: (raw.updatedBy ?? '').toString(),
   };

@@ -10,6 +10,7 @@ import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
 import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
+import { creativeDisplaySessionStorageKey } from '../lib/creativeDisplaySession';
 
 const ZOOM_STORAGE_KEY = 'creative-event-zoom';
 const ZOOM_MIN = 0.5;
@@ -70,6 +71,11 @@ const CreativeEventPage: React.FC = () => {
   const pageRootRef = useRef<HTMLDivElement>(null);
   const loadScheduleRef = useRef<(isRefresh?: boolean) => Promise<void>>(async () => {});
 
+  const creativeSessionStorageKey =
+    allowed && eventId && user?.id
+      ? creativeDisplaySessionStorageKey(user.id, eventId)
+      : null;
+
   const {
     connectionEnabledRef,
     sessionDisconnected,
@@ -83,6 +89,7 @@ const CreativeEventPage: React.FC = () => {
     enabled: allowed && !!eventId && !authLoading,
     eventId: eventId || null,
     disconnectSocket: false,
+    persistSessionKey: creativeSessionStorageKey,
     onReconnect: () => {
       void loadScheduleRef.current(true);
     },

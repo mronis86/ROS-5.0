@@ -5178,7 +5178,26 @@ app.get('/api/content-review/:eventId', async (req, res) => {
   }
 });
 
-/** Merge creative-only contributor updates into existing review JSON (creative.response + edits_made only). */
+/** Merge creative-only contributor updates into existing review JSON (creative responses + edits_made only). */
+function sanitizeCreativeResponseComments(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const text = String(item.text ?? '').trim().slice(0, 10000);
+    if (!text) continue;
+    out.push({
+      id: String(item.id ?? '').slice(0, 80) || `c-${out.length}`,
+      text,
+      createdAt: String(item.createdAt ?? '').slice(0, 40),
+      createdBy: String(item.createdBy ?? '').slice(0, 200),
+      createdById: String(item.createdById ?? '').slice(0, 80),
+    });
+    if (out.length >= 200) break;
+  }
+  return out;
+}
+
 function mergeCreativeContributorReviews(currentReviews, incomingReviews, modifierName, modifierId) {
   const merged =
     currentReviews && typeof currentReviews === 'object'
@@ -5204,7 +5223,17 @@ function mergeCreativeContributorReviews(currentReviews, incomingReviews, modifi
     const ros = existing.ros && typeof existing.ros === 'object' ? { ...existing.ros } : {};
     let itemChanged = false;
 
-    if (incomingCreative.response !== undefined) {
+    if (incomingCreative.responseComments !== undefined) {
+      const nextComments = sanitizeCreativeResponseComments(incomingCreative.responseComments);
+      const prevComments = sanitizeCreativeResponseComments(creative.responseComments);
+      if (JSON.stringify(nextComments) !== JSON.stringify(prevComments)) {
+        creative.responseComments = nextComments;
+        creative.response = '';
+        creative.updatedAt = now;
+        creative.updatedBy = by;
+        itemChanged = true;
+      }
+    } else if (incomingCreative.response !== undefined) {
       const nextResponse = String(incomingCreative.response ?? '').slice(0, 10000);
       if (nextResponse !== String(creative.response ?? '')) {
         creative.response = nextResponse;
