@@ -7,6 +7,13 @@ import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import AssetRetentionNotice from '../components/AssetRetentionNotice';
 import CreativePdfCueViewer from '../components/CreativePdfCueViewer';
+import ContentReviewCommentsPanel from '../components/ContentReviewCommentsPanel';
+import {
+  type ReviewComment,
+  generateReviewCommentId,
+  getStageComments,
+  normalizeStageEntry,
+} from '../lib/contentReviewComments';
 import {
   type CreativeCuePages,
   isPdfJsNavigableUrl,
@@ -49,7 +56,7 @@ function isAllowedCreativeUploadFile(file: File): boolean {
 
 interface StageReviewEntry {
   status: ReviewStatus;
-  note: string;
+  comments: ReviewComment[];
   /** Creative-team reply to reviewer feedback (creative stage). */
   response?: string;
   updatedAt: string;
@@ -70,17 +77,17 @@ const REVIEW_STAGES: { id: ReviewStage; label: string; shortLabel: string }[] = 
 ];
 
 function emptyStageReviewEntry(): StageReviewEntry {
-  return { status: 'pending', note: '', response: '', updatedAt: '', updatedBy: '' };
+  return { status: 'pending', comments: [], response: '', updatedAt: '', updatedBy: '' };
 }
 
 function stageEntryFromRaw(raw: Record<string, unknown> | StageReviewEntry | undefined): StageReviewEntry {
-  if (!raw || typeof raw !== 'object') return emptyStageReviewEntry();
+  const normalized = normalizeStageEntry(raw as Record<string, unknown> | undefined);
   return {
-    status: parseReviewStatus(raw.status),
-    note: (raw.note ?? '').toString(),
-    response: (raw.response ?? '').toString(),
-    updatedAt: (raw.updatedAt ?? '').toString(),
-    updatedBy: (raw.updatedBy ?? '').toString(),
+    status: parseReviewStatus(normalized.status),
+    comments: normalized.comments ?? [],
+    response: normalized.response,
+    updatedAt: normalized.updatedAt,
+    updatedBy: normalized.updatedBy,
   };
 }
 
@@ -817,6 +824,7 @@ const ContentReviewPage: React.FC = () => {
 
   const driverId = user?.id ?? 'guest';
   const driverName = (user?.full_name || user?.email || 'Guest').trim() || 'Guest';
+  const isAdmin = user?.is_admin === true;
   const reviewStorageKey = eventId ? `ros.contentReview.cueReview.${eventId}` : null;
   const streamDragRef = useRef<{ active: boolean; offsetX: number; offsetY: number }>({
     active: false,
@@ -1642,7 +1650,9 @@ const ContentReviewPage: React.FC = () => {
   const selectedReview = selectedRow ? cueReviews[selectedRow.id] : undefined;
   const selectedStageReview = getStageReview(selectedReview, activeReviewStage);
   const selectedStatus: ReviewStatus = selectedStageReview.status;
-  const selectedNote = selectedStageReview.note;
+  const selectedStageComments = getStageComments(selectedStageReview);
+  const creativeStageComments = getStageComments(getStageReview(selectedReview, 'creative'));
+  const rosStageComments = getStageComments(getStageReview(selectedReview, 'ros'));
   const selectedResponse = getStageReview(selectedReview, 'creative').response ?? '';
   const selectedFullyApproved = isFullyApproved(selectedReview);
   const rosApproveBlocked =
@@ -1662,8 +1672,8 @@ const ContentReviewPage: React.FC = () => {
           [itemId]: {
             ...before,
             [stage]: {
+              ...stageBefore,
               status,
-              note: stageBefore.note,
               response: stageBefore.response ?? '',
               updatedAt: new Date().toISOString(),
               updatedBy: driverName
@@ -1696,8 +1706,8 @@ const ContentReviewPage: React.FC = () => {
           next[itemId] = {
             ...before,
             [stage]: {
+              ...stageBefore,
               status,
-              note: stageBefore.note,
               response: stageBefore.response ?? '',
               updatedAt: now,
               updatedBy: driverName
@@ -1786,9 +1796,18 @@ const ContentReviewPage: React.FC = () => {
     [bulkSelectedIds, activeReviewStage, setCueReviewStatusesBulk]
   );
 
-  const setCueReviewNote = useCallback(
-    (itemId: number, stage: ReviewStage, note: string) => {
+  const addStageComment = useCallback(
+    (itemId: number, stage: ReviewStage, text: string) => {
       if (viewerOnly || creativeContributor) return;
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const comment: ReviewComment = {
+        id: generateReviewCommentId(),
+        text: trimmed,
+        createdAt: new Date().toISOString(),
+        createdBy: driverName,
+        createdById: driverId,
+      };
       setCueReviews((prev) => {
         const before = prev[itemId] ?? emptyCueReviewEntry();
         const stageBefore = getStageReview(before, stage);
@@ -1797,27 +1816,46 @@ const ContentReviewPage: React.FC = () => {
           [itemId]: {
             ...before,
             [stage]: {
-              status: stageBefore.status,
-              note,
-              response: stageBefore.response ?? '',
+              ...stageBefore,
+              comments: [...getStageComments(stageBefore), comment],
               updatedAt: new Date().toISOString(),
-              updatedBy: driverName
-            }
-          }
+              updatedBy: driverName,
+            },
+          },
         };
       });
     },
-    [driverName, viewerOnly, creativeContributor]
+    [creativeContributor, driverId, driverName, viewerOnly]
   );
 
-  const clearCueReviewNote = useCallback(
-    (itemId: number, stage: ReviewStage) => {
+  const deleteStageComment = useCallback(
+    (itemId: number, stage: ReviewStage, commentId: string) => {
       if (viewerOnly || creativeContributor) return;
-      const stageLabel = REVIEW_STAGES.find((s) => s.id === stage)?.label ?? 'Review';
-      if (!window.confirm(`Delete ${stageLabel} notes for this cue?`)) return;
-      setCueReviewNote(itemId, stage, '');
+      const before = cueReviewsRef.current[itemId] ?? emptyCueReviewEntry();
+      const stageBefore = getStageReview(before, stage);
+      const target = getStageComments(stageBefore).find((c) => c.id === commentId);
+      if (!target) return;
+      const allowed = isAdmin || target.createdById === driverId;
+      if (!allowed) return;
+      if (!window.confirm('Delete this comment?')) return;
+      setCueReviews((prev) => {
+        const row = prev[itemId] ?? emptyCueReviewEntry();
+        const stageRow = getStageReview(row, stage);
+        return {
+          ...prev,
+          [itemId]: {
+            ...row,
+            [stage]: {
+              ...stageRow,
+              comments: getStageComments(stageRow).filter((c) => c.id !== commentId),
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName,
+            },
+          },
+        };
+      });
     },
-    [creativeContributor, setCueReviewNote, viewerOnly]
+    [creativeContributor, driverId, driverName, isAdmin, viewerOnly]
   );
 
   const clearCreativeResponse = useCallback(
@@ -1827,30 +1865,6 @@ const ContentReviewPage: React.FC = () => {
       setCreativeResponse(itemId, '');
     },
     [creativeContributor, setCreativeResponse]
-  );
-
-  const clearStageCreativeResponse = useCallback(
-    (itemId: number) => {
-      if (viewerOnly || creativeContributor) return;
-      if (!window.confirm('Delete the creative team response for this cue?')) return;
-      setCueReviews((prev) => {
-        const before = prev[itemId] ?? emptyCueReviewEntry();
-        const creativeBefore = getStageReview(before, 'creative');
-        return {
-          ...prev,
-          [itemId]: {
-            ...before,
-            creative: {
-              ...creativeBefore,
-              response: '',
-              updatedAt: new Date().toISOString(),
-              updatedBy: driverName
-            }
-          }
-        };
-      });
-    },
-    [creativeContributor, driverName, viewerOnly]
   );
 
   const ReviewStageSwitcher = ({ className = '' }: { className?: string }) => (
@@ -4356,29 +4370,28 @@ const ContentReviewPage: React.FC = () => {
                           ) : null}
                           {creativeContributor && activeReviewStage === 'creative' ? (
                             <>
-                              {getStageReview(selectedReview, 'creative').note ? (
-                                <div className="rounded border border-amber-700/50 bg-amber-950/30 px-2 py-2">
-                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-200/90">
-                                    Reviewer feedback
-                                  </p>
-                                  <p className="mt-1 text-xs text-amber-50/95 whitespace-pre-wrap">
-                                    {getStageReview(selectedReview, 'creative').note}
-                                  </p>
-                                </div>
-                              ) : (
-                                <p className="text-[10px] text-slate-500">
-                                  No reviewer feedback on this cue yet.
-                                </p>
-                              )}
-                              {getStageReview(selectedReview, 'ros').note ? (
-                                <div className="rounded border border-slate-600/80 bg-slate-900/50 px-2 py-2">
-                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                                    ROS show notes
-                                  </p>
-                                  <p className="mt-1 text-xs text-slate-200 whitespace-pre-wrap">
-                                    {getStageReview(selectedReview, 'ros').note}
-                                  </p>
-                                </div>
+                              <ContentReviewCommentsPanel
+                                comments={creativeStageComments}
+                                title="Reviewer feedback"
+                                canPost={false}
+                                currentUserId={driverId}
+                                isAdmin={isAdmin}
+                                onAddComment={() => {}}
+                                onDeleteComment={() => {}}
+                                emptyMessage="No reviewer feedback on this cue yet."
+                                variant="amber"
+                              />
+                              {rosStageComments.length > 0 ? (
+                                <ContentReviewCommentsPanel
+                                  comments={rosStageComments}
+                                  title="ROS show notes"
+                                  canPost={false}
+                                  currentUserId={driverId}
+                                  isAdmin={isAdmin}
+                                  onAddComment={() => {}}
+                                  onDeleteComment={() => {}}
+                                  variant="default"
+                                />
                               ) : null}
                               <label className="text-[10px] font-semibold uppercase tracking-wide text-violet-200/90">
                                 Your response
@@ -4412,13 +4425,16 @@ const ContentReviewPage: React.FC = () => {
                               </p>
                             </>
                           ) : creativeContributor && activeReviewStage === 'ros' ? (
-                            selectedNote ? (
-                              <p className="min-h-[4rem] rounded border border-slate-600/80 bg-slate-900/50 px-2 py-2 text-xs text-slate-200 whitespace-pre-wrap">
-                                {selectedNote}
-                              </p>
-                            ) : (
-                              <p className="text-[10px] text-slate-500">No ROS show notes for this cue.</p>
-                            )
+                            <ContentReviewCommentsPanel
+                              comments={rosStageComments}
+                              title="ROS show notes"
+                              canPost={false}
+                              currentUserId={driverId}
+                              isAdmin={isAdmin}
+                              onAddComment={() => {}}
+                              onDeleteComment={() => {}}
+                              emptyMessage="No ROS show notes for this cue."
+                            />
                           ) : !viewerOnly ? (
                             <>
                               <div className="flex flex-wrap gap-1.5">
@@ -4461,56 +4477,41 @@ const ContentReviewPage: React.FC = () => {
                                   </button>
                                 ))}
                               </div>
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                                  Review notes
-                                </span>
-                                {selectedNote.trim() ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => clearCueReviewNote(selectedRow.id, activeReviewStage)}
-                                    className="rounded border border-rose-700/70 bg-rose-950/40 px-2 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-900/50"
-                                  >
-                                    Delete notes
-                                  </button>
-                                ) : null}
-                              </div>
-                              <textarea
-                                value={selectedNote}
-                                onChange={(e) => setCueReviewNote(selectedRow.id, activeReviewStage, e.target.value)}
-                                rows={6}
-                                placeholder={`${REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label} notes…`}
-                                className="min-h-[10rem] w-full flex-1 resize-y rounded border-2 border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 shadow-inner outline-none placeholder:text-slate-400 focus:border-orange-400 focus:ring-2 focus:ring-orange-400/40"
+                              <ContentReviewCommentsPanel
+                                key={`comments-${selectedRow.id}-${activeReviewStage}`}
+                                comments={selectedStageComments}
+                                title={`${REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label ?? 'Review'} comments`}
+                                canPost
+                                currentUserId={driverId}
+                                isAdmin={isAdmin}
+                                onAddComment={(text) => addStageComment(selectedRow.id, activeReviewStage, text)}
+                                onDeleteComment={(commentId) =>
+                                  deleteStageComment(selectedRow.id, activeReviewStage, commentId)
+                                }
+                                emptyMessage="No comments yet — add one to track feedback on this cue."
+                                variant={activeReviewStage === 'creative' ? 'amber' : 'default'}
                               />
                               {activeReviewStage === 'creative' && selectedResponse ? (
                                 <div className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
-                                      Creative team response
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={() => clearStageCreativeResponse(selectedRow.id)}
-                                      className="shrink-0 rounded border border-rose-700/70 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-950/50"
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
-                                  <p className="mt-1 text-xs text-violet-100 whitespace-pre-wrap">
-                                    {selectedResponse}
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
+                                    Creative team response
                                   </p>
+                                  <p className="mt-1 text-xs text-violet-100 whitespace-pre-wrap">{selectedResponse}</p>
                                 </div>
                               ) : null}
                             </>
-                          ) : selectedNote || selectedResponse ? (
+                          ) : selectedStageComments.length > 0 || selectedResponse ? (
                             <div className="space-y-2">
-                              {selectedNote ? (
-                                <p className="min-h-[4rem] rounded border border-slate-600/80 bg-slate-900/50 px-2 py-2 text-xs text-slate-200 whitespace-pre-wrap">
-                                  <span className="block text-[10px] font-semibold uppercase text-slate-500 mb-1">
-                                    {REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label} notes
-                                  </span>
-                                  {selectedNote}
-                                </p>
+                              {selectedStageComments.length > 0 ? (
+                                <ContentReviewCommentsPanel
+                                  comments={selectedStageComments}
+                                  title={`${REVIEW_STAGES.find((st) => st.id === activeReviewStage)?.label ?? 'Review'} comments`}
+                                  canPost={false}
+                                  currentUserId={driverId}
+                                  isAdmin={isAdmin}
+                                  onAddComment={() => {}}
+                                  onDeleteComment={() => {}}
+                                />
                               ) : null}
                               {activeReviewStage === 'creative' && selectedResponse ? (
                                 <p className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2 text-xs text-violet-100 whitespace-pre-wrap">
