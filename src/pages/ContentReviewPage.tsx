@@ -8,6 +8,8 @@ import { socketClient } from '../services/socket-client';
 import AssetRetentionNotice from '../components/AssetRetentionNotice';
 import CreativePdfCueViewer from '../components/CreativePdfCueViewer';
 import ContentReviewCommentsPanel from '../components/ContentReviewCommentsPanel';
+import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
+import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
 import {
   type ReviewComment,
   generateReviewCommentId,
@@ -174,7 +176,7 @@ function reviewStatusMeta(status: ReviewStatus) {
       };
     default:
       return {
-        label: 'Pending',
+        label: 'Unmarked',
         railClass: 'bg-slate-700/80 text-slate-300 border-slate-500/70',
         cueRailIdleClass: 'border-transparent bg-transparent hover:bg-slate-900',
         cueRailActiveClass: 'border-cyan-500/80 bg-slate-800 ring-1 ring-cyan-500/40',
@@ -688,6 +690,20 @@ const ContentReviewPage: React.FC = () => {
   const eventId = event?.id || eventIdParam || '';
   const numberOfDays = Math.max(1, Number(event?.numberOfDays) || 1);
 
+  const {
+    connectionEnabledRef: creativeSessionConnectionRef,
+    reconnectKey: creativeSessionReconnectKey,
+    showDisconnectModal: showCreativeDisconnectModal,
+    showDisconnectNotification: showCreativeDisconnectNotification,
+    disconnectDuration: creativeDisconnectDuration,
+    handleDisconnectTimerConfirm: handleCreativeDisconnectTimerConfirm,
+    handleNeverDisconnect: handleCreativeNeverDisconnect,
+    handleReconnect: handleCreativeReconnect,
+  } = useDisplaySessionDisconnect({
+    enabled: creativeContributor && !!eventId,
+    eventId,
+  });
+
   const goBackFromContentReview = useCallback(() => {
     if (creativeContributor || searchParams.get('viewer') === '1') {
       if (eventId) {
@@ -1016,6 +1032,7 @@ const ContentReviewPage: React.FC = () => {
 
   useEffect(() => {
     if (!eventId) return;
+    if (creativeContributor && !creativeSessionConnectionRef.current) return;
 
     socketClient.connect(eventId, {
       onContentReviewDataUpdated: (data) => applyRemoteReviewsRef.current(data),
@@ -1052,7 +1069,27 @@ const ContentReviewPage: React.FC = () => {
       socket?.off('connect', onConnect);
       socket?.off('contentReviewSelectionSync', onSync);
     };
-  }, [eventId]);
+  }, [creativeContributor, creativeSessionReconnectKey, eventId]);
+
+  useEffect(() => {
+    if (!creativeContributor || !eventId) return;
+
+    const handleVisibilityChange = () => {
+      if (!creativeSessionConnectionRef.current) return;
+      if (document.hidden) {
+        socketClient.disconnect(eventId);
+        return;
+      }
+      if (!socketClient.isConnected()) {
+        socketClient.connect(eventId, {
+          onContentReviewDataUpdated: (data) => applyRemoteReviewsRef.current(data),
+        });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [creativeContributor, creativeSessionReconnectKey, eventId]);
 
   useEffect(() => {
     if (followMode !== 'follow' || !eventId) return;
@@ -1860,12 +1897,36 @@ const ContentReviewPage: React.FC = () => {
 
   const clearCreativeResponse = useCallback(
     (itemId: number) => {
-      if (!creativeContributor) return;
-      if (!window.confirm('Delete your posted response for this cue?')) return;
-      setCreativeResponse(itemId, '');
+      const canDeleteAsCreative = creativeContributor;
+      const canDeleteAsModerator = isAdmin || (!viewerOnly && !creativeContributor);
+      if (!canDeleteAsCreative && !canDeleteAsModerator) return;
+      const message = canDeleteAsCreative
+        ? 'Delete your posted response for this cue?'
+        : 'Delete the creative team response for this cue?';
+      if (!window.confirm(message)) return;
+      setCueReviews((prev) => {
+        const before = prev[itemId] ?? emptyCueReviewEntry();
+        const creativeBefore = getStageReview(before, 'creative');
+        return {
+          ...prev,
+          [itemId]: {
+            ...before,
+            creative: {
+              ...creativeBefore,
+              response: '',
+              updatedAt: new Date().toISOString(),
+              updatedBy: driverName,
+            },
+          },
+        };
+      });
     },
-    [creativeContributor, setCreativeResponse]
+    [creativeContributor, driverName, isAdmin, viewerOnly]
   );
+
+  const canDeleteCreativeResponse =
+    !!selectedResponse.trim() &&
+    (creativeContributor || isAdmin || (!viewerOnly && !creativeContributor));
 
   const ReviewStageSwitcher = ({ className = '' }: { className?: string }) => (
     <div
@@ -2644,7 +2705,7 @@ const ContentReviewPage: React.FC = () => {
                       onClick={() => applyBulkStatus('pending')}
                       className="rounded border border-sky-600 bg-sky-800 px-1.5 py-0.5 text-[9px] font-semibold text-sky-50 hover:bg-sky-700"
                     >
-                      Review
+                      Unmark
                     </button>
                   </div>
                   {activeReviewStage === 'ros' ? (
@@ -4442,7 +4503,7 @@ const ContentReviewPage: React.FC = () => {
                                   [
                                     {
                                       id: 'pending' as const,
-                                      label: 'Review',
+                                      label: 'Unmarked',
                                       activeClass: 'border-sky-100 bg-sky-500 text-white shadow-lg',
                                       idleClass:
                                         'border-sky-600 bg-sky-800 text-sky-50 hover:bg-sky-700 hover:border-sky-500'
@@ -4493,9 +4554,20 @@ const ContentReviewPage: React.FC = () => {
                               />
                               {activeReviewStage === 'creative' && selectedResponse ? (
                                 <div className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-2">
-                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
-                                    Creative team response
-                                  </p>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/90">
+                                      Creative team response
+                                    </p>
+                                    {canDeleteCreativeResponse ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => clearCreativeResponse(selectedRow.id)}
+                                        className="shrink-0 rounded border border-rose-700/70 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-950/50"
+                                      >
+                                        Delete
+                                      </button>
+                                    ) : null}
+                                  </div>
                                   <p className="mt-1 text-xs text-violet-100 whitespace-pre-wrap">{selectedResponse}</p>
                                 </div>
                               ) : null}
@@ -4701,6 +4773,17 @@ const ContentReviewPage: React.FC = () => {
             aria-hidden
           />
         </div>
+      ) : null}
+
+      {creativeContributor ? (
+        <DisplaySessionDisconnectOverlays
+          showModal={showCreativeDisconnectModal}
+          showNotification={showCreativeDisconnectNotification}
+          disconnectDuration={creativeDisconnectDuration}
+          onConfirm={handleCreativeDisconnectTimerConfirm}
+          onNever={handleCreativeNeverDisconnect}
+          onReconnect={handleCreativeReconnect}
+        />
       ) : null}
     </div>
   );

@@ -8,6 +8,8 @@ import GuestRunOfShowGrid from '../components/guest/GuestRunOfShowGrid';
 import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
+import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
+import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
 
 const ZOOM_STORAGE_KEY = 'creative-event-zoom';
 const ZOOM_MIN = 0.5;
@@ -66,6 +68,25 @@ const CreativeEventPage: React.FC = () => {
   const [hubTab, setHubTab] = useState<HubTab>('ros');
   const [isRosFullscreen, setIsRosFullscreen] = useState(false);
   const pageRootRef = useRef<HTMLDivElement>(null);
+  const loadScheduleRef = useRef<(isRefresh?: boolean) => Promise<void>>(async () => {});
+
+  const {
+    connectionEnabledRef,
+    sessionDisconnected,
+    showDisconnectModal,
+    showDisconnectNotification,
+    disconnectDuration,
+    handleDisconnectTimerConfirm,
+    handleNeverDisconnect,
+    handleReconnect,
+  } = useDisplaySessionDisconnect({
+    enabled: allowed && !!eventId && !authLoading,
+    eventId: eventId || null,
+    disconnectSocket: false,
+    onReconnect: () => {
+      void loadScheduleRef.current(true);
+    },
+  });
 
   const setZoom = useCallback((value: number) => {
     const clamped = Math.max(
@@ -84,6 +105,7 @@ const CreativeEventPage: React.FC = () => {
   const loadSchedule = useCallback(
     async (isRefresh = false) => {
       if (!eventId) return;
+      if (isRefresh && !connectionEnabledRef.current) return;
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setError(null);
@@ -105,6 +127,10 @@ const CreativeEventPage: React.FC = () => {
     },
     [eventId]
   );
+
+  useEffect(() => {
+    loadScheduleRef.current = loadSchedule;
+  }, [loadSchedule]);
 
   const openContentReview = useCallback(() => {
     const name = payload?.event?.name || eventNameParam || 'Event';
@@ -343,8 +369,9 @@ const CreativeEventPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => void loadSchedule(true)}
-                disabled={refreshing}
+                disabled={refreshing || sessionDisconnected}
                 className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+                title={sessionDisconnected ? 'Reconnect to refresh the schedule' : undefined}
               >
                 {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
@@ -414,6 +441,15 @@ const CreativeEventPage: React.FC = () => {
         panel={speakerPanel}
         onPanelChange={setSpeakerPanel}
         onClose={() => setSpeakersItemId(null)}
+      />
+
+      <DisplaySessionDisconnectOverlays
+        showModal={showDisconnectModal}
+        showNotification={showDisconnectNotification}
+        disconnectDuration={disconnectDuration}
+        onConfirm={handleDisconnectTimerConfirm}
+        onNever={handleNeverDisconnect}
+        onReconnect={handleReconnect}
       />
     </div>
   );
