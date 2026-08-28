@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessCreative } from '../services/auth-service';
@@ -64,6 +64,8 @@ const CreativeEventPage: React.FC = () => {
   const [speakersItemId, setSpeakersItemId] = useState<number | null>(null);
   const [speakerPanel, setSpeakerPanel] = useState<SpeakerPanel>('photos');
   const [hubTab, setHubTab] = useState<HubTab>('ros');
+  const [isRosFullscreen, setIsRosFullscreen] = useState(false);
+  const pageRootRef = useRef<HTMLDivElement>(null);
 
   const setZoom = useCallback((value: number) => {
     const clamped = Math.max(
@@ -125,6 +127,36 @@ const CreativeEventPage: React.FC = () => {
     void loadSchedule(false);
   }, [allowed, authLoading, eventId, loadSchedule, navigate]);
 
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsRosFullscreen(document.fullscreenElement === pageRootRef.current);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  const toggleRosFullscreen = useCallback(async () => {
+    const el = pageRootRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement === el) {
+        await document.exitFullscreen();
+      } else {
+        await el.requestFullscreen();
+      }
+    } catch {
+      /* Fullscreen may be blocked by browser policy */
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pageRootRef.current && document.fullscreenElement === pageRootRef.current) {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+  }, []);
+
   const allItems = payload?.scheduleItems || [];
   const displayEventName = payload?.event?.name || eventNameParam || 'Event';
   const displayDate = payload?.event?.date || eventDateParam;
@@ -160,6 +192,7 @@ const CreativeEventPage: React.FC = () => {
 
   const speakersItem = allItems.find((item) => item.id === speakersItemId) || null;
   const selectedDayStart = dayStartLabel(selectedDay, masterStartTime, dayStartTimes);
+  const contentWidthClass = isRosFullscreen ? 'max-w-none' : 'max-w-[1800px]';
 
   if (authLoading || !allowed) {
     return (
@@ -171,11 +204,15 @@ const CreativeEventPage: React.FC = () => {
 
   return (
     <div
+      ref={pageRootRef}
       id="creative-ros-reference"
-      className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 pt-[var(--app-header-height)] print:bg-white print:text-black"
+      className={`fixed inset-x-0 bottom-0 z-0 flex flex-col overflow-hidden bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200 print:static print:inset-auto print:h-auto print:overflow-visible print:bg-white print:text-black ${
+        isRosFullscreen ? 'top-0 z-[200]' : 'top-[var(--app-header-height)]'
+      }`}
     >
-      <div className="shrink-0 sticky top-[var(--app-header-height)] z-40 border-b border-slate-700/80 bg-slate-900/95 backdrop-blur print:static print:border-slate-300 print:bg-white">
-        <div className="mx-auto max-w-[1800px] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+      <div className="shrink-0 border-b border-slate-700/80 bg-slate-900/95 backdrop-blur print:border-slate-300 print:bg-white">
+        {!isRosFullscreen ? (
+        <div className={`mx-auto ${contentWidthClass} px-4 py-2.5 flex flex-wrap items-center justify-between gap-3`}>
           <div className="flex items-center gap-3 min-w-0 print:hidden">
             <button
               type="button"
@@ -199,8 +236,27 @@ const CreativeEventPage: React.FC = () => {
             </p>
           </div>
         </div>
+        ) : (
+        <div className={`mx-auto ${contentWidthClass} px-4 py-2 flex flex-wrap items-center justify-between gap-2 print:hidden`}>
+          <div className="min-w-0">
+            <p className="font-semibold text-white truncate">{displayEventName}</p>
+            <p className="text-[11px] text-slate-400">
+              {[displayDate, displayLocation].filter(Boolean).join(' · ')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void toggleRosFullscreen()}
+            className="shrink-0 rounded-lg border border-slate-500 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+            title="Exit fullscreen (Esc)"
+          >
+            Exit fullscreen
+          </button>
+        </div>
+        )}
 
-        <div className="mx-auto max-w-[1800px] px-4 pb-2 flex flex-wrap items-center gap-2 border-t border-slate-800/80 pt-2 print:hidden">
+        {!isRosFullscreen ? (
+        <div className={`mx-auto ${contentWidthClass} px-4 pb-2 flex flex-wrap items-center gap-2 border-t border-slate-800/80 pt-2 print:hidden`}>
           <div className="flex rounded-lg border border-slate-600 bg-slate-800/50 p-0.5">
             <button
               type="button"
@@ -225,9 +281,10 @@ const CreativeEventPage: React.FC = () => {
             </button>
           </div>
         </div>
+        ) : null}
 
         {payload && hubTab === 'ros' ? (
-          <div className="mx-auto max-w-[1800px] px-4 pb-2.5 flex flex-wrap items-center gap-2 justify-between border-t border-slate-800/60 pt-2 print:border-slate-200">
+          <div className={`mx-auto ${contentWidthClass} px-4 pb-2.5 flex flex-wrap items-center gap-2 justify-between border-t border-slate-800/60 pt-2 print:border-slate-200`}>
             <div className="flex flex-wrap items-center gap-2">
               {daysFromItems > 1
                 ? Array.from({ length: daysFromItems }, (_, i) => i + 1).map((day) => (
@@ -298,6 +355,14 @@ const CreativeEventPage: React.FC = () => {
               >
                 Print
               </button>
+              <button
+                type="button"
+                onClick={() => void toggleRosFullscreen()}
+                className="rounded-lg border border-violet-500/60 bg-violet-950/40 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-900/50"
+                title="Expand schedule to fullscreen (Esc to exit)"
+              >
+                {isRosFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              </button>
               <input
                 type="search"
                 value={query}
@@ -310,7 +375,7 @@ const CreativeEventPage: React.FC = () => {
         ) : null}
       </div>
 
-      <main className="flex-1 min-h-0 flex flex-col mx-auto w-full max-w-[1800px] px-4 py-3 print:py-0 print:px-2">
+      <main className={`flex-1 min-h-0 flex flex-col overflow-hidden mx-auto w-full ${contentWidthClass} px-4 py-3 print:py-0 print:px-2 print:overflow-visible`}>
         {loading && !payload ? (
           <p className="text-slate-400 text-sm">Loading schedule…</p>
         ) : error && !payload ? (
@@ -335,7 +400,9 @@ const CreativeEventPage: React.FC = () => {
               />
             </div>
             <p className="shrink-0 text-center text-[11px] text-slate-500 pt-2 pb-1 print:hidden">
-              Static schedule reference — use Refresh after production updates the run of show.
+              {isRosFullscreen
+                ? 'Fullscreen — press Esc or Exit fullscreen to return'
+                : 'Static schedule reference — use Refresh after production updates the run of show.'}
             </p>
           </>
         ) : null}

@@ -149,7 +149,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     'h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center flex-shrink-0';
 
   return (
-    <div className="bg-slate-800 rounded-xl p-3 sm:p-4 shadow-2xl flex flex-col min-h-0 flex-1">
+    <div className="bg-slate-800 rounded-xl p-3 sm:p-4 shadow-2xl flex flex-col min-h-0 flex-1 h-full">
       <div
         id="guest-schedule-scroll"
         className="flex-1 min-h-0 overflow-auto rounded-lg border-2 border-slate-600"
