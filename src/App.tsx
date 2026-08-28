@@ -51,6 +51,7 @@ import TrainingManagePage from './pages/TrainingManagePage';
 import LedLayoutsPage from './pages/LedLayoutsPage';
 import LedOutputPage from './pages/LedOutputPage';
 import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
+import StreamGuidePage from './pages/StreamGuidePage';
 
 function AppContent() {
   const location = useLocation();
@@ -62,6 +63,7 @@ function AppContent() {
   const isFullScreenTimer = location.pathname === '/fullscreen-timer';
   const isPinNotesPopout = location.pathname === '/pin-notes-popout';
   const isClock = location.pathname === '/clock';
+  const isStreamGuide = location.pathname === '/stream-guide';
   const isGreenRoom = location.pathname === '/green-room';
   const isPhotoView = location.pathname === '/photo-view';
   const isMicManager = location.pathname === '/mic-manager';
@@ -89,7 +91,7 @@ function AppContent() {
     location.pathname === '/ultritouch-health-2';
 
   // Broadcast / panel embed pages: no App chrome, AuthGuard shell, or slate wrappers.
-  if (isLedOutput || isUltritouchHealth) {
+  if (isLedOutput || isUltritouchHealth || isStreamGuide) {
     return (
       <Routes>
         <Route path="/led-output" element={<LedOutputPage />} />
@@ -97,6 +99,7 @@ function AppContent() {
         <Route path="/ultritouch-health-monitor" element={<UltritouchHealthMonitorPage panel="4u" />} />
         <Route path="/ultritouch-health-2u" element={<UltritouchHealthMonitorPage panel="2u" />} />
         <Route path="/ultritouch-health-2" element={<UltritouchHealthMonitorPage panel="2u" />} />
+        <Route path="/stream-guide" element={<StreamGuidePage />} />
       </Routes>
     );
   }
@@ -121,6 +124,7 @@ function AppContent() {
     isLedOutput ||
     isUltritouchHealth ||
     isClock ||
+    isStreamGuide ||
     isAdmin ||
     isReports;
 
@@ -128,9 +132,9 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isTraining && !isLedOutput && !isUltritouchHealth && !isReports && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
       
-      {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && (
+      {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
