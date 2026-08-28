@@ -36,7 +36,12 @@ const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, c
 const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
-const { isAdminEmailNotifyConfigured, notifyTrainingBooking } = require('./lib/admin-notify-email');
+const {
+  isAdminEmailNotifyConfigured,
+  notifyTrainingBooking,
+  notifyContentReviewAssignedBatch,
+  notifyContentReviewActivity,
+} = require('./lib/admin-notify-email');
 const { getAppPublicOrigin } = require('./lib/access-portal');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
@@ -102,6 +107,15 @@ const {
   findOrphanEventData,
   purgeEventData,
 } = require('./lib/event-lifecycle');
+const {
+  ensureAssigneesTable,
+  canManageContentReviewAssignees,
+  listAssigneeCandidates,
+  getEventAssignees,
+  replaceEventAssignees,
+  MAX_ASSIGNEES_PER_ROLE,
+} = require('./lib/content-review-assignees');
+const { collectContentReviewNotificationJobs } = require('./lib/content-review-notify');
 const { adminKey: ADMIN_KEY } = loadAdminAuthConfig(isProduction);
 const requireAdminAuth = createRequireAdminAuth(ADMIN_KEY);
 const requireAdminAccess = createRequireAdminAccess(ADMIN_KEY);
@@ -1490,6 +1504,10 @@ async function runCreativeRoleColumnSync(db) {
       ON public.api_user_access (is_creative)
       WHERE is_creative = TRUE
   `);
+}
+
+async function runContentReviewAssigneesSyncTable(db) {
+  await ensureAssigneesTable(db);
 }
 
 async function runPreflightChecklistSyncTable(db) {
@@ -5124,6 +5142,107 @@ app.delete('/api/catering-notes/:id', async (req, res) => {
 });
 
 // Content Review endpoints (Neon: content_review_data)
+
+async function loadCalendarEventName(pool, eventId) {
+  try {
+    const r = await pool.query(`SELECT name FROM calendar_events WHERE id = $1 LIMIT 1`, [eventId]);
+    return r.rows[0]?.name || 'Event';
+  } catch {
+    return 'Event';
+  }
+}
+
+function queueContentReviewActivityEmails(pool, opts) {
+  if (!isAdminEmailNotifyConfigured()) return;
+  void (async () => {
+    try {
+      const eventName = await loadCalendarEventName(pool, opts.eventId);
+      const jobs = await collectContentReviewNotificationJobs(pool, {
+        ...opts,
+        eventName,
+      });
+      for (const job of jobs) {
+        await notifyContentReviewActivity(job);
+      }
+    } catch (err) {
+      console.warn('[content-review-notify] activity email failed:', err.message || err);
+    }
+  })();
+}
+
+app.get('/api/content-review/:eventId/assignees', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (req.auth && !userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const assignees = await getEventAssignees(pool, eventId);
+    const canManage = canManageContentReviewAssignees(req.auth);
+    let candidates = { creative: [], production: [] };
+    if (canManage) {
+      const all = await listAssigneeCandidates(pool);
+      candidates = {
+        creative: all.filter((u) => u.is_creative || u.is_admin || u.is_event_manager),
+        production: all.filter((u) => !u.is_creative || u.is_admin || u.is_event_manager),
+      };
+    }
+    res.json({
+      event_id: eventId,
+      assignees,
+      candidates,
+      can_manage: canManage,
+      max_per_role: MAX_ASSIGNEES_PER_ROLE,
+    });
+  } catch (error) {
+    console.error('Error loading content review assignees:', error);
+    if (error.code === '42P01') {
+      return res.status(503).json({
+        error: 'event_content_review_assignees table missing — run migration 057 on Neon',
+      });
+    }
+    res.status(500).json({ error: 'Failed to load content review assignees' });
+  }
+});
+
+app.put('/api/content-review/:eventId/assignees', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!canManageContentReviewAssignees(req.auth)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (req.auth && !userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const body = req.body || {};
+    const result = await replaceEventAssignees(
+      pool,
+      eventId,
+      {
+        creative: body.creative,
+        production: body.production,
+      },
+      req.auth?.accessId || null
+    );
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    const eventName = await loadCalendarEventName(pool, eventId);
+    if (result.newlyAssigned?.length) {
+      void notifyContentReviewAssignedBatch(result.newlyAssigned, { eventName, eventId }).catch((err) => {
+        console.warn('[content-review-notify] assignment email failed:', err.message || err);
+      });
+    }
+    res.json({
+      event_id: eventId,
+      assignees: result.assignees,
+      max_per_role: MAX_ASSIGNEES_PER_ROLE,
+    });
+  } catch (error) {
+    console.error('Error saving content review assignees:', error);
+    res.status(500).json({ error: 'Failed to save content review assignees' });
+  }
+});
+
 app.get('/api/content-review/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
@@ -5308,6 +5427,13 @@ app.put('/api/content-review/:eventId', async (req, res) => {
         updated_at: row.updated_at,
       };
       broadcastUpdate(eventId, 'contentReviewDataUpdated', payload);
+      queueContentReviewActivityEmails(pool, {
+        eventId,
+        beforeReviews: current.rows[0]?.reviews || {},
+        afterReviews: mergeResult.reviews,
+        modifierAccessId: last_modified_by || req.auth?.accessId || null,
+        modifierName: last_modified_by_name || null,
+      });
       return res.json(payload);
     }
     const {
@@ -5320,6 +5446,12 @@ app.put('/api/content-review/:eventId', async (req, res) => {
       last_modified_by,
       last_modified_by_name,
     } = req.body || {};
+
+    const beforeReviewRow = await pool.query(
+      'SELECT reviews FROM content_review_data WHERE event_id = $1 LIMIT 1',
+      [eventId]
+    );
+    const beforeReviews = beforeReviewRow.rows[0]?.reviews || {};
 
     let nextCreativePdfValue = creative_pdf_url ?? null;
     if (nextCreativePdfValue && !isCreativeFileRef(nextCreativePdfValue) && isLikelySignedStorageUrl(nextCreativePdfValue)) {
@@ -5446,6 +5578,13 @@ app.put('/api/content-review/:eventId', async (req, res) => {
       updated_at: row.updated_at,
     };
     broadcastUpdate(eventId, 'contentReviewDataUpdated', payload);
+    queueContentReviewActivityEmails(pool, {
+      eventId,
+      beforeReviews,
+      afterReviews: row.reviews || {},
+      modifierAccessId: last_modified_by || req.auth?.accessId || null,
+      modifierName: last_modified_by_name || null,
+    });
     res.json(payload);
   } catch (error) {
     console.error('Error saving content review data:', error);
@@ -8806,6 +8945,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ api_user_access.is_creative column ready');
     } catch (err) {
       console.warn('⚠️ is_creative column sync skipped:', err.message || err);
+    }
+    try {
+      await runContentReviewAssigneesSyncTable(pool);
+      console.log('✅ event_content_review_assignees table synced');
+    } catch (err) {
+      console.warn('⚠️ event_content_review_assignees sync skipped:', err.message || err);
     }
     try {
       await runPreflightChecklistSyncTable(pool);

@@ -8,9 +8,14 @@ import { socketClient } from '../services/socket-client';
 import AssetRetentionNotice from '../components/AssetRetentionNotice';
 import CreativePdfCueViewer from '../components/CreativePdfCueViewer';
 import ContentReviewCommentsPanel from '../components/ContentReviewCommentsPanel';
+import ContentReviewAssigneesModal from '../components/ContentReviewAssigneesModal';
 import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
 import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
 import { creativeDisplaySessionStorageKey } from '../lib/creativeDisplaySession';
+import {
+  fetchContentReviewAssignees,
+  type ContentReviewAssigneesPayload,
+} from '../lib/contentReviewAssignees';
 import {
   type ReviewComment,
   generateReviewCommentId,
@@ -743,6 +748,11 @@ const ContentReviewPage: React.FC = () => {
     height: 560
   });
   const [reviewPanelOpen, setReviewPanelOpen] = useState(false);
+  const [assigneesModalOpen, setAssigneesModalOpen] = useState(false);
+  const [reviewAssignees, setReviewAssignees] = useState<ContentReviewAssigneesPayload['assignees']>({
+    creative: [],
+    production: [],
+  });
   const [editModeEnabled, setEditModeEnabled] = useState(false);
   const [notesDraft, setNotesDraft] = useState('');
   const [notesDirty, setNotesDirty] = useState(false);
@@ -831,6 +841,7 @@ const ContentReviewPage: React.FC = () => {
   const driverId = user?.id ?? 'guest';
   const driverName = (user?.full_name || user?.email || 'Guest').trim() || 'Guest';
   const isAdmin = user?.is_admin === true;
+  const reviewAssigneeCount = reviewAssignees.creative.length + reviewAssignees.production.length;
 
   const creativeSessionStorageKey =
     creativeContributor && eventId && driverId !== 'guest'
@@ -851,6 +862,13 @@ const ContentReviewPage: React.FC = () => {
     eventId,
     persistSessionKey: creativeSessionStorageKey,
   });
+
+  useEffect(() => {
+    if (!eventId) return;
+    void fetchContentReviewAssignees(eventId).then(({ data }) => {
+      if (data?.assignees) setReviewAssignees(data.assignees);
+    });
+  }, [eventId]);
 
   const reviewStorageKey = eventId ? `ros.contentReview.cueReview.${eventId}` : null;
   const streamDragRef = useRef<{ active: boolean; offsetX: number; offsetY: number }>({
@@ -2541,6 +2559,27 @@ const ContentReviewPage: React.FC = () => {
             ))}
           </div>
           <ReviewStageSwitcher className="hidden md:flex" />
+          <button
+            type="button"
+            onClick={() => setAssigneesModalOpen(true)}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/70 px-2.5 py-2 text-xs font-semibold text-slate-200 hover:border-orange-500/50 hover:bg-slate-800"
+            title="Content review team and email notifications"
+          >
+            <svg className="h-4 w-4 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+              />
+            </svg>
+            <span className="hidden sm:inline">Team</span>
+            {reviewAssigneeCount > 0 ? (
+              <span className="rounded-full bg-orange-600 px-1.5 py-0.5 text-[10px] tabular-nums text-white">
+                {reviewAssigneeCount}
+              </span>
+            ) : null}
+          </button>
           {!viewerOnly ? (
           <button
             type="button"
@@ -4801,6 +4840,14 @@ const ContentReviewPage: React.FC = () => {
           onReconnect={handleCreativeReconnect}
         />
       ) : null}
+
+      <ContentReviewAssigneesModal
+        open={assigneesModalOpen}
+        eventId={eventId}
+        eventName={event.name || eventNameParam || 'Event'}
+        onClose={() => setAssigneesModalOpen(false)}
+        onSaved={(assignees) => setReviewAssignees(assignees)}
+      />
     </div>
   );
 };
