@@ -185,7 +185,7 @@ export async function fetchHealthMonitorSnapshot(mode: HealthMonitorMode): Promi
 
   const base = getApiBaseUrl();
   const [res, netlify, resend] = await Promise.all([
-    fetch(`${base}/health`, { cache: 'no-store' }),
+    fetch(`${base}/health/deep`, { cache: 'no-store' }),
     fetchNetlifyStatus(),
     fetchResendStatus(),
   ]);

@@ -882,13 +882,17 @@ async function probeUpstashHealth() {
   }
 }
 
-app.get('/health', async (req, res) => {
-  const timestamp = new Date().toISOString();
-  const railwayMeta = {
+function buildRailwayHealthMeta() {
+  return {
     nodeVersion: process.version,
     uptimeSeconds: Math.floor(process.uptime()),
-    env: process.env.NODE_ENV || 'development'
+    env: process.env.NODE_ENV || 'development',
   };
+}
+
+async function buildDeepHealthPayload() {
+  const timestamp = new Date().toISOString();
+  const railwayMeta = buildRailwayHealthMeta();
   const [neonResult, upstash] = await Promise.all([
     pool.query('SELECT 1 AS health, current_database() AS name').then(
       (result) => ({
@@ -902,8 +906,9 @@ app.get('/health', async (req, res) => {
   ]);
   const upstashConfigured = !!upstash.configured;
   if (neonResult.ok) {
-    res.json({
+    return {
       status: 'healthy',
+      depth: 'deep',
       timestamp,
       dbConnected: neonResult.connected,
       database: 'connected',
@@ -912,21 +917,44 @@ app.get('/health', async (req, res) => {
         neon: { connected: neonResult.connected, label: 'Neon', dbName: neonResult.dbName },
         railway: { connected: true, label: 'Railway', ...railwayMeta },
         upstash,
-      }
-    });
+      },
+    };
+  }
+  return {
+    status: 'unhealthy',
+    depth: 'deep',
+    error: neonResult.error,
+    timestamp,
+    dbConnected: false,
+    upstashConfigured,
+    services: {
+      neon: { connected: false, label: 'Neon', dbName: null },
+      railway: { connected: true, label: 'Railway', ...railwayMeta },
+      upstash,
+    },
+  };
+}
+
+// Liveness: no Neon/Upstash probes (for UptimeRobot — avoids waking the database every few minutes)
+app.get('/health', (req, res) => {
+  const railwayMeta = buildRailwayHealthMeta();
+  res.json({
+    status: 'healthy',
+    depth: 'live',
+    timestamp: new Date().toISOString(),
+    services: {
+      railway: { connected: true, label: 'Railway', ...railwayMeta },
+    },
+  });
+});
+
+// Readiness: Neon + Upstash (Admin Services, manual checks)
+app.get('/health/deep', async (req, res) => {
+  const payload = await buildDeepHealthPayload();
+  if (payload.status === 'healthy') {
+    res.json(payload);
   } else {
-    res.status(500).json({
-      status: 'unhealthy',
-      error: neonResult.error,
-      timestamp,
-      dbConnected: false,
-      upstashConfigured,
-      services: {
-        neon: { connected: false, label: 'Neon', dbName: null },
-        railway: { connected: true, label: 'Railway', ...railwayMeta },
-        upstash,
-      }
-    });
+    res.status(500).json(payload);
   }
 });
 

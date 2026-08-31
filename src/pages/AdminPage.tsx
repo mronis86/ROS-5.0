@@ -814,7 +814,7 @@ export default function AdminPage() {
     try {
       const base = getApiBaseUrl();
       const [res, netlify, resend] = await Promise.all([
-        fetch(`${base}/health`),
+        fetch(`${base}/health/deep`),
         fetchNetlifyStatus(),
         fetchResendStatus(),
       ]);
@@ -2452,9 +2452,8 @@ export default function AdminPage() {
               <div className="min-w-0 flex-1">
                 <h3 className="font-semibold text-white text-sm">External uptime monitor</h3>
                 <p className="text-slate-400 text-sm mt-1">
-                  Free outside check (e.g. UptimeRobot) that hits Railway <span className="font-mono text-slate-300">/health</span> every
-                  few minutes and emails you if the API is down. Complements this page and ops alert emails. Egress from these
-                  pings is negligible.
+                  Free outside check (e.g. UptimeRobot) on Railway <span className="font-mono text-slate-300">/health</span> (live only — no Neon query).
+                  This page uses <span className="font-mono text-slate-300">/health/deep</span> for Neon and Upstash. Complements ops alert emails.
                 </p>
                 <div className="mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center">
                   <code className="text-xs text-slate-300 bg-slate-900/60 border border-slate-700 rounded-md px-2.5 py-1.5 font-mono break-all">
@@ -2595,7 +2594,8 @@ export default function AdminPage() {
               <div className="min-w-0 flex-1">
                 <h3 className="font-semibold text-white text-sm">Mid-show API down</h3>
                 <p className="text-slate-400 text-sm mt-1">
-                  If Railway <span className="font-mono text-slate-300">/health</span> fails during a live event: confirm once,
+                  If Railway <span className="font-mono text-slate-300">/health</span> fails during a live event (API down), confirm once.
+                  If only Neon is down, check <span className="font-mono text-slate-300">/health/deep</span> or Services above.
                   then fall back to the old system and/or offline show — do not debug production mid-cues. Fix cloud after
                   the show.
                 </p>
