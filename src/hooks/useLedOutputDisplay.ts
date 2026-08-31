@@ -53,6 +53,11 @@ type UseLedOutputDisplayArgs = {
   /** Bump when schedule contents change so snapshots rebuild (e.g. prerender load). */
   contentRevision?: number;
   /**
+   * Bumps when ROS loads/activates a cue (including same cue again).
+   * Clears manual-clear suppress and restarts enter animation.
+   */
+  cueLoadNonce?: number;
+  /**
    * Prerender bake: no wall-clock timers. Caller drives enter progress via seekBakeMs
    * so capture can grab every frame at the correct CSS animation time.
    */
@@ -98,6 +103,7 @@ export function useLedOutputDisplay({
   manualClearNonce = 0,
   suppressBootCue = false,
   contentRevision = 0,
+  cueLoadNonce = 0,
   bakeSeekMode = false,
 }: UseLedOutputDisplayArgs) {
   const [snapshot, setSnapshot] = useState<DisplaySnapshot | null>(null);
@@ -112,6 +118,7 @@ export function useLedOutputDisplay({
   const bootCueCapturedRef = useRef(false);
   const bakeSeekModeRef = useRef(bakeSeekMode);
   const getScheduleItemsRef = useRef(getScheduleItems);
+  const lastCueLoadNonceRef = useRef(cueLoadNonce);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -195,7 +202,8 @@ export function useLedOutputDisplay({
     beginExit(anim);
   }, [beginExit, clearHoldTimer, finishExit]);
 
-  // On refresh, do not auto-show a cue that was already loaded before this page opened.
+  // Optional: hide a cue that was already active when the page first hydrated.
+  // Default off — loaded cues should always play on LED output.
   useEffect(() => {
     if (!suppressBootCue) {
       bootCueCapturedRef.current = false;
@@ -257,19 +265,19 @@ export function useLedOutputDisplay({
   useEffect(() => {
     if (!isCueActive || activeItemId == null) return;
 
-    const currentPhase = phaseRef.current;
-    if (currentPhase === 'exit' || currentPhase === 'hold-out') {
-      return;
+    const loadNonceAdvanced = cueLoadNonce !== lastCueLoadNonceRef.current;
+    if (loadNonceAdvanced) {
+      lastCueLoadNonceRef.current = cueLoadNonce;
+      // Fresh Load from ROS — show again even after Clear / same-cue reload
+      suppressedRef.current = false;
+      suppressedCueIdRef.current = null;
+      // Force re-enter even if this cue id was already showing
+      if (lastCueIdRef.current === activeItemId) {
+        lastCueIdRef.current = null;
+      }
     }
 
-    if (
-      suppressedRef.current &&
-      suppressedCueIdRef.current != null &&
-      suppressedCueIdRef.current === activeItemId
-    ) {
-      return;
-    }
-
+    // A different cue always clears an older suppress
     if (
       suppressedRef.current &&
       suppressedCueIdRef.current != null &&
@@ -277,6 +285,15 @@ export function useLedOutputDisplay({
     ) {
       suppressedRef.current = false;
       suppressedCueIdRef.current = null;
+    }
+
+    // Manual-clear suppress only (until Load nonce advances or Stop)
+    if (
+      suppressedRef.current &&
+      suppressedCueIdRef.current != null &&
+      suppressedCueIdRef.current === activeItemId
+    ) {
+      return;
     }
 
     const items = getScheduleItems();
@@ -288,6 +305,7 @@ export function useLedOutputDisplay({
       return;
     }
 
+    const currentPhase = phaseRef.current;
     const isNewCue = lastCueIdRef.current !== activeItemId;
     const anim = animationRef.current;
 
@@ -310,8 +328,14 @@ export function useLedOutputDisplay({
       return;
     }
 
+    // Already showing this cue — leave it alone (unless Load nonce forced a restart above)
     if (!isNewCue && (currentPhase === 'visible' || currentPhase === 'enter')) {
       return;
+    }
+
+    // Interrupt exit / hold-out when a cue is loaded again (or swapped)
+    if (currentPhase === 'exit' || currentPhase === 'hold-out') {
+      clearHoldTimer();
     }
 
     lastCueIdRef.current = activeItemId;
@@ -331,6 +355,7 @@ export function useLedOutputDisplay({
     activeItemId,
     getScheduleItems,
     contentRevision,
+    cueLoadNonce,
     finishExit,
     startEnter,
     clearHoldTimer,

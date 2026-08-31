@@ -82,7 +82,6 @@ const LedOutputPage: React.FC = () => {
   const isCueActive = prerenderMode
     ? prerenderItemInSchedule
     : liveFollow.isCueActive;
-  const hasHydrated = prerenderMode ? true : liveFollow.hasHydrated;
   const liveTimer = useLedOutputTimer(prerenderMode ? null : eventId);
 
   useEffect(() => {
@@ -121,8 +120,10 @@ const LedOutputPage: React.FC = () => {
     getScheduleItems,
     animation: resolvedAnimation,
     manualClearNonce,
-    suppressBootCue: prerenderMode ? false : hasHydrated,
+    // Always show currently loaded cues (boot suppress was blocking Load)
+    suppressBootCue: false,
     contentRevision: schedule.length,
+    cueLoadNonce: prerenderMode ? 0 : liveFollow.cueLoadNonce,
     bakeSeekMode,
   });
 
@@ -340,19 +341,24 @@ const LedOutputPage: React.FC = () => {
 
   useEffect(() => {
     if (!eventId || prerenderMode) return;
+    let cancelled = false;
     const callbacks = {
       onRunOfShowDataUpdated: (data: {
         schedule_items?: unknown;
         settings?: Record<string, unknown>;
       }) => {
+        if (cancelled) return;
         applyRosData(data);
       },
       onLedOutputClear: () => {
+        if (cancelled) return;
         triggerManualClear();
       },
     };
     socketClient.connect(eventId, callbacks);
-    return () => socketClient.disconnect(eventId);
+    return () => {
+      cancelled = true;
+    };
   }, [eventId, prerenderMode, applyRosData, triggerManualClear]);
 
   useEffect(() => {

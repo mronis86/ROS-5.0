@@ -7,13 +7,22 @@ export function useActiveCueFollow(eventId: string | null | undefined) {
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [timerState, setTimerState] = useState<string | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
+  /** Bumps on every loaded/running timer update so LED can re-enter after Clear or same-cue Load. */
+  const [cueLoadNonce, setCueLoadNonce] = useState(0);
   const lastLoadedRef = useRef<number | null>(null);
 
   const applyTimer = useCallback((itemId: number, state: string) => {
     if (state === 'loaded' || state === 'running') {
+      const prevId = lastLoadedRef.current;
+      const isNewItem = prevId !== itemId;
+      const wasInactive = prevId == null;
       setActiveItemId(itemId);
       setTimerState(state);
       lastLoadedRef.current = itemId;
+      // Re-enter LED on Load / cue change / first activate — not every running pulse
+      if (state === 'loaded' || isNewItem || wasInactive) {
+        setCueLoadNonce((n) => n + 1);
+      }
       return;
     }
     if (state === 'stopped') {
@@ -87,5 +96,12 @@ export function useActiveCueFollow(eventId: string | null | undefined) {
   const isCueActive =
     activeItemId != null && (timerState === 'loaded' || timerState === 'running');
 
-  return { activeItemId, timerState, isCueActive, hasHydrated, reloadActiveTimer: loadActiveTimer };
+  return {
+    activeItemId,
+    timerState,
+    isCueActive,
+    hasHydrated,
+    cueLoadNonce,
+    reloadActiveTimer: loadActiveTimer,
+  };
 }

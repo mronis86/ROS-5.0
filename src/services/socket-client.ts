@@ -69,6 +69,22 @@ class SocketClient {
   /** Multiple pages (ClockPage + Clock) subscribe to messages without overwriting each other. */
   private timerMessageHandlers = new Map<string, (data: any) => void>();
 
+  /**
+   * When several hooks share one Socket.IO connection (e.g. LED Follow + LED Timer),
+   * merging must chain these handlers — last-write-wins drops Load events from Follow.
+   */
+  private static readonly CHAIN_ON_MERGE = new Set<string>([
+    'onTimerUpdated',
+    'onActiveTimersUpdated',
+    'onTimerStarted',
+    'onTimerStopped',
+    'onTimersStopped',
+    'onSubCueTimerStarted',
+    'onSubCueTimerStopped',
+    'onRunOfShowDataUpdated',
+    'onLedOutputClear',
+  ]);
+
   private dispatchTimerMessage = (data: any) => {
     for (const handler of this.timerMessageHandlers.values()) {
       try {
@@ -78,6 +94,31 @@ class SocketClient {
       }
     }
   };
+
+  private mergeCallbacks(incoming: SocketCallbacks): SocketCallbacks {
+    const merged: SocketCallbacks = { ...this.callbacks };
+    for (const key of Object.keys(incoming) as (keyof SocketCallbacks)[]) {
+      const next = incoming[key];
+      if (next === undefined) continue;
+      const prev = merged[key];
+      if (
+        SocketClient.CHAIN_ON_MERGE.has(key) &&
+        typeof prev === 'function' &&
+        typeof next === 'function' &&
+        prev !== next
+      ) {
+        const prevFn = prev as (data: any) => void;
+        const nextFn = next as (data: any) => void;
+        (merged as any)[key] = (data: any) => {
+          prevFn(data);
+          nextFn(data);
+        };
+      } else {
+        (merged as any)[key] = next;
+      }
+    }
+    return merged;
+  }
 
   connect(eventId: string, callbacks: SocketCallbacks, handlerKey: string = 'default') {
     if (
@@ -89,8 +130,7 @@ class SocketClient {
 
     if (this.socket && this.eventId === eventId) {
       console.log('Socket.IO already connected for this event. Merging callbacks.');
-      // Prefer newer callbacks so remounted pages (e.g. Content Review) keep live handlers.
-      this.callbacks = { ...this.callbacks, ...callbacks };
+      this.callbacks = this.mergeCallbacks(callbacks);
       // Always dispatch to every registered message handler (Clock + ClockPage).
       this.callbacks.onTimerMessageUpdated = this.dispatchTimerMessage;
       if (!this.socket.connected) {
