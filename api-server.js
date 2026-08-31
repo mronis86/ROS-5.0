@@ -8940,7 +8940,9 @@ server.listen(PORT, '0.0.0.0', async () => {
       if (isAdminEmailNotifyConfigured()) {
         startContentReviewDigestWorker(pool);
         const { debounceMinutes } = require('./lib/content-review-notify-digest');
-        console.log(`📧 Content review digests: assignees only, ${debounceMinutes()}-minute quiet period`);
+        console.log(
+          `📧 Content review digests: assignees only, ${debounceMinutes()}-minute quiet period (event-driven timers, no idle polling)`
+        );
       }
     } catch (err) {
       console.warn('⚠️ event_content_review_assignees sync skipped:', err.message || err);
