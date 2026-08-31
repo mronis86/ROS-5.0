@@ -7934,6 +7934,8 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     if (!event?.id || !user?.id) return;
     const poll = () => {
+      // Don't poll from background tabs — avoids ghost Railway traffic from forgotten ROS sessions
+      if (document.hidden) return;
       void NeonBackupService.getAutoBackupLease(event.id)
         .then((lease) => {
           if (autoBackupEnabledRef.current && lease && String(lease.userId) === String(user.id)) {
@@ -7950,8 +7952,16 @@ const RunOfShowPage: React.FC = () => {
         })
         .catch(() => {});
     };
+    poll();
     const id = window.setInterval(poll, 45_000);
-    return () => clearInterval(id);
+    const onVis = () => {
+      if (!document.hidden) poll();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [event?.id, user?.id, applyAutoBackupLease]);
 
   // Best-effort release if the tab closes while we own the lease
