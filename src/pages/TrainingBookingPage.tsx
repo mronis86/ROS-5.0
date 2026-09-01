@@ -308,17 +308,32 @@ const TrainingBookingPage: React.FC = () => {
                   Confirmation for {booking.name} · {booking.email}
                 </p>
                 <p className="text-xs text-slate-500 mt-2">
-                  A confirmation email with a calendar attachment was sent to {booking.email}.
+                  A confirmation email was also sent to {booking.email}.
                 </p>
               </div>
+
+              <div className="rounded-xl border-2 border-amber-500/70 bg-amber-950/40 px-4 py-4">
+                <p className="text-amber-200 font-bold text-sm uppercase tracking-wide">
+                  Important — add to your calendar
+                </p>
+                <p className="text-sm text-amber-50/90 mt-2">
+                  This booking is <strong>not</strong> on your calendar yet. Save it now so you do not miss your session.
+                </p>
+                <ol className="mt-3 space-y-2 text-sm text-amber-100/90 list-decimal list-inside">
+                  <li>Click the button below to download the calendar file.</li>
+                  <li>Open the file when prompted (or find it in your Downloads folder).</li>
+                  <li>Choose <strong>Add to calendar</strong> / <strong>Save</strong> in Google Calendar, Outlook, or Apple Calendar.</li>
+                </ol>
+              </div>
+
               <a
                 href={trainingIcsAbsoluteUrl(booking.id)}
-                className="inline-flex items-center justify-center w-full rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 text-sm"
+                className="inline-flex items-center justify-center w-full rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3.5 text-base shadow-lg shadow-amber-900/30"
               >
-                Add to your calendar (.ics)
+                Download calendar file (.ics)
               </a>
-              <p className="text-xs text-slate-500 text-center">
-                Opens a calendar file you can import into Google Calendar, Outlook, Apple Calendar, and others.
+              <p className="text-xs text-slate-400 text-center">
+                You can also open the .ics attachment in your confirmation email.
               </p>
               <button
                 type="button"
