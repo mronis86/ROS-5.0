@@ -111,7 +111,7 @@ export async function persistLedEventSettings(
     const result = await DatabaseService.saveRunOfShowData({
       event_id: eventId,
       event_name: options.eventName || existing?.event_name || 'Event',
-      event_date: options.eventDate || existing?.event_date || '',
+      event_date: options.eventDate || existing?.event_date || undefined,
       // Prefer explicit schedule only when provided; otherwise keep DB copy (bypass cache above).
       schedule_items: options.scheduleItems || existing?.schedule_items || [],
       custom_columns: options.customColumns || existing?.custom_columns || [],

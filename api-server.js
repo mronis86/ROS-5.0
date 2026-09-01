@@ -43,6 +43,11 @@ const {
   notifyContentReviewAssignedBatch,
 } = require('./lib/admin-notify-email');
 const { getAppPublicOrigin } = require('./lib/access-portal');
+const {
+  UPCOMING_ROS_EVENT_DATE_SQL,
+  resolveRunOfShowEventDate,
+  backfillBlankRunOfShowEventDates,
+} = require('./lib/run-of-show-event-date');
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
@@ -1994,7 +1999,7 @@ async function runWeeklyBackupToDrive() {
   const upcomingResult = await pool.query(
     `SELECT event_id, event_name, event_date, schedule_items, custom_columns
      FROM run_of_show_data
-     WHERE (event_date::date >= CURRENT_DATE)
+     WHERE ${UPCOMING_ROS_EVENT_DATE_SQL}
      ORDER BY event_date::date ASC`
   );
   const rows = upcomingResult.rows || [];
@@ -2077,10 +2082,7 @@ app.get('/api/backup/upcoming-export', async (req, res) => {
     const result = await pool.query(
       `SELECT event_id, event_name, event_date, schedule_items, custom_columns
        FROM run_of_show_data
-       WHERE event_date IS NOT NULL
-         AND TRIM(event_date::text) <> ''
-         AND event_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-         AND event_date::date >= CURRENT_DATE
+       WHERE ${UPCOMING_ROS_EVENT_DATE_SQL}
        ORDER BY event_date::date ASC`
     );
     const rows = result.rows || [];
@@ -4409,6 +4411,18 @@ app.post('/api/run-of-show-data', async (req, res) => {
       scheduleToSave = mergeLedLayoutsPreservingAnimation(scheduleToSave, existingItems);
     }
 
+    const resolvedEventDate = await resolveRunOfShowEventDate(pool, event_id, {
+      incoming: event_date,
+      existingRow: currentRow,
+    });
+    if (!resolvedEventDate) {
+      return res.status(400).json({
+        error: 'event_date_required',
+        message:
+          'Could not determine the event date. Set the date on the event in the event list, then save again.',
+      });
+    }
+
     let result;
     if (!currentRow) {
       result = await pool.query(
@@ -4420,7 +4434,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
         [
           event_id,
           event_name,
-          event_date,
+          resolvedEventDate,
           JSON.stringify(scheduleToSave),
           JSON.stringify(custom_columns),
           JSON.stringify(settingsToSave),
@@ -4452,7 +4466,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
          RETURNING *`,
         [
           event_name,
-          event_date,
+          resolvedEventDate,
           JSON.stringify(scheduleToSave),
           JSON.stringify(custom_columns),
           JSON.stringify(settingsToSave),
@@ -9004,6 +9018,14 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ preflight_checklist_template table synced');
     } catch (err) {
       console.warn('⚠️ preflight_checklist_template sync skipped:', err.message || err);
+    }
+    try {
+      const backfilled = await backfillBlankRunOfShowEventDates(pool);
+      if (backfilled > 0) {
+        console.log(`✅ Backfilled event_date on ${backfilled} run_of_show_data row(s) from calendar_events`);
+      }
+    } catch (err) {
+      console.warn('⚠️ run_of_show_data event_date backfill skipped:', err.message || err);
     }
     try {
       await pool.query(

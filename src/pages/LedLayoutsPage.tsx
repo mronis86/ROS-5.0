@@ -80,12 +80,13 @@ const LedLayoutsPage: React.FC = () => {
   const urlParams = new URLSearchParams(location.search);
   const eventId = urlParams.get('eventId');
   const eventName = urlParams.get('eventName');
+  const eventDateParam = urlParams.get('eventDate');
 
   const event: Event = location.state?.event || {
     id: eventId || '',
     name: eventName || 'Current Event',
-    date: '',
-    location: '',
+    date: eventDateParam || '',
+    location: urlParams.get('eventLocation') || '',
   };
 
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
@@ -438,7 +439,7 @@ const LedLayoutsPage: React.FC = () => {
       const result = await DatabaseService.saveRunOfShowData({
         event_id: id,
         event_name: event?.name || existing?.event_name || 'Event',
-        event_date: existing?.event_date || runOfShowMeta?.event_date || '',
+        event_date: existing?.event_date || runOfShowMeta?.event_date || event.date || undefined,
         schedule_items: updatedSchedule,
         custom_columns: existing?.custom_columns || runOfShowMeta?.custom_columns || [],
         settings: baseSettings,
