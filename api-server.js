@@ -95,6 +95,7 @@ const {
   blockHour,
   unblockHour,
   buildIcsDownloadMeta,
+  buildTrainingInviteIcs,
   trainingTimezone,
   SLOT_START_HOUR,
   SLOT_END_HOUR,
@@ -2988,6 +2989,7 @@ app.post('/api/training/book', async (req, res) => {
     const ics = buildIcsDownloadMeta(booking, req);
     const origin = getAppPublicOrigin(req);
     const icsUrl = `${origin}/api/training/booking/${booking.id}/ics`;
+    const inviteIcs = buildTrainingInviteIcs(booking, { origin });
     const tz = trainingTimezone();
     try {
       await notifyTrainingBooking(pool, booking, {
@@ -3001,8 +3003,9 @@ app.post('/api/training/book', async (req, res) => {
       await notifyTrainingBookingConfirmation(booking, {
         timezone: tz,
         icsUrl,
-        icsFilename: ics.filename,
-        icsBody: ics.body,
+        icsFilename: 'invite.ics',
+        icsBody: inviteIcs,
+        origin,
       });
     } catch (mailErr) {
       console.error('[training/book] confirmation email failed:', mailErr.message || mailErr);

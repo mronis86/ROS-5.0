@@ -12,7 +12,7 @@ const {
   isAdminEmailNotifyConfigured,
   buildTrainingBookingConfirmationEmail,
 } = require('../lib/admin-notify-email');
-const { buildTrainingIcs } = require('../lib/training-booking');
+const { buildTrainingInviteIcs } = require('../lib/training-booking');
 
 async function main() {
   const to = (process.argv[2] || '').trim().toLowerCase();
@@ -43,8 +43,8 @@ async function main() {
     endsAt: endsAt.toISOString(),
   };
 
-  const icsBody = buildTrainingIcs(booking, { origin });
-  const icsFilename = `ros-training-${booking.startsAt.slice(0, 10)}.ics`;
+  const icsBody = buildTrainingInviteIcs(booking, { origin });
+  const icsFilename = 'invite.ics';
   const icsUrl = `${origin}/api/training/booking/${booking.id}/ics`;
 
   console.log('From:', process.env.ADMIN_NOTIFY_FROM);
@@ -60,6 +60,7 @@ async function main() {
     icsUrl,
     icsFilename,
     icsBody,
+    origin,
   });
   console.log('Sent booker confirmation with .ics attachment.');
 
