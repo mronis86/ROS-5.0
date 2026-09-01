@@ -39,6 +39,7 @@ const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-se
 const {
   isAdminEmailNotifyConfigured,
   notifyTrainingBooking,
+  notifyTrainingBookingConfirmation,
   notifyContentReviewAssignedBatch,
 } = require('./lib/admin-notify-email');
 const { getAppPublicOrigin } = require('./lib/access-portal');
@@ -2986,18 +2987,30 @@ app.post('/api/training/book', async (req, res) => {
     const booking = await createBooking(pool, req.body || {});
     const ics = buildIcsDownloadMeta(booking, req);
     const origin = getAppPublicOrigin(req);
+    const icsUrl = `${origin}/api/training/booking/${booking.id}/ics`;
+    const tz = trainingTimezone();
     try {
       await notifyTrainingBooking(pool, booking, {
-        timezone: trainingTimezone(),
+        timezone: tz,
         manageUrl: `${origin}/training/manage`,
       });
     } catch (mailErr) {
-      console.error('[training/book] notify email failed:', mailErr.message || mailErr);
+      console.error('[training/book] admin notify email failed:', mailErr.message || mailErr);
+    }
+    try {
+      await notifyTrainingBookingConfirmation(booking, {
+        timezone: tz,
+        icsUrl,
+        icsFilename: ics.filename,
+        icsBody: ics.body,
+      });
+    } catch (mailErr) {
+      console.error('[training/book] confirmation email failed:', mailErr.message || mailErr);
     }
     res.status(201).json({
       ok: true,
       booking,
-      timezone: trainingTimezone(),
+      timezone: tz,
       icsUrl: `/api/training/booking/${booking.id}/ics`,
       icsFilename: ics.filename,
     });

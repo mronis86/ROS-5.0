@@ -307,6 +307,9 @@ const TrainingBookingPage: React.FC = () => {
                 <p className="text-xs text-slate-400 mt-1">
                   Confirmation for {booking.name} · {booking.email}
                 </p>
+                <p className="text-xs text-slate-500 mt-2">
+                  A confirmation email with a calendar attachment was sent to {booking.email}.
+                </p>
               </div>
               <a
                 href={trainingIcsAbsoluteUrl(booking.id)}
