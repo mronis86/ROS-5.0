@@ -106,10 +106,12 @@ export function formatTrainingWhen(iso: string, timeZone?: string): string {
   }
 }
 
-export async function adminListTrainingBookings(includeCancelled = false) {
-  const res = await adminFetch(
-    `/api/admin/training/bookings${includeCancelled ? '?includeCancelled=1' : ''}`
-  );
+export async function adminListTrainingBookings(includeCancelled = false, includePast = false) {
+  const params = new URLSearchParams();
+  if (includeCancelled) params.set('includeCancelled', '1');
+  if (includePast) params.set('includePast', '1');
+  const qs = params.toString();
+  const res = await adminFetch(`/api/admin/training/bookings${qs ? `?${qs}` : ''}`);
   return res.json();
 }
 

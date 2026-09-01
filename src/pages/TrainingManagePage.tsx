@@ -107,7 +107,7 @@ const TrainingManagePage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
       <header className="sticky top-0 z-30 border-b border-slate-700/80 bg-slate-900/95 backdrop-blur">
-        <div className="mx-auto max-w-3xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="mx-auto max-w-5xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <AppLogo size="sm" />
             <div className="min-w-0">
@@ -133,7 +133,7 @@ const TrainingManagePage: React.FC = () => {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-3xl px-4 py-6">
+      <main className="mx-auto max-w-5xl px-4 py-6">
         <div className="mb-5">
           <h1 className="text-2xl font-semibold text-white">Training bookings</h1>
           <p className="text-sm text-slate-400 mt-1">

@@ -2077,7 +2077,10 @@ app.get('/api/backup/upcoming-export', async (req, res) => {
     const result = await pool.query(
       `SELECT event_id, event_name, event_date, schedule_items, custom_columns
        FROM run_of_show_data
-       WHERE (event_date::date >= CURRENT_DATE)
+       WHERE event_date IS NOT NULL
+         AND TRIM(event_date::text) <> ''
+         AND event_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+         AND event_date::date >= CURRENT_DATE
        ORDER BY event_date::date ASC`
     );
     const rows = result.rows || [];
@@ -3046,6 +3049,7 @@ app.get('/api/admin/training/bookings', async (req, res) => {
     await ensureTrainingSchema(pool);
     const bookings = await listBookingsAdmin(pool, {
       includeCancelled: String(req.query.includeCancelled || '') === '1',
+      includePast: String(req.query.includePast || '') === '1',
     });
     res.json({ ok: true, timezone: trainingTimezone(), bookings });
   } catch (error) {
