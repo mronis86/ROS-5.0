@@ -5434,31 +5434,56 @@ app.put('/api/content-review/:eventId', async (req, res) => {
       if (!userCanAccessEvent(req.auth, eventId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
-      const { reviews, last_modified_by, last_modified_by_name } = req.body || {};
-      const current = await pool.query('SELECT reviews FROM content_review_data WHERE event_id = $1 LIMIT 1', [
-        eventId,
-      ]);
-      const mergeResult = mergeCreativeContributorReviews(
-        current.rows[0]?.reviews,
-        reviews,
-        last_modified_by_name,
-        last_modified_by
+      const { reviews, creative_cue_pages, last_modified_by, last_modified_by_name } = req.body || {};
+      const current = await pool.query(
+        'SELECT reviews, creative_cue_pages FROM content_review_data WHERE event_id = $1 LIMIT 1',
+        [eventId]
       );
-      if (mergeResult.error) {
-        return res.status(400).json({ error: mergeResult.error });
+      const hasReviewsPayload = reviews != null && typeof reviews === 'object';
+      const hasCuePagesPayload =
+        creative_cue_pages != null && typeof creative_cue_pages === 'object' && !Array.isArray(creative_cue_pages);
+
+      let nextReviews = current.rows[0]?.reviews || {};
+      let reviewsChanged = false;
+      if (hasReviewsPayload) {
+        const mergeResult = mergeCreativeContributorReviews(
+          current.rows[0]?.reviews,
+          reviews,
+          last_modified_by_name,
+          last_modified_by
+        );
+        // Ignore "no review field changes" when this save is mainly cue-page map / autosave noise.
+        if (mergeResult.error && !hasCuePagesPayload) {
+          return res.status(400).json({ error: mergeResult.error });
+        }
+        if (!mergeResult.error) {
+          nextReviews = mergeResult.reviews;
+          reviewsChanged = true;
+        }
+      } else if (!hasCuePagesPayload) {
+        return res.status(400).json({ error: 'reviews object is required.' });
       }
-      const reviewsJson = JSON.stringify(mergeResult.reviews);
+
+      const nextCuePages = hasCuePagesPayload
+        ? creative_cue_pages
+        : current.rows[0]?.creative_cue_pages && typeof current.rows[0].creative_cue_pages === 'object'
+          ? current.rows[0].creative_cue_pages
+          : {};
+
+      const reviewsJson = JSON.stringify(nextReviews);
+      const cuePagesJson = JSON.stringify(nextCuePages || {});
       const result = await pool.query(
         `INSERT INTO content_review_data (
-           event_id, reviews, last_modified_by, last_modified_by_name, updated_at
-         ) VALUES ($1, $2::jsonb, $3, $4, NOW())
+           event_id, reviews, creative_cue_pages, last_modified_by, last_modified_by_name, updated_at
+         ) VALUES ($1, $2::jsonb, $3::jsonb, $4, $5, NOW())
          ON CONFLICT (event_id) DO UPDATE SET
            reviews = EXCLUDED.reviews,
+           creative_cue_pages = EXCLUDED.creative_cue_pages,
            last_modified_by = EXCLUDED.last_modified_by,
            last_modified_by_name = EXCLUDED.last_modified_by_name,
            updated_at = NOW()
          RETURNING *`,
-        [eventId, reviewsJson, last_modified_by || null, last_modified_by_name || null]
+        [eventId, reviewsJson, cuePagesJson, last_modified_by || null, last_modified_by_name || null]
       );
       const row = result.rows[0];
       const creativePdfUrl = await resolveCreativePdfUrl(eventId, row.creative_pdf_url || null);
@@ -5474,13 +5499,15 @@ app.put('/api/content-review/:eventId', async (req, res) => {
         updated_at: row.updated_at,
       };
       broadcastUpdate(eventId, 'contentReviewDataUpdated', payload);
-      queueContentReviewActivityEmails(pool, {
-        eventId,
-        beforeReviews: current.rows[0]?.reviews || {},
-        afterReviews: mergeResult.reviews,
-        modifierAccessId: last_modified_by || req.auth?.accessId || null,
-        modifierName: last_modified_by_name || null,
-      });
+      if (reviewsChanged) {
+        queueContentReviewActivityEmails(pool, {
+          eventId,
+          beforeReviews: current.rows[0]?.reviews || {},
+          afterReviews: nextReviews,
+          modifierAccessId: last_modified_by || req.auth?.accessId || null,
+          modifierName: last_modified_by_name || null,
+        });
+      }
       return res.json(payload);
     }
     const {
@@ -5673,9 +5700,7 @@ app.post(
       if (req.auth && !userCanAccessEvent(req.auth, eventId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
-      if (isCreativeOnlyAuth(req.auth)) {
-        return res.status(403).json({ error: 'Creative users cannot upload creative review files.' });
-      }
+      // Creative assignees (and admins/managers) may upload the deck used for review.
       if (!req.file?.buffer || !creativeFileAllowed(req.file)) {
         return res.status(400).json({ error: 'No file uploaded or unsupported file type.' });
       }

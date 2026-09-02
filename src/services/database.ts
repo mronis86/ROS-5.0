@@ -1532,7 +1532,11 @@ export class DatabaseService {
   static async uploadContentReviewCreativeFile(
     eventId: string,
     file: File
-  ): Promise<{ creative_pdf_url: string | null; file?: { id: string; original_name: string } } | null> {
+  ): Promise<{
+    creative_pdf_url: string | null;
+    file?: { id: string; original_name: string };
+    error?: string;
+  } | null> {
     try {
       const form = new FormData();
       form.append('file', file);
@@ -1544,14 +1548,18 @@ export class DatabaseService {
         body: form,
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        const message = body.error || `Upload failed (HTTP ${response.status})`;
         console.error('Failed to upload content review creative file:', response.status, body);
-        return null;
+        return { creative_pdf_url: null, error: message };
       }
       return await response.json();
     } catch (error) {
       console.error('Error uploading content review creative file:', error);
-      return null;
+      return {
+        creative_pdf_url: null,
+        error: error instanceof Error ? error.message : 'Upload failed',
+      };
     }
   }
 

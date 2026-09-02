@@ -1264,7 +1264,7 @@ const ContentReviewPage: React.FC = () => {
       try {
         const result = await DatabaseService.uploadContentReviewCreativeFile(eventId, file);
         if (!result?.creative_pdf_url) {
-          setCreativeFileUploadError('Upload failed. Please try again.');
+          setCreativeFileUploadError(result?.error || 'Upload failed. Please try again.');
           return;
         }
         const normalized = normalizeCreativeEmbedUrl(result.creative_pdf_url);
