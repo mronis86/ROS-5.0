@@ -1,5 +1,5 @@
-import type { GuestScheduleItem } from '../eventGuestLinks';
-import { displaySpeakersText } from '../guestRosHelpers';
+import type { GuestScheduleItem } from './eventGuestLinks';
+import { displaySpeakersText } from './guestRosHelpers';
 
 export type CreativeExportField =
   | 'cue'
