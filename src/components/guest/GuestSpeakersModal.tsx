@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { parseSpeakers } from '../../showcase/photoShowcaseHelpers';
 import type { GuestScheduleItem } from '../../lib/eventGuestLinks';
 import { formatSpeakerLocation, formatNameForTwoLines } from '../../showcase/photoShowcaseHelpers';
+import { displaySpeakersText } from '../../lib/guestRosHelpers';
 
 type SpeakerPanel = 'photos' | 'info';
 
@@ -13,6 +14,44 @@ interface GuestSpeakersModalProps {
   onClose: () => void;
 }
 
+async function copyText(value: string): Promise<boolean> {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function speakerInfoBlock(speaker: {
+  fullName?: string;
+  title?: string;
+  org?: string;
+  location?: string;
+  slot?: number;
+}): string {
+  const lines = [
+    speaker.fullName || 'Unnamed',
+    [speaker.title, speaker.org].filter(Boolean).join(', '),
+    speaker.location ? formatSpeakerLocation(speaker.location) : '',
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 const GuestSpeakersModal: React.FC<GuestSpeakersModalProps> = ({
   open,
   item,
@@ -20,11 +59,25 @@ const GuestSpeakersModal: React.FC<GuestSpeakersModalProps> = ({
   onPanelChange,
   onClose,
 }) => {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopy = useCallback(async (key: string, value: string) => {
+    const ok = await copyText(value);
+    if (!ok) return;
+    setCopiedKey(key);
+    window.setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 1600);
+  }, []);
+
   if (!open || !item) return null;
 
   const speakers = parseSpeakers(item.speakersText || item.speakers).filter(
     (s) => s.fullName || s.photoLink
   );
+  const allSpeakersText = displaySpeakersText(item.speakersText || item.speakers || '');
+  const namesOnly = speakers
+    .map((s) => String(s.fullName || '').trim())
+    .filter(Boolean)
+    .join('\n');
 
   return (
     <div
@@ -78,6 +131,25 @@ const GuestSpeakersModal: React.FC<GuestSpeakersModalProps> = ({
           </div>
         </div>
 
+        {speakers.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <button
+              type="button"
+              onClick={() => void handleCopy('names', namesOnly)}
+              className="rounded-md border border-slate-600 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
+            >
+              {copiedKey === 'names' ? 'Copied names' : 'Copy names'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCopy('all', allSpeakersText || namesOnly)}
+              className="rounded-md border border-slate-600 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
+            >
+              {copiedKey === 'all' ? 'Copied all' : 'Copy all speakers'}
+            </button>
+          </div>
+        ) : null}
+
         <div className="flex-1 overflow-y-auto p-4">
           {speakers.length === 0 ? (
             <p className="text-slate-500 text-center py-8">No speakers on this cue.</p>
@@ -86,6 +158,7 @@ const GuestSpeakersModal: React.FC<GuestSpeakersModalProps> = ({
               {speakers.map((speaker, idx) => {
                 const name = formatNameForTwoLines(speaker.fullName || 'Unnamed');
                 const titleOrg = [speaker.title, speaker.org].filter(Boolean).join(', ');
+                const copyKey = `photo-${speaker.slot ?? idx}`;
                 return (
                   <div key={`${speaker.slot ?? idx}`} className="flex flex-col items-center text-center max-w-[10rem]">
                     <img
@@ -108,28 +181,49 @@ const GuestSpeakersModal: React.FC<GuestSpeakersModalProps> = ({
                         {formatSpeakerLocation(speaker.location)}
                       </p>
                     ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void handleCopy(copyKey, speakerInfoBlock(speaker))}
+                      className="mt-2 text-[11px] font-semibold text-sky-300 hover:text-sky-200"
+                    >
+                      {copiedKey === copyKey ? 'Copied' : 'Copy'}
+                    </button>
                   </div>
                 );
               })}
             </div>
           ) : (
             <ul className="space-y-3">
-              {speakers.map((speaker, idx) => (
-                <li
-                  key={`${speaker.slot ?? idx}`}
-                  className="rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-3"
-                >
-                  <div className="font-semibold text-white text-lg">{speaker.fullName || 'Unnamed'}</div>
-                  {[speaker.title, speaker.org].filter(Boolean).length ? (
-                    <p className="text-sm text-slate-300 mt-1">
-                      {[speaker.title, speaker.org].filter(Boolean).join(', ')}
-                    </p>
-                  ) : null}
-                  {speaker.location ? (
-                    <p className="text-xs text-slate-400 mt-2">{formatSpeakerLocation(speaker.location)}</p>
-                  ) : null}
-                </li>
-              ))}
+              {speakers.map((speaker, idx) => {
+                const copyKey = `info-${speaker.slot ?? idx}`;
+                return (
+                  <li
+                    key={`${speaker.slot ?? idx}`}
+                    className="rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-white text-lg">{speaker.fullName || 'Unnamed'}</div>
+                        {[speaker.title, speaker.org].filter(Boolean).length ? (
+                          <p className="text-sm text-slate-300 mt-1">
+                            {[speaker.title, speaker.org].filter(Boolean).join(', ')}
+                          </p>
+                        ) : null}
+                        {speaker.location ? (
+                          <p className="text-xs text-slate-400 mt-2">{formatSpeakerLocation(speaker.location)}</p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy(copyKey, speakerInfoBlock(speaker))}
+                        className="shrink-0 text-[11px] font-semibold text-sky-300 hover:text-sky-200"
+                      >
+                        {copiedKey === copyKey ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

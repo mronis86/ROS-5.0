@@ -760,15 +760,6 @@ const CreativeEventPage: React.FC = () => {
         item={detailItem}
         startTime={detailItem ? startTimeById[detailItem.id] : undefined}
         onClose={() => setDetailItemId(null)}
-        onOpenSpeakers={
-          detailItem
-            ? () => {
-                setSpeakersItemId(detailItem.id);
-                setSpeakerPanel('photos');
-                setDetailItemId(null);
-              }
-            : undefined
-        }
       />
 
       <DisplaySessionDisconnectOverlays

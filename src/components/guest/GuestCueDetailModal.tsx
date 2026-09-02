@@ -7,7 +7,6 @@ interface GuestCueDetailModalProps {
   item: GuestScheduleItem | null;
   startTime?: string;
   onClose: () => void;
-  onOpenSpeakers?: () => void;
 }
 
 async function copyText(value: string): Promise<boolean> {
@@ -38,7 +37,6 @@ const GuestCueDetailModal: React.FC<GuestCueDetailModalProps> = ({
   item,
   startTime,
   onClose,
-  onOpenSpeakers,
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -129,26 +127,15 @@ const GuestCueDetailModal: React.FC<GuestCueDetailModalProps> = ({
           <div>
             <div className="flex items-center justify-between gap-2 mb-1">
               <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Speakers</p>
-              <div className="flex items-center gap-2">
-                {speakers ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleCopy('speakers', speakers)}
-                    className="text-[11px] font-semibold text-violet-300 hover:text-violet-200"
-                  >
-                    {copiedKey === 'speakers' ? 'Copied' : 'Copy'}
-                  </button>
-                ) : null}
-                {onOpenSpeakers ? (
-                  <button
-                    type="button"
-                    onClick={onOpenSpeakers}
-                    className="text-[11px] font-semibold text-sky-300 hover:text-sky-200"
-                  >
-                    Open speaker cards
-                  </button>
-                ) : null}
-              </div>
+              {speakers ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCopy('speakers', speakers)}
+                  className="text-[11px] font-semibold text-violet-300 hover:text-violet-200"
+                >
+                  {copiedKey === 'speakers' ? 'Copied' : 'Copy'}
+                </button>
+              ) : null}
             </div>
             {speakers ? (
               <p className="text-slate-200 whitespace-pre-wrap break-words leading-relaxed">{speakers}</p>
