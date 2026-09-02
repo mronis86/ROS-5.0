@@ -49,7 +49,9 @@ export interface GuestRunOfShowGridProps {
   activeItemId?: number | null;
   timerRunning?: boolean;
   timerLoaded?: boolean;
+  visibleColumns?: typeof GUEST_VISIBLE_COLUMNS;
   onOpenSpeakers: (itemId: number) => void;
+  onViewSegmentDetail?: (itemId: number) => void;
 }
 
 /**
@@ -64,8 +66,11 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   activeItemId,
   timerRunning = false,
   timerLoaded = false,
+  visibleColumns = GUEST_VISIBLE_COLUMNS,
   onOpenSpeakers,
+  onViewSegmentDetail,
 }) => {
+  const columns = visibleColumns || GUEST_VISIBLE_COLUMNS;
   const scheduleRows = useMemo(() => schedule.map(toScheduleRowItem), [schedule]);
   const indentedCues = useMemo(() => buildIndentedLookup(schedule), [schedule]);
 
@@ -169,7 +174,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
             >
               <span className="text-white font-bold text-lg">CUE</span>
             </div>
-            {GUEST_VISIBLE_COLUMNS.start && (
+            {columns.start && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.start }}
@@ -177,7 +182,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 <span className="text-white font-bold">Start</span>
               </div>
             )}
-            {GUEST_VISIBLE_COLUMNS.programType && (
+            {columns.programType && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.programType }}
@@ -185,7 +190,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 <span className="text-white font-bold">Program Type</span>
               </div>
             )}
-            {GUEST_VISIBLE_COLUMNS.duration && (
+            {columns.duration && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.duration }}
@@ -196,7 +201,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 </div>
               </div>
             )}
-            {GUEST_VISIBLE_COLUMNS.segmentName && (
+            {columns.segmentName && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.segmentName }}
@@ -204,7 +209,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 <span className="text-white font-bold">Segment Name</span>
               </div>
             )}
-            {GUEST_VISIBLE_COLUMNS.shotType && (
+            {columns.shotType && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.shotType }}
@@ -212,7 +217,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 <span className="text-white font-bold">Shot Type</span>
               </div>
             )}
-            {GUEST_VISIBLE_COLUMNS.pptQA && (
+            {columns.pptQA && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.pptQA }}
@@ -220,7 +225,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 <span className="text-white font-bold">PPT/Q&A</span>
               </div>
             )}
-            {GUEST_VISIBLE_COLUMNS.notes && (
+            {columns.notes && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.notes }}
@@ -228,7 +233,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 <span className="text-white font-bold">Notes</span>
               </div>
             )}
-            {GUEST_VISIBLE_COLUMNS.speakers && (
+            {columns.speakers && (
               <div
                 className={`${headerCell} px-4 border-r border-slate-600`}
                 style={{ width: GUEST_COLUMN_WIDTHS.speakers }}
@@ -294,7 +299,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   item={rowItem}
                   index={rowIndex}
                   columnWidths={GUEST_COLUMN_WIDTHS}
-                  visibleColumns={GUEST_VISIBLE_COLUMNS}
+                  visibleColumns={columns}
                   indentedCues={indentedCues}
                   overtimeMinutes={{}}
                   startCueId={null}
@@ -317,6 +322,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   getSpeakersHeight={getSpeakersHeight}
                   setViewingSpeakersItem={(id: number) => onOpenSpeakers(id)}
                   setShowViewSpeakersModal={noop}
+                  onViewSegmentDetail={onViewSegmentDetail}
                   customColumns={[]}
                   visibleCustomColumns={{}}
                   customColumnWidths={{}}

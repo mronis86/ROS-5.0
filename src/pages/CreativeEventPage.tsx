@@ -3,16 +3,27 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessCreative } from '../services/auth-service';
 import { fetchCreativeEvent } from '../lib/creativeEventApi';
-import { stripHtmlNotes, type GuestEventPayload, type GuestScheduleItem } from '../lib/eventGuestLinks';
+import { stripHtmlNotes, type GuestEventPayload } from '../lib/eventGuestLinks';
 import GuestRunOfShowGrid from '../components/guest/GuestRunOfShowGrid';
 import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
+import GuestCueDetailModal from '../components/guest/GuestCueDetailModal';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
 import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
 import { creativeDisplaySessionStorageKey } from '../lib/creativeDisplaySession';
+import { GUEST_VISIBLE_COLUMNS, ROS_PROGRAM_TYPES } from '../lib/guestRosHelpers';
+import {
+  buildCreativeExportCsv,
+  buildCreativeExportText,
+  CREATIVE_EXPORT_FIELD_OPTIONS,
+  DEFAULT_CREATIVE_EXPORT_FIELDS,
+  downloadTextFile,
+  type CreativeExportField,
+} from '../lib/creativeRosExport';
 
 const ZOOM_STORAGE_KEY = 'creative-event-zoom';
+const COLUMN_FILTER_STORAGE_KEY = 'creative-event-columns';
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 1.25;
 const ZOOM_STEP = 0.1;
@@ -20,6 +31,19 @@ const ZOOM_DEFAULT = 0.85;
 
 type HubTab = 'ros' | 'review';
 type SpeakerPanel = 'photos' | 'info';
+
+type CreativeVisibleColumns = typeof GUEST_VISIBLE_COLUMNS;
+
+const COLUMN_TOGGLE_OPTIONS: { key: keyof CreativeVisibleColumns; label: string }[] = [
+  { key: 'start', label: 'Start' },
+  { key: 'programType', label: 'Program' },
+  { key: 'duration', label: 'Duration' },
+  { key: 'segmentName', label: 'Segment' },
+  { key: 'shotType', label: 'Shot' },
+  { key: 'pptQA', label: 'PPT/Q&A' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'speakers', label: 'Speakers' },
+];
 
 function getStoredZoom(): number {
   try {
@@ -33,6 +57,17 @@ function getStoredZoom(): number {
   return ZOOM_DEFAULT;
 }
 
+function getStoredColumns(): CreativeVisibleColumns {
+  try {
+    const raw = localStorage.getItem(COLUMN_FILTER_STORAGE_KEY);
+    if (!raw) return { ...GUEST_VISIBLE_COLUMNS };
+    const parsed = JSON.parse(raw) as Partial<CreativeVisibleColumns>;
+    return { ...GUEST_VISIBLE_COLUMNS, ...parsed };
+  } catch {
+    return { ...GUEST_VISIBLE_COLUMNS };
+  }
+}
+
 function dayStartLabel(
   day: number,
   masterStartTime?: string,
@@ -43,6 +78,13 @@ function dayStartLabel(
     if (keyed) return keyed;
   }
   return masterStartTime || '—';
+}
+
+function safeFileSlug(value: string): string {
+  return String(value || 'event')
+    .replace(/[<>:"/\\|?*]+/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 80);
 }
 
 const CreativeEventPage: React.FC = () => {
@@ -64,8 +106,14 @@ const CreativeEventPage: React.FC = () => {
   const [selectedDay, setSelectedDay] = useState(1);
   const [query, setQuery] = useState('');
   const [zoomLevel, setZoomLevel] = useState<number>(getStoredZoom);
+  const [visibleColumns, setVisibleColumns] = useState<CreativeVisibleColumns>(getStoredColumns);
+  const [programTypeFilters, setProgramTypeFilters] = useState<string[]>([]);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [exportPanelOpen, setExportPanelOpen] = useState(false);
+  const [exportFields, setExportFields] = useState<CreativeExportField[]>(DEFAULT_CREATIVE_EXPORT_FIELDS);
   const [speakersItemId, setSpeakersItemId] = useState<number | null>(null);
   const [speakerPanel, setSpeakerPanel] = useState<SpeakerPanel>('photos');
+  const [detailItemId, setDetailItemId] = useState<number | null>(null);
   const [hubTab, setHubTab] = useState<HubTab>('ros');
   const [isRosFullscreen, setIsRosFullscreen] = useState(false);
   const pageRootRef = useRef<HTMLDivElement>(null);
@@ -107,6 +155,37 @@ const CreativeEventPage: React.FC = () => {
     } catch {
       /* ignore */
     }
+  }, []);
+
+  const toggleColumn = useCallback((key: keyof CreativeVisibleColumns) => {
+    setVisibleColumns((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      // Keep at least one content column visible
+      const anyOn = COLUMN_TOGGLE_OPTIONS.some((opt) => next[opt.key]);
+      if (!anyOn) return prev;
+      try {
+        localStorage.setItem(COLUMN_FILTER_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleProgramType = useCallback((type: string) => {
+    setProgramTypeFilters((prev) =>
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+    );
+  }, []);
+
+  const toggleExportField = useCallback((field: CreativeExportField) => {
+    setExportFields((prev) => {
+      if (prev.includes(field)) {
+        if (prev.length <= 1) return prev;
+        return prev.filter((f) => f !== field);
+      }
+      return [...prev, field];
+    });
   }, []);
 
   const loadSchedule = useCallback(
@@ -204,6 +283,10 @@ const CreativeEventPage: React.FC = () => {
 
   const dayItems = useMemo(() => {
     let rows = allItems.filter((item) => (item.day || 1) === selectedDay);
+    if (programTypeFilters.length > 0) {
+      const allowed = new Set(programTypeFilters);
+      rows = rows.filter((item) => allowed.has(String(item.programType || '')));
+    }
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((item) => {
@@ -216,16 +299,83 @@ const CreativeEventPage: React.FC = () => {
         notes.includes(q)
       );
     });
-  }, [allItems, selectedDay, query]);
+  }, [allItems, selectedDay, query, programTypeFilters]);
 
   const dayCueTotal = useMemo(
     () => allItems.filter((item) => (item.day || 1) === selectedDay).length,
     [allItems, selectedDay]
   );
 
+  const programTypesInDay = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of allItems) {
+      if ((item.day || 1) !== selectedDay) continue;
+      const t = String(item.programType || '').trim();
+      if (t) set.add(t);
+    }
+    const known = ROS_PROGRAM_TYPES.filter((t) => set.has(t));
+    const extra = Array.from(set)
+      .filter((t) => !ROS_PROGRAM_TYPES.includes(t))
+      .sort();
+    return [...known, ...extra];
+  }, [allItems, selectedDay]);
+
+  const startTimeById = useMemo(() => {
+    const map: Record<number, string> = {};
+    // Approximate via same day-filtered order as grid uses for display start times.
+    // Guest grid computes from full schedule; for export we mirror filtered day rows' starts.
+    const dayRows = allItems.filter((item) => (item.day || 1) === selectedDay);
+    const dayStart = dayStartLabel(selectedDay, masterStartTime, dayStartTimes);
+    if (!dayStart || dayStart === '—') return map;
+    const [h0, m0] = dayStart.split(':').map(Number);
+    if (!Number.isFinite(h0) || !Number.isFinite(m0)) return map;
+    let totalSeconds = 0;
+    for (const item of dayRows) {
+      if (!item.isIndented) {
+        const totalStartSeconds = h0 * 3600 + m0 * 60 + totalSeconds;
+        const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
+        const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
+        const date = new Date();
+        date.setHours(finalHours, finalMinutes, 0, 0);
+        map[item.id] = date.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+        totalSeconds +=
+          (Number(item.durationHours) || 0) * 3600 +
+          (Number(item.durationMinutes) || 0) * 60 +
+          (Number(item.durationSeconds) || 0);
+      } else {
+        // Indented cues share parent start — leave blank unless previously set
+      }
+    }
+    return map;
+  }, [allItems, selectedDay, masterStartTime, dayStartTimes]);
+
   const speakersItem = allItems.find((item) => item.id === speakersItemId) || null;
+  const detailItem = allItems.find((item) => item.id === detailItemId) || null;
   const selectedDayStart = dayStartLabel(selectedDay, masterStartTime, dayStartTimes);
   const contentWidthClass = isRosFullscreen ? 'max-w-none' : 'max-w-[1800px]';
+  const activeFilterCount =
+    programTypeFilters.length +
+    COLUMN_TOGGLE_OPTIONS.filter((opt) => !visibleColumns[opt.key]).length;
+
+  const runExport = useCallback(
+    (format: 'csv' | 'txt') => {
+      if (dayItems.length === 0 || exportFields.length === 0) return;
+      const stamp = new Date().toISOString().slice(0, 10);
+      const base = `${safeFileSlug(displayEventName)}_day${selectedDay}_${stamp}`;
+      if (format === 'csv') {
+        const csv = buildCreativeExportCsv(dayItems, exportFields, startTimeById);
+        downloadTextFile(`${base}.csv`, csv, 'text/csv;charset=utf-8');
+      } else {
+        const text = buildCreativeExportText(dayItems, exportFields, startTimeById, displayEventName);
+        downloadTextFile(`${base}.txt`, text, 'text/plain;charset=utf-8');
+      }
+    },
+    [dayItems, exportFields, startTimeById, displayEventName, selectedDay]
+  );
 
   if (authLoading || !allowed) {
     return (
@@ -338,10 +488,40 @@ const CreativeEventPage: React.FC = () => {
               <span className="text-xs text-slate-400 print:text-slate-600">
                 Day {selectedDay} · start {selectedDayStart} · {dayCueTotal} cue
                 {dayCueTotal === 1 ? '' : 's'}
-                {query.trim() ? ` · ${dayItems.length} shown` : ''}
+                {dayItems.length !== dayCueTotal || query.trim() || programTypeFilters.length
+                  ? ` · ${dayItems.length} shown`
+                  : ''}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2 print:hidden">
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterPanelOpen((v) => !v);
+                  setExportPanelOpen(false);
+                }}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                  filterPanelOpen || activeFilterCount > 0
+                    ? 'border-violet-500/70 bg-violet-950/50 text-violet-100'
+                    : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setExportPanelOpen((v) => !v);
+                  setFilterPanelOpen(false);
+                }}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                  exportPanelOpen
+                    ? 'border-emerald-500/70 bg-emerald-950/40 text-emerald-100'
+                    : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                Export
+              </button>
               <div
                 className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 overflow-hidden"
                 title="Zoom schedule to fit more on screen"
@@ -407,6 +587,129 @@ const CreativeEventPage: React.FC = () => {
             </div>
           </div>
         ) : null}
+
+        {payload && hubTab === 'ros' && filterPanelOpen ? (
+          <div className={`mx-auto ${contentWidthClass} px-4 pb-3 print:hidden`}>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 space-y-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">
+                  Show columns
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {COLUMN_TOGGLE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => toggleColumn(opt.key)}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
+                        visibleColumns[opt.key]
+                          ? 'border-violet-500 bg-violet-900/40 text-violet-100'
+                          : 'border-slate-600 text-slate-500'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {programTypesInDay.length > 0 ? (
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                      Program type
+                    </p>
+                    {programTypeFilters.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setProgramTypeFilters([])}
+                        className="text-[11px] text-slate-400 hover:text-white"
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {programTypesInDay.map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => toggleProgramType(type)}
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
+                          programTypeFilters.includes(type)
+                            ? 'border-amber-500 bg-amber-950/40 text-amber-100'
+                            : 'border-slate-600 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <p className="text-[11px] text-slate-500">
+                Tip: click a long segment name to open full text with copy, including speakers.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {payload && hubTab === 'ros' && exportPanelOpen ? (
+          <div className={`mx-auto ${contentWidthClass} px-4 pb-3 print:hidden`}>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-white">Export filtered cues</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Exports the {dayItems.length} cue{dayItems.length === 1 ? '' : 's'} currently shown
+                    (day + search + program filters).
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={dayItems.length === 0}
+                    onClick={() => runExport('csv')}
+                    className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    Download CSV
+                  </button>
+                  <button
+                    type="button"
+                    disabled={dayItems.length === 0}
+                    onClick={() => runExport('txt')}
+                    className="rounded-lg border border-emerald-600/70 text-emerald-100 hover:bg-emerald-950/50 disabled:opacity-40 px-3 py-1.5 text-xs font-semibold"
+                  >
+                    Download text
+                  </button>
+                </div>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">
+                  Include fields
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {CREATIVE_EXPORT_FIELD_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => toggleExportField(opt.id)}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
+                        exportFields.includes(opt.id)
+                          ? 'border-emerald-500 bg-emerald-950/40 text-emerald-100'
+                          : 'border-slate-600 text-slate-500'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-2">
+                  Example: leave Cue + Segment name + Speakers on for a speaker run sheet.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <main className={`flex-1 min-h-0 flex flex-col overflow-hidden mx-auto w-full ${contentWidthClass} px-4 py-3 print:py-0 print:px-2 print:overflow-visible`}>
@@ -427,16 +730,18 @@ const CreativeEventPage: React.FC = () => {
                 filteredItems={dayItems}
                 masterStartTime={masterStartTime}
                 dayStartTimes={dayStartTimes}
+                visibleColumns={visibleColumns}
                 onOpenSpeakers={(itemId) => {
                   setSpeakersItemId(itemId);
                   setSpeakerPanel('photos');
                 }}
+                onViewSegmentDetail={(itemId) => setDetailItemId(itemId)}
               />
             </div>
             <p className="shrink-0 text-center text-[11px] text-slate-500 pt-2 pb-1 print:hidden">
               {isRosFullscreen
                 ? 'Fullscreen — press Esc or Exit fullscreen to return'
-                : 'Static schedule reference — use Refresh after production updates the run of show.'}
+                : 'Click a segment name to view/copy full text. Use Filters and Export for a custom run sheet.'}
             </p>
           </>
         ) : null}
@@ -448,6 +753,22 @@ const CreativeEventPage: React.FC = () => {
         panel={speakerPanel}
         onPanelChange={setSpeakerPanel}
         onClose={() => setSpeakersItemId(null)}
+      />
+
+      <GuestCueDetailModal
+        open={detailItemId != null}
+        item={detailItem}
+        startTime={detailItem ? startTimeById[detailItem.id] : undefined}
+        onClose={() => setDetailItemId(null)}
+        onOpenSpeakers={
+          detailItem
+            ? () => {
+                setSpeakersItemId(detailItem.id);
+                setSpeakerPanel('photos');
+                setDetailItemId(null);
+              }
+            : undefined
+        }
       />
 
       <DisplaySessionDisconnectOverlays

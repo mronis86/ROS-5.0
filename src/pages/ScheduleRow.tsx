@@ -35,6 +35,8 @@ export interface ScheduleRowProps {
   setShowViewAssetsModal?: Function;
   setViewingSpeakersItem?: Function;
   setShowViewSpeakersModal?: Function;
+  /** When set for VIEWER/OPERATOR, segment name opens a detail popup instead of a disabled input. */
+  onViewSegmentDetail?: (itemId: number) => void;
   setEditingAssetsItem?: Function;
   setShowAssetsModal?: Function;
   setEditingParticipantsItem?: Function;
@@ -99,6 +101,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   setShowViewAssetsModal,
   setViewingSpeakersItem,
   setShowViewSpeakersModal,
+  onViewSegmentDetail,
   setEditingAssetsItem,
   setShowAssetsModal,
   setEditingParticipantsItem,
@@ -584,6 +587,21 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
           style={{ width: columnWidths.segmentName }}
         >
+          {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && onViewSegmentDetail ? (
+            <button
+              type="button"
+              onClick={() => onViewSegmentDetail(item.id)}
+              className={`w-full px-3 py-2 rounded text-base text-left transition-colors hover:ring-2 hover:ring-violet-400/60 ${
+                item.needsRecording
+                  ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
+                  : cellFill
+              }`}
+              title="Click to view full segment name and copy"
+            >
+              <span className="block truncate">{item.segmentName || '—'}</span>
+              <span className="block text-[10px] text-slate-400 mt-0.5">View / copy</span>
+            </button>
+          ) : (
           <input
             type="text"
             value={item.segmentName}
@@ -633,6 +651,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     : 'Edit segment name'
             }
           />
+          )}
         </div>
       )}
       {/* Shot type column (after Segment Name) */}
