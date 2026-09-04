@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event, LOCATION_OPTIONS } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
@@ -103,6 +103,65 @@ function formatCalloutTime(time: string): string {
 
 function calloutKindLabel(kind?: AudioCalloutKind): string {
   return kind === 'bgm' ? 'BGM' : 'VO';
+}
+
+/** Keep a menu panel inside the viewport. */
+function clampMenuPanelToViewport(
+  el: HTMLElement | null,
+  mode: 'dropdown' | 'flyout' = 'flyout'
+) {
+  if (!el) return;
+  const pad = 8;
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+
+  if (mode === 'dropdown') {
+    el.style.position = '';
+    el.style.top = '';
+    el.style.left = '';
+    el.style.right = '';
+    el.style.bottom = '';
+    el.style.maxHeight = '';
+    el.style.transform = '';
+    el.style.overflowY = 'auto';
+    const measured = el.getBoundingClientRect();
+    el.style.maxHeight = `${Math.max(120, vh - pad - measured.top)}px`;
+    return;
+  }
+
+  // Flyouts: fixed to the viewport so parent overflow can't clip them.
+  const trigger = el.parentElement;
+  const triggerRect = trigger?.getBoundingClientRect();
+  if (!triggerRect) return;
+
+  const width = Math.max(el.offsetWidth || 176, 176);
+  let left = triggerRect.right + 4;
+  if (left + width > vw - pad) {
+    left = Math.max(pad, triggerRect.left - width - 4);
+  }
+
+  el.style.position = 'fixed';
+  el.style.left = `${left}px`;
+  el.style.right = 'auto';
+  el.style.top = `${triggerRect.top}px`;
+  el.style.bottom = 'auto';
+  el.style.marginLeft = '0';
+  el.style.marginRight = '0';
+  el.style.transform = '';
+  el.style.zIndex = '70';
+  el.style.overflowY = 'auto';
+
+  // First pass: prefer aligning to trigger top, then shift + cap height.
+  let top = triggerRect.top;
+  el.style.top = `${top}px`;
+  el.style.maxHeight = `${Math.max(120, vh - pad - top)}px`;
+
+  const after = el.getBoundingClientRect();
+  if (after.bottom > vh - pad) {
+    top = Math.max(pad, vh - pad - after.height);
+    el.style.top = `${top}px`;
+    el.style.maxHeight = `${Math.max(120, vh - pad - top)}px`;
+  }
 }
 
 /** e.g. "CUE 1.1 VO - 4:45PM" or "VO - 4:45PM - 10 minutes" */
@@ -994,6 +1053,7 @@ const RunOfShowPage: React.FC = () => {
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
+  const [importExportGroup, setImportExportGroup] = useState<'export' | 'import' | null>(null);
   const [showOperatorActionsSubmenu, setShowOperatorActionsSubmenu] = useState(false);
   const [showReportsSubmenu, setShowReportsSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
@@ -6103,6 +6163,37 @@ const RunOfShowPage: React.FC = () => {
 
   // Close menus when clicking outside (but not when clicking inside the menu dropdown)
   const menuDropdownContainerRef = useRef<HTMLDivElement>(null);
+  const menuMainPanelRef = useRef<HTMLDivElement>(null);
+  const operatorActionsFlyoutRef = useRef<HTMLDivElement>(null);
+  const importExportFlyoutRef = useRef<HTMLDivElement>(null);
+  const reportsFlyoutRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!showMenuDropdown) return;
+
+    const clampAll = () => {
+      clampMenuPanelToViewport(menuMainPanelRef.current, 'dropdown');
+      if (showOperatorActionsSubmenu) clampMenuPanelToViewport(operatorActionsFlyoutRef.current, 'flyout');
+      if (showImportExportSubmenu) clampMenuPanelToViewport(importExportFlyoutRef.current, 'flyout');
+      if (showReportsSubmenu) clampMenuPanelToViewport(reportsFlyoutRef.current, 'flyout');
+    };
+
+    clampAll();
+    window.addEventListener('resize', clampAll);
+    const main = menuMainPanelRef.current;
+    main?.addEventListener('scroll', clampAll, { passive: true });
+    return () => {
+      window.removeEventListener('resize', clampAll);
+      main?.removeEventListener('scroll', clampAll);
+    };
+  }, [
+    showMenuDropdown,
+    showOperatorActionsSubmenu,
+    showImportExportSubmenu,
+    importExportGroup,
+    showReportsSubmenu,
+  ]);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       // Don't close if click was inside the menu dropdown container (allows Import & Export submenu to work)
@@ -6112,6 +6203,7 @@ const RunOfShowPage: React.FC = () => {
       setActiveJumpMenu(null);
       setShowMenuDropdown(false);
       setShowImportExportSubmenu(false);
+      setImportExportGroup(null);
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
@@ -11871,7 +11963,12 @@ const RunOfShowPage: React.FC = () => {
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowMenuDropdown(!showMenuDropdown);
-                    if (showMenuDropdown) { setShowImportExportSubmenu(false); setShowOperatorActionsSubmenu(false); setShowReportsSubmenu(false); }
+                    if (showMenuDropdown) {
+                      setShowImportExportSubmenu(false);
+                      setImportExportGroup(null);
+                      setShowOperatorActionsSubmenu(false);
+                      setShowReportsSubmenu(false);
+                    }
                   }}
                   className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
                   title="Menu"
@@ -11882,7 +11979,10 @@ const RunOfShowPage: React.FC = () => {
                 </button>
                 
                 {showMenuDropdown && (
-                  <div className="absolute top-full left-0 mt-1 w-52 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-50">
+                  <div
+                    ref={menuMainPanelRef}
+                    className="absolute top-full left-0 mt-1 w-56 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-50"
+                  >
                     <div className="py-1">
                       <button
                         type="button"
@@ -11990,6 +12090,7 @@ const RunOfShowPage: React.FC = () => {
                           onClick={() => {
                             setShowOperatorActionsSubmenu(!showOperatorActionsSubmenu);
                             setShowImportExportSubmenu(false);
+                            setImportExportGroup(null);
                             setShowReportsSubmenu(false);
                           }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
@@ -12006,7 +12107,10 @@ const RunOfShowPage: React.FC = () => {
                           </svg>
                         </button>
                         {showOperatorActionsSubmenu && (
-                          <div className="absolute left-full top-0 ml-1 min-w-[12rem] w-52 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
+                          <div
+                            ref={operatorActionsFlyoutRef}
+                            className="absolute left-full top-0 ml-1 min-w-[12rem] w-52 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]"
+                          >
                             <button
                               onClick={() => {
                                 setShowMenuDropdown(false);
@@ -12100,11 +12204,14 @@ const RunOfShowPage: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      {/* Import & Export - flyout submenu to the right */}
+                      {/* Import & Export — side flyout with accordion: Export / Import / Backup */}
                       <div className="border-t border-slate-600 my-1 pt-1 relative">
                         <button
+                          type="button"
                           onClick={() => {
-                            setShowImportExportSubmenu(!showImportExportSubmenu);
+                            const next = !showImportExportSubmenu;
+                            setShowImportExportSubmenu(next);
+                            setImportExportGroup(null);
                             setShowOperatorActionsSubmenu(false);
                             setShowReportsSubmenu(false);
                           }}
@@ -12121,103 +12228,156 @@ const RunOfShowPage: React.FC = () => {
                           </svg>
                         </button>
                         {showImportExportSubmenu && (
-                          <div className="absolute left-full top-0 ml-1 min-w-[11rem] w-44 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleExportCSV();
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Export CSV
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowGoogleSheetExportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Export to Google Sheet
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowCSVImportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Import CSV
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowExcelImportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Import Excel
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowAgendaImportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Import Agenda
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowImportEventModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                        Import from Event
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          setShowBackupModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                        </svg>
-                        Backups
-                      </button>
+                          <div
+                            ref={importExportFlyoutRef}
+                            className="absolute left-full top-0 ml-1 w-52 py-1.5 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]"
+                          >
+                            {/* Import */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setImportExportGroup((g) => (g === 'import' ? null : 'import'))
+                              }
+                              className={`w-full px-3 py-2 text-left text-sm font-semibold transition-colors flex items-center justify-between gap-2 ${
+                                importExportGroup === 'import'
+                                  ? 'bg-slate-700 text-white'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                            >
+                              Import
+                              <svg
+                                className={`w-3.5 h-3.5 text-slate-400 transition-transform ${importExportGroup === 'import' ? 'rotate-90' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </button>
+                            {importExportGroup === 'import' && (
+                              <div className="mx-2 mb-1.5 rounded-md border border-slate-600/70 bg-slate-950/70 overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowCSVImportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  CSV
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowExcelImportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  Excel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowAgendaImportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  Agenda
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowImportEventModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors"
+                                >
+                                  From Event
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Export */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setImportExportGroup((g) => (g === 'export' ? null : 'export'))
+                              }
+                              className={`w-full px-3 py-2 text-left text-sm font-semibold transition-colors flex items-center justify-between gap-2 ${
+                                importExportGroup === 'export'
+                                  ? 'bg-slate-700 text-white'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                            >
+                              Export
+                              <svg
+                                className={`w-3.5 h-3.5 text-slate-400 transition-transform ${importExportGroup === 'export' ? 'rotate-90' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </button>
+                            {importExportGroup === 'export' && (
+                              <div className="mx-2 mb-1.5 rounded-md border border-slate-600/70 bg-slate-950/70 overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleExportCSV();
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  CSV
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowGoogleSheetExportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors"
+                                >
+                                  Google Sheet
+                                </button>
+                              </div>
+                            )}
+
+                            <div className="my-1 border-t border-slate-700" />
+
+                            {/* Backup — direct action */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowImportExportSubmenu(false);
+                                setImportExportGroup(null);
+                                setShowBackupModal(true);
+                              }}
+                              className="w-full px-3 py-2 text-left text-sm font-semibold text-white hover:bg-slate-700 transition-colors"
+                            >
+                              Backup
+                            </button>
                           </div>
                         )}
                       </div>
@@ -12226,6 +12386,7 @@ const RunOfShowPage: React.FC = () => {
                           onClick={() => {
                             setShowReportsSubmenu(!showReportsSubmenu);
                             setShowImportExportSubmenu(false);
+                            setImportExportGroup(null);
                             setShowOperatorActionsSubmenu(false);
                           }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
@@ -12241,7 +12402,10 @@ const RunOfShowPage: React.FC = () => {
                           </svg>
                         </button>
                         {showReportsSubmenu && (
-                          <div className="absolute left-full top-0 ml-1 min-w-[12rem] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
+                          <div
+                            ref={reportsFlyoutRef}
+                            className="absolute left-full top-0 ml-1 min-w-[12rem] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]"
+                          >
                             <button
                               onClick={() => {
                                 setShowMenuDropdown(false);
@@ -15355,8 +15519,8 @@ const RunOfShowPage: React.FC = () => {
              {/* Content */}
              <div className="flex-1 p-6 overflow-y-auto">
                
-               {/* Add Speaker Button */}
-               <div className="mb-6">
+               {/* Add Speaker + DB hint */}
+               <div className="mb-6 flex flex-wrap items-center gap-3">
                  <button
                    onClick={addSpeakerText}
                    disabled={tempSpeakersText.length >= 7}
@@ -15364,24 +15528,105 @@ const RunOfShowPage: React.FC = () => {
                  >
                    + Add Speaker {tempSpeakersText.length < 7 && `(${7 - tempSpeakersText.length} slots remaining)`}
                  </button>
+                 <div className="flex-1 min-w-[220px] rounded-lg border border-blue-500/40 bg-blue-950/40 px-3 py-2 text-sm text-blue-100">
+                   Recurring guest? Open a speaker slot and click{' '}
+                   <span className="font-semibold text-white">Search Database</span> to import name, title, org, and photo.
+                 </div>
                </div>
                
                {/* Speakers List */}
                <div className="space-y-4 mb-6">
                  {tempSpeakersText.sort((a, b) => a.slot - b.slot).map((speaker) => (
                    <div key={speaker.id} className="bg-slate-700 rounded-lg p-4 border border-slate-600">
-                     <div className="flex items-center justify-between mb-4">
+                     <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                        <h3 className="text-lg font-semibold text-white">
                          Speaker {speaker.slot}
                        </h3>
-                       <button
-                         onClick={() => removeSpeakerText(speaker.id)}
-                         className="w-8 h-8 bg-red-600 hover:bg-red-500 text-white rounded flex items-center justify-center transition-colors"
-                         title="Remove Speaker"
-                       >
-                         ✕
-                       </button>
+                       <div className="flex items-center gap-2">
+                         <button
+                           type="button"
+                           onClick={() => {
+                             setSpeakerDbSearchId(speaker.id);
+                             setSpeakerDbQuery(speaker.fullName || '');
+                             if (speaker.fullName?.trim()) {
+                               void runSpeakerDbSearch(speaker.id, speaker.fullName);
+                             } else {
+                               setSpeakerDbHits([]);
+                             }
+                           }}
+                           className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                             speakerDbSearchId === speaker.id
+                               ? 'bg-blue-500 text-white'
+                               : 'bg-blue-600 hover:bg-blue-500 text-white'
+                           }`}
+                           title="Import name, title, org, and photo from the speaker database"
+                         >
+                           Search Database
+                         </button>
+                         <button
+                           onClick={() => removeSpeakerText(speaker.id)}
+                           className="w-8 h-8 bg-red-600 hover:bg-red-500 text-white rounded flex items-center justify-center transition-colors"
+                           title="Remove Speaker"
+                         >
+                           ✕
+                         </button>
+                       </div>
                      </div>
+
+                     {speakerDbSearchId === speaker.id && (
+                       <div className="mb-4 rounded-lg border border-blue-500/50 bg-slate-900/70 p-3 space-y-2">
+                         <label className="block text-sm font-medium text-blue-200">
+                           Search speaker database
+                         </label>
+                         <input
+                           type="search"
+                           autoFocus
+                           value={speakerDbQuery}
+                           onChange={(e) => void runSpeakerDbSearch(speaker.id, e.target.value)}
+                           placeholder="Type a name to find a recurring speaker…"
+                           className="w-full px-3 py-2 bg-slate-800 border border-blue-500/60 rounded text-white text-sm placeholder-slate-400 focus:outline-none focus:border-blue-400"
+                         />
+                         <div className="max-h-40 overflow-y-auto rounded border border-slate-600 bg-slate-950/80">
+                           {speakerDbBusy && (
+                             <div className="px-3 py-2 text-xs text-slate-400">Searching…</div>
+                           )}
+                           {!speakerDbBusy && speakerDbQuery.trim() && speakerDbHits.length === 0 && (
+                             <div className="px-3 py-2 text-xs text-slate-400">No matches</div>
+                           )}
+                           {!speakerDbBusy && !speakerDbQuery.trim() && (
+                             <div className="px-3 py-2 text-xs text-slate-400">
+                               Start typing to search the global speaker list
+                             </div>
+                           )}
+                           {speakerDbHits.map((hit) => (
+                             <button
+                               key={hit.id}
+                               type="button"
+                               onClick={() => importSpeakerFromDb(speaker.id, hit)}
+                               className="w-full text-left px-3 py-2 text-sm text-slate-200 hover:bg-blue-900/40 border-b border-slate-700/80 last:border-0"
+                             >
+                               <span className="font-medium text-white">{hit.full_name}</span>
+                               {(hit.title || hit.org) && (
+                                 <span className="block text-xs text-slate-400 truncate">
+                                   {[hit.title, hit.org].filter(Boolean).join(' · ')}
+                                 </span>
+                               )}
+                             </button>
+                           ))}
+                         </div>
+                         <button
+                           type="button"
+                           onClick={() => {
+                             setSpeakerDbSearchId(null);
+                             setSpeakerDbQuery('');
+                             setSpeakerDbHits([]);
+                           }}
+                           className="text-xs font-medium text-slate-400 hover:text-white"
+                         >
+                           Close search
+                         </button>
+                       </div>
+                     )}
                      
                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                        {/* Slot Number */}
@@ -15434,70 +15679,6 @@ const RunOfShowPage: React.FC = () => {
                            placeholder="Enter full name"
                            className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white text-sm placeholder-slate-400 focus:outline-none focus:border-blue-500"
                          />
-                         <div className="mt-2">
-                           {speakerDbSearchId === speaker.id ? (
-                             <div className="space-y-2">
-                               <input
-                                 type="search"
-                                 autoFocus
-                                 value={speakerDbQuery}
-                                 onChange={(e) => void runSpeakerDbSearch(speaker.id, e.target.value)}
-                                 placeholder="Search speaker database…"
-                                 className="w-full px-3 py-2 bg-slate-900 border border-blue-500/60 rounded text-white text-sm placeholder-slate-400 focus:outline-none"
-                               />
-                               <div className="max-h-36 overflow-y-auto rounded border border-slate-600 bg-slate-900/80">
-                                 {speakerDbBusy && (
-                                   <div className="px-3 py-2 text-xs text-slate-400">Searching…</div>
-                                 )}
-                                 {!speakerDbBusy && speakerDbQuery.trim() && speakerDbHits.length === 0 && (
-                                   <div className="px-3 py-2 text-xs text-slate-400">No matches</div>
-                                 )}
-                                 {speakerDbHits.map((hit) => (
-                                   <button
-                                     key={hit.id}
-                                     type="button"
-                                     onClick={() => importSpeakerFromDb(speaker.id, hit)}
-                                     className="w-full text-left px-3 py-2 text-sm text-slate-200 hover:bg-slate-700 border-b border-slate-700/80 last:border-0"
-                                   >
-                                     <span className="font-medium text-white">{hit.full_name}</span>
-                                     {(hit.title || hit.org) && (
-                                       <span className="block text-xs text-slate-400 truncate">
-                                         {[hit.title, hit.org].filter(Boolean).join(' · ')}
-                                       </span>
-                                     )}
-                                   </button>
-                                 ))}
-                               </div>
-                               <button
-                                 type="button"
-                                 onClick={() => {
-                                   setSpeakerDbSearchId(null);
-                                   setSpeakerDbQuery('');
-                                   setSpeakerDbHits([]);
-                                 }}
-                                 className="text-xs text-slate-400 hover:text-white"
-                               >
-                                 Close search
-                               </button>
-                             </div>
-                           ) : (
-                             <button
-                               type="button"
-                               onClick={() => {
-                                 setSpeakerDbSearchId(speaker.id);
-                                 setSpeakerDbQuery(speaker.fullName || '');
-                                 if (speaker.fullName?.trim()) {
-                                   void runSpeakerDbSearch(speaker.id, speaker.fullName);
-                                 } else {
-                                   setSpeakerDbHits([]);
-                                 }
-                               }}
-                               className="text-xs font-medium text-blue-300 hover:text-blue-200"
-                             >
-                               Search speaker database
-                             </button>
-                           )}
-                         </div>
                        </div>
                        
                        {/* Title */}
