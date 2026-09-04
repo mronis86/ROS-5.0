@@ -21,7 +21,7 @@ import {
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
-import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, isCateringOnlyUser, isCommsOnlyUser, isCreativeOnlyUser } from '../services/auth-service';
+import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, canAccessSpeakerManager, isCateringOnlyUser, isCommsOnlyUser, isCreativeOnlyUser } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import EventLocationCell from '../components/EventLocationCell';
@@ -883,7 +883,7 @@ const EventListPage: React.FC = () => {
         <p className="text-sm text-slate-400 mb-1">
           Manage your events and schedules
         </p>
-        {canAccessAdmin(user) || canAccessAccessManager(user) || canAccessProductionDashboard(user) ? (
+        {canAccessAdmin(user) || canAccessAccessManager(user) || canAccessProductionDashboard(user) || canAccessSpeakerManager(user) ? (
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
             {canAccessAdmin(user) ? (
               <button
@@ -901,6 +901,15 @@ const EventListPage: React.FC = () => {
                 className="rounded-lg border border-amber-600/60 bg-amber-950/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-900/50"
               >
                 Manage Access
+              </button>
+            ) : null}
+            {canAccessSpeakerManager(user) ? (
+              <button
+                type="button"
+                onClick={() => navigate('/speakers')}
+                className="rounded-lg border border-violet-600/60 bg-violet-950/40 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-900/50"
+              >
+                Speaker Manager
               </button>
             ) : null}
             {canAccessProductionDashboard(user) ? (

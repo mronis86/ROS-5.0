@@ -24,6 +24,7 @@ interface AuthContextType {
     status: import('../services/auth-service').AccessStatus;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_producer?: boolean;
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
@@ -121,9 +122,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     status: AccessStatus;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_producer?: boolean;
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
+    is_creative?: boolean;
     dashboard_enabled?: boolean;
   }) => {
     authService.applySessionFromPortal(session);

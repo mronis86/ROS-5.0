@@ -21,9 +21,11 @@ export interface CompleteAccountSetupResult {
   status?: AccessStatus;
   is_admin?: boolean;
   is_event_manager?: boolean;
+  is_producer?: boolean;
   is_catering?: boolean;
   is_bts_crew?: boolean;
   is_comms?: boolean;
+  is_creative?: boolean;
   dashboard_enabled?: boolean;
   error?: string;
 }
@@ -68,9 +70,11 @@ export async function completeAccountSetup(
     status: data.status,
     is_admin: data.is_admin,
     is_event_manager: data.is_event_manager,
+    is_producer: data.is_producer,
     is_catering: data.is_catering,
     is_bts_crew: data.is_bts_crew,
     is_comms: data.is_comms,
+    is_creative: data.is_creative,
     dashboard_enabled: data.dashboard_enabled,
   };
 }

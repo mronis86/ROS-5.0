@@ -30,6 +30,7 @@ interface User {
   full_name: string;
   role: string;
   is_admin?: boolean;
+  is_producer?: boolean;
   is_event_manager?: boolean;
   is_catering?: boolean;
   is_bts_crew?: boolean;
@@ -52,7 +53,18 @@ export function canAccessAdmin(user: User | null | undefined): boolean {
 export function canAccessAccessManager(user: User | null | undefined): boolean {
   if (!user) return false;
   if (user.is_admin) return true;
-  return user.is_event_manager === true || user.is_bts_crew === true;
+  return (
+    user.is_event_manager === true ||
+    user.is_producer === true ||
+    user.is_bts_crew === true
+  );
+}
+
+/** Global Speaker Manager page: Admins and Producers only. */
+export function canAccessSpeakerManager(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.is_admin) return true;
+  return user.is_producer === true;
 }
 
 /** Pre-Flight / Show Checklist: Admins and BTS Crew only. */
@@ -65,7 +77,7 @@ export function canAccessPreFlightChecklist(user: User | null | undefined): bool
 /** Catering UI: catering role, Event Managers, BTS Crew, or Admins. */
 export function canAccessCatering(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return true;
+  if (user.is_admin || user.is_event_manager || user.is_producer || user.is_bts_crew) return true;
   return user.is_catering === true;
 }
 
@@ -75,14 +87,14 @@ export function canAccessCatering(user: User | null | undefined): boolean {
  */
 export function isCateringOnlyUser(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return false;
+  if (user.is_admin || user.is_event_manager || user.is_producer || user.is_bts_crew) return false;
   return user.is_catering === true;
 }
 
 /** Comms UI: comms role, Event Managers, BTS Crew, or Admins. */
 export function canAccessComms(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return true;
+  if (user.is_admin || user.is_event_manager || user.is_producer || user.is_bts_crew) return true;
   return user.is_comms === true;
 }
 
@@ -92,14 +104,14 @@ export function canAccessComms(user: User | null | undefined): boolean {
  */
 export function isCommsOnlyUser(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return false;
+  if (user.is_admin || user.is_event_manager || user.is_producer || user.is_bts_crew) return false;
   return user.is_comms === true;
 }
 
 /** Creative UI: creative role, Event Managers, BTS Crew, or Admins. */
 export function canAccessCreative(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return true;
+  if (user.is_admin || user.is_event_manager || user.is_producer || user.is_bts_crew) return true;
   return user.is_creative === true;
 }
 
@@ -109,7 +121,7 @@ export function canAccessCreative(user: User | null | undefined): boolean {
  */
 export function isCreativeOnlyUser(user: User | null | undefined): boolean {
   if (!user) return false;
-  if (user.is_admin || user.is_event_manager || user.is_bts_crew) return false;
+  if (user.is_admin || user.is_event_manager || user.is_producer || user.is_bts_crew) return false;
   return user.is_creative === true;
 }
 
@@ -249,9 +261,11 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_producer?: boolean;
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
+    is_creative?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -296,6 +310,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
+      is_producer: data.is_producer,
       is_catering: data.is_catering,
       is_bts_crew: data.is_bts_crew,
       is_comms: data.is_comms,
@@ -316,9 +331,11 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_producer?: boolean;
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
+    is_creative?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
     error?: string;
@@ -386,6 +403,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
+      is_producer: data.is_producer,
       is_catering: data.is_catering,
       is_bts_crew: data.is_bts_crew,
       is_comms: data.is_comms,
@@ -406,9 +424,11 @@ class AuthService {
     full_name?: string;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_producer?: boolean;
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
+    is_creative?: boolean;
     neon_user_id?: string;
     dashboard_enabled?: boolean;
   }> {
@@ -426,6 +446,7 @@ class AuthService {
       full_name: data.full_name,
       is_admin: data.is_admin,
       is_event_manager: data.is_event_manager,
+      is_producer: data.is_producer,
       is_catering: data.is_catering,
       is_bts_crew: data.is_bts_crew,
       is_comms: data.is_comms,
@@ -469,6 +490,7 @@ class AuthService {
               role: 'VIEWER',
               is_admin: access.is_admin,
               is_event_manager: access.is_event_manager,
+              is_producer: access.is_producer,
               is_catering: access.is_catering,
               is_bts_crew: access.is_bts_crew,
               is_comms: access.is_comms,
@@ -585,6 +607,7 @@ class AuthService {
           role: 'VIEWER',
           is_admin: exchange.is_admin,
           is_event_manager: exchange.is_event_manager,
+          is_producer: exchange.is_producer,
           is_catering: exchange.is_catering,
           is_bts_crew: exchange.is_bts_crew,
           is_comms: exchange.is_comms,
@@ -700,6 +723,7 @@ class AuthService {
     status: AccessStatus;
     is_admin?: boolean;
     is_event_manager?: boolean;
+    is_producer?: boolean;
     is_catering?: boolean;
     is_bts_crew?: boolean;
     is_comms?: boolean;
@@ -714,6 +738,7 @@ class AuthService {
       role: 'VIEWER',
       is_admin: session.is_admin,
       is_event_manager: session.is_event_manager,
+      is_producer: session.is_producer,
       is_catering: session.is_catering,
       is_bts_crew: session.is_bts_crew,
       is_comms: session.is_comms,
@@ -851,6 +876,7 @@ class AuthService {
           this.authState.user.accessStatus = exchange.status;
           this.authState.user.is_admin = exchange.is_admin;
           this.authState.user.is_event_manager = exchange.is_event_manager;
+          this.authState.user.is_producer = exchange.is_producer;
           this.authState.user.is_catering = exchange.is_catering;
           this.authState.user.is_bts_crew = exchange.is_bts_crew;
           this.authState.user.is_comms = exchange.is_comms;
@@ -868,6 +894,7 @@ class AuthService {
       this.authState.user.accessStatus = access.status;
       this.authState.user.is_admin = access.is_admin;
       this.authState.user.is_event_manager = access.is_event_manager;
+      this.authState.user.is_producer = access.is_producer;
       this.authState.user.is_catering = access.is_catering;
       this.authState.user.is_bts_crew = access.is_bts_crew;
       this.authState.user.is_comms = access.is_comms;

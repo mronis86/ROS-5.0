@@ -33,7 +33,7 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
-const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, userCanManageSpeakers, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const {
@@ -61,6 +61,7 @@ const {
   safeOriginalName,
 } = require('./lib/event-cue-files');
 const { registerEventBoardRoutes, ensureEventBoardSchema } = require('./lib/event-board');
+const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
 const {
@@ -737,6 +738,7 @@ registerEventBoardRoutes(app, {
   safeOriginalName,
   multer,
 });
+registerSpeakerRoutes(app, { pool, userCanManageSpeakers });
 console.log(
   `[api-auth] require=${apiAuthConfig.requireLevel} legacyPublic=${apiAuthConfig.allowLegacy} sessionTtlHours=${apiAuthConfig.sessionTtlHours}`
 );
@@ -1548,6 +1550,18 @@ async function runCreativeRoleColumnSync(db) {
     CREATE INDEX IF NOT EXISTS idx_api_user_access_creative
       ON public.api_user_access (is_creative)
       WHERE is_creative = TRUE
+  `);
+}
+
+async function runProducerRoleColumnSync(db) {
+  await db.query(`
+    ALTER TABLE public.api_user_access
+      ADD COLUMN IF NOT EXISTS is_producer BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_api_user_access_producer
+      ON public.api_user_access (is_producer)
+      WHERE is_producer = TRUE
   `);
 }
 
@@ -9027,6 +9041,18 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ api_user_access.is_creative column ready');
     } catch (err) {
       console.warn('⚠️ is_creative column sync skipped:', err.message || err);
+    }
+    try {
+      await runProducerRoleColumnSync(pool);
+      console.log('✅ api_user_access.is_producer column ready');
+    } catch (err) {
+      console.warn('⚠️ is_producer column sync skipped:', err.message || err);
+    }
+    try {
+      await ensureSpeakersSchema(pool);
+      console.log('✅ speakers table synced');
+    } catch (err) {
+      console.warn('⚠️ speakers table sync skipped:', err.message || err);
     }
     try {
       await runContentReviewAssigneesSyncTable(pool);

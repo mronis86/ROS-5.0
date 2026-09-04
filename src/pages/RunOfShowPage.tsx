@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event, LOCATION_OPTIONS } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
-import { apiClient, getApiBaseUrl, EventCueFile } from '../services/api-client';
+import { apiClient, getApiBaseUrl, EventCueFile, type SpeakerDirectoryRow } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
 import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon-backup-service';
 import { apiJsonHeaders } from '../lib/sessionAuth';
@@ -55,7 +55,26 @@ interface Speaker {
   title: string;
   org: string;
   photoLink: string;
+  /** Optional link to global speaker DB row (not required in saved cue JSON). */
+  speakerDbId?: string;
 }
+
+function normalizeSpeakerNameKey(name: string): string {
+  return String(name || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+type SpeakerSyncAction = {
+  type: 'add' | 'update';
+  id?: string;
+  full_name: string;
+  title: string;
+  org: string;
+  photo_link: string;
+  accepted: boolean;
+};
 
 /** Wall-clock audio callouts on a parent cue — do not affect duration/start math. */
 export type AudioCalloutKind = 'vo' | 'bgm';
@@ -810,6 +829,12 @@ const RunOfShowPage: React.FC = () => {
   const [showSpeakersModal, setShowSpeakersModal] = useState(false);
   const [editingSpeakersItem, setEditingSpeakersItem] = useState<number | null>(null);
   const [tempSpeakersText, setTempSpeakersText] = useState<Speaker[]>([]);
+  const [speakerDbSearchId, setSpeakerDbSearchId] = useState<string | null>(null);
+  const [speakerDbQuery, setSpeakerDbQuery] = useState('');
+  const [speakerDbHits, setSpeakerDbHits] = useState<SpeakerDirectoryRow[]>([]);
+  const [speakerDbBusy, setSpeakerDbBusy] = useState(false);
+  const [speakerSyncPending, setSpeakerSyncPending] = useState<SpeakerSyncAction[] | null>(null);
+  const [speakerSyncBusy, setSpeakerSyncBusy] = useState(false);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [editingAssetsItem, setEditingAssetsItem] = useState<number | null>(null);
   /** Pre-assigned cue id while Add Item modal is open (enables ROS file upload before Save). */
@@ -4439,24 +4464,24 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Save speakers function
-  const saveSpeakers = () => {
+  const finishSaveSpeakers = () => {
     if (editingSpeakersItem !== null) {
-      const speakersJson = JSON.stringify(tempSpeakersText);
-      
+      const speakersForSave = tempSpeakersText.map(({ speakerDbId: _dbId, ...rest }) => rest);
+      const speakersJson = JSON.stringify(speakersForSave);
+
       if (editingSpeakersItem === -1) {
-        // Save to modal form
-        setModalForm(prev => ({ ...prev, speakersText: speakersJson }));
+        setModalForm((prev) => ({ ...prev, speakersText: speakersJson }));
       } else {
-        // Save to existing schedule item
-        const oldValue = schedule.find(item => item.id === editingSpeakersItem)?.speakersText || '';
-        const item = schedule.find(item => item.id === editingSpeakersItem);
-        setSchedule(prev => prev.map(scheduleItem => 
-          scheduleItem.id === editingSpeakersItem 
-            ? { ...scheduleItem, speakersText: speakersJson }
-            : scheduleItem
-        ));
-        
-        // Log the change
+        const oldValue = schedule.find((item) => item.id === editingSpeakersItem)?.speakersText || '';
+        const item = schedule.find((item) => item.id === editingSpeakersItem);
+        setSchedule((prev) =>
+          prev.map((scheduleItem) =>
+            scheduleItem.id === editingSpeakersItem
+              ? { ...scheduleItem, speakersText: speakersJson }
+              : scheduleItem
+          )
+        );
+
         if (item) {
           logChange('FIELD_UPDATE', `Updated speakers for "${item.segmentName}"`, {
             changeType: 'FIELD_CHANGE',
@@ -4468,16 +4493,137 @@ const RunOfShowPage: React.FC = () => {
             details: {
               fieldType: 'speakers',
               speakerCount: tempSpeakersText.length,
-              characterChange: speakersJson.length - oldValue.length
-            }
+              characterChange: speakersJson.length - oldValue.length,
+            },
           });
         }
       }
-      
+
       setShowSpeakersModal(false);
       setEditingSpeakersItem(null);
+      setSpeakerDbSearchId(null);
+      setSpeakerDbQuery('');
+      setSpeakerDbHits([]);
+      setSpeakerSyncPending(null);
       handleModalClosed();
     }
+  };
+
+  const saveSpeakers = async () => {
+    if (editingSpeakersItem === null) return;
+    const named = tempSpeakersText.filter((s) => s.fullName && s.fullName.trim() !== '');
+    if (named.length === 0) {
+      finishSaveSpeakers();
+      return;
+    }
+    try {
+      const { speakers: existing } = await apiClient.lookupSpeakers(named.map((s) => s.fullName));
+      const byKey = new Map(
+        (existing || []).map((row) => [normalizeSpeakerNameKey(row.full_name), row])
+      );
+      const pending: SpeakerSyncAction[] = [];
+      for (const s of named) {
+        const key = normalizeSpeakerNameKey(s.fullName);
+        const match = byKey.get(key);
+        const title = (s.title || '').trim();
+        const org = (s.org || '').trim();
+        const photo = (s.photoLink || '').trim();
+        if (!match) {
+          pending.push({
+            type: 'add',
+            full_name: s.fullName.trim(),
+            title,
+            org,
+            photo_link: photo,
+            accepted: true,
+          });
+        } else {
+          const same =
+            (match.title || '').trim() === title &&
+            (match.org || '').trim() === org &&
+            (match.photo_link || '').trim() === photo;
+          if (!same) {
+            pending.push({
+              type: 'update',
+              id: match.id,
+              full_name: s.fullName.trim(),
+              title,
+              org,
+              photo_link: photo,
+              accepted: true,
+            });
+          }
+        }
+      }
+      if (pending.length === 0) {
+        finishSaveSpeakers();
+        return;
+      }
+      setSpeakerSyncPending(pending);
+    } catch (err) {
+      console.warn('Speaker DB lookup failed; saving cue only', err);
+      finishSaveSpeakers();
+    }
+  };
+
+  const confirmSpeakerSyncAndSave = async () => {
+    if (!speakerSyncPending) {
+      finishSaveSpeakers();
+      return;
+    }
+    const actions = speakerSyncPending
+      .filter((a) => a.accepted)
+      .map(({ accepted: _a, ...rest }) => rest);
+    setSpeakerSyncBusy(true);
+    try {
+      if (actions.length > 0) {
+        await apiClient.syncSpeakers(actions);
+      }
+    } catch (err) {
+      console.warn('Speaker DB sync failed; saving cue anyway', err);
+    } finally {
+      setSpeakerSyncBusy(false);
+      setSpeakerSyncPending(null);
+      finishSaveSpeakers();
+    }
+  };
+
+  const runSpeakerDbSearch = async (speakerId: string, query: string) => {
+    setSpeakerDbSearchId(speakerId);
+    setSpeakerDbQuery(query);
+    if (!query.trim()) {
+      setSpeakerDbHits([]);
+      return;
+    }
+    setSpeakerDbBusy(true);
+    try {
+      const res = await apiClient.listSpeakers(query.trim(), 20);
+      setSpeakerDbHits(res.speakers || []);
+    } catch {
+      setSpeakerDbHits([]);
+    } finally {
+      setSpeakerDbBusy(false);
+    }
+  };
+
+  const importSpeakerFromDb = (speakerId: string, row: SpeakerDirectoryRow) => {
+    setTempSpeakersText((prev) =>
+      prev.map((s) =>
+        s.id === speakerId
+          ? {
+              ...s,
+              fullName: row.full_name || '',
+              title: row.title || '',
+              org: row.org || '',
+              photoLink: row.photo_link || '',
+              speakerDbId: row.id,
+            }
+          : s
+      )
+    );
+    setSpeakerDbSearchId(null);
+    setSpeakerDbQuery('');
+    setSpeakerDbHits([]);
   };
 
   // Save assets function
@@ -15288,6 +15434,70 @@ const RunOfShowPage: React.FC = () => {
                            placeholder="Enter full name"
                            className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white text-sm placeholder-slate-400 focus:outline-none focus:border-blue-500"
                          />
+                         <div className="mt-2">
+                           {speakerDbSearchId === speaker.id ? (
+                             <div className="space-y-2">
+                               <input
+                                 type="search"
+                                 autoFocus
+                                 value={speakerDbQuery}
+                                 onChange={(e) => void runSpeakerDbSearch(speaker.id, e.target.value)}
+                                 placeholder="Search speaker database…"
+                                 className="w-full px-3 py-2 bg-slate-900 border border-blue-500/60 rounded text-white text-sm placeholder-slate-400 focus:outline-none"
+                               />
+                               <div className="max-h-36 overflow-y-auto rounded border border-slate-600 bg-slate-900/80">
+                                 {speakerDbBusy && (
+                                   <div className="px-3 py-2 text-xs text-slate-400">Searching…</div>
+                                 )}
+                                 {!speakerDbBusy && speakerDbQuery.trim() && speakerDbHits.length === 0 && (
+                                   <div className="px-3 py-2 text-xs text-slate-400">No matches</div>
+                                 )}
+                                 {speakerDbHits.map((hit) => (
+                                   <button
+                                     key={hit.id}
+                                     type="button"
+                                     onClick={() => importSpeakerFromDb(speaker.id, hit)}
+                                     className="w-full text-left px-3 py-2 text-sm text-slate-200 hover:bg-slate-700 border-b border-slate-700/80 last:border-0"
+                                   >
+                                     <span className="font-medium text-white">{hit.full_name}</span>
+                                     {(hit.title || hit.org) && (
+                                       <span className="block text-xs text-slate-400 truncate">
+                                         {[hit.title, hit.org].filter(Boolean).join(' · ')}
+                                       </span>
+                                     )}
+                                   </button>
+                                 ))}
+                               </div>
+                               <button
+                                 type="button"
+                                 onClick={() => {
+                                   setSpeakerDbSearchId(null);
+                                   setSpeakerDbQuery('');
+                                   setSpeakerDbHits([]);
+                                 }}
+                                 className="text-xs text-slate-400 hover:text-white"
+                               >
+                                 Close search
+                               </button>
+                             </div>
+                           ) : (
+                             <button
+                               type="button"
+                               onClick={() => {
+                                 setSpeakerDbSearchId(speaker.id);
+                                 setSpeakerDbQuery(speaker.fullName || '');
+                                 if (speaker.fullName?.trim()) {
+                                   void runSpeakerDbSearch(speaker.id, speaker.fullName);
+                                 } else {
+                                   setSpeakerDbHits([]);
+                                 }
+                               }}
+                               className="text-xs font-medium text-blue-300 hover:text-blue-200"
+                             >
+                               Search speaker database
+                             </button>
+                           )}
+                         </div>
                        </div>
                        
                        {/* Title */}
@@ -15361,7 +15571,7 @@ const RunOfShowPage: React.FC = () => {
              <div className="border-t border-slate-700 p-6">
                <div className="flex gap-3">
                  <button
-                   onClick={saveSpeakers}
+                   onClick={() => void saveSpeakers()}
                    className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors"
                  >
                    Save & Close
@@ -15370,6 +15580,8 @@ const RunOfShowPage: React.FC = () => {
                    onClick={() => {
                      setShowSpeakersModal(false);
                      setEditingSpeakersItem(null);
+                     setSpeakerDbSearchId(null);
+                     setSpeakerSyncPending(null);
                      handleModalClosed();
                    }}
                    className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
@@ -15381,6 +15593,71 @@ const RunOfShowPage: React.FC = () => {
            </div>
          </div>
        )}
+
+       {speakerSyncPending && (
+         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+           <div className="bg-slate-800 rounded-xl max-w-lg w-full border border-slate-600 shadow-2xl">
+             <div className="px-5 py-4 border-b border-slate-700">
+               <h3 className="text-lg font-semibold text-white">Speaker database</h3>
+               <p className="text-sm text-slate-400 mt-1">
+                 Add new speakers or update existing records before saving this cue.
+               </p>
+             </div>
+             <div className="px-5 py-4 space-y-3 max-h-[50vh] overflow-y-auto">
+               {speakerSyncPending.map((action, idx) => (
+                 <label
+                   key={`${action.type}-${action.full_name}-${idx}`}
+                   className="flex items-start gap-3 rounded-lg border border-slate-600 bg-slate-900/50 px-3 py-2 cursor-pointer"
+                 >
+                   <input
+                     type="checkbox"
+                     checked={action.accepted}
+                     onChange={(e) => {
+                       const checked = e.target.checked;
+                       setSpeakerSyncPending((prev) =>
+                         prev
+                           ? prev.map((row, i) => (i === idx ? { ...row, accepted: checked } : row))
+                           : prev
+                       );
+                     }}
+                     className="mt-1"
+                   />
+                   <span className="text-sm text-slate-200">
+                     <span className="font-semibold text-white">
+                       {action.type === 'add' ? 'Add' : 'Update'} {action.full_name}
+                     </span>
+                     <span className="block text-xs text-slate-400 mt-0.5">
+                       {[action.title, action.org].filter(Boolean).join(' · ') || 'No title/org'}
+                     </span>
+                   </span>
+                 </label>
+               ))}
+             </div>
+             <div className="px-5 py-3 border-t border-slate-700 flex gap-2 justify-end">
+               <button
+                 type="button"
+                 disabled={speakerSyncBusy}
+                 onClick={() => {
+                   setSpeakerSyncPending(null);
+                   finishSaveSpeakers();
+                 }}
+                 className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm text-white"
+               >
+                 Skip all
+               </button>
+               <button
+                 type="button"
+                 disabled={speakerSyncBusy}
+                 onClick={() => void confirmSpeakerSyncAndSave()}
+                 className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-semibold text-white"
+               >
+                 {speakerSyncBusy ? 'Saving…' : 'Apply & save cue'}
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+
        {/* Assets Editor Modal */}
        {showAssetsModal && editingAssetsItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">

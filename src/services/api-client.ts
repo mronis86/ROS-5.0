@@ -738,6 +738,89 @@ class ApiClient {
     return result;
   }
 
+  async listSpeakers(q = '', limit = 50) {
+    const params = new URLSearchParams();
+    if (q.trim()) params.set('q', q.trim());
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return this.request<{ speakers: SpeakerDirectoryRow[] }>(
+      `/api/speakers${qs ? `?${qs}` : ''}`
+    );
+  }
+
+  async lookupSpeakers(names: string[]) {
+    return this.request<{ speakers: SpeakerDirectoryRow[] }>('/api/speakers/lookup', {
+      method: 'POST',
+      body: JSON.stringify({ names }),
+    });
+  }
+
+  async syncSpeakers(
+    actions: Array<{
+      type: 'add' | 'update';
+      id?: string;
+      full_name: string;
+      title?: string;
+      org?: string;
+      photo_link?: string;
+    }>
+  ) {
+    return this.request<{
+      ok: boolean;
+      results: Array<{
+        ok: boolean;
+        type?: string;
+        skipped?: boolean;
+        speaker?: SpeakerDirectoryRow;
+        error?: string;
+      }>;
+    }>('/api/speakers/sync', {
+      method: 'POST',
+      body: JSON.stringify({ actions }),
+    });
+  }
+
+  async createSpeaker(data: {
+    full_name: string;
+    title?: string;
+    org?: string;
+    photo_link?: string;
+    notes?: string;
+    email?: string;
+  }) {
+    return this.request<{ speaker: SpeakerDirectoryRow }>('/api/speakers', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateSpeaker(
+    id: string,
+    data: {
+      full_name: string;
+      title?: string;
+      org?: string;
+      photo_link?: string;
+      notes?: string;
+      email?: string;
+    }
+  ) {
+    return this.request<{ speaker: SpeakerDirectoryRow }>(
+      `/api/speakers/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async deleteSpeaker(id: string) {
+    return this.request<{ ok: boolean; id: string }>(
+      `/api/speakers/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+  }
+
   async setCueRecording(eventId: string, itemId: number, needsRecording: boolean) {
     const result = await this.request<any>(
       `/api/run-of-show-data/${encodeURIComponent(eventId)}/recording`,
@@ -878,6 +961,20 @@ export interface CateringNoteRow {
   schedule_item_id?: number | null;
   created_at: string;
   updated_at?: string;
+}
+
+export interface SpeakerDirectoryRow {
+  id: string;
+  full_name: string;
+  title: string;
+  org: string;
+  photo_link: string;
+  notes: string;
+  email: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  updated_by_name?: string | null;
 }
 
 export interface EventCueFile {

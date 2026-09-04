@@ -43,6 +43,7 @@ import QuickModePage from './pages/QuickModePage';
 import ComparisonPage from './pages/ComparisonPage';
 import DashboardPage from './pages/DashboardPage';
 import AccessManagerPage from './pages/AccessManagerPage';
+import SpeakerManagerPage from './pages/SpeakerManagerPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccessPortalPage from './pages/AccessPortalPage';
 import JoinEventAccessPage from './pages/JoinEventAccessPage';
@@ -142,6 +143,7 @@ function AppContent() {
             <Route path="/" element={<EventListPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/access-manager" element={<AccessManagerPage />} />
+            <Route path="/speakers" element={<SpeakerManagerPage />} />
             <Route path="/join-event" element={<JoinEventAccessPage />} />
             <Route path="/quick-mode" element={<QuickModePage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />
