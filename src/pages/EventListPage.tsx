@@ -9,9 +9,14 @@ import {
   EVENT_TYPE_OPTIONS,
   RECORD_STREAMING_OPTIONS,
   normalizeDayLocations,
+  normalizeDayLocationDetails,
   parseDayLocations,
+  parseDayLocationDetails,
   eventMatchesLocationFilter,
   eventLocationSearchText,
+  isOffSiteLocation,
+  eventAllowsBoardChoice,
+  normalizeWorkspaceMode,
 } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
@@ -36,29 +41,74 @@ const EMPTY_EVENT_FORM: EventFormData = {
   date: '',
   location: 'Great Hall',
   dayLocations: { 1: 'Great Hall' },
+  locationDetail: '',
+  dayLocationDetails: {},
   numberOfDays: 1,
   timezone: 'America/New_York',
   eventType: 'Staged Production',
   recordStreaming: 'None',
+  workspaceMode: 'ros',
 };
 
 function withDayCount(prev: EventFormData, numberOfDays: number): EventFormData {
   const dayLocations = normalizeDayLocations(prev.location, numberOfDays, prev.dayLocations);
+  const dayLocationDetails = normalizeDayLocationDetails(
+    dayLocations[1] || prev.location,
+    numberOfDays,
+    dayLocations,
+    prev.locationDetail,
+    prev.dayLocationDetails
+  );
   return {
     ...prev,
     numberOfDays,
     location: dayLocations[1] || prev.location,
     dayLocations,
+    locationDetail: dayLocationDetails[1] || '',
+    dayLocationDetails,
   };
 }
 
 function withDayLocation(prev: EventFormData, day: number, location: string): EventFormData {
   const dayLocations = normalizeDayLocations(prev.location, prev.numberOfDays, prev.dayLocations);
   dayLocations[day] = location;
+  const dayLocationDetails = { ...(prev.dayLocationDetails || {}) };
+  if (!isOffSiteLocation(location)) {
+    delete dayLocationDetails[day];
+  }
+  const normalizedDetails = normalizeDayLocationDetails(
+    dayLocations[1] || prev.location,
+    prev.numberOfDays,
+    dayLocations,
+    day === 1 ? (isOffSiteLocation(location) ? prev.locationDetail : '') : prev.locationDetail,
+    dayLocationDetails
+  );
   return {
     ...prev,
     dayLocations,
     location: day === 1 ? location : prev.location,
+    locationDetail: normalizedDetails[1] || '',
+    dayLocationDetails: normalizedDetails,
+  };
+}
+
+function withDayLocationDetail(prev: EventFormData, day: number, detail: string): EventFormData {
+  const dayLocations = normalizeDayLocations(prev.location, prev.numberOfDays, prev.dayLocations);
+  const dayLocationDetails = { ...(prev.dayLocationDetails || {}) };
+  const trimmed = detail.trim();
+  if (trimmed) dayLocationDetails[day] = detail;
+  else delete dayLocationDetails[day];
+  const normalizedDetails = normalizeDayLocationDetails(
+    dayLocations[1] || prev.location,
+    prev.numberOfDays,
+    dayLocations,
+    day === 1 ? detail : prev.locationDetail,
+    dayLocationDetails
+  );
+  return {
+    ...prev,
+    locationDetail: day === 1 ? detail : (normalizedDetails[1] || prev.locationDetail || ''),
+    dayLocationDetails: normalizedDetails,
   };
 }
 
@@ -200,10 +250,26 @@ const EventListPage: React.FC = () => {
               calEvent.schedule_data?.numberOfDays || 1,
               parseDayLocations(calEvent.schedule_data?.dayLocations)
             ),
+            locationDetail: typeof calEvent.schedule_data?.locationDetail === 'string'
+              ? calEvent.schedule_data.locationDetail
+              : '',
+            dayLocationDetails: normalizeDayLocationDetails(
+              calEvent.schedule_data?.location || 'Great Hall',
+              calEvent.schedule_data?.numberOfDays || 1,
+              parseDayLocations(calEvent.schedule_data?.dayLocations),
+              typeof calEvent.schedule_data?.locationDetail === 'string'
+                ? calEvent.schedule_data.locationDetail
+                : '',
+              parseDayLocationDetails(calEvent.schedule_data?.dayLocationDetails)
+            ),
             numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
             timezone: calEvent.schedule_data?.timezone || 'America/New_York',
             eventType: calEvent.schedule_data?.eventType || 'Staged Production',
             recordStreaming: calEvent.schedule_data?.recordStreaming || 'None',
+            workspaceMode: normalizeWorkspaceMode(
+              calEvent.schedule_data?.workspaceMode,
+              calEvent.schedule_data?.eventType || 'Staged Production'
+            ),
             isQuickMode: isQuickModeCalendarEvent(calEvent),
             displaySyncEnabled: parseDisplaySyncEnabled(calEvent.schedule_data),
             created_at: calEvent.created_at || new Date().toISOString(),
@@ -282,16 +348,26 @@ const EventListPage: React.FC = () => {
       formData.numberOfDays,
       formData.dayLocations
     );
+    const dayLocationDetails = normalizeDayLocationDetails(
+      dayLocations[1] || formData.location,
+      formData.numberOfDays,
+      dayLocations,
+      formData.locationDetail,
+      formData.dayLocationDetails
+    );
     const newEvent: Event = {
       id: eventId,
       name: formData.name,
       date: formData.date,
       location: dayLocations[1] || formData.location,
       dayLocations,
+      locationDetail: dayLocationDetails[1] || '',
+      dayLocationDetails,
       numberOfDays: formData.numberOfDays,
       timezone: formData.timezone || 'America/New_York',
       eventType: formData.eventType || 'Staged Production',
       recordStreaming: formData.recordStreaming || 'None',
+      workspaceMode: normalizeWorkspaceMode(formData.workspaceMode, formData.eventType),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -314,11 +390,14 @@ const EventListPage: React.FC = () => {
         schedule_data: {
           location: newEvent.location,
           dayLocations: newEvent.dayLocations,
+          locationDetail: newEvent.locationDetail || '',
+          dayLocationDetails: newEvent.dayLocationDetails || {},
           numberOfDays: newEvent.numberOfDays,
           eventId: newEvent.id,
           timezone: newEvent.timezone,
           eventType: newEvent.eventType,
-          recordStreaming: newEvent.recordStreaming
+          recordStreaming: newEvent.recordStreaming,
+          workspaceMode: newEvent.workspaceMode || 'ros',
         }
       };
       
@@ -338,6 +417,8 @@ const EventListPage: React.FC = () => {
           timezone: newEvent.timezone || 'America/New_York',
           location: newEvent.location,
           dayLocations: newEvent.dayLocations,
+          locationDetail: newEvent.locationDetail || '',
+          dayLocationDetails: newEvent.dayLocationDetails || {},
           numberOfDays: newEvent.numberOfDays,
           lastSaved: new Date().toISOString(),
           show_mode: 'rehearsal',
@@ -376,16 +457,26 @@ const EventListPage: React.FC = () => {
       editFormData.numberOfDays,
       editFormData.dayLocations
     );
+    const dayLocationDetails = normalizeDayLocationDetails(
+      dayLocations[1] || editFormData.location,
+      editFormData.numberOfDays,
+      dayLocations,
+      editFormData.locationDetail,
+      editFormData.dayLocationDetails
+    );
     const updatedEvent: Event = {
       ...editingEvent,
       name: editFormData.name,
       date: editFormData.date,
       location: dayLocations[1] || editFormData.location,
       dayLocations,
+      locationDetail: dayLocationDetails[1] || '',
+      dayLocationDetails,
       numberOfDays: editFormData.numberOfDays,
       timezone: editFormData.timezone,
       eventType: editFormData.eventType,
       recordStreaming: editFormData.recordStreaming,
+      workspaceMode: normalizeWorkspaceMode(editFormData.workspaceMode, editFormData.eventType),
       updated_at: new Date().toISOString()
     };
 
@@ -442,11 +533,14 @@ const EventListPage: React.FC = () => {
             ...matchingCalendarEvent.schedule_data, // Preserve existing schedule_data FIRST
             location: updatedEvent.location,         // Then override with new values
             dayLocations: updatedEvent.dayLocations,
+            locationDetail: updatedEvent.locationDetail || '',
+            dayLocationDetails: updatedEvent.dayLocationDetails || {},
             numberOfDays: updatedEvent.numberOfDays,
             eventId: updatedEvent.id,
             timezone: updatedEvent.timezone,
             eventType: updatedEvent.eventType,
-            recordStreaming: updatedEvent.recordStreaming
+            recordStreaming: updatedEvent.recordStreaming,
+            workspaceMode: updatedEvent.workspaceMode || 'ros',
           }
         };
         
@@ -479,6 +573,8 @@ const EventListPage: React.FC = () => {
               eventDate: updatedEvent.date,
               location: updatedEvent.location,
               dayLocations: updatedEvent.dayLocations,
+              locationDetail: updatedEvent.locationDetail || '',
+              dayLocationDetails: updatedEvent.dayLocationDetails || {},
               numberOfDays: updatedEvent.numberOfDays,
               timezone: updatedEvent.timezone,
               lastSaved: new Date().toISOString()
@@ -605,15 +701,25 @@ const EventListPage: React.FC = () => {
       event.numberOfDays,
       event.dayLocations
     );
+    const dayLocationDetails = normalizeDayLocationDetails(
+      dayLocations[1] || event.location,
+      event.numberOfDays,
+      dayLocations,
+      event.locationDetail,
+      event.dayLocationDetails
+    );
     setEditFormData({
       name: event.name,
       date: event.date,
       location: dayLocations[1] || event.location,
       dayLocations,
+      locationDetail: dayLocationDetails[1] || '',
+      dayLocationDetails,
       numberOfDays: event.numberOfDays,
       timezone: event.timezone || 'America/New_York',
       eventType: event.eventType || 'Staged Production',
-      recordStreaming: event.recordStreaming || 'None'
+      recordStreaming: event.recordStreaming || 'None',
+      workspaceMode: normalizeWorkspaceMode(event.workspaceMode, event.eventType),
     });
   };
 
@@ -634,10 +740,15 @@ const EventListPage: React.FC = () => {
         console.error('❌ Failed to save role to Supabase from EventListPage:', error);
         // Don't prevent navigation if Supabase save fails
       }
-      
-      const runOfShowPath = isNarrowViewport ? '/run-of-show-mobile' : '/run-of-show';
-      navigate(runOfShowPath, { state: { event: selectedEvent, userRole: role } });
-      
+
+      const mode = normalizeWorkspaceMode(selectedEvent.workspaceMode, selectedEvent.eventType);
+      if (mode === 'board') {
+        navigate('/event-board', { state: { event: selectedEvent, userRole: role } });
+      } else {
+        const runOfShowPath = isNarrowViewport ? '/run-of-show-mobile' : '/run-of-show';
+        navigate(runOfShowPath, { state: { event: selectedEvent, userRole: role } });
+      }
+
       // Close modal and reset state
       setShowRoleModal(false);
       setSelectedEvent(null);
@@ -1038,6 +1149,11 @@ const EventListPage: React.FC = () => {
                         <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[220px] w-[28%]">
                           <div className="flex items-center gap-2 flex-wrap">
                             {event.name}
+                            {normalizeWorkspaceMode(event.workspaceMode, event.eventType) === 'board' ? (
+                              <span className="ml-2 inline-flex items-center rounded bg-emerald-700/90 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white align-middle">
+                                Board
+                              </span>
+                            ) : null}
                             {event.isQuickMode && (
                               <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-purple-600 text-white">
                                 Quick
@@ -1055,6 +1171,8 @@ const EventListPage: React.FC = () => {
                             location={event.location}
                             numberOfDays={event.numberOfDays}
                             dayLocations={event.dayLocations}
+                            locationDetail={event.locationDetail}
+                            dayLocationDetails={event.dayLocationDetails}
                             getLocationColor={getLocationColor}
                           />
                         </td>
@@ -1200,12 +1318,32 @@ const EventListPage: React.FC = () => {
                     </option>
                   ))}
                 </select>
+                {isOffSiteLocation(
+                  normalizeDayLocations(formData.location, formData.numberOfDays, formData.dayLocations)[1]
+                ) ? (
+                  <input
+                    type="text"
+                    value={formData.locationDetail || formData.dayLocationDetails?.[1] || ''}
+                    onChange={(e) => setFormData((prev) => withDayLocationDetail(prev, 1, e.target.value))}
+                    placeholder="Off-site location info (venue, address, room…)"
+                    className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                  />
+                ) : null}
               </div>
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Event Type</label>
                 <select
                   value={formData.eventType || 'Staged Production'}
-                  onChange={(e) => setFormData(prev => ({ ...prev, eventType: e.target.value }))}
+                  onChange={(e) => {
+                    const eventType = e.target.value;
+                    setFormData((prev) => ({
+                      ...prev,
+                      eventType,
+                      workspaceMode: eventAllowsBoardChoice(eventType)
+                        ? (prev.workspaceMode || 'ros')
+                        : 'ros',
+                    }));
+                  }}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {EVENT_TYPE_OPTIONS.map((option) => (
@@ -1215,6 +1353,54 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {eventAllowsBoardChoice(formData.eventType) ? (
+                <div className="col-span-2 rounded-lg border border-emerald-700/50 bg-emerald-950/30 p-3 space-y-2">
+                  <p className="text-sm font-semibold text-emerald-100">How should this event run?</p>
+                  <p className="text-xs text-slate-400">
+                    General Meeting and Hollow Square can use a timed Run of Show or an Event Board.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label
+                      className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 cursor-pointer ${
+                        normalizeWorkspaceMode(formData.workspaceMode, formData.eventType) === 'ros'
+                          ? 'border-blue-500 bg-slate-800'
+                          : 'border-slate-600 bg-slate-900/60'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="create-workspace-mode"
+                        className="mt-1"
+                        checked={normalizeWorkspaceMode(formData.workspaceMode, formData.eventType) === 'ros'}
+                        onChange={() => setFormData((prev) => ({ ...prev, workspaceMode: 'ros' }))}
+                      />
+                      <span>
+                        <span className="block text-sm font-semibold text-white">Standard ROS</span>
+                        <span className="block text-xs text-slate-400">Timed cue sheet with timers</span>
+                      </span>
+                    </label>
+                    <label
+                      className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 cursor-pointer ${
+                        normalizeWorkspaceMode(formData.workspaceMode, formData.eventType) === 'board'
+                          ? 'border-emerald-500 bg-slate-800'
+                          : 'border-slate-600 bg-slate-900/60'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="create-workspace-mode"
+                        className="mt-1"
+                        checked={normalizeWorkspaceMode(formData.workspaceMode, formData.eventType) === 'board'}
+                        onChange={() => setFormData((prev) => ({ ...prev, workspaceMode: 'board' }))}
+                      />
+                      <span>
+                        <span className="block text-sm font-semibold text-white">Event Board</span>
+                        <span className="block text-xs text-slate-400">Agenda, decks, display files, AV notes</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              ) : null}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Broadcast Options</label>
                 <select
@@ -1270,6 +1456,17 @@ const EventListPage: React.FC = () => {
                               </option>
                             ))}
                           </select>
+                          {isOffSiteLocation(locs[day]) ? (
+                            <input
+                              type="text"
+                              value={formData.dayLocationDetails?.[day] || ''}
+                              onChange={(e) =>
+                                setFormData((prev) => withDayLocationDetail(prev, day, e.target.value))
+                              }
+                              placeholder="Off-site location info"
+                              className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                            />
+                          ) : null}
                         </label>
                       );
                     })}
@@ -1447,12 +1644,32 @@ const EventListPage: React.FC = () => {
                     </option>
                   ))}
                 </select>
+                {isOffSiteLocation(
+                  normalizeDayLocations(editFormData.location, editFormData.numberOfDays, editFormData.dayLocations)[1]
+                ) ? (
+                  <input
+                    type="text"
+                    value={editFormData.locationDetail || editFormData.dayLocationDetails?.[1] || ''}
+                    onChange={(e) => setEditFormData((prev) => withDayLocationDetail(prev, 1, e.target.value))}
+                    placeholder="Off-site location info (venue, address, room…)"
+                    className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                  />
+                ) : null}
               </div>
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Event Type</label>
                 <select
                   value={editFormData.eventType || 'Staged Production'}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, eventType: e.target.value }))}
+                  onChange={(e) => {
+                    const eventType = e.target.value;
+                    setEditFormData((prev) => ({
+                      ...prev,
+                      eventType,
+                      workspaceMode: eventAllowsBoardChoice(eventType)
+                        ? (prev.workspaceMode || 'ros')
+                        : 'ros',
+                    }));
+                  }}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {EVENT_TYPE_OPTIONS.map((option) => (
@@ -1462,6 +1679,52 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {eventAllowsBoardChoice(editFormData.eventType) ? (
+                <div className="col-span-2 rounded-lg border border-emerald-700/50 bg-emerald-950/30 p-3 space-y-2">
+                  <p className="text-sm font-semibold text-emerald-100">How should this event run?</p>
+                  <p className="text-xs text-slate-400">You can switch later between ROS and Event Board.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label
+                      className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 cursor-pointer ${
+                        normalizeWorkspaceMode(editFormData.workspaceMode, editFormData.eventType) === 'ros'
+                          ? 'border-blue-500 bg-slate-800'
+                          : 'border-slate-600 bg-slate-900/60'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="edit-workspace-mode"
+                        className="mt-1"
+                        checked={normalizeWorkspaceMode(editFormData.workspaceMode, editFormData.eventType) === 'ros'}
+                        onChange={() => setEditFormData((prev) => ({ ...prev, workspaceMode: 'ros' }))}
+                      />
+                      <span>
+                        <span className="block text-sm font-semibold text-white">Standard ROS</span>
+                        <span className="block text-xs text-slate-400">Timed cue sheet with timers</span>
+                      </span>
+                    </label>
+                    <label
+                      className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 cursor-pointer ${
+                        normalizeWorkspaceMode(editFormData.workspaceMode, editFormData.eventType) === 'board'
+                          ? 'border-emerald-500 bg-slate-800'
+                          : 'border-slate-600 bg-slate-900/60'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="edit-workspace-mode"
+                        className="mt-1"
+                        checked={normalizeWorkspaceMode(editFormData.workspaceMode, editFormData.eventType) === 'board'}
+                        onChange={() => setEditFormData((prev) => ({ ...prev, workspaceMode: 'board' }))}
+                      />
+                      <span>
+                        <span className="block text-sm font-semibold text-white">Event Board</span>
+                        <span className="block text-xs text-slate-400">Agenda, decks, display files, AV notes</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              ) : null}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Broadcast Options</label>
                 <select
@@ -1519,6 +1782,17 @@ const EventListPage: React.FC = () => {
                               </option>
                             ))}
                           </select>
+                          {isOffSiteLocation(locs[day]) ? (
+                            <input
+                              type="text"
+                              value={editFormData.dayLocationDetails?.[day] || ''}
+                              onChange={(e) =>
+                                setEditFormData((prev) => withDayLocationDetail(prev, day, e.target.value))
+                              }
+                              placeholder="Off-site location info"
+                              className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                            />
+                          ) : null}
                         </label>
                       );
                     })}

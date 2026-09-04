@@ -8,6 +8,13 @@ import {
   TIMEZONE_OPTIONS,
   EVENT_TYPE_OPTIONS,
   RECORD_STREAMING_OPTIONS,
+  normalizeDayLocations,
+  normalizeDayLocationDetails,
+  parseDayLocations,
+  parseDayLocationDetails,
+  eventMatchesLocationFilter,
+  eventLocationSearchText,
+  isOffSiteLocation,
 } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
@@ -17,8 +24,84 @@ import { isQuickModeCalendarEvent, clearQuickModeNewSessionDedupe } from '../lib
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import QuickModeBoltIcon from '../components/QuickModeBoltIcon';
 import EventListRowActions from '../components/EventListRowActions';
+import EventLocationCell from '../components/EventLocationCell';
 
 type EventListTab = 'upcoming' | 'past' | 'quickMode';
+
+const EMPTY_EVENT_FORM: EventFormData = {
+  name: '',
+  date: '',
+  location: 'Great Hall',
+  dayLocations: { 1: 'Great Hall' },
+  locationDetail: '',
+  dayLocationDetails: {},
+  numberOfDays: 1,
+  timezone: 'America/New_York',
+  eventType: 'Staged Production',
+  recordStreaming: 'None',
+};
+
+function withDayCount(prev: EventFormData, numberOfDays: number): EventFormData {
+  const dayLocations = normalizeDayLocations(prev.location, numberOfDays, prev.dayLocations);
+  const dayLocationDetails = normalizeDayLocationDetails(
+    dayLocations[1] || prev.location,
+    numberOfDays,
+    dayLocations,
+    prev.locationDetail,
+    prev.dayLocationDetails
+  );
+  return {
+    ...prev,
+    numberOfDays,
+    location: dayLocations[1] || prev.location,
+    dayLocations,
+    locationDetail: dayLocationDetails[1] || '',
+    dayLocationDetails,
+  };
+}
+
+function withDayLocation(prev: EventFormData, day: number, location: string): EventFormData {
+  const dayLocations = normalizeDayLocations(prev.location, prev.numberOfDays, prev.dayLocations);
+  dayLocations[day] = location;
+  const dayLocationDetails = { ...(prev.dayLocationDetails || {}) };
+  if (!isOffSiteLocation(location)) {
+    delete dayLocationDetails[day];
+  }
+  const normalizedDetails = normalizeDayLocationDetails(
+    dayLocations[1] || prev.location,
+    prev.numberOfDays,
+    dayLocations,
+    day === 1 ? (isOffSiteLocation(location) ? prev.locationDetail : '') : prev.locationDetail,
+    dayLocationDetails
+  );
+  return {
+    ...prev,
+    dayLocations,
+    location: day === 1 ? location : prev.location,
+    locationDetail: normalizedDetails[1] || '',
+    dayLocationDetails: normalizedDetails,
+  };
+}
+
+function withDayLocationDetail(prev: EventFormData, day: number, detail: string): EventFormData {
+  const dayLocations = normalizeDayLocations(prev.location, prev.numberOfDays, prev.dayLocations);
+  const dayLocationDetails = { ...(prev.dayLocationDetails || {}) };
+  const trimmed = detail.trim();
+  if (trimmed) dayLocationDetails[day] = detail;
+  else delete dayLocationDetails[day];
+  const normalizedDetails = normalizeDayLocationDetails(
+    dayLocations[1] || prev.location,
+    prev.numberOfDays,
+    dayLocations,
+    day === 1 ? detail : prev.locationDetail,
+    dayLocationDetails
+  );
+  return {
+    ...prev,
+    locationDetail: day === 1 ? detail : (normalizedDetails[1] || prev.locationDetail || ''),
+    dayLocationDetails: normalizedDetails,
+  };
+}
 
 const EventListPage: React.FC = () => {
   const navigate = useNavigate();
@@ -30,24 +113,8 @@ const EventListPage: React.FC = () => {
   const [filterDays, setFilterDays] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [editFormData, setEditFormData] = useState<EventFormData>({
-    name: '',
-    date: '',
-    location: 'Great Hall',
-    numberOfDays: 1,
-    timezone: 'America/New_York',
-    eventType: 'Staged Production',
-    recordStreaming: 'None'
-  });
-  const [formData, setFormData] = useState<EventFormData>({
-    name: '',
-    date: '',
-    location: 'Great Hall',
-    numberOfDays: 1,
-    timezone: 'America/New_York',
-    eventType: 'Staged Production',
-    recordStreaming: 'None'
-  });
+  const [editFormData, setEditFormData] = useState<EventFormData>({ ...EMPTY_EVENT_FORM });
+  const [formData, setFormData] = useState<EventFormData>({ ...EMPTY_EVENT_FORM });
   
   // Role selection state
   const [showRoleModal, setShowRoleModal] = useState(false);
@@ -133,6 +200,23 @@ const EventListPage: React.FC = () => {
             date: simpleDate,
             originalDate: calEvent.date,
             location: (calEvent.schedule_data?.location as string) || 'Great Hall',
+            dayLocations: normalizeDayLocations(
+              (calEvent.schedule_data?.location as string) || 'Great Hall',
+              Number(calEvent.schedule_data?.numberOfDays) || 1,
+              parseDayLocations(calEvent.schedule_data?.dayLocations)
+            ),
+            locationDetail: typeof calEvent.schedule_data?.locationDetail === 'string'
+              ? calEvent.schedule_data.locationDetail
+              : '',
+            dayLocationDetails: normalizeDayLocationDetails(
+              (calEvent.schedule_data?.location as string) || 'Great Hall',
+              Number(calEvent.schedule_data?.numberOfDays) || 1,
+              parseDayLocations(calEvent.schedule_data?.dayLocations),
+              typeof calEvent.schedule_data?.locationDetail === 'string'
+                ? calEvent.schedule_data.locationDetail
+                : '',
+              parseDayLocationDetails(calEvent.schedule_data?.dayLocationDetails)
+            ),
             numberOfDays: Number(calEvent.schedule_data?.numberOfDays) || 1,
             timezone: (calEvent.schedule_data?.timezone as string) || 'America/New_York',
             eventType: (calEvent.schedule_data?.eventType as string) || 'Staged Production',
@@ -209,11 +293,26 @@ const EventListPage: React.FC = () => {
     // Generate a unique ID for the event
     const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
+    const dayLocations = normalizeDayLocations(
+      formData.location,
+      formData.numberOfDays,
+      formData.dayLocations
+    );
+    const dayLocationDetails = normalizeDayLocationDetails(
+      dayLocations[1] || formData.location,
+      formData.numberOfDays,
+      dayLocations,
+      formData.locationDetail,
+      formData.dayLocationDetails
+    );
     const newEvent: Event = {
       id: eventId,
       name: formData.name,
       date: formData.date,
-      location: formData.location,
+      location: dayLocations[1] || formData.location,
+      dayLocations,
+      locationDetail: dayLocationDetails[1] || '',
+      dayLocationDetails,
       numberOfDays: formData.numberOfDays,
       timezone: formData.timezone || 'America/New_York',
       eventType: formData.eventType || 'Staged Production',
@@ -224,7 +323,7 @@ const EventListPage: React.FC = () => {
 
     // Close modal first to prevent layout shift
     setShowAddModal(false);
-    setFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
+    setFormData({ ...EMPTY_EVENT_FORM });
     
     // Add event to local list immediately
     setEvents(prev => [...prev, newEvent]);
@@ -239,6 +338,9 @@ const EventListPage: React.FC = () => {
         date: newEvent.date,
         schedule_data: {
           location: newEvent.location,
+          dayLocations: newEvent.dayLocations,
+          locationDetail: newEvent.locationDetail || '',
+          dayLocationDetails: newEvent.dayLocationDetails || {},
           numberOfDays: newEvent.numberOfDays,
           eventId: newEvent.id,
           timezone: newEvent.timezone,
@@ -300,11 +402,26 @@ const EventListPage: React.FC = () => {
       return;
     }
 
+    const dayLocations = normalizeDayLocations(
+      editFormData.location,
+      editFormData.numberOfDays,
+      editFormData.dayLocations
+    );
+    const dayLocationDetails = normalizeDayLocationDetails(
+      dayLocations[1] || editFormData.location,
+      editFormData.numberOfDays,
+      dayLocations,
+      editFormData.locationDetail,
+      editFormData.dayLocationDetails
+    );
     const updatedEvent: Event = {
       ...editingEvent,
       name: editFormData.name,
       date: editFormData.date,
-      location: editFormData.location,
+      location: dayLocations[1] || editFormData.location,
+      dayLocations,
+      locationDetail: dayLocationDetails[1] || '',
+      dayLocationDetails,
       numberOfDays: editFormData.numberOfDays,
       timezone: editFormData.timezone,
       eventType: editFormData.eventType,
@@ -325,7 +442,7 @@ const EventListPage: React.FC = () => {
 
     // Close modal first
     setEditingEvent(null);
-    setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
+    setEditFormData({ ...EMPTY_EVENT_FORM });
     
     // Update local list immediately for instant feedback
     setEvents(prev => prev.map(event => 
@@ -364,6 +481,9 @@ const EventListPage: React.FC = () => {
           schedule_data: {
             ...matchingCalendarEvent.schedule_data, // Preserve existing schedule_data FIRST
             location: updatedEvent.location,         // Then override with new values
+            dayLocations: updatedEvent.dayLocations,
+            locationDetail: updatedEvent.locationDetail || '',
+            dayLocationDetails: updatedEvent.dayLocationDetails || {},
             numberOfDays: updatedEvent.numberOfDays,
             eventId: updatedEvent.id,
             timezone: updatedEvent.timezone,
@@ -518,10 +638,25 @@ const EventListPage: React.FC = () => {
 
   const openEditModal = (event: Event) => {
     setEditingEvent(event);
+    const dayLocations = normalizeDayLocations(
+      event.location,
+      event.numberOfDays,
+      event.dayLocations
+    );
+    const dayLocationDetails = normalizeDayLocationDetails(
+      dayLocations[1] || event.location,
+      event.numberOfDays,
+      dayLocations,
+      event.locationDetail,
+      event.dayLocationDetails
+    );
     setEditFormData({
       name: event.name,
       date: event.date,
-      location: event.location,
+      location: dayLocations[1] || event.location,
+      dayLocations,
+      locationDetail: dayLocationDetails[1] || '',
+      dayLocationDetails,
       numberOfDays: event.numberOfDays,
       timezone: event.timezone || 'America/New_York',
       eventType: event.eventType || 'Staged Production',
@@ -620,7 +755,7 @@ const EventListPage: React.FC = () => {
     const filtered = events.filter(event => {
       const searchMatch = searchTerm === '' || 
         event.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        event.location.toLowerCase().includes(searchTerm.toLowerCase());
+        eventLocationSearchText(event).toLowerCase().includes(searchTerm.toLowerCase());
 
       if (activeTab === 'quickMode') {
         return Boolean(event.isQuickMode) && searchMatch;
@@ -630,7 +765,7 @@ const EventListPage: React.FC = () => {
         ? isEventUpcoming(event.date, event.numberOfDays, today)
         : isEventPast(event.date, event.numberOfDays, today);
       
-      const locationMatch = filterLocation === 'all' || event.location === filterLocation;
+      const locationMatch = eventMatchesLocationFilter(event, filterLocation);
       const daysMatch = filterDays === 'all' || event.numberOfDays.toString() === filterDays;
       
       const passes = dateMatch && locationMatch && daysMatch && searchMatch && !event.isQuickMode;
@@ -922,8 +1057,14 @@ const EventListPage: React.FC = () => {
                           <>
                         <td className="px-3 py-2 border-r border-slate-600">
                           <div className="flex items-center gap-1.5">
-                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${getLocationColor(event.location)}`}></div>
-                            <span className="text-slate-300 text-sm">{event.location}</span>
+                            <EventLocationCell
+                              location={event.location}
+                              numberOfDays={event.numberOfDays}
+                              dayLocations={event.dayLocations}
+                              locationDetail={event.locationDetail}
+                              dayLocationDetails={event.dayLocationDetails}
+                              getLocationColor={getLocationColor}
+                            />
                           </div>
                         </td>
                         <td className="px-3 py-2 border-r border-slate-600">
@@ -1008,10 +1149,12 @@ const EventListPage: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-slate-300 text-sm font-medium mb-1">Location</label>
+                <label className="block text-slate-300 text-sm font-medium mb-1">
+                  {formData.numberOfDays > 1 ? 'Day 1 location' : 'Location'}
+                </label>
                 <select
-                  value={formData.location}
-                  onChange={(e) => setFormData(prev => ({ ...prev, location: e.target.value }))}
+                  value={normalizeDayLocations(formData.location, formData.numberOfDays, formData.dayLocations)[1]}
+                  onChange={(e) => setFormData((prev) => withDayLocation(prev, 1, e.target.value))}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {LOCATION_OPTIONS.map((option) => (
@@ -1020,6 +1163,17 @@ const EventListPage: React.FC = () => {
                     </option>
                   ))}
                 </select>
+                {isOffSiteLocation(
+                  normalizeDayLocations(formData.location, formData.numberOfDays, formData.dayLocations)[1]
+                ) ? (
+                  <input
+                    type="text"
+                    value={formData.locationDetail || formData.dayLocationDetails?.[1] || ''}
+                    onChange={(e) => setFormData((prev) => withDayLocationDetail(prev, 1, e.target.value))}
+                    placeholder="Off-site location info (venue, address, room…)"
+                    className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                  />
+                ) : null}
               </div>
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Event Type</label>
@@ -1053,7 +1207,7 @@ const EventListPage: React.FC = () => {
                 <label className="block text-slate-300 text-sm font-medium mb-1">Duration</label>
                 <select
                   value={formData.numberOfDays}
-                  onChange={(e) => setFormData(prev => ({ ...prev, numberOfDays: parseInt(e.target.value) }))}
+                  onChange={(e) => setFormData((prev) => withDayCount(prev, parseInt(e.target.value, 10)))}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {DAYS_OPTIONS.map((days) => (
@@ -1063,6 +1217,50 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {formData.numberOfDays > 1 ? (
+                <div className="col-span-2 rounded-lg border border-slate-600/80 bg-slate-900/40 p-3">
+                  <p className="text-xs text-slate-400 mb-2">
+                    Multi-day rooms — set a different location for later days if the event moves.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {Array.from({ length: formData.numberOfDays - 1 }, (_, i) => {
+                      const day = i + 2;
+                      const locs = normalizeDayLocations(
+                        formData.location,
+                        formData.numberOfDays,
+                        formData.dayLocations
+                      );
+                      return (
+                        <label key={day} className="text-xs text-slate-400">
+                          Day {day} location
+                          <select
+                            value={locs[day]}
+                            onChange={(e) => setFormData((prev) => withDayLocation(prev, day, e.target.value))}
+                            className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                          >
+                            {LOCATION_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          {isOffSiteLocation(locs[day]) ? (
+                            <input
+                              type="text"
+                              value={formData.dayLocationDetails?.[day] || ''}
+                              onChange={(e) =>
+                                setFormData((prev) => withDayLocationDetail(prev, day, e.target.value))
+                              }
+                              placeholder="Off-site location info"
+                              className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                            />
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Timezone</label>
                 <select
@@ -1082,7 +1280,7 @@ const EventListPage: React.FC = () => {
               <button
                 onClick={() => {
                   setShowAddModal(false);
-                  setFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
+                  setFormData({ ...EMPTY_EVENT_FORM });
                 }}
                 className="flex-1 px-4 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors"
               >
@@ -1182,10 +1380,12 @@ const EventListPage: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-slate-300 text-sm font-medium mb-1">Location</label>
+                <label className="block text-slate-300 text-sm font-medium mb-1">
+                  {editFormData.numberOfDays > 1 ? 'Day 1 location' : 'Location'}
+                </label>
                 <select
-                  value={editFormData.location}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, location: e.target.value }))}
+                  value={normalizeDayLocations(editFormData.location, editFormData.numberOfDays, editFormData.dayLocations)[1]}
+                  onChange={(e) => setEditFormData((prev) => withDayLocation(prev, 1, e.target.value))}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {LOCATION_OPTIONS.map((option) => (
@@ -1194,6 +1394,17 @@ const EventListPage: React.FC = () => {
                     </option>
                   ))}
                 </select>
+                {isOffSiteLocation(
+                  normalizeDayLocations(editFormData.location, editFormData.numberOfDays, editFormData.dayLocations)[1]
+                ) ? (
+                  <input
+                    type="text"
+                    value={editFormData.locationDetail || editFormData.dayLocationDetails?.[1] || ''}
+                    onChange={(e) => setEditFormData((prev) => withDayLocationDetail(prev, 1, e.target.value))}
+                    placeholder="Off-site location info (venue, address, room…)"
+                    className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                  />
+                ) : null}
               </div>
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Event Type</label>
@@ -1227,7 +1438,7 @@ const EventListPage: React.FC = () => {
                 <label className="block text-slate-300 text-sm font-medium mb-1">Duration</label>
                 <select
                   value={editFormData.numberOfDays}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, numberOfDays: parseInt(e.target.value) }))}
+                  onChange={(e) => setEditFormData((prev) => withDayCount(prev, parseInt(e.target.value, 10)))}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {DAYS_OPTIONS.map((days) => (
@@ -1237,6 +1448,52 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {editFormData.numberOfDays > 1 ? (
+                <div className="col-span-2 rounded-lg border border-slate-600/80 bg-slate-900/40 p-3">
+                  <p className="text-xs text-slate-400 mb-2">
+                    Multi-day rooms — set a different location for later days if the event moves.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {Array.from({ length: editFormData.numberOfDays - 1 }, (_, i) => {
+                      const day = i + 2;
+                      const locs = normalizeDayLocations(
+                        editFormData.location,
+                        editFormData.numberOfDays,
+                        editFormData.dayLocations
+                      );
+                      return (
+                        <label key={day} className="text-xs text-slate-400">
+                          Day {day} location
+                          <select
+                            value={locs[day]}
+                            onChange={(e) =>
+                              setEditFormData((prev) => withDayLocation(prev, day, e.target.value))
+                            }
+                            className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                          >
+                            {LOCATION_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          {isOffSiteLocation(locs[day]) ? (
+                            <input
+                              type="text"
+                              value={editFormData.dayLocationDetails?.[day] || ''}
+                              onChange={(e) =>
+                                setEditFormData((prev) => withDayLocationDetail(prev, day, e.target.value))
+                              }
+                              placeholder="Off-site location info"
+                              className="mt-2 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                            />
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Timezone</label>
                 <select
@@ -1256,7 +1513,7 @@ const EventListPage: React.FC = () => {
               <button
                 onClick={() => {
                   setEditingEvent(null);
-                  setEditFormData({ name: '', date: '', location: 'Great Hall', numberOfDays: 1, timezone: 'America/New_York', eventType: 'Staged Production', recordStreaming: 'None' });
+                  setEditFormData({ ...EMPTY_EVENT_FORM });
                 }}
                 className="flex-1 px-4 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors"
               >

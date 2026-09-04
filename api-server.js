@@ -60,6 +60,7 @@ const {
   getS3,
   safeOriginalName,
 } = require('./lib/event-cue-files');
+const { registerEventBoardRoutes, ensureEventBoardSchema } = require('./lib/event-board');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
 const {
@@ -727,6 +728,15 @@ registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
 registerEventCueFileRoutes(app, pool);
+registerEventBoardRoutes(app, {
+  pool,
+  userCanAccessEvent,
+  isBucketConfigured,
+  getS3,
+  getBucketConfig,
+  safeOriginalName,
+  multer,
+});
 console.log(
   `[api-auth] require=${apiAuthConfig.requireLevel} legacyPublic=${apiAuthConfig.allowLegacy} sessionTtlHours=${apiAuthConfig.sessionTtlHours}`
 );
@@ -9074,6 +9084,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       startEventCueFileCleanup(pool);
     } catch (err) {
       console.warn('⚠️ event_cue_files sync skipped:', err.message || err);
+    }
+    try {
+      await ensureEventBoardSchema(pool);
+      console.log('✅ event_board tables ready');
+    } catch (err) {
+      console.warn('⚠️ event_board sync skipped:', err.message || err);
     }
   }
 });

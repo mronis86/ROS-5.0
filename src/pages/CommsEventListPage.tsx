@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessComms, isCommsOnlyUser } from '../services/auth-service';
 import { DatabaseService } from '../services/database';
-import { LOCATION_OPTIONS, normalizeDayLocations, parseDayLocations, type DayLocations } from '../types/Event';
+import { LOCATION_OPTIONS, normalizeDayLocations, normalizeDayLocationDetails, parseDayLocations, parseDayLocationDetails, type DayLocations, type DayLocationDetails } from '../types/Event';
 import { isQuickModeCalendarEvent } from '../lib/quickModeEvent';
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import EventLocationCell from '../components/EventLocationCell';
@@ -14,6 +14,8 @@ type EventRow = {
   date: string;
   location: string;
   dayLocations?: DayLocations;
+  locationDetail?: string;
+  dayLocationDetails?: DayLocationDetails;
   numberOfDays: number;
   timezone: string;
   eventType: string;
@@ -88,6 +90,14 @@ const CommsEventListPage: React.FC = () => {
               String(sd.location || e.location || 'Great Hall'),
               Number(sd.numberOfDays) || 1,
               parseDayLocations(sd.dayLocations)
+            ),
+            locationDetail: typeof sd.locationDetail === 'string' ? sd.locationDetail : '',
+            dayLocationDetails: normalizeDayLocationDetails(
+              String(sd.location || e.location || 'Great Hall'),
+              Number(sd.numberOfDays) || 1,
+              parseDayLocations(sd.dayLocations),
+              typeof sd.locationDetail === 'string' ? sd.locationDetail : '',
+              parseDayLocationDetails(sd.dayLocationDetails)
             ),
             numberOfDays: Number(sd.numberOfDays) || 1,
             timezone: String(sd.timezone || 'America/New_York'),
@@ -243,6 +253,8 @@ const CommsEventListPage: React.FC = () => {
                         location={event.location || 'Great Hall'}
                         numberOfDays={event.numberOfDays}
                         dayLocations={event.dayLocations}
+                        locationDetail={event.locationDetail}
+                        dayLocationDetails={event.dayLocationDetails}
                         getLocationColor={locationDotClass}
                         compact
                       />
@@ -321,6 +333,8 @@ const CommsEventListPage: React.FC = () => {
                               location={event.location || 'Great Hall'}
                               numberOfDays={event.numberOfDays}
                               dayLocations={event.dayLocations}
+                              locationDetail={event.locationDetail}
+                              dayLocationDetails={event.dayLocationDetails}
                               getLocationColor={locationDotClass}
                             />
                           </div>

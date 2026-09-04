@@ -9666,36 +9666,47 @@ const RunOfShowPage: React.FC = () => {
   };
 
   const moveScheduleItem = (itemId: number, direction: 'up' | 'down') => {
-    const currentIndex = schedule.findIndex(item => item.id === itemId);
-    if (currentIndex === -1) return;
+    const item = schedule.find(scheduleItem => scheduleItem.id === itemId);
+    if (!item) return;
 
-    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (newIndex < 0 || newIndex >= schedule.length) return;
+    // Reorder within the same day only. Adjacent full-schedule swaps break on
+    // multi-day events (day 2 ↑ often swaps with a day 1 row and the day view does not change).
+    const day = item.day || 1;
+    const dayItems = schedule.filter(scheduleItem => (scheduleItem.day || 1) === day);
+    const dayIndex = dayItems.findIndex(scheduleItem => scheduleItem.id === itemId);
+    if (dayIndex === -1) return;
 
-    const item = schedule[currentIndex];
-    const fromRow = currentIndex + 1;
-    const toRow = newIndex + 1;
+    const targetDayIndex = direction === 'up' ? dayIndex - 1 : dayIndex + 1;
+    if (targetDayIndex < 0 || targetDayIndex >= dayItems.length) return;
+
+    const fromRow = dayIndex + 1;
+    const toRow = targetDayIndex + 1;
 
     setSchedule(prev => {
-      const newSchedule = [...prev];
-      [newSchedule[currentIndex], newSchedule[newIndex]] = [newSchedule[newIndex], newSchedule[currentIndex]];
-      return newSchedule;
+      const dayItemsPrev = prev.filter(scheduleItem => (scheduleItem.day || 1) === day);
+      const from = dayItemsPrev.findIndex(scheduleItem => scheduleItem.id === itemId);
+      const to = direction === 'up' ? from - 1 : from + 1;
+      if (from < 0 || to < 0 || to >= dayItemsPrev.length) return prev;
+      const reordered = [...dayItemsPrev];
+      [reordered[from], reordered[to]] = [reordered[to], reordered[from]];
+      let dayCursor = 0;
+      return prev.map(scheduleItem =>
+        (scheduleItem.day || 1) === day ? reordered[dayCursor++] : scheduleItem
+      );
     });
-    
-    // Log the change
-    if (item) {
-      logChange('MOVE_ITEM', `Moved "${item.segmentName}" from row ${fromRow} to row ${toRow}`, {
-        changeType: 'MOVE',
-        itemId: item.id,
-        itemName: item.segmentName,
-        details: {
-          fromRow: fromRow,
-          toRow: toRow,
-          direction: direction
-        }
-      });
-    }
-    
+
+    logChange('MOVE_ITEM', `Moved "${item.segmentName}" from row ${fromRow} to row ${toRow}`, {
+      changeType: 'MOVE',
+      itemId: item.id,
+      itemName: item.segmentName,
+      details: {
+        fromRow,
+        toRow,
+        direction,
+        day,
+      }
+    });
+
     setActiveRowMenu(null);
   };
 
@@ -9883,24 +9894,39 @@ const RunOfShowPage: React.FC = () => {
   };
 
   const moveToSpecificRow = (itemId: number, targetRowNumber: number) => {
-    const currentIndex = schedule.findIndex(item => item.id === itemId);
-    if (currentIndex === -1) return;
+    const item = schedule.find(scheduleItem => scheduleItem.id === itemId);
+    if (!item) return;
 
-    const targetIndex = targetRowNumber - 1; // Convert to 0-based index
-    if (targetIndex < 0 || targetIndex >= schedule.length || targetIndex === currentIndex) return;
+    // targetRowNumber is 1-based within the currently visible day list
+    const day = item.day || 1;
+    const dayItems = schedule.filter(scheduleItem => (scheduleItem.day || 1) === day);
+    const currentDayIndex = dayItems.findIndex(scheduleItem => scheduleItem.id === itemId);
+    const targetDayIndex = targetRowNumber - 1;
+    if (
+      currentDayIndex === -1 ||
+      targetDayIndex < 0 ||
+      targetDayIndex >= dayItems.length ||
+      targetDayIndex === currentDayIndex
+    ) {
+      return;
+    }
 
-    const item = schedule[currentIndex];
-    const fromRow = currentIndex + 1;
+    const fromRow = currentDayIndex + 1;
     const toRow = targetRowNumber;
 
     setSchedule(prev => {
-      const newSchedule = [...prev];
-      const item = newSchedule[currentIndex];
-      newSchedule.splice(currentIndex, 1);
-      newSchedule.splice(targetIndex, 0, item);
-      return newSchedule;
+      const dayItemsPrev = prev.filter(scheduleItem => (scheduleItem.day || 1) === day);
+      const moving = dayItemsPrev.find(scheduleItem => scheduleItem.id === itemId);
+      if (!moving) return prev;
+      const without = dayItemsPrev.filter(scheduleItem => scheduleItem.id !== itemId);
+      const insertAt = Math.max(0, Math.min(targetDayIndex, without.length));
+      without.splice(insertAt, 0, moving);
+      let dayCursor = 0;
+      return prev.map(scheduleItem =>
+        (scheduleItem.day || 1) === day ? without[dayCursor++] : scheduleItem
+      );
     });
-    
+
     // Log the change
     if (item) {
       logChange('MOVE_ITEM', `Moved "${item.segmentName}" from row ${fromRow} to row ${toRow}`, {
@@ -9910,7 +9936,8 @@ const RunOfShowPage: React.FC = () => {
         details: {
           fromRow: fromRow,
           toRow: toRow,
-          direction: 'specific'
+          direction: 'specific',
+          day,
         }
       });
     }
@@ -13451,7 +13478,10 @@ const RunOfShowPage: React.FC = () => {
                           }
                           // Pause syncing when inserting new row
                           handleModalEditing();
-                          setInsertRowPosition(index);
+                          // Use full-schedule index (not day-filtered index) so multi-day
+                          // inserts land after this item instead of near the top of the day.
+                          const fullIndex = schedule.findIndex(scheduleItem => scheduleItem.id === item.id);
+                          setInsertRowPosition(fullIndex >= 0 ? fullIndex : index);
                           setModalDraftItemId(Date.now());
                           setShowAddModal(true);
                         }}

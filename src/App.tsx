@@ -9,6 +9,7 @@ import AppHeader from './components/AppHeader';
 import ReportIssueFab from './components/ReportIssueFab';
 import { hydrateLogoVariantFromServer } from './lib/appSettings';
 import EventListPage from './pages/EventListPage';
+import EventBoardPage from './pages/EventBoardPage';
 import RunOfShowPage from './pages/RunOfShowPage';
 import RunOfShowMobilePage from './pages/RunOfShowMobilePage';
 import FullScreenTimerPage from './pages/FullScreenTimerPage';
@@ -144,6 +145,7 @@ function AppContent() {
             <Route path="/join-event" element={<JoinEventAccessPage />} />
             <Route path="/quick-mode" element={<QuickModePage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />
+            <Route path="/event-board" element={<EventBoardPage />} />
             <Route path="/run-of-show-mobile" element={<RunOfShowMobilePage />} />
             <Route path="/fullscreen-timer" element={<FullScreenTimerPage />} />
             <Route path="/graphics-links" element={<GraphicsLinksPage />} />

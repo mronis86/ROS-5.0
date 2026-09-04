@@ -313,6 +313,8 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                         location={event.location}
                         numberOfDays={event.numberOfDays}
                         dayLocations={event.dayLocations}
+                        locationDetail={event.locationDetail}
+                        dayLocationDetails={event.dayLocationDetails}
                         getLocationColor={getLocationColor}
                         compact
                       />
