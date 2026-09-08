@@ -709,7 +709,7 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
 app.set('trust proxy', 1);
 app.use(helmet());
 // In development allow any origin (so other computers on LAN can POST e.g. to /api/auth/check-domain)
-const ADMIN_CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Admin-Key', 'X-Admin-Pin'];
+const ADMIN_CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Admin-Key', 'X-Admin-Pin', 'X-ROS-Role'];
 const RATE_LIMIT_CORS_HEADERS = ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Retry-After'];
 const corsOptions = {
   origin: isProduction ? true : true,

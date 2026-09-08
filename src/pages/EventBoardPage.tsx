@@ -1,10 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { Event } from '../types/Event';
-import { normalizeWorkspaceMode } from '../types/Event';
 import { getApiBaseUrl } from '../services/api-client';
 import { apiAuthFetch, authHeaders } from '../lib/sessionAuth';
 import { DatabaseService } from '../services/database';
+import { useAuth } from '../contexts/AuthContext';
+import { canSelectOperatorRole } from '../services/auth-service';
+import RoleSelectionModal from '../components/RoleSelectionModal';
+
+type SessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
+
+function resolveSessionRole(
+  role: string | null | undefined,
+  user: { is_admin?: boolean; is_event_manager?: boolean } | null | undefined
+): SessionRole {
+  if (!role || !['VIEWER', 'EDITOR', 'OPERATOR'].includes(role)) return 'VIEWER';
+  if (role === 'OPERATOR' && !canSelectOperatorRole(user)) return 'VIEWER';
+  return role as SessionRole;
+}
 
 type BoardZone = 'agenda' | 'powerpoint' | 'display';
 
@@ -54,9 +67,16 @@ function formatBytes(n?: number | null): string {
 const EventBoardPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const state = (location.state || {}) as { event?: Event; userRole?: string };
-  const [event, setEvent] = useState<Event | null>(state.event || null);
-  const [userRole] = useState(String(state.userRole || 'EDITOR').toUpperCase());
+  const [event] = useState<Event | null>(state.event || null);
+  const [userRole, setUserRole] = useState<SessionRole>(() => {
+    const fromNav = state.userRole;
+    if (fromNav) return resolveSessionRole(fromNav, user);
+    const saved = event?.id ? localStorage.getItem(`userRole_${event.id}`) : null;
+    return resolveSessionRole(saved || 'EDITOR', user);
+  });
+  const [showRoleChangeModal, setShowRoleChangeModal] = useState(false);
   const canEdit = userRole === 'EDITOR';
 
   const [board, setBoard] = useState<BoardData | null>(null);
@@ -66,7 +86,6 @@ const EventBoardPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadBusyZone, setUploadBusyZone] = useState<BoardZone | null>(null);
-  const [switching, setSwitching] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const eventId = event?.id;
@@ -225,36 +244,28 @@ const EventBoardPage: React.FC = () => {
     }
   };
 
-  const switchToRos = async () => {
-    if (!event || !canEdit) return;
-    if (!window.confirm('Switch this event to a standard timed Run of Show? You can switch back later from Edit Event.')) {
-      return;
+  const applyRole = (role: string) => {
+    const resolved = resolveSessionRole(role, user);
+    setUserRole(resolved);
+    if (event?.id) {
+      localStorage.setItem(`userRole_${event.id}`, resolved);
+      if (user?.id) {
+        const username = user.full_name || user.email || 'Unknown';
+        void DatabaseService.saveUserSession(event.id, user.id, username, resolved);
+      }
     }
-    setSwitching(true);
-    try {
-      const calendarEvents: any[] = (await DatabaseService.getCalendarEvents()) || [];
-      const match = calendarEvents.find(
-        (c) => c.schedule_data?.eventId === event.id || c.id === event.id || c.id === event.calendarId
-      );
-      if (!match?.id) throw new Error('Could not find calendar event to update');
-      const nextMode = normalizeWorkspaceMode('ros', event.eventType);
-      await DatabaseService.updateCalendarEvent(match.id, {
-        name: event.name,
-        date: event.date,
-        schedule_data: {
-          ...match.schedule_data,
-          workspaceMode: nextMode,
-          eventId: event.id,
-        },
-      });
-      const nextEvent = { ...event, workspaceMode: nextMode };
-      setEvent(nextEvent);
-      navigate('/run-of-show', { state: { event: nextEvent, userRole } });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not switch to ROS');
-    } finally {
-      setSwitching(false);
+    setShowRoleChangeModal(false);
+  };
+
+  const handleBackToEvents = async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
     }
+    if (canEdit && eventId) {
+      await persistNotes(avNotes, agendaText);
+    }
+    navigate('/');
   };
 
   const renderZone = (zone: BoardZone) => {
@@ -346,62 +357,73 @@ const EventBoardPage: React.FC = () => {
 
   if (!eventId) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center p-6">
-        <div className="max-w-md text-center space-y-3">
-          <p className="text-lg font-semibold text-white">Event Board</p>
-          <p className="text-sm text-slate-400">{error || 'Open an event from the list.'}</p>
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
-          >
-            Back to events
-          </button>
+      <div className="min-h-screen bg-slate-900 text-slate-200 pt-[var(--app-header-height)]">
+        <div className="sticky top-[var(--app-header-height)] z-40 border-b border-slate-700 bg-slate-900">
+          <div className="flex items-center px-3 py-1.5">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="rounded-md bg-slate-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-600"
+            >
+              ← Events
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center justify-center px-6 pt-16">
+          <div className="max-w-md text-center space-y-3">
+            <p className="text-lg font-semibold text-white">Event Board</p>
+            <p className="text-sm text-slate-400">{error || 'Open an event from the list.'}</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 bg-slate-900/80">
-        <div className="mx-auto max-w-6xl px-4 py-4 flex flex-wrap items-center gap-3 justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-semibold text-white truncate">{event?.name || 'Event Board'}</h1>
-              <span className="rounded-md bg-emerald-700/80 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">
-                Board
-              </span>
-              <span className="text-[11px] text-slate-400">{userRole}</span>
-              {saving ? <span className="text-[11px] text-slate-500">Saving…</span> : null}
-            </div>
-            <p className="text-xs text-slate-400 mt-1">
-              {[event?.date, event?.location, event?.eventType].filter(Boolean).join(' · ')}
-            </p>
+    <div className="min-h-screen bg-slate-900 text-slate-100 pt-[var(--app-header-height)]">
+      <header className="sticky top-[var(--app-header-height)] z-40 border-b border-slate-700 bg-slate-900">
+        <div className="flex items-center gap-2 px-3 py-1.5">
+          <button
+            type="button"
+            onClick={() => void handleBackToEvents()}
+            className="shrink-0 rounded-md bg-slate-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-600"
+            title="Back to Events"
+          >
+            ← Events
+          </button>
+          <div className="ml-6 min-w-0 flex items-center gap-2">
+            <h1 className="truncate text-sm font-semibold text-white">{event?.name || 'Event Board'}</h1>
+            <span className="shrink-0 rounded bg-emerald-800/80 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-100">
+              Board
+            </span>
+            <span className="hidden md:inline truncate text-xs text-slate-500">
+              {[event?.date, event?.location].filter(Boolean).join(' · ')}
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            {canEdit ? (
-              <button
-                type="button"
-                disabled={switching}
-                onClick={() => void switchToRos()}
-                className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-700 disabled:opacity-50"
-              >
-                {switching ? 'Switching…' : 'Switch to timed ROS'}
-              </button>
-            ) : null}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {saving ? <span className="text-[11px] text-slate-500">Saving…</span> : null}
+            <span className="text-xs text-slate-400">
+              <span className="hidden sm:inline">Role: </span>
+              <span className="font-semibold text-white">{userRole}</span>
+            </span>
             <button
               type="button"
-              onClick={() => navigate('/')}
-              className="rounded-lg bg-slate-700 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-600"
+              onClick={() => setShowRoleChangeModal(true)}
+              className="rounded-md bg-slate-700 px-2 py-1 text-xs font-medium text-white hover:bg-slate-600"
             >
-              Event list
+              Change Role
             </button>
           </div>
         </div>
       </header>
+      <RoleSelectionModal
+        isOpen={showRoleChangeModal}
+        onClose={() => setShowRoleChangeModal(false)}
+        onRoleSelected={applyRole}
+        eventId={event?.id || ''}
+      />
 
-      <main className="mx-auto max-w-6xl px-4 py-6 space-y-5">
+      <main className="mx-auto max-w-6xl px-4 sm:px-8 py-6 space-y-5">
         {error ? (
           <div className="rounded-lg border border-red-800/70 bg-red-950/40 px-3 py-2 text-sm text-red-200">
             {error}
