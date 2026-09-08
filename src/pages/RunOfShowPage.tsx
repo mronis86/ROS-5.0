@@ -13,6 +13,7 @@ import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeade
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import { canAccessAccessManager, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
+import { shouldConfirmCueRecordingMark } from '../lib/cueRecording';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
@@ -13312,7 +13313,7 @@ const RunOfShowPage: React.FC = () => {
                           style={{ width: columnWidths.timer }}
                         >
                           <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
-                            Timer
+                            Counter
                             {currentUserRole === 'VIEWER' && (
                               <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                             )}
@@ -14273,7 +14274,7 @@ const RunOfShowPage: React.FC = () => {
                       style={{ width: columnWidths.timer }}
                     >
                       <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
-                        Timer
+                        Counter
                         {currentUserRole === 'VIEWER' && (
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
@@ -14343,6 +14344,7 @@ const RunOfShowPage: React.FC = () => {
                         currentUserId={user?.id}
                         onRowEditStart={claimRowEditLock}
                         onRowEditEnd={releaseRowEditLock}
+                        confirmRecordingMark={shouldConfirmCueRecordingMark(user)}
                         item={item}
                         index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}
@@ -16834,7 +16836,7 @@ const RunOfShowPage: React.FC = () => {
                       onChange={(e) => setVisibleColumns(prev => ({ ...prev, timer: e.target.checked }))}
                       className="rounded"
                     />
-                    <span className="text-white">Timer</span>
+                    <span className="text-white">Counter</span>
                   </label>
                   
                   {customColumns.map((column, index) => (

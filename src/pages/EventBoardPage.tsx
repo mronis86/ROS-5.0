@@ -7,6 +7,7 @@ import { DatabaseService } from '../services/database';
 import { useAuth } from '../contexts/AuthContext';
 import { canSelectOperatorRole } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
+import { parseBoardAgenda, rowsLookTimed, type BoardAgendaRow } from '../lib/boardAgenda';
 
 type SessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
 
@@ -36,6 +37,9 @@ type BoardData = {
   event_id: string;
   av_notes: string;
   agenda_text: string;
+  agenda_items?: BoardAgendaRow[];
+  conference_setup?: string;
+  food_beverage?: string;
   assets: BoardAsset[];
 };
 
@@ -81,14 +85,34 @@ const EventBoardPage: React.FC = () => {
 
   const [board, setBoard] = useState<BoardData | null>(null);
   const [avNotes, setAvNotes] = useState('');
+  const [conferenceSetup, setConferenceSetup] = useState('');
+  const [foodBeverage, setFoodBeverage] = useState('');
   const [agendaText, setAgendaText] = useState('');
+  const [agendaItems, setAgendaItems] = useState<BoardAgendaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadBusyZone, setUploadBusyZone] = useState<BoardZone | null>(null);
+  const [notesTab, setNotesTab] = useState<'agenda' | 'setup' | 'food' | 'av'>('agenda');
+  const [notesQuery, setNotesQuery] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const eventId = event?.id;
+
+  const notesQueryNorm = notesQuery.trim().toLowerCase();
+  const noteMatches = (text: string) =>
+    !notesQueryNorm || text.toLowerCase().includes(notesQueryNorm);
+  const filteredAgendaItems = agendaItems.filter((row) =>
+    noteMatches([row.time, row.subject, row.info].join(' '))
+  );
+  const noteTabHasMatch = {
+    agenda: rowsLookTimed(agendaItems)
+      ? agendaItems.some((row) => noteMatches([row.time, row.subject, row.info].join(' ')))
+      : noteMatches(agendaText),
+    setup: noteMatches(conferenceSetup),
+    food: noteMatches(foodBeverage),
+    av: noteMatches(avNotes),
+  };
 
   const assetsByZone = useMemo(() => {
     const map: Record<BoardZone, BoardAsset[]> = { agenda: [], powerpoint: [], display: [] };
@@ -111,7 +135,12 @@ const EventBoardPage: React.FC = () => {
       const data = (await res.json()) as BoardData;
       setBoard(data);
       setAvNotes(data.av_notes || '');
+      setConferenceSetup(data.conference_setup || '');
+      setFoodBeverage(data.food_beverage || '');
       setAgendaText(data.agenda_text || '');
+      const stored = Array.isArray(data.agenda_items) ? data.agenda_items : [];
+      const parsed = stored.length ? stored : parseBoardAgenda(data.agenda_text || '');
+      setAgendaItems(rowsLookTimed(parsed) ? parsed : stored);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load board');
     } finally {
@@ -129,7 +158,13 @@ const EventBoardPage: React.FC = () => {
   }, [eventId, loadBoard]);
 
   const persistNotes = useCallback(
-    async (nextAv: string, nextAgenda: string) => {
+    async (
+      nextAv: string,
+      nextAgenda: string,
+      nextItems: BoardAgendaRow[] = agendaItems,
+      nextConference: string = conferenceSetup,
+      nextFood: string = foodBeverage
+    ) => {
       if (!eventId || !canEdit) return;
       setSaving(true);
       try {
@@ -139,7 +174,9 @@ const EventBoardPage: React.FC = () => {
           body: JSON.stringify({
             av_notes: nextAv,
             agenda_text: nextAgenda,
-            agenda_items: [],
+            agenda_items: nextItems,
+            conference_setup: nextConference,
+            food_beverage: nextFood,
           }),
         });
         if (!res) throw new Error('Not signed in');
@@ -153,18 +190,24 @@ const EventBoardPage: React.FC = () => {
         setSaving(false);
       }
     },
-    [canEdit, eventId, userRole]
+    [agendaItems, canEdit, conferenceSetup, eventId, foodBeverage, userRole]
   );
 
   const scheduleSave = useCallback(
-    (nextAv: string, nextAgenda: string) => {
+    (
+      nextAv: string,
+      nextAgenda: string,
+      nextItems: BoardAgendaRow[] = agendaItems,
+      nextConference: string = conferenceSetup,
+      nextFood: string = foodBeverage
+    ) => {
       if (!canEdit) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        void persistNotes(nextAv, nextAgenda);
+        void persistNotes(nextAv, nextAgenda, nextItems, nextConference, nextFood);
       }, 700);
     },
-    [canEdit, persistNotes]
+    [agendaItems, canEdit, conferenceSetup, foodBeverage, persistNotes]
   );
 
   const onUpload = async (zone: BoardZone, file: File) => {
@@ -184,7 +227,13 @@ const EventBoardPage: React.FC = () => {
       if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
       await loadBoard(eventId);
       if (zone === 'agenda' && data.extracted_text) {
-        setAgendaText((prev) => prev || data.extracted_text);
+        const parsed = parseBoardAgenda(String(data.extracted_text));
+        if (rowsLookTimed(parsed)) {
+          setAgendaItems(parsed);
+          setAgendaText(parsed.map((row) => [row.time, row.subject, row.info].filter(Boolean).join(' — ')).join('\n'));
+        } else {
+          setAgendaText((prev) => prev || String(data.extracted_text));
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
@@ -218,7 +267,12 @@ const EventBoardPage: React.FC = () => {
       if (!res) throw new Error('Not signed in');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not apply text');
-      setAgendaText(data.agenda_text || asset.extracted_text || '');
+      const source = data.agenda_text || data.extracted_text || asset.extracted_text || '';
+      const parsed = Array.isArray(data.agenda_items) && data.agenda_items.length
+        ? data.agenda_items
+        : parseBoardAgenda(source);
+      setAgendaText(source);
+      setAgendaItems(rowsLookTimed(parsed) ? parsed : []);
       await loadBoard(eventId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not apply text');
@@ -441,39 +495,158 @@ const EventBoardPage: React.FC = () => {
             </div>
 
             <section className="rounded-xl border border-slate-600/80 bg-slate-900/50 p-4">
-              <h2 className="text-sm font-semibold text-white mb-1">Agenda text</h2>
-              <p className="text-xs text-slate-400 mb-2">
-                Parsed or pasted schedule notes for the room (not a timed cue sheet).
-              </p>
-              <textarea
-                value={agendaText}
-                disabled={!canEdit}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setAgendaText(next);
-                  scheduleSave(avNotes, next);
-                }}
-                rows={10}
-                className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-                placeholder="Paste agenda text or extract it from an uploaded document…"
-              />
-            </section>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div className="flex flex-wrap gap-1">
+                  {(
+                    [
+                      ['agenda', 'Agenda'],
+                      ['setup', 'Conference setup'],
+                      ['food', 'Food & Beverage'],
+                      ['av', 'AV notes'],
+                    ] as const
+                  ).map(([id, label]) => {
+                    const active = notesTab === id;
+                    const hit = !!notesQueryNorm && noteTabHasMatch[id];
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setNotesTab(id)}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          active
+                            ? 'bg-slate-700 text-white'
+                            : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        {label}
+                        {hit ? <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 align-middle" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input
+                  type="search"
+                  value={notesQuery}
+                  onChange={(e) => setNotesQuery(e.target.value)}
+                  placeholder="Search notes…"
+                  className="w-full sm:w-56 rounded-md border border-slate-600 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
 
-            <section className="rounded-xl border border-slate-600/80 bg-slate-900/50 p-4">
-              <h2 className="text-sm font-semibold text-white mb-1">General AV info / notes</h2>
-              <p className="text-xs text-slate-400 mb-2">Mic counts, record/stream plan, room quirks, contacts…</p>
-              <textarea
-                value={avNotes}
-                disabled={!canEdit}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setAvNotes(next);
-                  scheduleSave(next, agendaText);
-                }}
-                rows={8}
-                className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-                placeholder="AV notes for this meeting…"
-              />
+              {notesTab === 'agenda' ? (
+                <>
+                  <p className="text-xs text-slate-400 mb-3">
+                    Simplified from the uploaded agenda: times, subject, and extra info.
+                  </p>
+                  {rowsLookTimed(agendaItems) ? (
+                    <div className="overflow-x-auto rounded-lg border border-slate-700">
+                      <table className="min-w-full text-left text-sm">
+                        <thead className="bg-slate-800 text-[11px] uppercase tracking-wide text-slate-400">
+                          <tr>
+                            <th className="px-3 py-2 font-semibold w-[9.5rem]">Times</th>
+                            <th className="px-3 py-2 font-semibold">Subject</th>
+                            <th className="px-3 py-2 font-semibold">Info</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredAgendaItems.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className="px-3 py-4 text-slate-500">No matching agenda rows.</td>
+                            </tr>
+                          ) : (
+                            filteredAgendaItems.map((row, index) => (
+                              <tr key={`${row.time}-${row.subject}-${index}`} className="border-t border-slate-700/80 align-top">
+                                <td className="px-3 py-2 text-cyan-200 whitespace-nowrap tabular-nums">{row.time || '—'}</td>
+                                <td className="px-3 py-2 text-white">{row.subject || '—'}</td>
+                                <td className="px-3 py-2 text-slate-300">{row.info || '—'}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <textarea
+                      value={agendaText}
+                      disabled={!canEdit}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setAgendaText(next);
+                        const parsed = parseBoardAgenda(next);
+                        const nextItems = rowsLookTimed(parsed) ? parsed : [];
+                        setAgendaItems(nextItems);
+                        scheduleSave(avNotes, next, nextItems, conferenceSetup, foodBeverage);
+                      }}
+                      rows={12}
+                      className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                      placeholder="Paste agenda text or extract it from an uploaded document…"
+                    />
+                  )}
+                </>
+              ) : null}
+
+              {notesTab === 'setup' ? (
+                <>
+                  <p className="text-xs text-slate-400 mb-2">Room layout, registration, signage, staffing, load-in…</p>
+                  <textarea
+                    value={conferenceSetup}
+                    disabled={!canEdit}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setConferenceSetup(next);
+                      scheduleSave(avNotes, agendaText, agendaItems, next, foodBeverage);
+                    }}
+                    rows={14}
+                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                    placeholder="Conference setup notes…"
+                  />
+                </>
+              ) : null}
+
+              {notesTab === 'food' ? (
+                <>
+                  <p className="text-xs text-slate-400 mb-2">Meals, breaks, dietary notes, service times, headcount…</p>
+                  <textarea
+                    value={foodBeverage}
+                    disabled={!canEdit}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setFoodBeverage(next);
+                      scheduleSave(avNotes, agendaText, agendaItems, conferenceSetup, next);
+                    }}
+                    rows={14}
+                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                    placeholder="Food and beverage notes…"
+                  />
+                </>
+              ) : null}
+
+              {notesTab === 'av' ? (
+                <>
+                  <p className="text-xs text-slate-400 mb-2">Mic counts, record/stream plan, room quirks, contacts…</p>
+                  <textarea
+                    value={avNotes}
+                    disabled={!canEdit}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setAvNotes(next);
+                      scheduleSave(next, agendaText, agendaItems, conferenceSetup, foodBeverage);
+                    }}
+                    rows={14}
+                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                    placeholder="AV notes for this meeting…"
+                  />
+                </>
+              ) : null}
+
+              {notesQueryNorm && !noteTabHasMatch[notesTab] ? (
+                <p className="mt-2 text-xs text-slate-500">
+                  No matches in this tab.
+                  {(['agenda', 'setup', 'food', 'av'] as const).some((id) => id !== notesTab && noteTabHasMatch[id])
+                    ? ' A cyan dot marks tabs that contain this search.'
+                    : ' Nothing in the notes matches.'}
+                </p>
+              ) : null}
             </section>
           </>
         )}

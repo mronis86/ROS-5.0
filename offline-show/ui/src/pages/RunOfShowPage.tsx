@@ -12218,7 +12218,7 @@ const RunOfShowPage: React.FC = () => {
                           style={{ width: columnWidths.timer }}
                         >
                           <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
-                            Timer
+                            Counter
                             {currentUserRole === 'VIEWER' && (
                               <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                             )}
@@ -13174,7 +13174,7 @@ const RunOfShowPage: React.FC = () => {
                       style={{ width: columnWidths.timer }}
                     >
                       <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
-                        Timer
+                        Counter
                         {currentUserRole === 'VIEWER' && (
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
@@ -15143,7 +15143,7 @@ const RunOfShowPage: React.FC = () => {
                       onChange={(e) => setVisibleColumns(prev => ({ ...prev, timer: e.target.checked }))}
                       className="rounded"
                     />
-                    <span className="text-white">Timer</span>
+                    <span className="text-white">Counter</span>
                   </label>
                   
                   {customColumns.map((column, index) => (

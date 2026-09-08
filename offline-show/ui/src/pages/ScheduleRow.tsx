@@ -965,7 +965,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           />
         </div>
       )}
-      {/* Timer column: Countdown (default) or Time of Day for Clock page */}
+      {/* Counter column: Countdown (default) or Time of Day for Clock page */}
       {visibleColumns.timer && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
@@ -980,7 +980,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             onChange={(e) => {
               if (isLockedByOther) return;
               if (currentUserRole === 'VIEWER') {
-                alert('Only EDITORs and OPERATORs can change Timer display. Please change your role.');
+                alert('Only EDITORs and OPERATORs can change Counter display. Please change your role.');
                 return;
               }
               const newValue = e.target.value as 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
@@ -992,7 +992,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   : scheduleItem
               ));
               if (logChange) {
-                logChange('FIELD_UPDATE', `Updated Timer for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
+                logChange('FIELD_UPDATE', `Updated Counter for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
                   changeType: 'FIELD_CHANGE',
                   itemId: item.id,
                   itemName: item.segmentName,

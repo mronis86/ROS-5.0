@@ -5,6 +5,7 @@ import { socketClient } from '../services/socket-client';
 import { Event } from '../types/Event';
 import { useAuth } from '../contexts/AuthContext';
 import { canSelectOperatorRole } from '../services/auth-service';
+import { CUE_RECORDING_MARK_WARNING, shouldConfirmCueRecordingMark } from '../lib/cueRecording';
 
 /** Mirrored from `RunOfShowPage.tsx` — keep visuals consistent with desktop ROS. */
 const PROGRAM_TYPES = [
@@ -530,6 +531,7 @@ const RunOfShowMobilePage: React.FC = () => {
   const canEditEditorOnlyFields = isEditor;
   /** REC flag — editor + operator (matches desktop ScheduleRow). */
   const canEditRecording = isEditor || isOperator;
+  const confirmRecordingMark = shouldConfirmCueRecordingMark(user);
 
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [rosData, setRosData] = useState<RunOfShowData | null>(null);
@@ -1489,9 +1491,21 @@ const RunOfShowMobilePage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={needsRecordingDraft}
-                    onChange={(e) => setNeedsRecordingDraft(e.target.checked)}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      if (next && confirmRecordingMark) {
+                        if (!window.confirm(CUE_RECORDING_MARK_WARNING)) return;
+                      }
+                      setNeedsRecordingDraft(next);
+                    }}
                     disabled={!canEditRecording}
-                    title={!canEditRecording ? 'Viewers cannot mark cues for recording' : undefined}
+                    title={
+                      !canEditRecording
+                        ? 'Viewers cannot mark cues for recording'
+                        : confirmRecordingMark
+                          ? 'Only for planned post content — not every segment'
+                          : 'Mark this cue for planned post content'
+                    }
                   />
                   Record
                 </label>

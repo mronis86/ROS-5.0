@@ -1,4 +1,5 @@
 import React from 'react';
+import { CUE_RECORDING_MARK_WARNING } from '../lib/cueRecording';
 
 export interface ScheduleRowProps {
   item: any;
@@ -64,6 +65,8 @@ export interface ScheduleRowProps {
   currentUserId?: string;
   onRowEditStart?: (rowId: number) => void;
   onRowEditEnd?: (rowId: number) => void;
+  /** When true, checking REC shows a warning (regular users — not Comms/Admin). */
+  confirmRecordingMark?: boolean;
 }
 
 const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
@@ -126,6 +129,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   currentUserId,
   onRowEditStart,
   onRowEditEnd,
+  confirmRecordingMark = false,
 }) => {
   const isLockedByOther = Boolean(rowLock && currentUserId && rowLock.userId !== currentUserId);
   const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
@@ -196,6 +200,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     }
     const oldValue = !!item.needsRecording;
     if (oldValue === next) return;
+    if (next && confirmRecordingMark) {
+      if (!window.confirm(CUE_RECORDING_MARK_WARNING)) return;
+    }
     setSchedule((prev: any[]) => prev.map(scheduleItem =>
       scheduleItem.id === item.id
         ? { ...scheduleItem, needsRecording: next }
@@ -804,7 +811,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               onChange={(e) => setNeedsRecording(e.target.checked)}
               disabled={isLockedByOther || currentUserRole === 'VIEWER'}
               className={`w-6 h-6 rounded border-2 ${item.needsRecording ? 'border-red-400 bg-red-700' : isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
-              title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot mark cues for recording' : 'Mark this cue for recording'}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : currentUserRole === 'VIEWER'
+                    ? 'Viewers cannot mark cues for recording'
+                    : confirmRecordingMark
+                      ? 'Only for planned post content — not every segment (event Record already covers the show)'
+                      : 'Mark this cue for planned post content'
+              }
             />
             <span className={`text-xs font-black tracking-wide ${item.needsRecording ? 'text-red-400' : 'text-slate-300'}`}>REC</span>
           </label>
@@ -1016,7 +1031,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           />
         </div>
       )}
-      {/* Timer column: Countdown (default) or Time of Day for Clock page */}
+      {/* Counter column: Countdown (default) or Time of Day for Clock page */}
       {visibleColumns.timer && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
@@ -1031,7 +1046,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             onChange={(e) => {
               if (isLockedByOther) return;
               if (currentUserRole === 'VIEWER') {
-                alert('Only EDITORs and OPERATORs can change Timer display. Please change your role.');
+                alert('Only EDITORs and OPERATORs can change Counter display. Please change your role.');
                 return;
               }
               const newValue = e.target.value as 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
@@ -1043,7 +1058,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   : scheduleItem
               ));
               if (logChange) {
-                logChange('FIELD_UPDATE', `Updated Timer for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
+                logChange('FIELD_UPDATE', `Updated Counter for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
                   changeType: 'FIELD_CHANGE',
                   itemId: item.id,
                   itemName: item.segmentName,
