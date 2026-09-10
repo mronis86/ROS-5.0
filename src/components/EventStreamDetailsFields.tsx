@@ -42,6 +42,8 @@ const EventStreamDetailsFields: React.FC<Props> = ({
     playbackUrl: value?.playbackUrl || '',
     youtubeChannel: value?.youtubeChannel || '',
     youtubeChannelOther: value?.youtubeChannelOther || '',
+    youtubeVideoTitle: value?.youtubeVideoTitle || '',
+    youtubeDescription: value?.youtubeDescription || '',
     visibility: value?.visibility || '',
     shareWith: value?.shareWith || '',
     requestContactName: value?.requestContactName || '',
@@ -219,7 +221,17 @@ const EventStreamDetailsFields: React.FC<Props> = ({
                   <span className="text-slate-500">YouTube channel:</span> {channelLabel}
                 </p>
                 <p className="text-slate-300">
-                  <span className="text-slate-500">Visibility:</span> {details.visibility || '—'}
+                  <span className="text-slate-500">Video name:</span>{' '}
+                  {details.youtubeVideoTitle || '—'}
+                </p>
+                {details.youtubeDescription ? (
+                  <p className="text-slate-300 whitespace-pre-wrap">
+                    <span className="text-slate-500">Description:</span> {details.youtubeDescription}
+                  </p>
+                ) : null}
+                <p className="text-slate-300">
+                  <span className="text-slate-500">YouTube visibility:</span>{' '}
+                  {details.visibility || '—'}
                 </p>
                 <p className="text-slate-300 whitespace-pre-wrap">
                   <span className="text-slate-500">Share player link with:</span>{' '}

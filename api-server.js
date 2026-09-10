@@ -3073,6 +3073,8 @@ app.post('/api/stream-request/:token', async (req, res) => {
       submitted: {
         youtubeChannel: normalized.youtubeChannel,
         youtubeChannelOther: normalized.youtubeChannelOther,
+        youtubeVideoTitle: normalized.youtubeVideoTitle,
+        youtubeDescription: normalized.youtubeDescription,
         visibility: normalized.visibility,
         shareWith: normalized.shareWith,
         requestSubmittedAt: normalized.requestSubmittedAt,

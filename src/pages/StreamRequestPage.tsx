@@ -22,6 +22,8 @@ const StreamRequestPage: React.FC = () => {
 
   const [youtubeChannel, setYoutubeChannel] = useState('');
   const [youtubeChannelOther, setYoutubeChannelOther] = useState('');
+  const [youtubeVideoTitle, setYoutubeVideoTitle] = useState('');
+  const [youtubeDescription, setYoutubeDescription] = useState('');
   const [visibility, setVisibility] = useState('');
   const [shareWith, setShareWith] = useState('');
   const [requestContactName, setRequestContactName] = useState('');
@@ -56,6 +58,8 @@ const StreamRequestPage: React.FC = () => {
       const ex = data.existing || {};
       setYoutubeChannel(ex.youtubeChannel || '');
       setYoutubeChannelOther(ex.youtubeChannelOther || '');
+      setYoutubeVideoTitle(ex.youtubeVideoTitle || '');
+      setYoutubeDescription(ex.youtubeDescription || '');
       setVisibility(ex.visibility || '');
       setShareWith(ex.shareWith || '');
       setRequestContactName(ex.requestContactName || '');
@@ -75,6 +79,8 @@ const StreamRequestPage: React.FC = () => {
     const result = await submitStreamRequestForm(token, {
       youtubeChannel,
       youtubeChannelOther,
+      youtubeVideoTitle,
+      youtubeDescription,
       visibility,
       shareWith,
       requestContactName,
@@ -168,7 +174,38 @@ const StreamRequestPage: React.FC = () => {
             ) : null}
 
             <div>
-              <p className="block text-sm font-medium text-slate-200 mb-2">Video visibility</p>
+              <label className="block text-sm font-medium text-slate-200 mb-1">
+                Video name on YouTube
+              </label>
+              <input
+                required
+                value={youtubeVideoTitle}
+                onChange={(e) => setYoutubeVideoTitle(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+                placeholder="Title as it should appear on YouTube"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-200 mb-1">
+                Description{' '}
+                <span className="text-slate-500 font-normal">(optional)</span>
+              </label>
+              <textarea
+                rows={4}
+                value={youtubeDescription}
+                onChange={(e) => setYoutubeDescription(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+                placeholder="YouTube video description"
+              />
+            </div>
+
+            <div>
+              <p className="block text-sm font-medium text-slate-200 mb-1">YouTube video visibility</p>
+              <p className="text-xs text-slate-500 mb-2">
+                This sets how the video appears on YouTube (Public or Unlisted) — not the player page
+                itself.
+              </p>
               <div className="flex gap-3">
                 {visibilities.map((v) => (
                   <label

@@ -16,6 +16,11 @@ export type EventStreamDetails = {
   /** From public Stream Request form */
   youtubeChannel?: string;
   youtubeChannelOther?: string;
+  /** YouTube video title */
+  youtubeVideoTitle?: string;
+  /** YouTube video description */
+  youtubeDescription?: string;
+  /** YouTube visibility: Public | Unlisted */
   visibility?: 'Public' | 'Unlisted' | string;
   /** Who should get the player link (Swoogo / posting). */
   shareWith?: string;
@@ -38,6 +43,8 @@ export function eventHasStreamRequestInfo(details?: EventStreamDetails | null): 
   if (!details) return false;
   return !!(
     String(details.youtubeChannel || '').trim() ||
+    String(details.youtubeVideoTitle || '').trim() ||
+    String(details.youtubeDescription || '').trim() ||
     String(details.visibility || '').trim() ||
     String(details.shareWith || '').trim() ||
     String(details.requestSubmittedAt || '').trim()
@@ -253,6 +260,8 @@ export function parseEventStreamDetails(raw: unknown): EventStreamDetails | unde
   const playbackUrl = typeof o.playbackUrl === 'string' ? o.playbackUrl : '';
   const youtubeChannel = typeof o.youtubeChannel === 'string' ? o.youtubeChannel : '';
   const youtubeChannelOther = typeof o.youtubeChannelOther === 'string' ? o.youtubeChannelOther : '';
+  const youtubeVideoTitle = typeof o.youtubeVideoTitle === 'string' ? o.youtubeVideoTitle : '';
+  const youtubeDescription = typeof o.youtubeDescription === 'string' ? o.youtubeDescription : '';
   const visibility = typeof o.visibility === 'string' ? o.visibility : '';
   const shareWith = typeof o.shareWith === 'string' ? o.shareWith : '';
   const requestContactName = typeof o.requestContactName === 'string' ? o.requestContactName : '';
@@ -263,6 +272,8 @@ export function parseEventStreamDetails(raw: unknown): EventStreamDetails | unde
     !streamKey &&
     !playbackUrl &&
     !youtubeChannel &&
+    !youtubeVideoTitle &&
+    !youtubeDescription &&
     !visibility &&
     !shareWith &&
     !requestSubmittedAt
@@ -275,6 +286,8 @@ export function parseEventStreamDetails(raw: unknown): EventStreamDetails | unde
     playbackUrl,
     youtubeChannel,
     youtubeChannelOther,
+    youtubeVideoTitle,
+    youtubeDescription,
     visibility,
     shareWith,
     requestContactName,
@@ -294,6 +307,8 @@ export function normalizeEventStreamDetails(
   const playbackUrl = String(details?.playbackUrl || '').trim();
   const youtubeChannel = String(details?.youtubeChannel || '').trim();
   const youtubeChannelOther = String(details?.youtubeChannelOther || '').trim();
+  const youtubeVideoTitle = String(details?.youtubeVideoTitle || '').trim();
+  const youtubeDescription = String(details?.youtubeDescription || '').trim();
   const visibility = String(details?.visibility || '').trim();
   const shareWith = String(details?.shareWith || '').trim();
   const requestContactName = String(details?.requestContactName || '').trim();
@@ -304,6 +319,8 @@ export function normalizeEventStreamDetails(
     !streamKey &&
     !playbackUrl &&
     !youtubeChannel &&
+    !youtubeVideoTitle &&
+    !youtubeDescription &&
     !visibility &&
     !shareWith &&
     !requestSubmittedAt
@@ -316,6 +333,8 @@ export function normalizeEventStreamDetails(
     playbackUrl,
     youtubeChannel,
     youtubeChannelOther,
+    youtubeVideoTitle,
+    youtubeDescription,
     visibility,
     shareWith,
     requestContactName,

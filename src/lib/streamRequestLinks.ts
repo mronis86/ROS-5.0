@@ -8,6 +8,8 @@ export type StreamRequestFormPayload = {
   existing?: {
     youtubeChannel?: string;
     youtubeChannelOther?: string;
+    youtubeVideoTitle?: string;
+    youtubeDescription?: string;
     visibility?: string;
     shareWith?: string;
     requestContactName?: string;
