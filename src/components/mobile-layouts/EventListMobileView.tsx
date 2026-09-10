@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Event, DAYS_OPTIONS, LOCATION_OPTIONS } from '../../types/Event';
+import { Event, DAYS_OPTIONS, LOCATION_OPTIONS, eventNeedsStreamDetails, eventStreamDetailsReady } from '../../types/Event';
 import QuickModeBoltIcon from '../QuickModeBoltIcon';
 import EventListRowActions from '../EventListRowActions';
 import EventDisplaySyncToggle from '../EventDisplaySyncToggle';
@@ -322,8 +322,13 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                     <span className={`inline-flex rounded px-2 py-0.5 text-[11px] text-white ${getEventTypeColor(event.eventType || 'Staged Production')}`}>
                       {getEventTypeShortLabel(event.eventType || 'Staged Production')}
                     </span>
-                    <span className={`inline-flex rounded px-2 py-0.5 text-[11px] text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}>
+                    <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}>
                       {rec.label}
+                      {eventNeedsStreamDetails(event.recordStreaming) ? (
+                        <span className="text-[9px] font-black">
+                          {eventStreamDetailsReady(event.streamDetails) ? '✓' : '!'}
+                        </span>
+                      ) : null}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-400">

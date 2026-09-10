@@ -8,6 +8,13 @@ export const OFF_SITE_LOCATION = 'External/Off-Site';
 
 export type WorkspaceMode = 'ros' | 'board';
 
+/** RTMP / key / watch URL for events marked Streaming or Stream+Rec. */
+export type EventStreamDetails = {
+  rtmpUrl?: string;
+  streamKey?: string;
+  playbackUrl?: string;
+};
+
 /** Event types that may choose Event Board instead of a timed ROS. */
 export const BOARD_ELIGIBLE_EVENT_TYPES = new Set(['General Meeting', 'Hollow Square']);
 
@@ -44,6 +51,11 @@ export interface Event {
   timezone?: string; // Event timezone
   eventType?: string;
   recordStreaming?: string;
+  /**
+   * Ingest / playback info when Broadcast Options is Streaming or Stream+Rec.
+   * Stream key is sensitive — do not put in public ICS / guest exports.
+   */
+  streamDetails?: EventStreamDetails;
   /** Timed ROS (default) or Event Board workspace. */
   workspaceMode?: WorkspaceMode;
   created_at?: string;
@@ -66,6 +78,7 @@ export interface EventFormData {
   timezone?: string;
   eventType?: string;
   recordStreaming?: string;
+  streamDetails?: EventStreamDetails;
   workspaceMode?: WorkspaceMode;
 }
 
@@ -197,6 +210,39 @@ export const RECORD_STREAMING_OPTIONS = [
   { value: 'Stream+Rec', label: 'Stream+Rec', color: 'bg-violet-600' },
   { value: 'None', label: 'None', color: 'bg-slate-500' },
 ];
+
+export function eventNeedsStreamDetails(recordStreaming?: string | null): boolean {
+  const v = String(recordStreaming || '').trim();
+  return v === 'Streaming' || v === 'Stream+Rec';
+}
+
+export function parseEventStreamDetails(raw: unknown): EventStreamDetails | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const rtmpUrl = typeof o.rtmpUrl === 'string' ? o.rtmpUrl : '';
+  const streamKey = typeof o.streamKey === 'string' ? o.streamKey : '';
+  const playbackUrl = typeof o.playbackUrl === 'string' ? o.playbackUrl : '';
+  if (!rtmpUrl && !streamKey && !playbackUrl) return undefined;
+  return { rtmpUrl, streamKey, playbackUrl };
+}
+
+/** Keep details only when broadcast mode needs them; trim empty strings. */
+export function normalizeEventStreamDetails(
+  recordStreaming: string | null | undefined,
+  details?: EventStreamDetails | null
+): EventStreamDetails | undefined {
+  if (!eventNeedsStreamDetails(recordStreaming)) return undefined;
+  const rtmpUrl = String(details?.rtmpUrl || '').trim();
+  const streamKey = String(details?.streamKey || '').trim();
+  const playbackUrl = String(details?.playbackUrl || '').trim();
+  if (!rtmpUrl && !streamKey && !playbackUrl) return {};
+  return { rtmpUrl, streamKey, playbackUrl };
+}
+
+/** Ready to go live when RTMP + key are both present (playback URL optional). */
+export function eventStreamDetailsReady(details?: EventStreamDetails | null): boolean {
+  return !!(String(details?.rtmpUrl || '').trim() && String(details?.streamKey || '').trim());
+}
 
 export const LOCATION_OPTIONS = [
   { value: 'Great Hall', label: 'Great Hall', color: 'bg-blue-600' },

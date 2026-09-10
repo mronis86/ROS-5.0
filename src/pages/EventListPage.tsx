@@ -17,6 +17,10 @@ import {
   isOffSiteLocation,
   eventAllowsBoardChoice,
   normalizeWorkspaceMode,
+  eventNeedsStreamDetails,
+  parseEventStreamDetails,
+  normalizeEventStreamDetails,
+  eventStreamDetailsReady,
 } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
@@ -33,6 +37,7 @@ import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import { parseDisplaySyncEnabled, DISPLAY_SYNC_COLUMN_LABEL } from '../lib/displaySync';
 import EventDisplaySyncToggle from '../components/EventDisplaySyncToggle';
 import ShareEventAccessModal from '../components/ShareEventAccessModal';
+import EventStreamDetailsFields from '../components/EventStreamDetailsFields';
 
 type EventListTab = 'upcoming' | 'past' | 'quickMode';
 
@@ -47,6 +52,7 @@ const EMPTY_EVENT_FORM: EventFormData = {
   timezone: 'America/New_York',
   eventType: 'Staged Production',
   recordStreaming: 'None',
+  streamDetails: undefined,
   workspaceMode: 'ros',
 };
 
@@ -266,6 +272,7 @@ const EventListPage: React.FC = () => {
             timezone: calEvent.schedule_data?.timezone || 'America/New_York',
             eventType: calEvent.schedule_data?.eventType || 'Staged Production',
             recordStreaming: calEvent.schedule_data?.recordStreaming || 'None',
+            streamDetails: parseEventStreamDetails(calEvent.schedule_data?.streamDetails),
             workspaceMode: normalizeWorkspaceMode(
               calEvent.schedule_data?.workspaceMode,
               calEvent.schedule_data?.eventType || 'Staged Production'
@@ -367,6 +374,7 @@ const EventListPage: React.FC = () => {
       timezone: formData.timezone || 'America/New_York',
       eventType: formData.eventType || 'Staged Production',
       recordStreaming: formData.recordStreaming || 'None',
+      streamDetails: normalizeEventStreamDetails(formData.recordStreaming, formData.streamDetails),
       workspaceMode: normalizeWorkspaceMode(formData.workspaceMode, formData.eventType),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -397,6 +405,7 @@ const EventListPage: React.FC = () => {
           timezone: newEvent.timezone,
           eventType: newEvent.eventType,
           recordStreaming: newEvent.recordStreaming,
+          streamDetails: newEvent.streamDetails ?? null,
           workspaceMode: newEvent.workspaceMode || 'ros',
         }
       };
@@ -476,6 +485,7 @@ const EventListPage: React.FC = () => {
       timezone: editFormData.timezone,
       eventType: editFormData.eventType,
       recordStreaming: editFormData.recordStreaming,
+      streamDetails: normalizeEventStreamDetails(editFormData.recordStreaming, editFormData.streamDetails),
       workspaceMode: normalizeWorkspaceMode(editFormData.workspaceMode, editFormData.eventType),
       updated_at: new Date().toISOString()
     };
@@ -540,6 +550,7 @@ const EventListPage: React.FC = () => {
             timezone: updatedEvent.timezone,
             eventType: updatedEvent.eventType,
             recordStreaming: updatedEvent.recordStreaming,
+            streamDetails: updatedEvent.streamDetails ?? null,
             workspaceMode: updatedEvent.workspaceMode || 'ros',
           }
         };
@@ -719,6 +730,7 @@ const EventListPage: React.FC = () => {
       timezone: event.timezone || 'America/New_York',
       eventType: event.eventType || 'Staged Production',
       recordStreaming: event.recordStreaming || 'None',
+      streamDetails: event.streamDetails ? { ...event.streamDetails } : undefined,
       workspaceMode: normalizeWorkspaceMode(event.workspaceMode, event.eventType),
     });
   };
@@ -1195,10 +1207,27 @@ const EventListPage: React.FC = () => {
                         </td>
                         <td className="px-2 py-2 border-r border-slate-600 min-w-[4.5rem] text-center">
                           <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
-                            title={getRecordStreamingShort(event.recordStreaming || 'None').title}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
+                            title={
+                              eventNeedsStreamDetails(event.recordStreaming)
+                                ? eventStreamDetailsReady(event.streamDetails)
+                                  ? `${getRecordStreamingShort(event.recordStreaming || 'None').title} — RTMP + key saved`
+                                  : `${getRecordStreamingShort(event.recordStreaming || 'None').title} — add RTMP + stream key in Edit`
+                                : getRecordStreamingShort(event.recordStreaming || 'None').title
+                            }
                           >
                             {getRecordStreamingShort(event.recordStreaming || 'None').label}
+                            {eventNeedsStreamDetails(event.recordStreaming) ? (
+                              <span
+                                className={`text-[9px] font-black uppercase tracking-wide ${
+                                  eventStreamDetailsReady(event.streamDetails)
+                                    ? 'opacity-90'
+                                    : 'bg-black/30 px-1 rounded'
+                                }`}
+                              >
+                                {eventStreamDetailsReady(event.streamDetails) ? '✓' : '!'}
+                              </span>
+                            ) : null}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
@@ -1414,7 +1443,16 @@ const EventListPage: React.FC = () => {
                 <label className="block text-slate-300 text-sm font-medium mb-1">Broadcast Options</label>
                 <select
                   value={formData.recordStreaming || 'None'}
-                  onChange={(e) => setFormData(prev => ({ ...prev, recordStreaming: e.target.value }))}
+                  onChange={(e) => {
+                    const recordStreaming = e.target.value;
+                    setFormData((prev) => ({
+                      ...prev,
+                      recordStreaming,
+                      streamDetails: eventNeedsStreamDetails(recordStreaming)
+                        ? prev.streamDetails || {}
+                        : undefined,
+                    }));
+                  }}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {RECORD_STREAMING_OPTIONS.map((option) => (
@@ -1424,6 +1462,13 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {eventNeedsStreamDetails(formData.recordStreaming) ? (
+                <EventStreamDetailsFields
+                  idPrefix="create-stream"
+                  value={formData.streamDetails}
+                  onChange={(streamDetails) => setFormData((prev) => ({ ...prev, streamDetails }))}
+                />
+              ) : null}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Duration</label>
                 <select
@@ -1738,7 +1783,16 @@ const EventListPage: React.FC = () => {
                 <label className="block text-slate-300 text-sm font-medium mb-1">Broadcast Options</label>
                 <select
                   value={editFormData.recordStreaming || 'None'}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, recordStreaming: e.target.value }))}
+                  onChange={(e) => {
+                    const recordStreaming = e.target.value;
+                    setEditFormData((prev) => ({
+                      ...prev,
+                      recordStreaming,
+                      streamDetails: eventNeedsStreamDetails(recordStreaming)
+                        ? prev.streamDetails || {}
+                        : undefined,
+                    }));
+                  }}
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                 >
                   {RECORD_STREAMING_OPTIONS.map((option) => (
@@ -1748,6 +1802,13 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {eventNeedsStreamDetails(editFormData.recordStreaming) ? (
+                <EventStreamDetailsFields
+                  idPrefix="edit-stream"
+                  value={editFormData.streamDetails}
+                  onChange={(streamDetails) => setEditFormData((prev) => ({ ...prev, streamDetails }))}
+                />
+              ) : null}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1">Duration</label>
                 <select
