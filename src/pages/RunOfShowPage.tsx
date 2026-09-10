@@ -170,6 +170,50 @@ function clampMenuPanelToViewport(
   }
 }
 
+/** Row # actions menu: fixed so schedule overflow can't clip it; flips up near the bottom. */
+function placeRowJumpMenu(el: HTMLElement | null, anchor: HTMLElement | null) {
+  if (!el || !anchor) return;
+  const pad = 8;
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const rect = anchor.getBoundingClientRect();
+  const menuW = Math.max(el.offsetWidth || 180, 180);
+  const menuH = Math.max(el.offsetHeight || 200, 200);
+
+  let left = rect.left;
+  if (left + menuW > vw - pad) {
+    left = Math.max(pad, vw - pad - menuW);
+  }
+
+  const spaceBelow = vh - pad - rect.bottom;
+  const spaceAbove = rect.top - pad;
+  const openUp = spaceBelow < menuH && spaceAbove > spaceBelow;
+
+  let top: number;
+  let maxHeight: number;
+  if (openUp) {
+    top = Math.max(pad, rect.top - menuH - 4);
+    maxHeight = Math.max(120, rect.top - pad - 4);
+  } else {
+    top = rect.bottom + 4;
+    maxHeight = Math.max(120, vh - pad - top);
+    if (top + Math.min(menuH, maxHeight) > vh - pad) {
+      top = Math.max(pad, vh - pad - Math.min(menuH, maxHeight));
+      maxHeight = Math.max(120, vh - pad - top);
+    }
+  }
+
+  el.style.position = 'fixed';
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  el.style.right = 'auto';
+  el.style.bottom = 'auto';
+  el.style.margin = '0';
+  el.style.zIndex = '80';
+  el.style.maxHeight = `${maxHeight}px`;
+  el.style.overflowY = 'auto';
+}
+
 /** e.g. "CUE 1.1 VO - 4:45PM" or "VO - 4:45PM - 10 minutes" */
 function formatCalloutChipText(vo: Pick<VoCue, 'time' | 'label' | 'kind' | 'cuePrefix'>): string {
   const rawPrefix = (vo.cuePrefix || '').trim();
@@ -1038,6 +1082,8 @@ const RunOfShowPage: React.FC = () => {
   const [activeRowMenu, setActiveRowMenu] = useState<number | null>(null);
   const [activeItemMenu, setActiveItemMenu] = useState<number | null>(null);
   const [activeJumpMenu, setActiveJumpMenu] = useState<number | null>(null);
+  const jumpMenuRef = useRef<HTMLDivElement | null>(null);
+  const jumpMenuAnchorRef = useRef<HTMLButtonElement | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [timerProgress, setTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
@@ -6208,10 +6254,27 @@ const RunOfShowPage: React.FC = () => {
     showReportsSubmenu,
   ]);
 
+  useLayoutEffect(() => {
+    if (activeJumpMenu == null) return;
+
+    const place = () => placeRowJumpMenu(jumpMenuRef.current, jumpMenuAnchorRef.current);
+    place();
+    const raf = requestAnimationFrame(place);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [activeJumpMenu]);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       // Don't close if click was inside the menu dropdown container (allows Import & Export submenu to work)
       if (menuDropdownContainerRef.current?.contains(e.target as Node)) return;
+      if (jumpMenuRef.current?.contains(e.target as Node)) return;
+      if (jumpMenuAnchorRef.current?.contains(e.target as Node)) return;
       setActiveItemMenu(null);
       setActiveRowMenu(null);
       setActiveJumpMenu(null);
@@ -13686,6 +13749,7 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot access row actions. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
+                          jumpMenuAnchorRef.current = e.currentTarget;
                           setActiveJumpMenu(activeJumpMenu === item.id ? null : item.id);
                         }}
                         className={`w-5 h-5 text-white rounded flex items-center justify-center text-xs font-bold transition-colors ${
@@ -13700,7 +13764,8 @@ const RunOfShowPage: React.FC = () => {
                       </button>
                       {activeJumpMenu === item.id && (
                         <div 
-                          className="absolute left-0 top-6 z-50 bg-slate-700 border border-slate-600 rounded-lg shadow-lg min-w-[160px]"
+                          ref={jumpMenuRef}
+                          className="bg-slate-700 border border-slate-600 rounded-lg shadow-lg min-w-[160px]"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
