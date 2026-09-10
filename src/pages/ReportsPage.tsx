@@ -507,6 +507,7 @@ const ReportsPage: React.FC = () => {
   const getProgramTypeColor = (programType: string) => {
     const colors: Record<string, string> = {
       'PreShow/End': '#8B5CF6',        // Bright Purple
+      'Head Table': '#4338CA',         // Indigo — GM / Hollow Square
       'Podium Transition': '#8B4513',  // Dark Brown
       'Panel Transition': '#404040',   // Darker Grey
       'Full-Stage/Ted-Talk': '#EA580C', // Bright Orange (matches RunOfShowPage)
@@ -561,6 +562,7 @@ const ReportsPage: React.FC = () => {
   // Program type labels for condensed report color legend (same order as Run of Show program type dropdown)
   const condensedColorLegend: { label: string; key: string }[] = [
     { label: 'PreShow/End', key: 'PreShow/End' },
+    { label: 'Head Table', key: 'Head Table' },
     { label: 'Podium Transition', key: 'Podium Transition' },
     { label: 'Panel Transition', key: 'Panel Transition' },
     { label: 'Full Stage / Ted Talk', key: 'Full-Stage/Ted-Talk' },

@@ -79,11 +79,11 @@ function labelPopupPosition(viewportX: number, viewportY: number): { left: numbe
 }
 
 const PROGRAM_TYPES = [
-  'PreShow/End','Podium Transition','Panel Transition','Full-Stage/Ted-Talk','Sub Cue',
+  'PreShow/End','Head Table','Podium Transition','Panel Transition','Full-Stage/Ted-Talk','Sub Cue',
   'No Transition','Video','Panel+Remote','Remote Only','Break F&B/B2B','Breakout Session','TBD','KILLED',
 ];
 const PROGRAM_TYPE_COLORS: Record<string, string> = {
-  'PreShow/End':'#8B5CF6','Podium Transition':'#8B4513','Panel Transition':'#404040',
+  'PreShow/End':'#8B5CF6','Head Table':'#4338CA','Podium Transition':'#8B4513','Panel Transition':'#404040',
   'Sub Cue':'#F3F4F6','No Transition':'#059669','Video':'#F59E0B','Panel+Remote':'#1E40AF',
   'Remote Only':'#60A5FA','Break F&B/B2B':'#EC4899','Breakout Session':'#20B2AA',
   'TBD':'#6B7280','KILLED':'#DC2626','Full-Stage/Ted-Talk':'#EA580C',

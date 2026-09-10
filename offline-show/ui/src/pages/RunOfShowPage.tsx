@@ -3977,14 +3977,23 @@ const RunOfShowPage: React.FC = () => {
     setModalForm(prev => ({ ...prev, day: selectedDay }));
   }, [selectedDay]);
 
-  const programTypes = [
-    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
-    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'Delay Block', 'TBD', 'KILLED'
-  ];
+  const programTypes = (() => {
+    const types = [
+      'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
+      'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'Delay Block', 'TBD', 'KILLED'
+    ];
+    const et = String(event?.eventType || '').trim();
+    if (et === 'General Meeting' || et === 'Hollow Square') {
+      const idx = types.indexOf('PreShow/End');
+      if (idx >= 0) types.splice(idx + 1, 0, 'Head Table');
+    }
+    return types;
+  })();
 
   // Program Type color mapping
   const programTypeColors: { [key: string]: string } = {
     'PreShow/End': '#8B5CF6',        // Bright Purple
+    'Head Table': '#4338CA',         // Indigo — GM / Hollow Square
     'Podium Transition': '#8B4513',  // Dark Brown
     'Panel Transition': '#404040',   // Darker Grey
     'Sub Cue': '#F3F4F6',           // White with border

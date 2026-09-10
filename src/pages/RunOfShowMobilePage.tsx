@@ -6,54 +6,26 @@ import { Event } from '../types/Event';
 import { useAuth } from '../contexts/AuthContext';
 import { canSelectOperatorRole } from '../services/auth-service';
 import { CUE_RECORDING_MARK_WARNING, shouldConfirmCueRecordingMark } from '../lib/cueRecording';
+import {
+  buildRosProgramTypes,
+  HEAD_TABLE_PROGRAM_TYPE,
+  ROS_PROGRAM_TYPE_COLORS,
+} from '../lib/guestRosHelpers';
 
-/** Mirrored from `RunOfShowPage.tsx` — keep visuals consistent with desktop ROS. */
-const PROGRAM_TYPES = [
-  'PreShow/End',
-  'Podium Transition',
-  'Panel Transition',
-  'Full-Stage/Ted-Talk',
-  'Sub Cue',
-  'No Transition',
-  'Video',
-  'Panel+Remote',
-  'Remote Only',
-  'Break F&B/B2B',
-  'Breakout Session',
-  'Delay Block',
-  'TBD',
-  'KILLED'
-] as const;
-
-const PROGRAM_TYPE_COLORS: Record<string, string> = {
-  'PreShow/End': '#8B5CF6',
-  'Podium Transition': '#8B4513',
-  'Panel Transition': '#404040',
-  'Sub Cue': '#F3F4F6',
-  'No Transition': '#059669',
-  Video: '#F59E0B',
-  'Panel+Remote': '#1E40AF',
-  'Remote Only': '#60A5FA',
-  'Break F&B/B2B': '#EC4899',
-  'Breakout Session': '#20B2AA',
-  'Delay Block': '#7C3AED',
-  TBD: '#6B7280',
-  KILLED: '#DC2626',
-  'Full-Stage/Ted-Talk': '#EA580C'
-};
+/** Mirrored from desktop ROS via guestRosHelpers — keep visuals consistent. */
 
 const SHOT_TYPES = ['Podium', '1-Shot', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'] as const;
 
 function programTypeBg(programType: string): string {
-  return PROGRAM_TYPE_COLORS[programType] || '#374151';
+  return ROS_PROGRAM_TYPE_COLORS[programType] || '#374151';
 }
 
 function programTypeFg(programType: string): string {
   return programType === 'Sub Cue' ? '#000000' : '#ffffff';
 }
 
-function isKnownProgramType(programType: string): boolean {
-  return (PROGRAM_TYPES as readonly string[]).includes(programType);
+function isKnownProgramType(programType: string, types: string[]): boolean {
+  return types.includes(programType);
 }
 
 type ScheduleItem = {
@@ -540,6 +512,19 @@ const RunOfShowMobilePage: React.FC = () => {
   const [error, setError] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+
+  const programTypes = useMemo(() => {
+    const types = buildRosProgramTypes(event?.eventType);
+    if (
+      items.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
+      !types.includes(HEAD_TABLE_PROGRAM_TYPE)
+    ) {
+      const idx = types.indexOf('PreShow/End');
+      if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
+      else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
+    }
+    return types;
+  }, [event?.eventType, items]);
 
   const [segmentDraft, setSegmentDraft] = useState('');
   const [programDraft, setProgramDraft] = useState('');
@@ -1049,7 +1034,7 @@ const RunOfShowMobilePage: React.FC = () => {
                       color: programTypeFg(programDraft || 'No Transition')
                     }}
                   >
-                    {programDraft && !isKnownProgramType(programDraft) ? (
+                    {programDraft && !isKnownProgramType(programDraft, programTypes) ? (
                       <option
                         value={programDraft}
                         style={{
@@ -1060,7 +1045,7 @@ const RunOfShowMobilePage: React.FC = () => {
                         Current (legacy): {programDraft}
                       </option>
                     ) : null}
-                    {PROGRAM_TYPES.map((type) => (
+                    {programTypes.map((type) => (
                       <option
                         key={type}
                         value={type}

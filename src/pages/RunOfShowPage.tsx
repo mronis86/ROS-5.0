@@ -46,6 +46,11 @@ import {
   parseRehearsalBaseline,
   type RehearsalBaseline,
 } from '../lib/rehearsalBaseline';
+import {
+  buildRosProgramTypes,
+  HEAD_TABLE_PROGRAM_TYPE,
+  ROS_PROGRAM_TYPE_COLORS,
+} from '../lib/guestRosHelpers';
 
 // Speaker interface/type definition
 interface Speaker {
@@ -4061,27 +4066,23 @@ const RunOfShowPage: React.FC = () => {
     setModalForm(prev => ({ ...prev, day: selectedDay }));
   }, [selectedDay]);
 
-  const programTypes = [
-    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
-    'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'Delay Block', 'TBD', 'KILLED'
-  ];
+  const programTypes = useMemo(() => {
+    const types = buildRosProgramTypes(event?.eventType);
+    // Keep Head Table selectable if any cue already uses it (e.g. event type changed later).
+    if (
+      schedule.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
+      !types.includes(HEAD_TABLE_PROGRAM_TYPE)
+    ) {
+      const idx = types.indexOf('PreShow/End');
+      if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
+      else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
+    }
+    return types;
+  }, [event?.eventType, schedule]);
 
   // Program Type color mapping
   const programTypeColors: { [key: string]: string } = {
-    'PreShow/End': '#8B5CF6',        // Bright Purple
-    'Podium Transition': '#8B4513',  // Dark Brown
-    'Panel Transition': '#404040',   // Darker Grey
-    'Sub Cue': '#F3F4F6',           // White with border
-    'No Transition': '#059669',      // Bright Teal
-    'Video': '#F59E0B',              // Bright Yellow/Orange
-    'Panel+Remote': '#1E40AF',       // Darker Blue
-    'Remote Only': '#60A5FA',        // Light Blue
-    'Break F&B/B2B': '#EC4899',              // Bright Pink
-    'Breakout Session': '#20B2AA',           // Seafoam
-    'Delay Block': '#7C3AED',                 // Violet
-    'TBD': '#6B7280',                // Medium Gray
-    'KILLED': '#DC2626',             // Bright Red
-    'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
+    ...ROS_PROGRAM_TYPE_COLORS,
   };
 
   // Function to get subtle row background color based on Program Type
