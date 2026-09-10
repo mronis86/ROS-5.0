@@ -87,6 +87,18 @@ const {
   emitGuestSocketUpdate,
 } = require('./lib/event-guest-links');
 const {
+  isMissingStreamRequestTableError,
+  ensureStreamRequestLinkSchema,
+  ensureStreamRequestLink,
+  lookupStreamRequestByToken,
+  touchStreamRequestLinkUsed,
+  touchStreamRequestSubmitted,
+  loadStreamRequestFormPayload,
+  normalizeStreamRequestBody,
+  applyStreamRequestToEvent,
+  isStreamRequestToken,
+} = require('./lib/stream-request-links');
+const {
   isMissingTrainingTableError,
   ensureTrainingSchema,
   listAvailableSlots,
@@ -2959,6 +2971,122 @@ app.get('/api/guest-event/:token', async (req, res) => {
     }
     console.error('[guest-event GET]', error);
     res.status(500).json({ error: error.message || 'Failed to load guest view' });
+  }
+});
+
+/** Create or reuse a public Stream Request form link for an event. */
+app.post('/api/calendar-events/:id/stream-request-link', async (req, res) => {
+  try {
+    if (!req.auth || (req.auth.type !== 'user' && req.auth.type !== 'neon_user')) {
+      return res.status(401).json({ error: 'Sign in required.' });
+    }
+    const eventId = String(req.params.id || '').trim();
+    if (!eventId) return res.status(400).json({ error: 'Event id required.' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'You do not have access to this event.' });
+    }
+    await ensureStreamRequestLinkSchema(pool);
+    const payload = await loadStreamRequestFormPayload(pool, eventId);
+    if (!payload) return res.status(404).json({ error: 'Event not found.' });
+
+    const rotate = req.body?.rotate === true;
+    const link = await ensureStreamRequestLink(pool, {
+      eventId: payload.event.id,
+      accessId: req.auth.accessId,
+      req,
+      rotate,
+    });
+    res.json({
+      ok: true,
+      event: payload.event,
+      streamRequestUrl: link.streamRequestUrl,
+      reused: !!link.reused,
+      createdAt: link.createdAt,
+    });
+  } catch (error) {
+    if (isMissingStreamRequestTableError(error)) {
+      return res.status(503).json({
+        error: 'Run migration 064_event_stream_request_links.sql on Neon to enable Stream Request links.',
+        needsMigration: true,
+      });
+    }
+    console.error('[stream-request-link create]', error);
+    res.status(500).json({ error: error.message || 'Failed to create stream request link' });
+  }
+});
+
+/** Public Stream Request form — load event summary + existing answers. */
+app.get('/api/stream-request/:token', async (req, res) => {
+  try {
+    const rawToken = String(req.params.token || '').trim();
+    if (!isStreamRequestToken(rawToken)) {
+      return res.status(404).json({ error: 'Invalid or expired stream request link.' });
+    }
+    await ensureStreamRequestLinkSchema(pool);
+    const link = await lookupStreamRequestByToken(pool, rawToken);
+    if (!link || link.revoked_at) {
+      return res.status(404).json({ error: 'Invalid or expired stream request link.' });
+    }
+    const payload = await loadStreamRequestFormPayload(pool, link.event_id);
+    if (!payload) {
+      return res.status(404).json({ error: 'This event is no longer available.' });
+    }
+    await touchStreamRequestLinkUsed(pool, link.id);
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    if (isMissingStreamRequestTableError(error)) {
+      return res.status(503).json({
+        error: 'Stream Request forms are not available yet.',
+        needsMigration: true,
+      });
+    }
+    console.error('[stream-request GET]', error);
+    res.status(500).json({ error: error.message || 'Failed to load stream request form' });
+  }
+});
+
+/** Public Stream Request form — submit answers into event streamDetails. */
+app.post('/api/stream-request/:token', async (req, res) => {
+  try {
+    const rawToken = String(req.params.token || '').trim();
+    if (!isStreamRequestToken(rawToken)) {
+      return res.status(404).json({ error: 'Invalid or expired stream request link.' });
+    }
+    await ensureStreamRequestLinkSchema(pool);
+    const link = await lookupStreamRequestByToken(pool, rawToken);
+    if (!link || link.revoked_at) {
+      return res.status(404).json({ error: 'Invalid or expired stream request link.' });
+    }
+    const normalized = normalizeStreamRequestBody(req.body || {});
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error });
+    }
+    const applied = await applyStreamRequestToEvent(pool, link.event_id, normalized);
+    if (!applied) {
+      return res.status(404).json({ error: 'This event is no longer available.' });
+    }
+    await touchStreamRequestSubmitted(pool, link.id);
+    res.json({
+      ok: true,
+      message: 'Thanks — your stream request was saved for this event.',
+      event: { id: applied.eventId },
+      submitted: {
+        youtubeChannel: normalized.youtubeChannel,
+        youtubeChannelOther: normalized.youtubeChannelOther,
+        visibility: normalized.visibility,
+        shareWith: normalized.shareWith,
+        requestSubmittedAt: normalized.requestSubmittedAt,
+      },
+    });
+  } catch (error) {
+    if (isMissingStreamRequestTableError(error)) {
+      return res.status(503).json({
+        error: 'Stream Request forms are not available yet.',
+        needsMigration: true,
+      });
+    }
+    console.error('[stream-request POST]', error);
+    res.status(500).json({ error: error.message || 'Failed to submit stream request' });
   }
 });
 

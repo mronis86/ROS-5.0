@@ -1805,6 +1805,7 @@ const EventListPage: React.FC = () => {
               {eventNeedsStreamDetails(editFormData.recordStreaming) ? (
                 <EventStreamDetailsFields
                   idPrefix="edit-stream"
+                  eventId={editingEvent?.id}
                   value={editFormData.streamDetails}
                   onChange={(streamDetails) => setEditFormData((prev) => ({ ...prev, streamDetails }))}
                 />

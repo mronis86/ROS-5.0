@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
 import type { EventStreamDetails } from '../types/Event';
+import { eventHasStreamRequestInfo } from '../types/Event';
+import { createStreamRequestLink } from '../lib/streamRequestLinks';
 
 type Props = {
   value: EventStreamDetails | undefined;
   onChange: (next: EventStreamDetails) => void;
   /** Compact copy for edit vs create — same fields. */
   idPrefix?: string;
+  /** When set, shows Copy Stream Request form link (saved events only). */
+  eventId?: string | null;
 };
 
 async function copyText(label: string, text: string) {
@@ -21,16 +25,55 @@ async function copyText(label: string, text: string) {
   }
 }
 
-const EventStreamDetailsFields: React.FC<Props> = ({ value, onChange, idPrefix = 'stream' }) => {
+const EventStreamDetailsFields: React.FC<Props> = ({
+  value,
+  onChange,
+  idPrefix = 'stream',
+  eventId,
+}) => {
   const [showKey, setShowKey] = useState(false);
+  const [showRequest, setShowRequest] = useState(false);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkMessage, setLinkMessage] = useState<string | null>(null);
+
   const details: EventStreamDetails = {
     rtmpUrl: value?.rtmpUrl || '',
     streamKey: value?.streamKey || '',
     playbackUrl: value?.playbackUrl || '',
+    youtubeChannel: value?.youtubeChannel || '',
+    youtubeChannelOther: value?.youtubeChannelOther || '',
+    visibility: value?.visibility || '',
+    shareWith: value?.shareWith || '',
+    requestContactName: value?.requestContactName || '',
+    requestContactEmail: value?.requestContactEmail || '',
+    requestSubmittedAt: value?.requestSubmittedAt || '',
   };
 
   const patch = (partial: Partial<EventStreamDetails>) => {
     onChange({ ...details, ...partial });
+  };
+
+  const hasRequest = eventHasStreamRequestInfo(details);
+  const channelLabel =
+    details.youtubeChannel === 'Other' && details.youtubeChannelOther
+      ? `Other — ${details.youtubeChannelOther}`
+      : details.youtubeChannel || '—';
+
+  const copyRequestLink = async () => {
+    if (!eventId) {
+      alert('Save the event first, then copy the Stream Request link.');
+      return;
+    }
+    setLinkBusy(true);
+    setLinkMessage(null);
+    const result = await createStreamRequestLink(eventId);
+    setLinkBusy(false);
+    if (!result.ok || !result.streamRequestUrl) {
+      setLinkMessage(result.error || 'Could not create link');
+      return;
+    }
+    await copyText('Stream Request link', result.streamRequestUrl);
+    setLinkMessage(result.reused ? 'Link copied (existing).' : 'Link copied.');
   };
 
   return (
@@ -41,6 +84,23 @@ const EventStreamDetailsFields: React.FC<Props> = ({ value, onChange, idPrefix =
           RTMP ingest and stream key for this event. Playback URL is optional. Key is stored with the
           event — treat it as sensitive.
         </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void copyRequestLink()}
+          disabled={linkBusy || !eventId}
+          className="px-2.5 py-1.5 rounded bg-emerald-700/80 text-emerald-50 text-xs font-medium hover:bg-emerald-600 disabled:opacity-50"
+          title={
+            eventId
+              ? 'Copy public form link to collect YouTube channel, Public/Unlisted, and share-to'
+              : 'Save the event first to generate a Stream Request link'
+          }
+        >
+          {linkBusy ? 'Creating link…' : 'Copy Stream Request form link'}
+        </button>
+        {linkMessage ? <span className="text-[11px] text-slate-400">{linkMessage}</span> : null}
       </div>
 
       <div>
@@ -129,6 +189,64 @@ const EventStreamDetailsFields: React.FC<Props> = ({ value, onChange, idPrefix =
             Copy
           </button>
         </div>
+      </div>
+
+      <div className="rounded-md border border-slate-600/80 bg-slate-950/40 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowRequest((v) => !v)}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-800/60"
+        >
+          <span className="text-sm font-medium text-slate-200">
+            Stream request info
+            {hasRequest ? (
+              <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+                Received
+              </span>
+            ) : (
+              <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                None yet
+              </span>
+            )}
+          </span>
+          <span className="text-slate-400 text-xs">{showRequest ? 'Hide' : 'View more'}</span>
+        </button>
+        {showRequest ? (
+          <div className="px-3 pb-3 pt-1 space-y-2 border-t border-slate-700 text-sm">
+            {hasRequest ? (
+              <>
+                <p className="text-slate-300">
+                  <span className="text-slate-500">YouTube channel:</span> {channelLabel}
+                </p>
+                <p className="text-slate-300">
+                  <span className="text-slate-500">Visibility:</span> {details.visibility || '—'}
+                </p>
+                <p className="text-slate-300 whitespace-pre-wrap">
+                  <span className="text-slate-500">Share player link with:</span>{' '}
+                  {details.shareWith || '—'}
+                </p>
+                {(details.requestContactName || details.requestContactEmail) && (
+                  <p className="text-slate-300">
+                    <span className="text-slate-500">Submitted by:</span>{' '}
+                    {[details.requestContactName, details.requestContactEmail]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                )}
+                {details.requestSubmittedAt ? (
+                  <p className="text-xs text-slate-500">
+                    Submitted {new Date(details.requestSubmittedAt).toLocaleString()}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Copy the Stream Request form link above and send it out. Answers will show here after
+                someone submits.
+              </p>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );

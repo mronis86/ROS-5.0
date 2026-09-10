@@ -13,7 +13,36 @@ export type EventStreamDetails = {
   rtmpUrl?: string;
   streamKey?: string;
   playbackUrl?: string;
+  /** From public Stream Request form */
+  youtubeChannel?: string;
+  youtubeChannelOther?: string;
+  visibility?: 'Public' | 'Unlisted' | string;
+  /** Who should get the player link (Swoogo / posting). */
+  shareWith?: string;
+  requestContactName?: string;
+  requestContactEmail?: string;
+  requestSubmittedAt?: string;
 };
+
+export const STREAM_YOUTUBE_CHANNEL_OPTIONS = [
+  'US Chamber of Commerce',
+  'USCC Foundation',
+  'Hiring Our Heroes',
+  'CO',
+  'Other',
+] as const;
+
+export const STREAM_VISIBILITY_OPTIONS = ['Public', 'Unlisted'] as const;
+
+export function eventHasStreamRequestInfo(details?: EventStreamDetails | null): boolean {
+  if (!details) return false;
+  return !!(
+    String(details.youtubeChannel || '').trim() ||
+    String(details.visibility || '').trim() ||
+    String(details.shareWith || '').trim() ||
+    String(details.requestSubmittedAt || '').trim()
+  );
+}
 
 /** Event types that may choose Event Board instead of a timed ROS. */
 export const BOARD_ELIGIBLE_EVENT_TYPES = new Set(['General Meeting', 'Hollow Square']);
@@ -222,8 +251,36 @@ export function parseEventStreamDetails(raw: unknown): EventStreamDetails | unde
   const rtmpUrl = typeof o.rtmpUrl === 'string' ? o.rtmpUrl : '';
   const streamKey = typeof o.streamKey === 'string' ? o.streamKey : '';
   const playbackUrl = typeof o.playbackUrl === 'string' ? o.playbackUrl : '';
-  if (!rtmpUrl && !streamKey && !playbackUrl) return undefined;
-  return { rtmpUrl, streamKey, playbackUrl };
+  const youtubeChannel = typeof o.youtubeChannel === 'string' ? o.youtubeChannel : '';
+  const youtubeChannelOther = typeof o.youtubeChannelOther === 'string' ? o.youtubeChannelOther : '';
+  const visibility = typeof o.visibility === 'string' ? o.visibility : '';
+  const shareWith = typeof o.shareWith === 'string' ? o.shareWith : '';
+  const requestContactName = typeof o.requestContactName === 'string' ? o.requestContactName : '';
+  const requestContactEmail = typeof o.requestContactEmail === 'string' ? o.requestContactEmail : '';
+  const requestSubmittedAt = typeof o.requestSubmittedAt === 'string' ? o.requestSubmittedAt : '';
+  if (
+    !rtmpUrl &&
+    !streamKey &&
+    !playbackUrl &&
+    !youtubeChannel &&
+    !visibility &&
+    !shareWith &&
+    !requestSubmittedAt
+  ) {
+    return undefined;
+  }
+  return {
+    rtmpUrl,
+    streamKey,
+    playbackUrl,
+    youtubeChannel,
+    youtubeChannelOther,
+    visibility,
+    shareWith,
+    requestContactName,
+    requestContactEmail,
+    requestSubmittedAt,
+  };
 }
 
 /** Keep details only when broadcast mode needs them; trim empty strings. */
@@ -235,8 +292,36 @@ export function normalizeEventStreamDetails(
   const rtmpUrl = String(details?.rtmpUrl || '').trim();
   const streamKey = String(details?.streamKey || '').trim();
   const playbackUrl = String(details?.playbackUrl || '').trim();
-  if (!rtmpUrl && !streamKey && !playbackUrl) return {};
-  return { rtmpUrl, streamKey, playbackUrl };
+  const youtubeChannel = String(details?.youtubeChannel || '').trim();
+  const youtubeChannelOther = String(details?.youtubeChannelOther || '').trim();
+  const visibility = String(details?.visibility || '').trim();
+  const shareWith = String(details?.shareWith || '').trim();
+  const requestContactName = String(details?.requestContactName || '').trim();
+  const requestContactEmail = String(details?.requestContactEmail || '').trim();
+  const requestSubmittedAt = String(details?.requestSubmittedAt || '').trim();
+  if (
+    !rtmpUrl &&
+    !streamKey &&
+    !playbackUrl &&
+    !youtubeChannel &&
+    !visibility &&
+    !shareWith &&
+    !requestSubmittedAt
+  ) {
+    return {};
+  }
+  return {
+    rtmpUrl,
+    streamKey,
+    playbackUrl,
+    youtubeChannel,
+    youtubeChannelOther,
+    visibility,
+    shareWith,
+    requestContactName,
+    requestContactEmail,
+    requestSubmittedAt,
+  };
 }
 
 /** Ready to go live when RTMP + key are both present (playback URL optional). */
