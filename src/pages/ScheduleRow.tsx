@@ -621,59 +621,79 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               }`}
               title="Click to view full segment name and copy"
             >
+              {item.otherRoom ? (
+                <span
+                  className="mb-1 inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-500 text-slate-950"
+                  title={`Happens in ${item.otherRoom} (not main program room)`}
+                >
+                  {item.otherRoom}
+                </span>
+              ) : null}
               <span className="block truncate">{item.segmentName || '—'}</span>
               <span className="block text-[10px] text-slate-400 mt-0.5">View / copy</span>
             </button>
           ) : (
-          <input
-            type="text"
-            value={item.segmentName}
-            onFocus={claimRowLock}
-            onChange={(e) => {
-              if (isLockedByOther) return;
-              handleUserEditing();
-              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-                alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
-                return;
-              }
-              const oldValue = item.segmentName;
-              setSchedule((prev: any[]) => prev.map(scheduleItem => 
-                scheduleItem.id === item.id 
-                  ? { ...scheduleItem, segmentName: e.target.value }
-                  : scheduleItem
-              ));
-              logChangeDebounced(
-                `segmentName_${item.id}`,
-                'FIELD_UPDATE',
-                `Updated segment name for "${oldValue}" to "${e.target.value}"`,
-                {
-                  changeType: 'FIELD_CHANGE',
-                  itemId: item.id,
-                  itemName: e.target.value,
-                  fieldName: 'segmentName',
-                  oldValue: oldValue,
-                  newValue: e.target.value,
-                  details: { fieldType: 'text', characterChange: e.target.value.length - oldValue.length }
+          <div className="w-full flex flex-col gap-1 min-w-0">
+            {item.otherRoom ? (
+              <span
+                className="self-start inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-500 text-slate-950"
+                title={`Happens in ${item.otherRoom} (not main program room)`}
+              >
+                {item.otherRoom}
+              </span>
+            ) : null}
+            <input
+              type="text"
+              value={item.segmentName}
+              onFocus={claimRowLock}
+              onChange={(e) => {
+                if (isLockedByOther) return;
+                handleUserEditing();
+                if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                  alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
+                  return;
                 }
-              );
-            }}
-            disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-            className={`w-full px-3 py-2 rounded text-base transition-colors ${
-              item.needsRecording
-                ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
-                : cellFill
-            }`}
-            placeholder={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
-            title={
-              item.needsRecording
-                ? 'Marked for recording'
-                : isLockedByOther
-                  ? lockLabel
-                  : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
-                    ? 'Only EDITORs can edit segment names'
-                    : 'Edit segment name'
-            }
-          />
+                const oldValue = item.segmentName;
+                setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                  scheduleItem.id === item.id 
+                    ? { ...scheduleItem, segmentName: e.target.value }
+                    : scheduleItem
+                ));
+                logChangeDebounced(
+                  `segmentName_${item.id}`,
+                  'FIELD_UPDATE',
+                  `Updated segment name for "${oldValue}" to "${e.target.value}"`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: e.target.value,
+                    fieldName: 'segmentName',
+                    oldValue: oldValue,
+                    newValue: e.target.value,
+                    details: { fieldType: 'text', characterChange: e.target.value.length - oldValue.length }
+                  }
+                );
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+              className={`w-full px-3 py-2 rounded text-base transition-colors ${
+                item.needsRecording
+                  ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
+                  : cellFill
+              }`}
+              placeholder={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
+              title={
+                item.otherRoom
+                  ? `${item.segmentName || 'Segment'} · ${item.otherRoom}`
+                  : item.needsRecording
+                  ? 'Marked for recording'
+                  : isLockedByOther
+                    ? lockLabel
+                    : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                      ? 'Only EDITORs can edit segment names'
+                      : 'Edit segment name'
+              }
+            />
+          </div>
           )}
         </div>
       )}
@@ -1245,7 +1265,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'programType', 'shotType', 'segmentName',
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'assets', 'speakers', 'speakersText',
-    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'isPublic'
+    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic'
   ] as const;
   for (const field of fieldsToCheck) {
     if ((prevItem as any)?.[field] !== (nextItem as any)?.[field]) return false;

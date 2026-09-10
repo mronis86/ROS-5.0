@@ -93,9 +93,11 @@ const EventBoardPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadBusyZone, setUploadBusyZone] = useState<BoardZone | null>(null);
+  const [dragOverZone, setDragOverZone] = useState<BoardZone | null>(null);
   const [notesTab, setNotesTab] = useState<'agenda' | 'setup' | 'food' | 'av'>('agenda');
   const [notesQuery, setNotesQuery] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileInputRefs = useRef<Partial<Record<BoardZone, HTMLInputElement | null>>>({});
 
   const eventId = event?.id;
 
@@ -333,15 +335,63 @@ const EventBoardPage: React.FC = () => {
         </header>
 
         {canEdit ? (
-          <label
-            className={`mb-3 flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-500 bg-slate-950/40 px-3 py-6 text-center cursor-pointer hover:border-blue-400 hover:bg-slate-900/60 transition-colors ${
-              uploadBusyZone === zone ? 'opacity-60 pointer-events-none' : ''
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label={`Upload ${meta.title}`}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                if (uploadBusyZone === zone) return;
+                fileInputRefs.current[zone]?.click();
+              }
+            }}
+            onClick={() => {
+              if (uploadBusyZone === zone) return;
+              fileInputRefs.current[zone]?.click();
+            }}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (uploadBusyZone === zone) return;
+              setDragOverZone(zone);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (uploadBusyZone === zone) return;
+              e.dataTransfer.dropEffect = 'copy';
+              setDragOverZone(zone);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOverZone((prev) => (prev === zone ? null : prev));
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOverZone(null);
+              if (uploadBusyZone === zone) return;
+              const file = e.dataTransfer.files?.[0];
+              if (!file) return;
+              void onUpload(zone, file);
+            }}
+            className={`mb-3 flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-3 py-6 text-center transition-colors ${
+              uploadBusyZone === zone
+                ? 'opacity-60 pointer-events-none border-slate-500 bg-slate-950/40'
+                : dragOverZone === zone
+                  ? 'cursor-copy border-blue-400 bg-blue-950/40'
+                  : 'cursor-pointer border-slate-500 bg-slate-950/40 hover:border-blue-400 hover:bg-slate-900/60'
             }`}
           >
             <span className="text-sm text-slate-200">
               {uploadBusyZone === zone ? 'Uploading…' : 'Drop file or click to upload'}
             </span>
             <input
+              ref={(el) => {
+                fileInputRefs.current[zone] = el;
+              }}
               type="file"
               className="hidden"
               accept={meta.accept}
@@ -351,7 +401,7 @@ const EventBoardPage: React.FC = () => {
                 if (file) void onUpload(zone, file);
               }}
             />
-          </label>
+          </div>
         ) : (
           <p className="mb-3 text-xs text-slate-500">View only — EDITOR role required to upload.</p>
         )}

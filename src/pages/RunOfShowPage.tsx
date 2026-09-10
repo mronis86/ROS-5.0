@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Event, LOCATION_OPTIONS } from '../types/Event';
+import { Event, LOCATION_OPTIONS, normalizeDayLocations } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { apiClient, getApiBaseUrl, EventCueFile, type SpeakerDirectoryRow } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
@@ -273,6 +273,11 @@ interface ScheduleItem {
   needsRecording?: boolean;
   /** Who marked REC: 'comms' (ASAP) vs 'ros' (export / planned post). */
   recordingSource?: 'comms' | 'ros' | null;
+  /**
+   * Optional room when this cue happens off the main program room
+   * (not a breakout). Blank/null = main event room for that day.
+   */
+  otherRoom?: string | null;
   timerId: string;
   customFields: Record<string, string>;
   isPublic: boolean;
@@ -927,6 +932,9 @@ const RunOfShowPage: React.FC = () => {
   const [breakoutRoomParentId, setBreakoutRoomParentId] = useState<number | null>(null);
   const [numberOfBreakoutRooms, setNumberOfBreakoutRooms] = useState<number>(1);
   const [breakoutRoomsData, setBreakoutRoomsData] = useState<Array<{ location: string; title: string }>>([{ location: 'Great Hall', title: '' }]);
+  const [showOtherRoomModal, setShowOtherRoomModal] = useState(false);
+  const [otherRoomItemId, setOtherRoomItemId] = useState<number | null>(null);
+  const [otherRoomDraft, setOtherRoomDraft] = useState('');
   const [activeTimers, setActiveTimers] = useState<Record<number, boolean>>({});
   const [activeTimerIntervals, setActiveTimerIntervals] = useState<Record<number, NodeJS.Timeout>>({});
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
@@ -2240,6 +2248,7 @@ const RunOfShowPage: React.FC = () => {
       showSpeakerManagerModal ||
       showAddModal ||
       showBreakoutRoomModal ||
+      showOtherRoomModal ||
       showDelayBlockModal ||
       showCustomColumnModal ||
       showPublicBulkModal;
@@ -2259,7 +2268,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showDelayBlockModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -3728,6 +3737,7 @@ const RunOfShowPage: React.FC = () => {
       showSpeakerManagerModal ||
       showAddModal ||
       showBreakoutRoomModal ||
+      showOtherRoomModal ||
       showDelayBlockModal ||
       showCustomColumnModal ||
       showPublicBulkModal
@@ -13759,6 +13769,25 @@ const RunOfShowPage: React.FC = () => {
                             <span>⏱</span>
                             <span>Add Delay Block</span>
                           </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                                alert('Only EDITORs can set other room. Please change your role to EDITOR.');
+                                return;
+                              }
+                              handleModalEditing();
+                              setActiveJumpMenu(null);
+                              setOtherRoomItemId(item.id);
+                              setOtherRoomDraft(item.otherRoom || '');
+                              setShowOtherRoomModal(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2 border-t border-slate-600"
+                            title="Mark this cue as happening in another room (not a breakout)"
+                          >
+                            <span>🚪</span>
+                            <span>{item.otherRoom ? `Other Room (${item.otherRoom})` : 'Other Room…'}</span>
+                          </button>
                           {/* Add Breakout Room button - only show for Breakout Session items */}
                           {item.programType === 'Breakout Session' && !indentedCues[item.id] && (
                             <button
@@ -17869,6 +17898,109 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Other Room Modal — mark cue as off main program room (not a breakout) */}
+      {showOtherRoomModal && otherRoomItemId !== null && (() => {
+        const target = schedule.find((i) => i.id === otherRoomItemId);
+        const day = target?.day || selectedDay;
+        const mainRoom =
+          event
+            ? normalizeDayLocations(event.location, event.numberOfDays || 1, event.dayLocations)[day] ||
+              event.location
+            : 'Great Hall';
+        const closeOtherRoomModal = () => {
+          setShowOtherRoomModal(false);
+          setOtherRoomItemId(null);
+          setOtherRoomDraft('');
+          handleModalClosed();
+        };
+        const applyOtherRoom = (value: string | null) => {
+          const trimmed = (value || '').trim();
+          const next =
+            !trimmed || trimmed === mainRoom ? null : trimmed;
+          const oldValue = target?.otherRoom || null;
+          setSchedule((prev) =>
+            prev.map((scheduleItem) =>
+              scheduleItem.id === otherRoomItemId
+                ? { ...scheduleItem, otherRoom: next }
+                : scheduleItem
+            )
+          );
+          logChange(
+            'FIELD_UPDATE',
+            next
+              ? `Set other room for "${target?.segmentName || 'cue'}" to "${next}"`
+              : `Cleared other room for "${target?.segmentName || 'cue'}"`,
+            {
+              changeType: 'FIELD_CHANGE',
+              itemId: otherRoomItemId,
+              itemName: target?.segmentName,
+              fieldName: 'otherRoom',
+              oldValue,
+              newValue: next,
+            }
+          );
+          closeOtherRoomModal();
+        };
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-lg max-w-md w-full shadow-xl">
+              <div className="p-6">
+                <h2 className="text-xl font-bold text-white mb-1">Other Room</h2>
+                <p className="text-slate-400 text-sm mb-4">
+                  Mark this cue as happening outside the main program room
+                  {mainRoom ? (
+                    <>
+                      {' '}
+                      (<span className="text-slate-300">{mainRoom}</span>)
+                    </>
+                  ) : null}
+                  . Not a breakout — stays on the main timeline.
+                </p>
+                <label className="block text-slate-300 text-sm font-medium mb-2">Room</label>
+                <select
+                  value={otherRoomDraft}
+                  onChange={(e) => setOtherRoomDraft(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500 mb-4"
+                  autoFocus
+                >
+                  <option value="">Main room ({mainRoom})</option>
+                  {LOCATION_OPTIONS.filter((opt) => opt.value !== mainRoom).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex justify-end gap-2">
+                  {target?.otherRoom ? (
+                    <button
+                      type="button"
+                      onClick={() => applyOtherRoom(null)}
+                      className="px-3 py-2 text-sm rounded bg-slate-700 text-slate-200 hover:bg-slate-600 mr-auto"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={closeOtherRoomModal}
+                    className="px-3 py-2 text-sm rounded bg-slate-700 text-slate-200 hover:bg-slate-600"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyOtherRoom(otherRoomDraft)}
+                    className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-500"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Breakout Room Modal */}
       {showBreakoutRoomModal && breakoutRoomParentId !== null && (
