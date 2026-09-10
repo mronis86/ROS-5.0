@@ -16,6 +16,7 @@ type ScheduleItem = {
   durationMinutes?: number;
   durationSeconds?: number;
   needsRecording?: boolean;
+  recordingSource?: 'comms' | 'ros' | null;
   isIndented?: boolean;
   customFields?: { cue?: string };
 };
@@ -172,16 +173,28 @@ const CommsEventPage: React.FC = () => {
   const toggleRecording = async (item: ScheduleItem) => {
     const next = !itemNeedsRecording(item);
     setSchedule((prev) =>
-      prev.map((row) => (row.id === item.id ? { ...row, needsRecording: next } : row))
+      prev.map((row) =>
+        row.id === item.id
+          ? { ...row, needsRecording: next, recordingSource: next ? 'comms' : null }
+          : row
+      )
     );
     setSavingId(item.id);
     setError(null);
     try {
-      const result = await apiClient.setCueRecording(eventId, item.id, next);
+      const result = await apiClient.setCueRecording(eventId, item.id, next, 'comms');
       if (result?.schedule_items) applyRos(result);
     } catch (err) {
       setSchedule((prev) =>
-        prev.map((row) => (row.id === item.id ? { ...row, needsRecording: !next } : row))
+        prev.map((row) =>
+          row.id === item.id
+            ? {
+                ...row,
+                needsRecording: !next,
+                recordingSource: !next ? item.recordingSource ?? 'comms' : null,
+              }
+            : row
+        )
       );
       setError(err instanceof Error ? err.message : 'Failed to update recording flag');
     } finally {
@@ -211,7 +224,7 @@ const CommsEventPage: React.FC = () => {
             </button>
             <h1 className="text-xl sm:text-2xl font-bold text-white">{eventName || 'Comms'}</h1>
             <p className="text-slate-400 text-sm mt-1">
-              Mark cues that need to be recorded. Those cues are outlined on the run of show.
+              Mark cues Comms needs recorded ASAP. Those show a COMMS badge in the run of show Record column.
             </p>
           </div>
           <div className="rounded-lg border border-red-700/50 bg-red-950/40 px-3 py-2 text-sm">
@@ -298,7 +311,7 @@ const CommsEventPage: React.FC = () => {
                               : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
                           } disabled:opacity-50`}
                         >
-                          {recording ? 'Recording' : 'Record'}
+                          {recording ? 'COMMS REC' : 'Record'}
                         </button>
                       </div>
                     </div>
@@ -349,7 +362,7 @@ const CommsEventPage: React.FC = () => {
                                   : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
                               } disabled:opacity-50`}
                             >
-                              {recording ? 'Recording' : 'Record'}
+                              {recording ? 'COMMS REC' : 'Record'}
                             </button>
                           </td>
                         </tr>

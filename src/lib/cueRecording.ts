@@ -1,7 +1,27 @@
 /** Cue-level REC flag is for planned post content — not “this show records.” */
 
+export type CueRecordingSource = 'comms' | 'ros';
+
 export function itemNeedsRecording(item: { needsRecording?: boolean } | null | undefined): boolean {
   return item?.needsRecording === true;
+}
+
+/** True when Comms (page or Comms user) marked this cue — ASAP / Comms request. */
+export function itemMarkedByComms(item: {
+  needsRecording?: boolean;
+  recordingSource?: string | null;
+} | null | undefined): boolean {
+  return itemNeedsRecording(item) && String(item?.recordingSource || '').toLowerCase() === 'comms';
+}
+
+export function resolveRecordingSource(
+  needsRecording: boolean,
+  opts?: { fromComms?: boolean; isCommsUser?: boolean; previous?: string | null }
+): CueRecordingSource | null {
+  if (!needsRecording) return null;
+  if (opts?.fromComms || opts?.isCommsUser) return 'comms';
+  if (String(opts?.previous || '').toLowerCase() === 'comms') return 'comms';
+  return 'ros';
 }
 
 export const CUE_RECORDING_MARK_WARNING =

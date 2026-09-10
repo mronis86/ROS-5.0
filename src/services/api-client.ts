@@ -821,12 +821,21 @@ class ApiClient {
     );
   }
 
-  async setCueRecording(eventId: string, itemId: number, needsRecording: boolean) {
+  async setCueRecording(
+    eventId: string,
+    itemId: number,
+    needsRecording: boolean,
+    source: 'comms' | 'ros' = 'comms'
+  ) {
     const result = await this.request<any>(
       `/api/run-of-show-data/${encodeURIComponent(eventId)}/recording`,
       {
         method: 'PATCH',
-        body: JSON.stringify({ item_id: itemId, needs_recording: needsRecording }),
+        body: JSON.stringify({
+          item_id: itemId,
+          needs_recording: needsRecording,
+          source,
+        }),
       }
     );
     this.cache.delete(`runOfShowData_${eventId}`);

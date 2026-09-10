@@ -799,9 +799,9 @@ const EventListPage: React.FC = () => {
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day); // month is 0-indexed
     return date.toLocaleDateString('en-US', {
-      weekday: 'long',
+      weekday: 'short',
       year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
       timeZone: 'America/New_York' // EST/EDT timezone
     });
@@ -926,7 +926,7 @@ const EventListPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className={`mx-auto w-full ${isNarrowViewport ? 'max-w-lg px-3' : isAdminUser ? 'max-w-7xl px-6' : 'max-w-6xl px-6'}`}>
+      <div className={`mx-auto w-full ${isNarrowViewport ? 'max-w-lg px-3' : 'max-w-7xl px-4 xl:px-6'}`}>
         {!isNarrowViewport ? (
           <>
         {/* Tabs + Add New Event on one row */}
@@ -1019,17 +1019,17 @@ const EventListPage: React.FC = () => {
 
         {/* Search and Filter */}
         <div className="flex justify-center mb-4">
-          <div className="bg-slate-800 rounded-lg p-3 w-full max-w-4xl">
-            <div className="flex items-center gap-4 justify-between">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-white font-semibold text-sm">🔍 Search:</span>
+          <div className="bg-slate-800 rounded-lg p-3 w-full max-w-5xl">
+            <div className="flex flex-wrap items-center gap-3 justify-between">
+              <div className="flex flex-wrap items-center gap-3 min-w-0 flex-1">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <span className="text-white font-semibold text-sm shrink-0">🔍 Search:</span>
                   <input
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     placeholder="Search events by name or location..."
-                    className="w-80 px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
+                    className="w-full min-w-0 max-w-md px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white focus:border-blue-500 focus:outline-none text-sm"
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -1090,18 +1090,18 @@ const EventListPage: React.FC = () => {
                         <span className="sr-only">Select</span>
                       </th>
                     )}
-                    <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[220px] w-[28%]">Event Name</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Date</th>
+                    <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[140px] w-[24%]">Event Name</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 whitespace-nowrap">Date</th>
                     {activeTab !== 'quickMode' && (
                       <>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Location</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Type</th>
-                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]" title="Broadcast Options">Broadcast</th>
+                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[4.5rem]" title="Broadcast Options">Broadcast</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Duration</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
+                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
                     {isAdminUser && (
                       <th
-                        className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]"
+                        className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[4.5rem]"
                         title="Green Room, Photo View, and other follower displays"
                       >
                         {DISPLAY_SYNC_COLUMN_LABEL}
@@ -1155,8 +1155,8 @@ const EventListPage: React.FC = () => {
                             />
                           </td>
                         )}
-                        <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[220px] w-[28%]">
-                          <div className="flex items-center gap-2 flex-wrap">
+                        <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[140px] w-[24%]">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
                             {event.name}
                             {normalizeWorkspaceMode(event.workspaceMode, event.eventType) === 'board' ? (
                               <span className="ml-2 inline-flex items-center rounded bg-emerald-700/90 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white align-middle">
@@ -1170,7 +1170,7 @@ const EventListPage: React.FC = () => {
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
+                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center whitespace-nowrap">
                           {formatDate(event.date)}
                         </td>
                         {activeTab !== 'quickMode' && (
@@ -1193,7 +1193,7 @@ const EventListPage: React.FC = () => {
                             {getEventTypeShortLabel(event.eventType || 'Staged Production')}
                           </span>
                         </td>
-                        <td className="px-2 py-2 border-r border-slate-600 min-w-[5.5rem] text-center">
+                        <td className="px-2 py-2 border-r border-slate-600 min-w-[4.5rem] text-center">
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
                             title={getRecordStreamingShort(event.recordStreaming || 'None').title}
@@ -1204,8 +1204,8 @@ const EventListPage: React.FC = () => {
                         <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
                           {event.numberOfDays} day{event.numberOfDays > 1 ? 's' : ''}
                         </td>
-                        <td className="px-3 py-2 text-slate-300 border-r border-slate-600">
-                          <span className="text-xs font-mono">
+                        <td className="px-2 py-2 text-slate-300 border-r border-slate-600">
+                          <span className="text-xs font-mono truncate block max-w-[8rem] mx-auto" title={event.timezone || 'America/New_York'}>
                             {event.timezone || 'America/New_York'}
                           </span>
                         </td>
@@ -1225,7 +1225,7 @@ const EventListPage: React.FC = () => {
                             {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
                           </td>
                         )}
-                        <td className="px-2 py-2 min-w-[10.5rem] text-center">
+                        <td className="px-2 py-2 text-center">
                           <EventListRowActions
                             layout="table"
                             mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}

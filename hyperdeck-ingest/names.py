@@ -38,16 +38,28 @@ def cue_label(item: dict | None) -> str:
     return f"CUE {item_id}" if item_id is not None else ""
 
 
+def _truthy_flag(value) -> bool:
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    if isinstance(value, (int, float)) and value == 1:
+        return True
+    if isinstance(value, str) and value.strip().lower() in ("1", "true", "yes", "y"):
+        return True
+    return False
+
+
 def item_needs_recording(item: dict | None) -> bool:
     if not item:
         return False
-    if item.get("needsRecording") is True or item.get("needs_recording") is True:
+    if _truthy_flag(item.get("needsRecording")) or _truthy_flag(item.get("needs_recording")):
         return True
-    if item.get("recording") is True:
+    if _truthy_flag(item.get("recording")):
         return True
     fields = item.get("customFields") or {}
     if isinstance(fields, dict):
-        if fields.get("needsRecording") is True or fields.get("recording") is True:
+        if _truthy_flag(fields.get("needsRecording")) or _truthy_flag(fields.get("recording")):
             return True
     return False
 

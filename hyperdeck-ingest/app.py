@@ -67,6 +67,8 @@ class HyperDeckIngestApp:
         self._recording_meta: dict = {}
         self._recording_seen_running = False
         self._completed_record_item_ids: set[str] = set()
+        self._last_schedule_refresh = 0.0
+        self._last_marked_count: int | None = None
         self._session_timer_configured = False
         self.copied_keys = set(str(x) for x in (self.cfg.get("copied_keys") or []))
         self._auto_stop_never = False
@@ -376,6 +378,7 @@ class HyperDeckIngestApp:
             command=self._on_event_lock_toggled,
         ).pack(side="left")
         ttk.Button(lock_row, text="Confirm event", command=self._confirm_event_selection).pack(side="left", padx=(8, 0))
+        ttk.Button(lock_row, text="Refresh marks", command=self._refresh_marks_clicked).pack(side="left", padx=(8, 0))
         ttk.Label(event_pick, textvariable=self.event_rec_summary_var, style="CardMuted.TLabel").grid(
             row=7, column=0, sticky="w", pady=(4, 0)
         )
@@ -1138,18 +1141,68 @@ class HyperDeckIngestApp:
                 return ev
         return {"id": eid, "name": "", "date": ""}
 
+    def _refresh_marks_clicked(self) -> None:
+        eid = self.event_id_var.get().strip()
+        if not eid:
+            messagebox.showinfo("Event", "Select an event first.")
+            return
+
+        def work():
+            try:
+                prev = self._last_marked_count
+                self._refresh_schedule(force=True)
+                marked = sum(1 for item in self.schedule if item_needs_recording(item))
+                note = f"Record marks refreshed: {marked} marked"
+                if prev is not None and prev != marked:
+                    note += f" (was {prev})"
+                self.log(note, "ok")
+            except Exception as exc:
+                self.log(str(exc), "error")
+                self.root.after(0, lambda: messagebox.showerror("Refresh marks", str(exc)))
+
+        self._bg(work)
+
     def _update_record_cue_summary(self) -> None:
         total = len(self.schedule)
         marked = sum(1 for item in self.schedule if item_needs_recording(item))
+        self._last_marked_count = marked
         self.event_rec_summary_var.set(f"Record-marked cues: {marked} / {total}")
 
-    def _refresh_schedule(self) -> None:
+    def _refresh_schedule(self, force: bool = False) -> None:
         eid = self.event_id_var.get().strip()
         if not eid:
             raise RosApiError("Select an event first")
+        now = time.time()
+        refresh_every = max(3, int(self.cfg.get("schedule_refresh_seconds") or 8))
+        if (
+            not force
+            and self.schedule
+            and self._last_schedule_refresh
+            and (now - self._last_schedule_refresh) < refresh_every
+        ):
+            return
         api = self._apply_api_from_fields()
+        prev_marked = {
+            str(item.get("id"))
+            for item in self.schedule
+            if item_needs_recording(item) and item.get("id") is not None
+        }
         self.schedule = api.schedule_items(eid)
-        self.log(f"Schedule: {len(self.schedule)} cues")
+        self._last_schedule_refresh = time.time()
+        marked_ids = {
+            str(item.get("id"))
+            for item in self.schedule
+            if item_needs_recording(item) and item.get("id") is not None
+        }
+        marked = len(marked_ids)
+        self.log(f"Schedule: {len(self.schedule)} cues · Record-marked: {marked}")
+        if prev_marked and marked_ids != prev_marked:
+            added = sorted(marked_ids - prev_marked)
+            removed = sorted(prev_marked - marked_ids)
+            if added:
+                self.log(f"New Record marks: {', '.join(added)}", "ok")
+            if removed:
+                self.log(f"Cleared Record marks: {', '.join(removed)}")
         self.root.after(0, self._update_record_cue_summary)
 
     def _item_by_id(self, item_id) -> dict | None:
@@ -1303,7 +1356,7 @@ class HyperDeckIngestApp:
                 model = self.deck.connect()
                 self.status_deck.set(model or "Connected")
                 self.log(f"HyperDeck connected: {model or self.deck.host}", "ok")
-            self._refresh_schedule()
+            self._refresh_schedule(force=True)
         except Exception as exc:
             messagebox.showerror("Cannot start", str(exc))
             return
@@ -1313,11 +1366,13 @@ class HyperDeckIngestApp:
         self._recording_seen_running = False
         self.following = True
         self._set_pill("following")
+        marked = sum(1 for item in self.schedule if item_needs_recording(item))
+        self.log(f"Follow started with {marked} Record-marked cue(s)", "ok")
         if self._auto_stop_never:
-            self.log("Follow started — polling until session timer expires or you click Stop", "ok")
+            self.log("Polling until session timer expires or you click Stop", "ok")
         elif self._auto_stop_ends_at:
             left = max(0, int((self._auto_stop_ends_at - time.time() * 1000) / 1000))
-            self.log(f"Follow started — session timer {self._format_duration(left)} remaining", "ok")
+            self.log(f"Session timer {self._format_duration(left)} remaining", "ok")
         else:
             self.log("Follow started", "ok")
         self._follow_thread = threading.Thread(target=self._follow_loop, daemon=True)
@@ -1389,6 +1444,11 @@ class HyperDeckIngestApp:
 
     def _follow_tick(self) -> None:
         eid = self.event_id_var.get().strip()
+        try:
+            self._refresh_schedule(force=False)
+        except Exception as exc:
+            self.log(f"Schedule refresh failed: {exc}", "error")
+
         timer = self.api.get_active_timer(eid)
 
         if self._recording_item_id is not None and timer is None:
@@ -1408,12 +1468,17 @@ class HyperDeckIngestApp:
         state = str(timer.get("timer_state") or "").lower()
         running = timer.get("is_running") is True or state == "running"
         item = self._item_by_id(item_id)
-        if item is None:
+        if item is None or (
+            item is not None
+            and not item_needs_recording(item)
+            and state in ("loaded", "running")
+        ):
+            # Missing cue, or unmarked while loaded — pull latest marks once.
             try:
-                self._refresh_schedule()
+                self._refresh_schedule(force=True)
                 item = self._item_by_id(item_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.log(f"Schedule refresh failed: {exc}", "error")
         marked = item_needs_recording(item)
         cue = cue_label(item)
         segment = str((item or {}).get("segmentName") or "")

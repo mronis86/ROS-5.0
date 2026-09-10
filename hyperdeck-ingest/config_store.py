@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     "record_only_marked": True,
     "auto_copy": True,
     "poll_seconds": 1,
+    "schedule_refresh_seconds": 8,
     "auto_stop_hours": 2,
     "auto_stop_minutes": 0,
     "auto_stop_never": False,
@@ -69,6 +70,10 @@ def load_config() -> dict[str, Any]:
         data["poll_seconds"] = min(60, max(1, int(data.get("poll_seconds") or 1)))
     except (TypeError, ValueError):
         data["poll_seconds"] = 1
+    try:
+        data["schedule_refresh_seconds"] = min(120, max(3, int(data.get("schedule_refresh_seconds") or 8)))
+    except (TypeError, ValueError):
+        data["schedule_refresh_seconds"] = 8
     data["auto_stop_hours"] = _clamp_auto_stop_hours(data.get("auto_stop_hours"))
     data["auto_stop_minutes"] = _clamp_auto_stop_minutes(data.get("auto_stop_minutes"))
     data["auto_stop_never"] = data.get("auto_stop_never") is True
@@ -89,6 +94,10 @@ def save_config(data: dict[str, Any]) -> dict[str, Any]:
         merged["poll_seconds"] = min(60, max(1, int(merged.get("poll_seconds") or 1)))
     except (TypeError, ValueError):
         merged["poll_seconds"] = 1
+    try:
+        merged["schedule_refresh_seconds"] = min(120, max(3, int(merged.get("schedule_refresh_seconds") or 8)))
+    except (TypeError, ValueError):
+        merged["schedule_refresh_seconds"] = 8
     merged["auto_stop_hours"] = _clamp_auto_stop_hours(merged.get("auto_stop_hours"))
     merged["auto_stop_minutes"] = _clamp_auto_stop_minutes(merged.get("auto_stop_minutes"))
     merged["auto_stop_never"] = merged.get("auto_stop_never") is True

@@ -3658,10 +3658,19 @@ app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
     if (!Array.isArray(items)) items = [];
 
     const byId = new Map(updates.map((u) => [u.id, u.needsRecording]));
+    const markSource =
+      body.source === 'comms' || body.recording_source === 'comms' || req.auth?.isComms === true
+        ? 'comms'
+        : 'ros';
     const nextItems = items.map((item) => {
       const id = Number(item.id);
       if (!byId.has(id)) return item;
-      return { ...item, needsRecording: byId.get(id) };
+      const needsRecording = byId.get(id);
+      return {
+        ...item,
+        needsRecording,
+        recordingSource: needsRecording ? markSource : null,
+      };
     });
 
     const result = await pool.query(

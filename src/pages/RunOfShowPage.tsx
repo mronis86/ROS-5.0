@@ -271,6 +271,8 @@ interface ScheduleItem {
   hasPPT: boolean;
   hasQA: boolean;
   needsRecording?: boolean;
+  /** Who marked REC: 'comms' (ASAP) vs 'ros' (export / planned post). */
+  recordingSource?: 'comms' | 'ros' | null;
   timerId: string;
   customFields: Record<string, string>;
   isPublic: boolean;
@@ -1215,7 +1217,7 @@ const RunOfShowPage: React.FC = () => {
     segmentName: 320, // w-80 = 320px
     shotType: 192, // w-48 = 192px
     pptQA: 192, // w-48 = 192px
-    recording: 88,
+    recording: 100,
     notes: 384, // w-96 = 384px
     assets: 192, // w-48 = 192px
     participants: 256, // w-64 = 256px
@@ -9782,6 +9784,12 @@ const RunOfShowPage: React.FC = () => {
           hasPPT: row.hasPPT || false,
           hasQA: row.hasQA || false,
           needsRecording: !!(row.needsRecording || row.recording),
+          recordingSource:
+            row.recordingSource === 'comms' || row.recording_source === 'comms'
+              ? 'comms'
+              : row.recordingSource === 'ros' || row.recording_source === 'ros'
+                ? 'ros'
+                : null,
           timerId: row.timerId || '',
           isPublic: row.isPublic || false,
           isIndented: row.isIndented || false,
@@ -14345,6 +14353,7 @@ const RunOfShowPage: React.FC = () => {
                         onRowEditStart={claimRowEditLock}
                         onRowEditEnd={releaseRowEditLock}
                         confirmRecordingMark={shouldConfirmCueRecordingMark(user)}
+                        isCommsUser={user?.is_comms === true}
                         item={item}
                         index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}

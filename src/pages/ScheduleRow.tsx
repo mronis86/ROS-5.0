@@ -1,5 +1,5 @@
 import React from 'react';
-import { CUE_RECORDING_MARK_WARNING } from '../lib/cueRecording';
+import { CUE_RECORDING_MARK_WARNING, itemMarkedByComms, resolveRecordingSource } from '../lib/cueRecording';
 
 export interface ScheduleRowProps {
   item: any;
@@ -67,6 +67,8 @@ export interface ScheduleRowProps {
   onRowEditEnd?: (rowId: number) => void;
   /** When true, checking REC shows a warning (regular users — not Comms/Admin). */
   confirmRecordingMark?: boolean;
+  /** When true, marks made on this ROS use the Comms source (COMMS badge). */
+  isCommsUser?: boolean;
 }
 
 const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
@@ -130,6 +132,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   onRowEditStart,
   onRowEditEnd,
   confirmRecordingMark = false,
+  isCommsUser = false,
 }) => {
   const isLockedByOther = Boolean(rowLock && currentUserId && rowLock.userId !== currentUserId);
   const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
@@ -205,13 +208,22 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     }
     setSchedule((prev: any[]) => prev.map(scheduleItem =>
       scheduleItem.id === item.id
-        ? { ...scheduleItem, needsRecording: next }
+        ? {
+            ...scheduleItem,
+            needsRecording: next,
+            recordingSource: resolveRecordingSource(next, {
+              isCommsUser,
+              previous: scheduleItem.recordingSource,
+            }),
+          }
         : scheduleItem
     ));
     logChangeDebounced(
       `needsRecording_${item.id}`,
       'FIELD_UPDATE',
-      `Updated recording flag for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${next ? 'TRUE' : 'FALSE'}`,
+      `Updated recording flag for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${next ? 'TRUE' : 'FALSE'}${
+        next && isCommsUser ? ' (COMMS)' : ''
+      }`,
       {
         changeType: 'FIELD_CHANGE',
         itemId: item.id,
@@ -219,7 +231,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         fieldName: 'needsRecording',
         oldValue: oldValue ? 'TRUE' : 'FALSE',
         newValue: next ? 'TRUE' : 'FALSE',
-        details: { fieldType: 'checkbox', booleanChange: true }
+        details: {
+          fieldType: 'checkbox',
+          booleanChange: true,
+          recordingSource: resolveRecordingSource(next, { isCommsUser, previous: item.recordingSource }),
+        }
       }
     );
   };
@@ -804,7 +820,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={{ width: columnWidths.recording }}
         >
-          <label className="flex flex-col items-center gap-1">
+          <label className="flex flex-col items-center gap-0.5">
             <input
               type="checkbox"
               checked={!!item.needsRecording}
@@ -816,12 +832,22 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   ? lockLabel
                   : currentUserRole === 'VIEWER'
                     ? 'Viewers cannot mark cues for recording'
-                    : confirmRecordingMark
-                      ? 'Only for planned post content — not every segment (event Record already covers the show)'
-                      : 'Mark this cue for planned post content'
+                    : itemMarkedByComms(item)
+                      ? 'Comms marked this cue for ASAP recording'
+                      : confirmRecordingMark
+                        ? 'Only for planned post content — not every segment (event Record already covers the show)'
+                        : 'Mark this cue for planned post content / export'
               }
             />
             <span className={`text-xs font-black tracking-wide ${item.needsRecording ? 'text-red-400' : 'text-slate-300'}`}>REC</span>
+            {itemMarkedByComms(item) ? (
+              <span
+                className="rounded px-1 py-0.5 text-[9px] font-black tracking-wide bg-amber-500 text-slate-950"
+                title="Marked by Comms — ASAP request (not just export)"
+              >
+                COMMS
+              </span>
+            ) : null}
           </label>
         </div>
       )}
@@ -1219,7 +1245,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'programType', 'shotType', 'segmentName',
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'assets', 'speakers', 'speakersText',
-    'hasPPT', 'hasQA', 'needsRecording', 'isPublic'
+    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'isPublic'
   ] as const;
   for (const field of fieldsToCheck) {
     if ((prevItem as any)?.[field] !== (nextItem as any)?.[field]) return false;
@@ -1231,6 +1257,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.programTypes !== nextProps.programTypes) return false;
   if (prevProps.programTypeColors !== nextProps.programTypeColors) return false;
   if (prevProps.shotTypes !== nextProps.shotTypes) return false;
+
+  if (prevProps.confirmRecordingMark !== nextProps.confirmRecordingMark) return false;
+  if (prevProps.isCommsUser !== nextProps.isCommsUser) return false;
 
   // Role changes can affect disabled states and styling
   if (prevProps.currentUserRole !== nextProps.currentUserRole) return false;
