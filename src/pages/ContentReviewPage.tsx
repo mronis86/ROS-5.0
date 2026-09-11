@@ -30,6 +30,11 @@ import {
   parseCreativeCuePages,
   scanPdfForCuePages,
 } from '../lib/creativeCuePdfPages';
+import {
+  buildRosProgramTypes,
+  HEAD_TABLE_PROGRAM_TYPE,
+  ROS_PROGRAM_TYPE_COLORS,
+} from '../lib/guestRosHelpers';
 
 type ContentReviewFollowMode = 'solo' | 'drive' | 'follow';
 type ReviewStatus = 'pending' | 'needs_update' | 'approved' | 'edits_made';
@@ -195,41 +200,12 @@ function reviewStatusMeta(status: ReviewStatus) {
   }
 }
 
-/** Matches PhotoView / print cue styling */
+/** Matches Run of Show / PhotoView cue styling (legacy Podium/Panel kept for old rows). */
 const PROGRAM_TYPE_COLORS: Record<string, string> = {
-  'Podium Transition': '#8B4513',
-  'Panel Transition': '#404040',
-  'Sub Cue': '#F3F4F6',
-  'No Transition': '#059669',
-  Video: '#F59E0B',
-  'Panel+Remote': '#1E40AF',
-  'Remote Only': '#60A5FA',
-  'Break F&B/B2B': '#EC4899',
-  'Breakout Session': '#20B2AA',
-  'Delay Block': '#7C3AED',
-  TBD: '#6B7280',
-  KILLED: '#DC2626',
+  ...ROS_PROGRAM_TYPE_COLORS,
   Podium: '#8B4513',
   Panel: '#404040',
-  'PreShow/End': '#8B5CF6'
 };
-const PROGRAM_TYPE_OPTIONS = [
-  'Podium Transition',
-  'Panel Transition',
-  'Sub Cue',
-  'No Transition',
-  'Video',
-  'Panel+Remote',
-  'Remote Only',
-  'Break F&B/B2B',
-  'Breakout Session',
-  'Delay Block',
-  'TBD',
-  'KILLED',
-  'Podium',
-  'Panel',
-  'PreShow/End'
-];
 
 const SHOT_TYPES = ['Podium', '1-Shot', '2-Shot', '3-Shot', '4-Shot', '5-Shot', '6-Shot', '7-Shot', 'Ted-Talk'];
 
@@ -244,6 +220,8 @@ interface ScheduleItem {
   programType: string;
   shotType: string;
   segmentName: string;
+  /** Optional off-main-room label from ROS (not a breakout). */
+  otherRoom?: string | null;
   durationHours: number;
   durationMinutes: number;
   durationSeconds: number;
@@ -269,17 +247,46 @@ type SpeakerSlotDraft = {
 };
 
 function normalizeScheduleItem(raw: any): ScheduleItem {
-  const sec = raw.duration_seconds ?? raw.durationSeconds ?? 0;
   const cf = raw.customFields ?? raw.custom_fields ?? {};
+  const otherRoomRaw = raw.otherRoom ?? raw.other_room;
+  const otherRoom =
+    typeof otherRoomRaw === 'string' && otherRoomRaw.trim() ? otherRoomRaw.trim() : null;
+
+  // ROS stores HMS components; only treat a lone duration_seconds as a total when HMS is absent.
+  const hRaw = raw.durationHours ?? raw.duration_hours;
+  const mRaw = raw.durationMinutes ?? raw.duration_minutes;
+  const hasHms = hRaw != null || mRaw != null;
+  let durationHours: number;
+  let durationMinutes: number;
+  let durationSeconds: number;
+  if (hasHms) {
+    durationHours = Math.max(0, Math.floor(Number(hRaw) || 0));
+    durationMinutes = Math.max(0, Math.floor(Number(mRaw) || 0));
+    durationSeconds = Math.max(0, Math.floor(Number(raw.durationSeconds ?? raw.duration_seconds) || 0));
+  } else {
+    const totalRaw = raw.duration_seconds ?? raw.durationSeconds;
+    if (totalRaw != null && Number.isFinite(Number(totalRaw))) {
+      const t = Math.max(0, Math.floor(Number(totalRaw)));
+      durationHours = Math.floor(t / 3600);
+      durationMinutes = Math.floor((t % 3600) / 60);
+      durationSeconds = t % 60;
+    } else {
+      durationHours = 0;
+      durationMinutes = 0;
+      durationSeconds = 0;
+    }
+  }
+
   return {
     id: Number(raw.id),
     day: Number(raw.day ?? 1),
     programType: String(raw.programType ?? raw.program_type ?? ''),
     shotType: String(raw.shotType ?? raw.shot_type ?? ''),
     segmentName: String(raw.segmentName ?? raw.segment_name ?? ''),
-    durationHours: Math.floor(sec / 3600),
-    durationMinutes: Math.floor((sec % 3600) / 60),
-    durationSeconds: sec % 60,
+    otherRoom,
+    durationHours,
+    durationMinutes,
+    durationSeconds,
     notes: String(raw.notes ?? ''),
     assets: String(raw.assets ?? ''),
     speakersText: String(raw.speakersText ?? raw.speakers_text ?? ''),
@@ -288,6 +295,17 @@ function normalizeScheduleItem(raw: any): ScheduleItem {
     customFields: typeof cf === 'object' && cf !== null ? cf : {},
     isStartCue: !!(raw.isStartCue ?? raw.is_start_cue)
   };
+}
+
+function OtherRoomBadge({ room, className = '' }: { room: string; className?: string }) {
+  return (
+    <span
+      className={`inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-500 text-slate-950 ${className}`}
+      title={`Happens in ${room} (not main program room)`}
+    >
+      {room}
+    </span>
+  );
 }
 
 function formatCueDisplay(cue: string | undefined): string {
@@ -834,13 +852,18 @@ const ContentReviewPage: React.FC = () => {
   /** When true, the next cueReviews→persist effect is skipped (remote socket apply). */
   const suppressReviewPersistRef = useRef(false);
   const cueReviewsRef = useRef<CueReviewMap>({});
-  const applyRemoteReviewsRef = useRef<(data: { event_id?: string; reviews?: Record<string, unknown> }) => void>(
-    () => undefined
-  );
+  const savedStreamUrlRef = useRef<string | null>(null);
+  const savedCreativePdfUrlRef = useRef<string | null>(null);
+  const creativeCuePagesRef = useRef<CreativeCuePages>({});
+  const applyRemoteReviewsRef = useRef<(data: Record<string, unknown>) => void>(() => undefined);
+  const applyRemoteScheduleRef = useRef<(data: any) => void>(() => undefined);
+  const loadRef = useRef<() => Promise<void>>(async () => undefined);
   const scheduleLenRef = useRef(0);
+  const driverIdRef = useRef('guest');
 
   const driverId = user?.id ?? 'guest';
   const driverName = (user?.full_name || user?.email || 'Guest').trim() || 'Guest';
+  driverIdRef.current = driverId;
   const isAdmin = user?.is_admin === true;
   const reviewAssigneeCount = reviewAssignees.creative.length + reviewAssignees.production.length;
 
@@ -1045,19 +1068,120 @@ const ContentReviewPage: React.FC = () => {
     cueReviewsRef.current = cueReviews;
   }, [cueReviews]);
 
+  useEffect(() => {
+    savedStreamUrlRef.current = savedStreamUrl;
+  }, [savedStreamUrl]);
+
+  useEffect(() => {
+    savedCreativePdfUrlRef.current = savedCreativePdfUrl;
+  }, [savedCreativePdfUrl]);
+
+  useEffect(() => {
+    creativeCuePagesRef.current = creativeCuePages;
+  }, [creativeCuePages]);
+
   applyRemoteReviewsRef.current = (data) => {
     if (!data) return;
     if (!eventId) return;
     if (data.event_id != null && String(data.event_id) !== String(eventId)) return;
     if (!contentReviewHydratedRef.current) return;
-    const next = normalizeCueReviewMap(data.reviews);
-    try {
-      if (JSON.stringify(cueReviewsRef.current) === JSON.stringify(next)) return;
-    } catch {
-      /* compare failed — still apply */
+
+    let appliedSomething = false;
+
+    if (data.reviews != null) {
+      const next = normalizeCueReviewMap(data.reviews as Record<string, unknown>);
+      let same = false;
+      try {
+        same = JSON.stringify(cueReviewsRef.current) === JSON.stringify(next);
+      } catch {
+        same = false;
+      }
+      if (!same) {
+        setCueReviews(next);
+        appliedSomething = true;
+      }
     }
-    suppressReviewPersistRef.current = true;
-    setCueReviews(next);
+
+    if ('stream_url' in data) {
+      const nextStream =
+        typeof data.stream_url === 'string' ? sanitizeStreamEmbedUrl(data.stream_url) : null;
+      if (nextStream !== savedStreamUrlRef.current) {
+        setSavedStreamUrl(nextStream);
+        appliedSomething = true;
+      }
+    }
+
+    if ('creative_pdf_url' in data) {
+      const nextPdf =
+        typeof data.creative_pdf_url === 'string'
+          ? normalizeCreativeEmbedUrl(data.creative_pdf_url)
+          : null;
+      if (nextPdf !== savedCreativePdfUrlRef.current) {
+        setSavedCreativePdfUrl(nextPdf);
+        if (nextPdf) setCreativePdfSetupOpen(false);
+        appliedSomething = true;
+      }
+    }
+
+    if ('creative_cue_pages' in data) {
+      const nextPages = parseCreativeCuePages(data.creative_cue_pages);
+      let samePages = false;
+      try {
+        samePages =
+          JSON.stringify(creativeCuePagesRef.current) === JSON.stringify(nextPages);
+      } catch {
+        samePages = false;
+      }
+      if (!samePages) {
+        setCreativeCuePages(nextPages);
+        appliedSomething = true;
+      }
+    }
+
+    // Skip echoing a persist for remote review/meta updates. Do not apply active_stage /
+    // side_rail_width — those are per-client UI prefs included on every autosave.
+    if (appliedSomething) {
+      suppressReviewPersistRef.current = true;
+    }
+  };
+
+  applyRemoteScheduleRef.current = (data) => {
+    if (!data) return;
+    if (!eventId) return;
+    const dataEventId = data.event_id ?? data.eventId;
+    if (dataEventId != null && String(dataEventId) !== String(eventId)) return;
+    if (!contentReviewHydratedRef.current) return;
+    // Own saves already applied optimistically — skip to avoid clobbering in-progress drafts.
+    if (data.last_modified_by && String(data.last_modified_by) === String(driverIdRef.current)) {
+      return;
+    }
+
+    let scheduleItems = data.schedule_items;
+    if (typeof scheduleItems === 'string') {
+      try {
+        scheduleItems = JSON.parse(scheduleItems);
+      } catch {
+        scheduleItems = null;
+      }
+    }
+    if (Array.isArray(scheduleItems)) {
+      setSchedule(scheduleItems.map(normalizeScheduleItem));
+    }
+    if (Array.isArray(data.custom_columns)) {
+      setCustomColumns(data.custom_columns as CustomColumn[]);
+    }
+    const settings = data.settings;
+    if (settings && typeof settings === 'object') {
+      const settingsDays = Number((settings as any).numberOfDays) || 0;
+      const settingsName = String((settings as any).eventName || '').trim();
+      if (settingsDays > 0 || settingsName) {
+        setEvent((prev) => ({
+          ...prev,
+          ...(settingsName ? { name: settingsName } : {}),
+          ...(settingsDays > 0 ? { numberOfDays: Math.max(1, settingsDays) } : {}),
+        }));
+      }
+    }
   };
 
   useEffect(() => {
@@ -1065,7 +1189,13 @@ const ContentReviewPage: React.FC = () => {
     if (creativeContributor && !creativeSessionConnectionRef.current) return;
 
     socketClient.connect(eventId, {
+      onRunOfShowDataUpdated: (data) => applyRemoteScheduleRef.current(data),
       onContentReviewDataUpdated: (data) => applyRemoteReviewsRef.current(data),
+      onInitialSync: async () => {
+        if (contentReviewHydratedRef.current) {
+          await loadRef.current();
+        }
+      },
     });
     const socket = socketClient.getSocket();
     const onConnect = () => {
@@ -1112,7 +1242,13 @@ const ContentReviewPage: React.FC = () => {
       }
       if (!socketClient.isConnected()) {
         socketClient.connect(eventId, {
+          onRunOfShowDataUpdated: (data) => applyRemoteScheduleRef.current(data),
           onContentReviewDataUpdated: (data) => applyRemoteReviewsRef.current(data),
+          onInitialSync: async () => {
+            if (contentReviewHydratedRef.current) {
+              await loadRef.current();
+            }
+          },
         });
       }
     };
@@ -1631,6 +1767,8 @@ const ContentReviewPage: React.FC = () => {
     clampSideRailWidth,
   ]);
 
+  loadRef.current = load;
+
   useEffect(() => {
     load();
   }, [load]);
@@ -2022,6 +2160,29 @@ const ContentReviewPage: React.FC = () => {
     return group.items.filter((it) => it.id !== displayItem.id);
   }, [cueGroups, displayItem]);
 
+  const programTypeOptions = useMemo(() => {
+    const types = buildRosProgramTypes(event?.eventType);
+    // Keep Head Table selectable if any cue already uses it (e.g. event type changed later).
+    if (
+      schedule.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
+      !types.includes(HEAD_TABLE_PROGRAM_TYPE)
+    ) {
+      const idx = types.indexOf('PreShow/End');
+      if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
+      else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
+    }
+    // Preserve legacy labels still present on cues so the select can show the current value.
+    for (const legacy of ['Podium', 'Panel'] as const) {
+      if (schedule.some((item) => item.programType === legacy) && !types.includes(legacy)) {
+        types.push(legacy);
+      }
+    }
+    if (programTypeDraft && !types.includes(programTypeDraft)) {
+      types.push(programTypeDraft);
+    }
+    return types;
+  }, [event?.eventType, schedule, programTypeDraft]);
+
   const programColor = (pt: string) => PROGRAM_TYPE_COLORS[pt] || '#6B7280';
   const programTextClass = (pt: string) =>
     pt === 'Sub Cue' || pt === 'KILLED' ? 'text-black' : 'text-white';
@@ -2071,6 +2232,71 @@ const ContentReviewPage: React.FC = () => {
     setSpeakersDirty(false);
     setSpeakersSaveMessage(null);
   }, [displayItem?.id, editModeEnabled]);
+
+  const notesDirtyRef = useRef(false);
+  const segmentDirtyRef = useRef(false);
+  const shotDirtyRef = useRef(false);
+  const assetsDirtyRef = useRef(false);
+  const durationDirtyRef = useRef(false);
+  const customFieldsDirtyRef = useRef(false);
+  const pptQaDirtyRef = useRef(false);
+  const cueProgramDirtyRef = useRef(false);
+  const speakersDirtyRef = useRef(false);
+
+  notesDirtyRef.current = notesDirty;
+  segmentDirtyRef.current = segmentDirty;
+  shotDirtyRef.current = shotDirty;
+  assetsDirtyRef.current = assetsDirty;
+  durationDirtyRef.current = durationDirty;
+  customFieldsDirtyRef.current = customFieldsDirty;
+  pptQaDirtyRef.current = pptQaDirty;
+  cueProgramDirtyRef.current = cueProgramDirty;
+  speakersDirtyRef.current = speakersDirty;
+
+  /** Keep non-dirty drafts in sync when remote schedule updates the selected cue. */
+  useEffect(() => {
+    if (!displayItem) return;
+    if (!notesDirtyRef.current) {
+      setNotesDraft(displayItem.notes ?? '');
+      if (editModeEnabled && notesEditorRef.current) {
+        notesEditorRef.current.innerHTML = notesForEditor(displayItem.notes ?? '');
+      }
+    }
+    if (!segmentDirtyRef.current) setSegmentDraft(displayItem.segmentName ?? '');
+    if (!shotDirtyRef.current) setShotDraft(displayItem.shotType ?? '');
+    if (!assetsDirtyRef.current) {
+      setAssetsDraft(displayItem.assets ?? '');
+      const parsedAssets = parseAssetRows(displayItem.assets ?? '');
+      setAssetRows(
+        parsedAssets.length
+          ? parsedAssets
+          : [{ id: `asset-${Date.now()}`, name: '', link: '', linkEnabled: false }]
+      );
+    }
+    if (!durationDirtyRef.current) {
+      setDurationHoursDraft(String(displayItem.durationHours ?? 0));
+      setDurationMinutesDraft(String(displayItem.durationMinutes ?? 0));
+      setDurationSecondsDraft(String(displayItem.durationSeconds ?? 0));
+    }
+    if (!customFieldsDirtyRef.current) {
+      setCustomFieldsDraft(
+        Object.fromEntries(
+          (customColumns || []).map((col) => [col.id, (displayItem.customFields?.[col.id] ?? '').toString()])
+        )
+      );
+    }
+    if (!pptQaDirtyRef.current) {
+      setHasPptDraft(!!displayItem.hasPPT);
+      setHasQaDraft(!!displayItem.hasQA);
+    }
+    if (!cueProgramDirtyRef.current) {
+      setCueDraft((displayItem.customFields?.cue ?? '').toString());
+      setProgramTypeDraft(displayItem.programType ?? '');
+    }
+    if (!speakersDirtyRef.current) {
+      setSpeakerDraft(parseSpeakersDraft(displayItem.speakersText ?? ''));
+    }
+  }, [displayItem, editModeEnabled, customColumns]);
 
   useEffect(() => {
     if (!editModeEnabled) return;
@@ -2868,6 +3094,9 @@ const ContentReviewPage: React.FC = () => {
                               {it.segmentName || '—'}
                             </div>
                             <div className="mt-1 flex flex-wrap gap-0.5">
+                              {it.otherRoom ? (
+                                <OtherRoomBadge room={it.otherRoom} className="text-[9px] px-1.5 py-0.5" />
+                              ) : null}
                               {fullyApproved ? (
                                 <span
                                   className={`inline-flex rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${reviewMeta.railClass}`}
@@ -2937,6 +3166,11 @@ const ContentReviewPage: React.FC = () => {
                         {displayItem.segmentName ? (
                           <span className="ml-2 text-sm font-medium text-slate-300">
                             · {displayItem.segmentName}
+                          </span>
+                        ) : null}
+                        {displayItem.otherRoom ? (
+                          <span className="ml-2 inline-flex align-middle">
+                            <OtherRoomBadge room={displayItem.otherRoom} />
                           </span>
                         ) : null}
                       </div>
@@ -3313,7 +3547,7 @@ const ContentReviewPage: React.FC = () => {
                               }}
                             >
                               <option value="">Select Program Type</option>
-                              {PROGRAM_TYPE_OPTIONS.map((type) => (
+                              {programTypeOptions.map((type) => (
                                 <option
                                   key={type}
                                   value={type}
@@ -3504,6 +3738,11 @@ const ContentReviewPage: React.FC = () => {
                     </div>
                     <div className="bg-slate-800/70 px-3 py-2 md:col-span-6">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Segment</div>
+                      {displayItem.otherRoom ? (
+                        <div className="mt-1">
+                          <OtherRoomBadge room={displayItem.otherRoom} />
+                        </div>
+                      ) : null}
                       {editModeEnabled ? (
                         <div className="mt-1 space-y-1.5">
                           <input
@@ -4334,6 +4573,11 @@ const ContentReviewPage: React.FC = () => {
                               </div>
                               <div>
                                 <div className="text-[10px] font-semibold uppercase text-slate-500">Segment</div>
+                                {sub.otherRoom ? (
+                                  <div className="mt-1">
+                                    <OtherRoomBadge room={sub.otherRoom} />
+                                  </div>
+                                ) : null}
                                 <div className="text-base font-semibold leading-snug text-white">
                                   {sub.segmentName || '—'}
                                 </div>
