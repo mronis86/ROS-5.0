@@ -867,6 +867,327 @@ const ContentReviewPage: React.FC = () => {
   const isAdmin = user?.is_admin === true;
   const reviewAssigneeCount = reviewAssignees.creative.length + reviewAssignees.production.length;
 
+  const [rowLocks, setRowLocks] = useState<Record<number, { userId: string; userName: string }>>({});
+  const rowLocksRef = useRef(rowLocks);
+  const localEditingRowIdRef = useRef<number | null>(null);
+  const rowLockHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scheduleVersionRef = useRef<number | null>(null);
+  const lastSyncedScheduleRef = useRef<any[]>([]);
+  const customColumnsRef = useRef<CustomColumn[]>([]);
+  const editingIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventMetaRef = useRef({ name: event.name, date: event.date });
+
+  useEffect(() => {
+    rowLocksRef.current = rowLocks;
+  }, [rowLocks]);
+  useEffect(() => {
+    customColumnsRef.current = customColumns;
+  }, [customColumns]);
+  useEffect(() => {
+    eventMetaRef.current = { name: event.name, date: event.date };
+  }, [event.name, event.date]);
+
+  const rememberSyncedSchedule = useCallback((data: any) => {
+    if (!data) return;
+    let items = data.schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = null;
+      }
+    }
+    if (Array.isArray(items)) {
+      lastSyncedScheduleRef.current = items;
+    }
+    if (data.version != null && !Number.isNaN(Number(data.version))) {
+      scheduleVersionRef.current = Number(data.version);
+    }
+  }, []);
+
+  const mergeSchedulePreservingLocalEdits = useCallback(
+    (remoteItems: ScheduleItem[], localItems: ScheduleItem[]) => {
+      const protectIds = new Set<number>();
+      if (localEditingRowIdRef.current != null) {
+        protectIds.add(Number(localEditingRowIdRef.current));
+      }
+      const myId = driverIdRef.current && driverIdRef.current !== 'guest' ? String(driverIdRef.current) : '';
+      if (myId) {
+        for (const [rowId, lock] of Object.entries(rowLocksRef.current || {})) {
+          if (lock?.userId === myId) protectIds.add(Number(rowId));
+        }
+      }
+      if (protectIds.size === 0) return remoteItems;
+      const localById = new Map((localItems || []).map((item) => [Number(item.id), item]));
+      return remoteItems.map((remote) => {
+        const id = Number(remote.id);
+        if (protectIds.has(id) && localById.has(id)) return localById.get(id)!;
+        return remote;
+      });
+    },
+    []
+  );
+
+  const stopRowLockHeartbeat = useCallback(() => {
+    if (rowLockHeartbeatRef.current) {
+      clearInterval(rowLockHeartbeatRef.current);
+      rowLockHeartbeatRef.current = null;
+    }
+  }, []);
+
+  const startRowLockHeartbeat = useCallback(
+    (rowId: number) => {
+      stopRowLockHeartbeat();
+      rowLockHeartbeatRef.current = setInterval(() => {
+        if (!driverIdRef.current || driverIdRef.current === 'guest') return;
+        if (localEditingRowIdRef.current !== rowId) return;
+        socketClient.emitRowEditStart(rowId, driverIdRef.current, driverName);
+      }, 10000);
+    },
+    [stopRowLockHeartbeat, driverName]
+  );
+
+  const claimRowEditLock = useCallback(
+    (rowId: number) => {
+      if (!eventId || viewerOnly) return;
+      if (!driverIdRef.current || driverIdRef.current === 'guest') return;
+      const existing = rowLocksRef.current[rowId];
+      if (existing && existing.userId !== driverIdRef.current) return;
+
+      const previous = localEditingRowIdRef.current;
+      if (previous != null && previous !== rowId) {
+        socketClient.emitRowEditEnd(previous, driverIdRef.current);
+        setRowLocks((prev) => {
+          if (!prev[previous] || prev[previous].userId !== driverIdRef.current) return prev;
+          const next = { ...prev };
+          delete next[previous];
+          return next;
+        });
+      }
+
+      localEditingRowIdRef.current = rowId;
+      socketClient.emitRowEditStart(rowId, driverIdRef.current, driverName);
+      setRowLocks((prev) => ({
+        ...prev,
+        [rowId]: { userId: driverIdRef.current, userName: driverName },
+      }));
+      startRowLockHeartbeat(rowId);
+    },
+    [eventId, viewerOnly, driverName, startRowLockHeartbeat]
+  );
+
+  const releaseRowEditLock = useCallback(
+    (rowId: number) => {
+      if (!driverIdRef.current || driverIdRef.current === 'guest') return;
+      if (localEditingRowIdRef.current === rowId) {
+        localEditingRowIdRef.current = null;
+        stopRowLockHeartbeat();
+      }
+      socketClient.emitRowEditEnd(rowId, driverIdRef.current);
+      setRowLocks((prev) => {
+        if (!prev[rowId] || prev[rowId].userId !== driverIdRef.current) return prev;
+        const next = { ...prev };
+        delete next[rowId];
+        return next;
+      });
+    },
+    [stopRowLockHeartbeat]
+  );
+
+  const touchCueEditActivity = useCallback(
+    (rowId: number) => {
+      claimRowEditLock(rowId);
+      if (editingIdleTimeoutRef.current) clearTimeout(editingIdleTimeoutRef.current);
+      editingIdleTimeoutRef.current = setTimeout(() => {
+        if (localEditingRowIdRef.current === rowId) {
+          releaseRowEditLock(rowId);
+        }
+      }, 5000);
+    },
+    [claimRowEditLock, releaseRowEditLock]
+  );
+
+  const applyPatchToRawItem = useCallback((raw: any, patched: ScheduleItem) => {
+    const duration_seconds =
+      (patched.durationHours || 0) * 3600 +
+      (patched.durationMinutes || 0) * 60 +
+      (patched.durationSeconds || 0);
+    return {
+      ...raw,
+      id: patched.id,
+      day: patched.day,
+      programType: patched.programType,
+      shotType: patched.shotType,
+      segmentName: patched.segmentName,
+      otherRoom: patched.otherRoom ?? null,
+      notes: patched.notes,
+      assets: patched.assets,
+      speakersText: patched.speakersText,
+      hasPPT: !!patched.hasPPT,
+      hasQA: !!patched.hasQA,
+      durationHours: patched.durationHours,
+      durationMinutes: patched.durationMinutes,
+      durationSeconds: patched.durationSeconds,
+      duration_seconds,
+      customFields: patched.customFields || {},
+    };
+  }, []);
+
+  const saveCuePatch = useCallback(
+    async (
+      itemId: number,
+      patchFn: (item: ScheduleItem) => ScheduleItem
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      if (!eventId || viewerOnly) return { ok: false, error: 'Unavailable' };
+      const lock = rowLocksRef.current[itemId];
+      if (lock && String(lock.userId) !== String(driverIdRef.current)) {
+        return {
+          ok: false,
+          error: `${lock.userName || 'Someone'} is editing this cue`,
+        };
+      }
+
+      const currentLocal = scheduleRef.current.find((i) => i.id === itemId);
+      if (!currentLocal) return { ok: false, error: 'Cue not found' };
+      const patchedOptimistic = patchFn(currentLocal);
+      setSchedule((prev) => prev.map((it) => (it.id === itemId ? patchedOptimistic : it)));
+      touchCueEditActivity(itemId);
+
+      const doSave = async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+        const existing = await DatabaseService.getRunOfShowData(eventId, { bypassCache: true });
+        if (!existing) return { ok: false, error: 'Could not load schedule' };
+
+        let serverItems: any[] = existing.schedule_items as any[];
+        if (typeof serverItems === 'string') {
+          try {
+            serverItems = JSON.parse(serverItems);
+          } catch {
+            serverItems = [];
+          }
+        }
+        if (!Array.isArray(serverItems)) serverItems = [];
+
+        if (existing.version != null && !Number.isNaN(Number(existing.version))) {
+          scheduleVersionRef.current = Number(existing.version);
+        }
+        lastSyncedScheduleRef.current = serverItems;
+
+        let found = false;
+        let merged = serverItems.map((raw) => {
+          if (Number(raw.id) !== itemId) return raw;
+          found = true;
+          const next = patchFn(normalizeScheduleItem(raw));
+          return applyPatchToRawItem(raw, next);
+        });
+        if (!found) {
+          merged = [...merged, applyPatchToRawItem({ id: itemId }, patchedOptimistic)];
+        }
+
+        const myId = String(driverIdRef.current);
+        const locks = rowLocksRef.current;
+        const syncedById = new Map(
+          (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+        );
+        merged = merged.map((item) => {
+          const id = Number(item.id);
+          if (id === itemId) return item;
+          const rowLock = locks[id];
+          if (rowLock?.userId && String(rowLock.userId) !== myId) {
+            const synced = syncedById.get(id);
+            if (synced) return synced;
+          }
+          return item;
+        });
+
+        const meta = eventMetaRef.current;
+        const result = await DatabaseService.saveRunOfShowData(
+          {
+            event_id: eventId,
+            event_name: meta.name || existing.event_name || 'Event',
+            event_date: meta.date || existing.event_date || new Date().toISOString().slice(0, 10),
+            schedule_items: merged,
+            custom_columns: Array.isArray(existing.custom_columns)
+              ? existing.custom_columns
+              : customColumnsRef.current,
+            settings: existing.settings || {},
+            version: scheduleVersionRef.current,
+          },
+          {
+            userId: driverIdRef.current,
+            userName: driverName,
+            userRole: 'OPERATOR',
+          }
+        );
+        if (!result) return { ok: false, error: 'Save failed' };
+        rememberSyncedSchedule(result);
+
+        let resultItems = result.schedule_items as any;
+        if (typeof resultItems === 'string') {
+          try {
+            resultItems = JSON.parse(resultItems);
+          } catch {
+            resultItems = null;
+          }
+        }
+        if (Array.isArray(resultItems)) {
+          const normalized = resultItems.map(normalizeScheduleItem);
+          const localForMerge = scheduleRef.current.map((it) =>
+            it.id === itemId ? patchedOptimistic : it
+          );
+          setSchedule(mergeSchedulePreservingLocalEdits(normalized, localForMerge));
+        }
+        return { ok: true };
+      };
+
+      try {
+        return await doSave();
+      } catch (e: any) {
+        if (e?.status === 409 && e?.data?.current) {
+          rememberSyncedSchedule(e.data.current);
+          let items = e.data.current.schedule_items;
+          if (typeof items === 'string') {
+            try {
+              items = JSON.parse(items);
+            } catch {
+              items = null;
+            }
+          }
+          if (Array.isArray(items)) {
+            setSchedule(
+              mergeSchedulePreservingLocalEdits(
+                items.map(normalizeScheduleItem),
+                scheduleRef.current
+              )
+            );
+          }
+          try {
+            return await doSave();
+          } catch (e2: any) {
+            console.error('Content Review save retry failed:', e2);
+            return {
+              ok: false,
+              error:
+                e2?.status === 409
+                  ? 'Schedule changed by someone else — try again'
+                  : 'Save failed',
+            };
+          }
+        }
+        console.error('Content Review save failed:', e);
+        return { ok: false, error: 'Save failed' };
+      }
+    },
+    [
+      eventId,
+      viewerOnly,
+      driverName,
+      touchCueEditActivity,
+      applyPatchToRawItem,
+      rememberSyncedSchedule,
+      mergeSchedulePreservingLocalEdits,
+    ]
+  );
+
   const creativeSessionStorageKey =
     creativeContributor && eventId && driverId !== 'guest'
       ? creativeDisplaySessionStorageKey(driverId, eventId)
@@ -1151,7 +1472,11 @@ const ContentReviewPage: React.FC = () => {
     const dataEventId = data.event_id ?? data.eventId;
     if (dataEventId != null && String(dataEventId) !== String(eventId)) return;
     if (!contentReviewHydratedRef.current) return;
-    // Own saves already applied optimistically — skip to avoid clobbering in-progress drafts.
+
+    // Always adopt version / last-synced snapshot for OCC.
+    rememberSyncedSchedule(data);
+
+    // Own saves already applied optimistically — keep version but skip schedule replace.
     if (data.last_modified_by && String(data.last_modified_by) === String(driverIdRef.current)) {
       return;
     }
@@ -1165,9 +1490,10 @@ const ContentReviewPage: React.FC = () => {
       }
     }
     if (Array.isArray(scheduleItems)) {
-      setSchedule(scheduleItems.map(normalizeScheduleItem));
+      const normalized = scheduleItems.map(normalizeScheduleItem);
+      setSchedule(mergeSchedulePreservingLocalEdits(normalized, scheduleRef.current));
     }
-    if (Array.isArray(data.custom_columns)) {
+    if (Array.isArray(data.custom_columns) && localEditingRowIdRef.current == null) {
       setCustomColumns(data.custom_columns as CustomColumn[]);
     }
     const settings = data.settings;
@@ -1191,6 +1517,47 @@ const ContentReviewPage: React.FC = () => {
     socketClient.connect(eventId, {
       onRunOfShowDataUpdated: (data) => applyRemoteScheduleRef.current(data),
       onContentReviewDataUpdated: (data) => applyRemoteReviewsRef.current(data),
+      onRowLocked: (data) => {
+        if (!data || String(data.eventId) !== String(eventId)) return;
+        const rowId = Number(data.rowId);
+        if (!Number.isFinite(rowId)) return;
+        setRowLocks((prev) => ({
+          ...prev,
+          [rowId]: { userId: String(data.userId || ''), userName: String(data.userName || 'Someone') },
+        }));
+      },
+      onRowUnlocked: (data) => {
+        if (!data || String(data.eventId) !== String(eventId)) return;
+        const rowId = Number(data.rowId);
+        if (!Number.isFinite(rowId)) return;
+        setRowLocks((prev) => {
+          if (!prev[rowId]) return prev;
+          const next = { ...prev };
+          delete next[rowId];
+          return next;
+        });
+      },
+      onRowLocksSnapshot: (data) => {
+        if (!data || String(data.eventId) !== String(eventId)) return;
+        const next: Record<number, { userId: string; userName: string }> = {};
+        for (const lock of data.locks || []) {
+          const rowId = Number(lock.rowId);
+          if (!Number.isFinite(rowId)) continue;
+          next[rowId] = {
+            userId: String(lock.userId || ''),
+            userName: String(lock.userName || 'Someone'),
+          };
+        }
+        // Keep optimistic self-lock if snapshot hasn't caught up yet.
+        const selfId = localEditingRowIdRef.current;
+        if (selfId != null && driverIdRef.current && driverIdRef.current !== 'guest') {
+          const mine = rowLocksRef.current[selfId];
+          if (mine?.userId === driverIdRef.current && !next[selfId]) {
+            next[selfId] = mine;
+          }
+        }
+        setRowLocks(next);
+      },
       onInitialSync: async () => {
         if (contentReviewHydratedRef.current) {
           await loadRef.current();
@@ -1200,6 +1567,12 @@ const ContentReviewPage: React.FC = () => {
     const socket = socketClient.getSocket();
     const onConnect = () => {
       if (followModeRef.current === 'follow') socketClient.emitContentReviewRequestState();
+      socketClient.emitRowLocksRequest();
+      const editingId = localEditingRowIdRef.current;
+      if (editingId != null && driverIdRef.current && driverIdRef.current !== 'guest') {
+        socketClient.emitRowEditStart(editingId, driverIdRef.current, driverName);
+        startRowLockHeartbeat(editingId);
+      }
     };
     const onSync = (payload: {
       eventId?: string;
@@ -1222,14 +1595,30 @@ const ContentReviewPage: React.FC = () => {
     };
     socket?.on('connect', onConnect);
     socket?.on('contentReviewSelectionSync', onSync);
-    if (socket?.connected && followModeRef.current === 'follow') {
-      socketClient.emitContentReviewRequestState();
+    if (socket?.connected) {
+      onConnect();
     }
     return () => {
       socket?.off('connect', onConnect);
       socket?.off('contentReviewSelectionSync', onSync);
+      const editingId = localEditingRowIdRef.current;
+      if (editingId != null && driverIdRef.current && driverIdRef.current !== 'guest') {
+        socketClient.emitRowEditEnd(editingId, driverIdRef.current);
+      }
+      stopRowLockHeartbeat();
+      if (editingIdleTimeoutRef.current) {
+        clearTimeout(editingIdleTimeoutRef.current);
+        editingIdleTimeoutRef.current = null;
+      }
     };
-  }, [creativeContributor, creativeSessionReconnectKey, eventId]);
+  }, [
+    creativeContributor,
+    creativeSessionReconnectKey,
+    eventId,
+    driverName,
+    startRowLockHeartbeat,
+    stopRowLockHeartbeat,
+  ]);
 
   useEffect(() => {
     if (!creativeContributor || !eventId) return;
@@ -1237,6 +1626,11 @@ const ContentReviewPage: React.FC = () => {
     const handleVisibilityChange = () => {
       if (!creativeSessionConnectionRef.current) return;
       if (document.hidden) {
+        const editingId = localEditingRowIdRef.current;
+        if (editingId != null && driverIdRef.current && driverIdRef.current !== 'guest') {
+          socketClient.emitRowEditEnd(editingId, driverIdRef.current);
+        }
+        stopRowLockHeartbeat();
         socketClient.disconnect(eventId);
         return;
       }
@@ -1244,18 +1638,67 @@ const ContentReviewPage: React.FC = () => {
         socketClient.connect(eventId, {
           onRunOfShowDataUpdated: (data) => applyRemoteScheduleRef.current(data),
           onContentReviewDataUpdated: (data) => applyRemoteReviewsRef.current(data),
+          onRowLocked: (data) => {
+            if (!data || String(data.eventId) !== String(eventId)) return;
+            const rowId = Number(data.rowId);
+            if (!Number.isFinite(rowId)) return;
+            setRowLocks((prev) => ({
+              ...prev,
+              [rowId]: {
+                userId: String(data.userId || ''),
+                userName: String(data.userName || 'Someone'),
+              },
+            }));
+          },
+          onRowUnlocked: (data) => {
+            if (!data || String(data.eventId) !== String(eventId)) return;
+            const rowId = Number(data.rowId);
+            if (!Number.isFinite(rowId)) return;
+            setRowLocks((prev) => {
+              if (!prev[rowId]) return prev;
+              const next = { ...prev };
+              delete next[rowId];
+              return next;
+            });
+          },
+          onRowLocksSnapshot: (data) => {
+            if (!data || String(data.eventId) !== String(eventId)) return;
+            const next: Record<number, { userId: string; userName: string }> = {};
+            for (const lock of data.locks || []) {
+              const rowId = Number(lock.rowId);
+              if (!Number.isFinite(rowId)) continue;
+              next[rowId] = {
+                userId: String(lock.userId || ''),
+                userName: String(lock.userName || 'Someone'),
+              };
+            }
+            setRowLocks(next);
+          },
           onInitialSync: async () => {
             if (contentReviewHydratedRef.current) {
               await loadRef.current();
             }
           },
         });
+        socketClient.emitRowLocksRequest();
+        const editingId = localEditingRowIdRef.current;
+        if (editingId != null && driverIdRef.current && driverIdRef.current !== 'guest') {
+          socketClient.emitRowEditStart(editingId, driverIdRef.current, driverName);
+          startRowLockHeartbeat(editingId);
+        }
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [creativeContributor, creativeSessionReconnectKey, eventId]);
+  }, [
+    creativeContributor,
+    creativeSessionReconnectKey,
+    eventId,
+    driverName,
+    startRowLockHeartbeat,
+    stopRowLockHeartbeat,
+  ]);
 
   useEffect(() => {
     if (followMode !== 'follow' || !eventId) return;
@@ -1702,6 +2145,7 @@ const ContentReviewPage: React.FC = () => {
       }
       const items = (data.schedule_items as any[]).map(normalizeScheduleItem);
       setSchedule(items);
+      rememberSyncedSchedule(data);
       setCustomColumns(Array.isArray(data.custom_columns) ? (data.custom_columns as CustomColumn[]) : []);
       setIndented(buildIndentedMap(indentedRows));
 
@@ -1765,6 +2209,7 @@ const ContentReviewPage: React.FC = () => {
     streamFromQuery,
     creativePdfFromQuery,
     clampSideRailWidth,
+    rememberSyncedSchedule,
   ]);
 
   loadRef.current = load;
@@ -2138,6 +2583,43 @@ const ContentReviewPage: React.FC = () => {
     return schedule.find((r) => r.id === root) ?? null;
   }, [schedule, selectedId, indented]);
 
+  const displayCueLock = displayItem ? rowLocks[displayItem.id] : null;
+  const isDisplayCueLockedByOther = !!(
+    displayCueLock &&
+    displayCueLock.userId &&
+    String(displayCueLock.userId) !== String(driverId)
+  );
+  const displayCueLockLabel = isDisplayCueLockedByOther
+    ? `${displayCueLock?.userName || 'Someone'} is editing`
+    : null;
+
+  // Can't edit a cue another user has locked — mirror ROS behavior.
+  useEffect(() => {
+    if (isDisplayCueLockedByOther && editModeEnabled) {
+      setEditModeEnabled(false);
+    }
+  }, [isDisplayCueLockedByOther, editModeEnabled]);
+
+  // Claim/release the same row-lock channel ROS uses while Edit mode is on.
+  useEffect(() => {
+    if (!editModeEnabled || !displayItem || viewerOnly || isDisplayCueLockedByOther) {
+      const prev = localEditingRowIdRef.current;
+      if (prev != null) releaseRowEditLock(prev);
+      return;
+    }
+    claimRowEditLock(displayItem.id);
+    return () => {
+      /* switch/unmount handled by next effect run or socket cleanup */
+    };
+  }, [
+    editModeEnabled,
+    displayItem?.id,
+    viewerOnly,
+    isDisplayCueLockedByOther,
+    claimRowEditLock,
+    releaseRowEditLock,
+  ]);
+
   const creativeCueItem = selectedRow ?? displayItem ?? null;
   const creativeCueExtras =
     creativeCueItem && cueNeedsCreativeExtras(creativeCueItem) ? creativeCueItem : null;
@@ -2308,199 +2790,83 @@ const ContentReviewPage: React.FC = () => {
   const saveDisplayItemNotes = useCallback(async () => {
     if (!displayItem || !eventId || isSavingNotes) return;
     const nextNotes = notesDraft;
-    const updatedSchedule = schedule.map((it) => (it.id === displayItem.id ? { ...it, notes: nextNotes } : it));
-
     setIsSavingNotes(true);
-    setSchedule(updatedSchedule);
     setNotesSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, notes: nextNotes }));
+    if (result.ok) {
       setNotesDirty(false);
       setNotesSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save notes from Content Review:', e);
-      setNotesSaveMessage('Save failed');
-    } finally {
-      setIsSavingNotes(false);
+    } else {
+      setNotesSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingNotes, notesDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingNotes(false);
+  }, [displayItem, eventId, isSavingNotes, notesDraft, saveCuePatch]);
 
   const saveDisplayItemSegment = useCallback(async () => {
     if (!displayItem || !eventId || isSavingSegment) return;
     const nextSegment = segmentDraft;
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id ? { ...it, segmentName: nextSegment } : it
-    );
-
     setIsSavingSegment(true);
-    setSchedule(updatedSchedule);
     setSegmentSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, segmentName: nextSegment }));
+    if (result.ok) {
       setSegmentDirty(false);
       setSegmentSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save segment from Content Review:', e);
-      setSegmentSaveMessage('Save failed');
-    } finally {
-      setIsSavingSegment(false);
+    } else {
+      setSegmentSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingSegment, segmentDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingSegment(false);
+  }, [displayItem, eventId, isSavingSegment, segmentDraft, saveCuePatch]);
 
   const saveDisplayItemShot = useCallback(async () => {
     if (!displayItem || !eventId || isSavingShot) return;
     const nextShot = shotDraft;
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id ? { ...it, shotType: nextShot } : it
-    );
-
     setIsSavingShot(true);
-    setSchedule(updatedSchedule);
     setShotSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, shotType: nextShot }));
+    if (result.ok) {
       setShotDirty(false);
       setShotSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save shot type from Content Review:', e);
-      setShotSaveMessage('Save failed');
-    } finally {
-      setIsSavingShot(false);
+    } else {
+      setShotSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingShot, shotDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingShot(false);
+  }, [displayItem, eventId, isSavingShot, shotDraft, saveCuePatch]);
 
   const saveDisplayItemAssets = useCallback(async () => {
     if (!displayItem || !eventId || isSavingAssets) return;
     const nextAssets = stringifyAssetRows(assetRows);
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id ? { ...it, assets: nextAssets } : it
-    );
-
     setIsSavingAssets(true);
-    setSchedule(updatedSchedule);
     setAssetsSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, assets: nextAssets }));
+    if (result.ok) {
       setAssetsDirty(false);
       setAssetsSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save assets from Content Review:', e);
-      setAssetsSaveMessage('Save failed');
-    } finally {
-      setIsSavingAssets(false);
+    } else {
+      setAssetsSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingAssets, assetRows, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingAssets(false);
+  }, [displayItem, eventId, isSavingAssets, assetRows, saveCuePatch]);
 
   const saveDisplayItemDuration = useCallback(async () => {
     if (!displayItem || !eventId || isSavingDuration) return;
     const h = Math.max(0, Number.parseInt(durationHoursDraft || '0', 10) || 0);
     const m = Math.min(59, Math.max(0, Number.parseInt(durationMinutesDraft || '0', 10) || 0));
     const s = Math.min(59, Math.max(0, Number.parseInt(durationSecondsDraft || '0', 10) || 0));
-
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id
-        ? {
-            ...it,
-            durationHours: h,
-            durationMinutes: m,
-            durationSeconds: s
-          }
-        : it
-    );
-
     setIsSavingDuration(true);
-    setSchedule(updatedSchedule);
     setDurationSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({
+      ...it,
+      durationHours: h,
+      durationMinutes: m,
+      durationSeconds: s,
+    }));
+    if (result.ok) {
       setDurationDirty(false);
       setDurationSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save duration from Content Review:', e);
-      setDurationSaveMessage('Save failed');
-    } finally {
-      setIsSavingDuration(false);
+    } else {
+      setDurationSaveMessage(result.error || 'Save failed');
     }
+    setIsSavingDuration(false);
   }, [
     displayItem,
     eventId,
@@ -2508,91 +2874,50 @@ const ContentReviewPage: React.FC = () => {
     durationHoursDraft,
     durationMinutesDraft,
     durationSecondsDraft,
-    schedule,
-    event.name,
-    event.date,
-    customColumns,
-    driverId,
-    driverName
+    saveCuePatch,
   ]);
 
   const saveDisplayItemCustomFields = useCallback(async () => {
     if (!displayItem || !eventId || isSavingCustomFields) return;
     const nextCustomFields = {
       ...(displayItem.customFields || {}),
-      ...customFieldsDraft
+      ...customFieldsDraft,
     };
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id ? { ...it, customFields: nextCustomFields } : it
-    );
-
     setIsSavingCustomFields(true);
-    setSchedule(updatedSchedule);
     setCustomFieldsSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({
+      ...it,
+      customFields: {
+        ...(it.customFields || {}),
+        ...nextCustomFields,
+      },
+    }));
+    if (result.ok) {
       setCustomFieldsDirty(false);
       setCustomFieldsSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save custom fields from Content Review:', e);
-      setCustomFieldsSaveMessage('Save failed');
-    } finally {
-      setIsSavingCustomFields(false);
+    } else {
+      setCustomFieldsSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingCustomFields, customFieldsDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingCustomFields(false);
+  }, [displayItem, eventId, isSavingCustomFields, customFieldsDraft, saveCuePatch]);
 
   const saveDisplayItemPptQa = useCallback(async () => {
     if (!displayItem || !eventId || isSavingPptQa) return;
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id ? { ...it, hasPPT: hasPptDraft, hasQA: hasQaDraft } : it
-    );
-
     setIsSavingPptQa(true);
-    setSchedule(updatedSchedule);
     setPptQaSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({
+      ...it,
+      hasPPT: hasPptDraft,
+      hasQA: hasQaDraft,
+    }));
+    if (result.ok) {
       setPptQaDirty(false);
       setPptQaSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save PPT/Q&A from Content Review:', e);
-      setPptQaSaveMessage('Save failed');
-    } finally {
-      setIsSavingPptQa(false);
+    } else {
+      setPptQaSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingPptQa, hasPptDraft, hasQaDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingPptQa(false);
+  }, [displayItem, eventId, isSavingPptQa, hasPptDraft, hasQaDraft, saveCuePatch]);
 
   const saveDisplayItemCueProgram = useCallback(async () => {
     if (!displayItem || !eventId || isSavingCueProgram) return;
@@ -2603,7 +2928,7 @@ const ContentReviewPage: React.FC = () => {
       return;
     }
     const cueKey = nextCue.replace(/\s+/g, '').toUpperCase();
-    const duplicateCue = schedule.some((it) => {
+    const duplicateCue = scheduleRef.current.some((it) => {
       if (it.id === displayItem.id) return false;
       const existingCue = (it.customFields?.cue ?? '').toString().trim();
       const existingKey = existingCue.replace(/\s+/g, '').toUpperCase();
@@ -2614,88 +2939,43 @@ const ContentReviewPage: React.FC = () => {
       return;
     }
 
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id
-        ? {
-            ...it,
-            programType: nextProgramType,
-            customFields: {
-              ...(it.customFields || {}),
-              cue: nextCue
-            }
-          }
-        : it
-    );
-
     setIsSavingCueProgram(true);
-    setSchedule(updatedSchedule);
     setCueProgramSaveMessage(null);
     setCueProgramError(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({
+      ...it,
+      programType: nextProgramType,
+      customFields: {
+        ...(it.customFields || {}),
+        cue: nextCue,
+      },
+    }));
+    if (result.ok) {
       setCueProgramDirty(false);
       setCueProgramSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save cue/program type from Content Review:', e);
-      setCueProgramSaveMessage('Save failed');
-    } finally {
-      setIsSavingCueProgram(false);
+    } else {
+      setCueProgramSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingCueProgram, cueDraft, programTypeDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingCueProgram(false);
+  }, [displayItem, eventId, isSavingCueProgram, cueDraft, programTypeDraft, saveCuePatch]);
 
   const saveDisplayItemSpeakers = useCallback(async () => {
     if (!displayItem || !eventId || isSavingSpeakers) return;
     const nextSpeakersText = stringifySpeakersDraft(speakerDraft);
-    const updatedSchedule = schedule.map((it) =>
-      it.id === displayItem.id ? { ...it, speakersText: nextSpeakersText } : it
-    );
-
     setIsSavingSpeakers(true);
-    setSchedule(updatedSchedule);
     setSpeakersSaveMessage(null);
-    try {
-      const existing = await DatabaseService.getRunOfShowData(eventId);
-      const result = await DatabaseService.saveRunOfShowData(
-        {
-          event_id: eventId,
-          event_name: event.name || existing?.event_name || 'Event',
-          event_date: event.date || existing?.event_date || new Date().toISOString().slice(0, 10),
-          schedule_items: updatedSchedule,
-          custom_columns: customColumns,
-          settings: existing?.settings || {}
-        },
-        {
-          userId: driverId,
-          userName: driverName,
-          userRole: 'OPERATOR'
-        }
-      );
-      if (!result) throw new Error('save failed');
+    const result = await saveCuePatch(displayItem.id, (it) => ({
+      ...it,
+      speakersText: nextSpeakersText,
+    }));
+    if (result.ok) {
       setSpeakersDirty(false);
       setSpeakersSaveMessage('Saved');
-    } catch (e) {
-      console.error('Failed to save speakers from Content Review:', e);
-      setSpeakersSaveMessage('Save failed');
-    } finally {
-      setIsSavingSpeakers(false);
+    } else {
+      setSpeakersSaveMessage(result.error || 'Save failed');
     }
-  }, [displayItem, eventId, isSavingSpeakers, speakerDraft, schedule, event.name, event.date, customColumns, driverId, driverName]);
+    setIsSavingSpeakers(false);
+  }, [displayItem, eventId, isSavingSpeakers, speakerDraft, saveCuePatch]);
 
   const applyNotesFormatting = useCallback((action: string, value?: string) => {
     const editor = notesEditorRef.current;
@@ -2817,15 +3097,26 @@ const ContentReviewPage: React.FC = () => {
             type="button"
             aria-pressed={editModeEnabled}
             aria-label={editModeEnabled ? 'Disable edit mode' : 'Enable edit mode'}
-            disabled={activeReviewStage === 'creative'}
+            disabled={activeReviewStage === 'creative' || isDisplayCueLockedByOther}
             title={
               activeReviewStage === 'creative'
                 ? 'Switch to ROS Show to edit run-of-show fields'
-                : undefined
+                : isDisplayCueLockedByOther
+                  ? displayCueLockLabel || 'Someone is editing this cue'
+                  : undefined
             }
-            onClick={() => setEditModeEnabled((on) => !on)}
+            onClick={() => {
+              if (!editModeEnabled && displayItem) {
+                const lock = rowLocks[displayItem.id];
+                if (lock && String(lock.userId) !== String(driverId)) {
+                  window.alert(`${lock.userName || 'Someone'} is editing this cue`);
+                  return;
+                }
+              }
+              setEditModeEnabled((on) => !on);
+            }}
             className={`flex shrink-0 items-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-xs font-semibold shadow-sm md:px-3 md:text-sm ${
-              activeReviewStage === 'creative'
+              activeReviewStage === 'creative' || isDisplayCueLockedByOther
                 ? 'cursor-not-allowed border-slate-600 bg-slate-800/50 text-slate-500 opacity-60'
                 : editModeEnabled
                   ? 'border-violet-300 bg-gradient-to-b from-violet-500 to-violet-600 text-white shadow-lg'
@@ -3032,15 +3323,23 @@ const ContentReviewPage: React.FC = () => {
                     const rosMeta = reviewStatusMeta(getStageReview(cueEntry, 'ros').status);
                     const fullyApproved = isFullyApproved(cueEntry);
                     const bulkOn = bulkSelectedIds.has(it.id);
+                    const cueLock = rowLocks[it.id];
+                    const cueLockedByOther = !!(
+                      cueLock &&
+                      cueLock.userId &&
+                      String(cueLock.userId) !== String(driverId)
+                    );
                     return (
                       <div
                         key={it.id}
                         className={`mb-0.5 flex w-full items-stretch gap-0.5 rounded-md border transition-all ${
                           followMode === 'follow'
                             ? 'border-transparent opacity-55'
-                            : active
-                              ? reviewMeta.cueRailActiveClass
-                              : reviewMeta.cueRailIdleClass
+                            : cueLockedByOther
+                              ? 'border-amber-500/70 bg-amber-950/35 ring-1 ring-inset ring-amber-400/50'
+                              : active
+                                ? reviewMeta.cueRailActiveClass
+                                : reviewMeta.cueRailIdleClass
                         }`}
                         style={{
                           textDecoration: killed ? 'line-through' : undefined,
@@ -3094,6 +3393,14 @@ const ContentReviewPage: React.FC = () => {
                               {it.segmentName || '—'}
                             </div>
                             <div className="mt-1 flex flex-wrap gap-0.5">
+                              {cueLockedByOther ? (
+                                <span
+                                  className="inline-flex rounded border border-amber-500/70 bg-amber-900/60 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-amber-100"
+                                  title={`${cueLock?.userName || 'Someone'} is editing`}
+                                >
+                                  {cueLock?.userName || 'Someone'} editing
+                                </span>
+                              ) : null}
                               {it.otherRoom ? (
                                 <OtherRoomBadge room={it.otherRoom} className="text-[9px] px-1.5 py-0.5" />
                               ) : null}
@@ -3495,6 +3802,18 @@ const ContentReviewPage: React.FC = () => {
               </div>
             ) : (
               <div className="mx-auto max-w-5xl space-y-4">
+                {isDisplayCueLockedByOther ? (
+                  <div className="rounded-lg border border-amber-500/60 bg-amber-950/40 px-4 py-2.5 text-sm text-amber-100">
+                    <span className="font-semibold text-amber-50">
+                      {displayCueLockLabel || 'Someone is editing'}
+                    </span>
+                    <span className="text-amber-200/90">
+                      {' '}
+                      — this cue is locked (same as Run of Show). You can view it, but edits are
+                      disabled until they finish.
+                    </span>
+                  </div>
+                ) : null}
                 {selectedRow && selectedRow.id !== displayItem.id ? (
                   <div className="rounded-lg border border-cyan-700/50 bg-cyan-950/30 px-4 py-2.5 text-sm text-cyan-100">
                     <span className="text-slate-400">Selected sub-cue</span>{' '}
