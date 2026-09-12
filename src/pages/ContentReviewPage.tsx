@@ -42,6 +42,7 @@ import {
   normalizeVoCues,
   syncCalloutsIntoNotes,
 } from '../lib/audioCallouts';
+import { calculateScheduleStartTime } from '../lib/scheduleStartTime';
 
 type ContentReviewFollowMode = 'solo' | 'drive' | 'follow';
 type ReviewStatus = 'pending' | 'needs_update' | 'approved' | 'edits_made';
@@ -717,6 +718,8 @@ const ContentReviewPage: React.FC = () => {
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
   const [indented, setIndented] = useState<IndentedMap>({});
+  const [masterStartTime, setMasterStartTime] = useState('');
+  const [dayStartTimes, setDayStartTimes] = useState<Record<number | string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -1520,6 +1523,12 @@ const ContentReviewPage: React.FC = () => {
     if (settings && typeof settings === 'object') {
       const settingsDays = Number((settings as any).numberOfDays) || 0;
       const settingsName = String((settings as any).eventName || '').trim();
+      if ((settings as any).masterStartTime != null) {
+        setMasterStartTime(String((settings as any).masterStartTime || ''));
+      }
+      if ((settings as any).dayStartTimes && typeof (settings as any).dayStartTimes === 'object') {
+        setDayStartTimes((settings as any).dayStartTimes as Record<number | string, string>);
+      }
       if (settingsDays > 0 || settingsName) {
         setEvent((prev) => ({
           ...prev,
@@ -2173,6 +2182,12 @@ const ContentReviewPage: React.FC = () => {
       const maxItemDay = items.reduce((max, it) => Math.max(max, Number(it.day) || 1), 1);
       const resolvedDays = Math.max(1, settingsDays, maxItemDay);
       const settingsName = String((data as any)?.settings?.eventName || '').trim();
+      const settingsMaster = String((data as any)?.settings?.masterStartTime || '').trim();
+      const settingsDayStarts = (data as any)?.settings?.dayStartTimes;
+      setMasterStartTime(settingsMaster);
+      setDayStartTimes(
+        settingsDayStarts && typeof settingsDayStarts === 'object' ? settingsDayStarts : {}
+      );
       setEvent((prev) => ({
         ...prev,
         id: eventId || prev.id,
@@ -2612,6 +2627,25 @@ const ContentReviewPage: React.FC = () => {
   const displayCueLockLabel = isDisplayCueLockedByOther
     ? `${displayCueLock?.userName || 'Someone'} is editing`
     : null;
+
+  const scheduleStartById = useMemo(() => {
+    const map = new Map<number, string>();
+    schedule.forEach((item, index) => {
+      const label = calculateScheduleStartTime(
+        schedule,
+        index,
+        masterStartTime,
+        dayStartTimes,
+        indented
+      );
+      if (label) map.set(item.id, label);
+    });
+    return map;
+  }, [schedule, masterStartTime, dayStartTimes, indented]);
+
+  const displayItemStartTime = displayItem
+    ? scheduleStartById.get(displayItem.id) || ''
+    : '';
 
   // Can't edit a cue another user has locked — mirror ROS behavior.
   useEffect(() => {
@@ -3456,6 +3490,11 @@ const ContentReviewPage: React.FC = () => {
                               {formatCueDisplay(cueLabel(it))}
                             </div>
                             <div className="truncate text-[10px] text-slate-400 md:text-[11px]">
+                              {scheduleStartById.get(it.id) ? (
+                                <span className="mr-1 font-mono tabular-nums text-slate-300">
+                                  {scheduleStartById.get(it.id)}
+                                </span>
+                              ) : null}
                               {it.segmentName || '—'}
                             </div>
                             <div className="mt-1 flex flex-wrap gap-0.5">
@@ -4009,11 +4048,18 @@ const ContentReviewPage: React.FC = () => {
                     </div>
                     <div className="border-b border-slate-600 px-3 py-2 md:col-span-2 md:border-b-0 md:border-r">
                       <div className="min-w-0">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Day</span>
-                        <div className="mt-0.5 truncate text-sm font-bold text-white">Day {displayItem.day}</div>
-                        {displayItem.isStartCue ? (
-                          <div className="mt-1 text-[10px] font-bold text-amber-400">START</div>
-                        ) : null}
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          Start
+                        </span>
+                        <div className="mt-0.5 truncate font-mono text-sm font-bold tabular-nums text-white md:text-base">
+                          {displayItemStartTime || '—'}
+                        </div>
+                        <div className="mt-1 truncate text-[10px] text-slate-400">
+                          Day {displayItem.day}
+                          {displayItem.isStartCue ? (
+                            <span className="ml-1 font-bold text-amber-400">· START</span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                     <div className="border-b border-slate-600 px-3 py-2 md:col-span-2 md:border-b-0 md:border-r">
@@ -4983,9 +5029,14 @@ const ContentReviewPage: React.FC = () => {
                                   </div>
                                 </div>
                                 <div className="text-right">
-                                  <div className="text-[10px] font-semibold uppercase text-slate-500">Day</div>
-                                  <div className="text-sm font-bold text-white">Day {sub.day}</div>
-                                  <div className="mt-1 font-mono text-sm font-bold tabular-nums text-slate-200">
+                                  <div className="text-[10px] font-semibold uppercase text-slate-500">Start</div>
+                                  <div className="font-mono text-sm font-bold tabular-nums text-white">
+                                    {scheduleStartById.get(sub.id) || '—'}
+                                  </div>
+                                  <div className="mt-1 text-[10px] font-semibold uppercase text-slate-500">
+                                    Day {sub.day}
+                                  </div>
+                                  <div className="font-mono text-sm font-bold tabular-nums text-slate-200">
                                     {formatDurationClock(sub)}
                                   </div>
                                 </div>
