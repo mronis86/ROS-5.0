@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canManageContentReviewTeam, isCreativeOnlyUser } from '../services/auth-service';
@@ -2730,45 +2730,6 @@ const ContentReviewPage: React.FC = () => {
     return parts.length ? parts.join(' / ') : 'None';
   };
 
-  useEffect(() => {
-    setNotesDraft(displayItem?.notes ?? '');
-    setNotesDirty(false);
-    setNotesSaveMessage(null);
-    setSegmentDraft(displayItem?.segmentName ?? '');
-    setSegmentDirty(false);
-    setSegmentSaveMessage(null);
-    setShotDraft(displayItem?.shotType ?? '');
-    setShotDirty(false);
-    setShotSaveMessage(null);
-    setAssetsDraft(displayItem?.assets ?? '');
-    const parsedAssets = parseAssetRows(displayItem?.assets ?? '');
-    setAssetRows(parsedAssets.length ? parsedAssets : [{ id: `asset-${Date.now()}`, name: '', link: '', linkEnabled: false }]);
-    setAssetsDirty(false);
-    setAssetsSaveMessage(null);
-    setDurationHoursDraft(String(displayItem?.durationHours ?? 0));
-    setDurationMinutesDraft(String(displayItem?.durationMinutes ?? 0));
-    setDurationSecondsDraft(String(displayItem?.durationSeconds ?? 0));
-    setDurationDirty(false);
-    setDurationSaveMessage(null);
-    setCustomFieldsDraft(
-      Object.fromEntries((customColumns || []).map((col) => [col.id, (displayItem?.customFields?.[col.id] ?? '').toString()]))
-    );
-    setCustomFieldsDirty(false);
-    setCustomFieldsSaveMessage(null);
-    setHasPptDraft(!!displayItem?.hasPPT);
-    setHasQaDraft(!!displayItem?.hasQA);
-    setPptQaDirty(false);
-    setPptQaSaveMessage(null);
-    setCueDraft((displayItem?.customFields?.cue ?? '').toString());
-    setProgramTypeDraft(displayItem?.programType ?? '');
-    setCueProgramDirty(false);
-    setCueProgramSaveMessage(null);
-    setCueProgramError(null);
-    setSpeakerDraft(parseSpeakersDraft(displayItem?.speakersText ?? ''));
-    setSpeakersDirty(false);
-    setSpeakersSaveMessage(null);
-  }, [displayItem?.id, editModeEnabled]);
-
   const notesDirtyRef = useRef(false);
   const segmentDirtyRef = useRef(false);
   const shotDirtyRef = useRef(false);
@@ -2778,6 +2739,7 @@ const ContentReviewPage: React.FC = () => {
   const pptQaDirtyRef = useRef(false);
   const cueProgramDirtyRef = useRef(false);
   const speakersDirtyRef = useRef(false);
+  const lastHydratedCueIdRef = useRef<number | null>(null);
 
   notesDirtyRef.current = notesDirty;
   segmentDirtyRef.current = segmentDirty;
@@ -2789,9 +2751,85 @@ const ContentReviewPage: React.FC = () => {
   cueProgramDirtyRef.current = cueProgramDirty;
   speakersDirtyRef.current = speakersDirty;
 
-  /** Keep non-dirty drafts in sync when remote schedule updates the selected cue. */
+  /** Reset all edit drafts from a cue (used on cue switch / edit mode toggle). */
+  const hydrateEditDraftsFromItem = useCallback(
+    (item: ScheduleItem | null | undefined) => {
+      // Clear dirty flags synchronously so the remote-sync effect cannot keep stale drafts.
+      notesDirtyRef.current = false;
+      segmentDirtyRef.current = false;
+      shotDirtyRef.current = false;
+      assetsDirtyRef.current = false;
+      durationDirtyRef.current = false;
+      customFieldsDirtyRef.current = false;
+      pptQaDirtyRef.current = false;
+      cueProgramDirtyRef.current = false;
+      speakersDirtyRef.current = false;
+
+      const notes = item?.notes ?? '';
+      setNotesDraft(notes);
+      setNotesDirty(false);
+      setNotesSaveMessage(null);
+      setSegmentDraft(item?.segmentName ?? '');
+      setSegmentDirty(false);
+      setSegmentSaveMessage(null);
+      setShotDraft(item?.shotType ?? '');
+      setShotDirty(false);
+      setShotSaveMessage(null);
+      setAssetsDraft(item?.assets ?? '');
+      const parsedAssets = parseAssetRows(item?.assets ?? '');
+      setAssetRows(
+        parsedAssets.length
+          ? parsedAssets
+          : [{ id: `asset-${Date.now()}`, name: '', link: '', linkEnabled: false }]
+      );
+      setAssetsDirty(false);
+      setAssetsSaveMessage(null);
+      setDurationHoursDraft(String(item?.durationHours ?? 0));
+      setDurationMinutesDraft(String(item?.durationMinutes ?? 0));
+      setDurationSecondsDraft(String(item?.durationSeconds ?? 0));
+      setDurationDirty(false);
+      setDurationSaveMessage(null);
+      setCustomFieldsDraft(
+        Object.fromEntries(
+          (customColumns || []).map((col) => [col.id, (item?.customFields?.[col.id] ?? '').toString()])
+        )
+      );
+      setCustomFieldsDirty(false);
+      setCustomFieldsSaveMessage(null);
+      setHasPptDraft(!!item?.hasPPT);
+      setHasQaDraft(!!item?.hasQA);
+      setPptQaDirty(false);
+      setPptQaSaveMessage(null);
+      setCueDraft((item?.customFields?.cue ?? '').toString());
+      setProgramTypeDraft(item?.programType ?? '');
+      setCueProgramDirty(false);
+      setCueProgramSaveMessage(null);
+      setCueProgramError(null);
+      setSpeakerDraft(parseSpeakersDraft(item?.speakersText ?? ''));
+      setSpeakersDirty(false);
+      setSpeakersSaveMessage(null);
+
+      if (notesEditorRef.current) {
+        notesEditorRef.current.innerHTML = notesForEditor(notes);
+      }
+      lastHydratedCueIdRef.current = item?.id ?? null;
+    },
+    [customColumns]
+  );
+
+  // Cue switch / edit-mode toggle: always load that cue's fields (layout effect avoids stale flash).
+  useLayoutEffect(() => {
+    hydrateEditDraftsFromItem(displayItem);
+    setShowVoModal(false);
+    setVoSaveMessage(null);
+  }, [displayItem?.id, editModeEnabled, hydrateEditDraftsFromItem]);
+
+  /** Keep non-dirty drafts in sync when remote schedule updates the *same* selected cue. */
   useEffect(() => {
     if (!displayItem) return;
+    // Cue switches are handled by hydrateEditDraftsFromItem — don't fight them with stale dirty flags.
+    if (lastHydratedCueIdRef.current !== displayItem.id) return;
+
     if (!notesDirtyRef.current) {
       setNotesDraft(displayItem.notes ?? '');
       if (editModeEnabled && notesEditorRef.current) {
@@ -2817,7 +2855,10 @@ const ContentReviewPage: React.FC = () => {
     if (!customFieldsDirtyRef.current) {
       setCustomFieldsDraft(
         Object.fromEntries(
-          (customColumns || []).map((col) => [col.id, (displayItem.customFields?.[col.id] ?? '').toString()])
+          (customColumns || []).map((col) => [
+            col.id,
+            (displayItem.customFields?.[col.id] ?? '').toString(),
+          ])
         )
       );
     }
@@ -2833,13 +2874,6 @@ const ContentReviewPage: React.FC = () => {
       setSpeakerDraft(parseSpeakersDraft(displayItem.speakersText ?? ''));
     }
   }, [displayItem, editModeEnabled, customColumns]);
-
-  useEffect(() => {
-    if (!editModeEnabled) return;
-    const editor = notesEditorRef.current;
-    if (!editor) return;
-    editor.innerHTML = notesForEditor(notesDraft);
-  }, [editModeEnabled, displayItem?.id]);
 
   const saveDisplayItemNotes = useCallback(async () => {
     if (!displayItem || !eventId || isSavingNotes) return;
@@ -4689,6 +4723,7 @@ const ContentReviewPage: React.FC = () => {
                           <button type="button" onClick={() => applyNotesFormatting('redo')} className="rounded border border-slate-500 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-700">Redo</button>
                         </div>
                         <div
+                          key={`notes-editor-${displayItem.id}`}
                           ref={notesEditorRef}
                           contentEditable
                           suppressContentEditableWarning
