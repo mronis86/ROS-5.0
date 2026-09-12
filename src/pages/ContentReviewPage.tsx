@@ -35,6 +35,13 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import {
+  type AudioCalloutKind,
+  type VoCue,
+  formatCalloutChipText,
+  normalizeVoCues,
+  syncCalloutsIntoNotes,
+} from '../lib/audioCallouts';
 
 type ContentReviewFollowMode = 'solo' | 'drive' | 'follow';
 type ReviewStatus = 'pending' | 'needs_update' | 'approved' | 'edits_made';
@@ -228,6 +235,8 @@ interface ScheduleItem {
   notes: string;
   assets: string;
   speakersText: string;
+  /** VO / BGM callouts (also mirrored into notes HTML). */
+  voCues?: VoCue[];
   hasPPT?: boolean;
   hasQA?: boolean;
   customFields: Record<string, string>;
@@ -290,6 +299,7 @@ function normalizeScheduleItem(raw: any): ScheduleItem {
     notes: String(raw.notes ?? ''),
     assets: String(raw.assets ?? ''),
     speakersText: String(raw.speakersText ?? raw.speakers_text ?? ''),
+    voCues: normalizeVoCues(raw.voCues ?? raw.vo_cues),
     hasPPT: !!(raw.hasPPT ?? raw.has_ppt),
     hasQA: !!(raw.hasQA ?? raw.has_qa),
     customFields: typeof cf === 'object' && cf !== null ? cf : {},
@@ -777,6 +787,15 @@ const ContentReviewPage: React.FC = () => {
   const [notesDirty, setNotesDirty] = useState(false);
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [notesSaveMessage, setNotesSaveMessage] = useState<string | null>(null);
+  const [showVoModal, setShowVoModal] = useState(false);
+  const [tempVoCues, setTempVoCues] = useState<VoCue[]>([]);
+  const [voDraftKind, setVoDraftKind] = useState<AudioCalloutKind>('vo');
+  const [voDraftTime, setVoDraftTime] = useState('16:45');
+  const [voDraftLabel, setVoDraftLabel] = useState('');
+  const [voDraftUseCuePrefix, setVoDraftUseCuePrefix] = useState(false);
+  const [voDraftCuePrefix, setVoDraftCuePrefix] = useState('');
+  const [isSavingVoCues, setIsSavingVoCues] = useState(false);
+  const [voSaveMessage, setVoSaveMessage] = useState<string | null>(null);
   const [segmentDraft, setSegmentDraft] = useState('');
   const [segmentDirty, setSegmentDirty] = useState(false);
   const [isSavingSegment, setIsSavingSegment] = useState(false);
@@ -1023,6 +1042,7 @@ const ContentReviewPage: React.FC = () => {
       notes: patched.notes,
       assets: patched.assets,
       speakersText: patched.speakersText,
+      voCues: Array.isArray(patched.voCues) && patched.voCues.length ? patched.voCues : undefined,
       hasPPT: !!patched.hasPPT,
       hasQA: !!patched.hasQA,
       durationHours: patched.durationHours,
@@ -2977,6 +2997,52 @@ const ContentReviewPage: React.FC = () => {
     setIsSavingSpeakers(false);
   }, [displayItem, eventId, isSavingSpeakers, speakerDraft, saveCuePatch]);
 
+  const openVoModal = useCallback(() => {
+    if (!displayItem || isDisplayCueLockedByOther || !editModeEnabled) return;
+    setTempVoCues(
+      Array.isArray(displayItem.voCues) ? displayItem.voCues.map((v) => ({ ...v })) : []
+    );
+    setVoDraftKind('vo');
+    setVoDraftTime('16:45');
+    setVoDraftLabel('');
+    setVoDraftUseCuePrefix(false);
+    setVoDraftCuePrefix('');
+    setVoSaveMessage(null);
+    touchCueEditActivity(displayItem.id);
+    setShowVoModal(true);
+  }, [displayItem, isDisplayCueLockedByOther, editModeEnabled, touchCueEditActivity]);
+
+  const saveVoCuesFromModal = useCallback(async () => {
+    if (!displayItem || !eventId || isSavingVoCues) return;
+    const next = [...tempVoCues].sort((a, b) => a.time.localeCompare(b.time));
+    const previous = Array.isArray(displayItem.voCues) ? displayItem.voCues : [];
+    const baseNotes = notesDirty ? notesDraft : displayItem.notes || '';
+    const nextNotes = syncCalloutsIntoNotes(baseNotes, previous, next);
+
+    setIsSavingVoCues(true);
+    setVoSaveMessage(null);
+    const result = await saveCuePatch(displayItem.id, (it) => {
+      const prev = Array.isArray(it.voCues) ? it.voCues : [];
+      return {
+        ...it,
+        voCues: next.length ? next : undefined,
+        notes: syncCalloutsIntoNotes(it.notes || '', prev, next),
+      };
+    });
+    if (result.ok) {
+      setNotesDraft(nextNotes);
+      setNotesDirty(false);
+      if (notesEditorRef.current) {
+        notesEditorRef.current.innerHTML = notesForEditor(nextNotes);
+      }
+      setShowVoModal(false);
+      setVoSaveMessage(null);
+    } else {
+      setVoSaveMessage(result.error || 'Save failed');
+    }
+    setIsSavingVoCues(false);
+  }, [displayItem, eventId, isSavingVoCues, tempVoCues, saveCuePatch, notesDirty, notesDraft]);
+
   const applyNotesFormatting = useCallback((action: string, value?: string) => {
     const editor = notesEditorRef.current;
     if (!editor) return;
@@ -4508,14 +4574,48 @@ const ContentReviewPage: React.FC = () => {
                   )}
                 </div>
 
-                {/* Notes — full width block */}
+                {/* Notes — full width block (+ VO/BGM like main ROS) */}
                 <div className="rounded-lg border border-slate-600 bg-slate-800">
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-600 bg-slate-700 px-4 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-600 bg-slate-700 px-4 py-2">
                     <span className="text-xs font-bold uppercase tracking-wide text-slate-200">Notes</span>
-                    {editModeEnabled ? (
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">Edit mode</span>
-                    ) : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {editModeEnabled && !isDisplayCueLockedByOther ? (
+                        <button
+                          type="button"
+                          onClick={openVoModal}
+                          className="inline-flex items-center rounded border border-dashed border-slate-400/80 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:border-amber-400 hover:text-amber-100 transition-colors"
+                          title="Add VO or Background Music into Notes"
+                        >
+                          + VO / BGM
+                        </button>
+                      ) : null}
+                      {editModeEnabled ? (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">
+                          Edit mode
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
+                  {Array.isArray(displayItem.voCues) && displayItem.voCues.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 border-b border-slate-700/80 bg-slate-900/40 px-4 py-2">
+                      {displayItem.voCues.map((vo) => {
+                        const isBgm = vo.kind === 'bgm';
+                        return (
+                          <span
+                            key={vo.id}
+                            className={`inline-flex max-w-full truncate rounded border px-2 py-0.5 text-[11px] font-semibold ${
+                              isBgm
+                                ? 'border-teal-600/50 bg-teal-950/50 text-teal-100'
+                                : 'border-amber-600/50 bg-amber-950/50 text-amber-100'
+                            }`}
+                            title={formatCalloutChipText(vo)}
+                          >
+                            {formatCalloutChipText(vo)}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {editModeEnabled ? (
                     <div className="space-y-2 p-4">
                       <div className="rounded border border-slate-600 bg-slate-900/80 p-2">
@@ -5419,6 +5519,204 @@ const ContentReviewPage: React.FC = () => {
         onClose={() => setAssigneesModalOpen(false)}
         onSaved={(assignees) => setReviewAssignees(assignees)}
       />
+      ) : null}
+
+      {showVoModal && displayItem ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
+          <div
+            className="w-full max-w-xl rounded-xl border border-slate-500/50 bg-slate-800 p-6 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cr-vo-modal-title"
+          >
+            <h2 id="cr-vo-modal-title" className="mb-1 text-xl font-bold text-white">
+              VO &amp; Background Music
+            </h2>
+            <p className="mb-4 text-sm text-slate-300">
+              Adds formatted text into Notes for{' '}
+              <span className="font-semibold text-white">
+                {displayItem.segmentName || 'this cue'}
+              </span>
+              . Wall-clock only — does <span className="font-medium text-white">not</span> change
+              duration or start times.
+            </p>
+
+            <ul className="mb-4 max-h-56 space-y-2 overflow-y-auto">
+              {tempVoCues.length === 0 ? (
+                <li className="text-sm italic text-slate-400">Nothing yet — add a VO or BGM below.</li>
+              ) : null}
+              {tempVoCues.map((vo) => {
+                const chipText = formatCalloutChipText(vo);
+                const isBgm = vo.kind === 'bgm';
+                return (
+                  <li
+                    key={vo.id}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                      isBgm
+                        ? 'border-teal-600/40 bg-teal-950/40'
+                        : 'border-amber-600/40 bg-amber-950/40'
+                    }`}
+                  >
+                    <span className="flex-1 truncate text-sm font-semibold text-white">{chipText}</span>
+                    <button
+                      type="button"
+                      className="px-2 text-sm font-bold text-red-300 hover:text-red-200"
+                      onClick={() => setTempVoCues((prev) => prev.filter((x) => x.id !== vo.id))}
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="mb-5 space-y-3 rounded-lg border border-slate-600 bg-slate-900/80 p-3">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setVoDraftKind('vo')}
+                  className={`rounded-md border px-3 py-1.5 text-sm font-semibold ${
+                    voDraftKind === 'vo'
+                      ? 'border-amber-500 bg-amber-700 text-white'
+                      : 'border-slate-500 bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  VO
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVoDraftKind('bgm')}
+                  className={`rounded-md border px-3 py-1.5 text-sm font-semibold ${
+                    voDraftKind === 'bgm'
+                      ? 'border-teal-500 bg-teal-700 text-white'
+                      : 'border-slate-500 bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  Background Music
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  Time
+                  <input
+                    type="time"
+                    value={voDraftTime}
+                    onChange={(e) => setVoDraftTime(e.target.value)}
+                    className="rounded border border-slate-500 bg-slate-700 px-2 py-1.5 text-sm text-white"
+                  />
+                </label>
+                <label className="flex min-w-[10rem] flex-1 flex-col gap-1 text-xs text-slate-300">
+                  Label
+                  <input
+                    type="text"
+                    value={voDraftLabel}
+                    onChange={(e) => setVoDraftLabel(e.target.value)}
+                    placeholder={voDraftKind === 'bgm' ? 'e.g. underscore bed' : 'e.g. 10 minutes'}
+                    className="rounded border border-slate-500 bg-slate-700 px-2 py-1.5 text-sm text-white"
+                  />
+                </label>
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={voDraftUseCuePrefix}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setVoDraftUseCuePrefix(on);
+                    if (on && !voDraftCuePrefix.trim()) {
+                      const cue = displayItem.customFields?.cue
+                        ? String(displayItem.customFields.cue).trim()
+                        : '';
+                      setVoDraftCuePrefix(cue);
+                    }
+                  }}
+                />
+                <span>
+                  Add <span className="font-semibold text-white">CUE</span> prefix
+                  <span className="block text-xs text-slate-400">
+                    Auto-filled from this row’s cue #. Edit if you need a suffix (e.g. 12A).
+                  </span>
+                </span>
+              </label>
+
+              {voDraftUseCuePrefix ? (
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  CUE number / suffix
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-400">CUE</span>
+                    <input
+                      type="text"
+                      value={voDraftCuePrefix}
+                      onChange={(e) => setVoDraftCuePrefix(e.target.value)}
+                      placeholder="Auto from row cue #"
+                      className="flex-1 rounded border border-slate-500 bg-slate-700 px-2 py-1.5 text-sm text-white"
+                    />
+                  </div>
+                </label>
+              ) : null}
+
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-sm font-semibold text-white ${
+                  voDraftKind === 'bgm'
+                    ? 'bg-teal-700 hover:bg-teal-600'
+                    : 'bg-amber-700 hover:bg-amber-600'
+                }`}
+                onClick={() => {
+                  if (!voDraftTime) return;
+                  const cuePrefix = voDraftUseCuePrefix
+                    ? voDraftCuePrefix.trim() ||
+                      String(displayItem.customFields?.cue || '').trim()
+                    : undefined;
+                  setTempVoCues((prev) =>
+                    [
+                      ...prev,
+                      {
+                        id: `vo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                        time: voDraftTime,
+                        label: voDraftLabel.trim(),
+                        kind: voDraftKind,
+                        ...(cuePrefix ? { cuePrefix } : {}),
+                      },
+                    ].sort((a, b) => a.time.localeCompare(b.time))
+                  );
+                  setVoDraftLabel('');
+                }}
+              >
+                Add {voDraftKind === 'bgm' ? 'BGM' : 'VO'}
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {voSaveMessage ? (
+                <span className="mr-auto text-xs font-semibold text-rose-300">{voSaveMessage}</span>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-lg bg-slate-600 px-4 py-2 text-sm text-white hover:bg-slate-500"
+                onClick={() => {
+                  setShowVoModal(false);
+                  setVoSaveMessage(null);
+                }}
+                disabled={isSavingVoCues}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void saveVoCuesFromModal()}
+                disabled={isSavingVoCues}
+              >
+                {isSavingVoCues ? 'Saving…' : 'Save to Notes'}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );
