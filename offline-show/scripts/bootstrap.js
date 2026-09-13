@@ -18,6 +18,48 @@ function nodeMajor() {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+function npmSupportsAllowScriptsFlag() {
+  try {
+    const ver = String(execSync('npm --version', { encoding: 'utf8' })).trim();
+    const major = parseInt(ver.split('.')[0], 10);
+    return Number.isFinite(major) && major >= 11;
+  } catch {
+    return false;
+  }
+}
+
+/** Ensure better-sqlite3 native binding actually loads (npm may skip install scripts). */
+function ensureSqliteBinding() {
+  try {
+    require(path.join(offlineRoot, 'node_modules', 'better-sqlite3'));
+    console.log('✅ better-sqlite3 native binding OK');
+    return;
+  } catch (err) {
+    console.warn('⚠️ better-sqlite3 binding missing — rebuilding (npm may have blocked install scripts)...');
+    console.warn(String(err && err.message ? err.message : err));
+  }
+
+  const rebuildCmd = npmSupportsAllowScriptsFlag()
+    ? 'npm rebuild better-sqlite3 --allow-scripts=better-sqlite3'
+    : 'npm rebuild better-sqlite3';
+  try {
+    run(rebuildCmd, offlineRoot);
+    require(path.join(offlineRoot, 'node_modules', 'better-sqlite3'));
+    console.log('✅ better-sqlite3 rebuilt successfully');
+  } catch (err) {
+    console.error('');
+    console.error('SQLite native module failed to load after rebuild.');
+    console.error('On npm 12+, approve and rebuild:');
+    console.error('  npm install-scripts approve better-sqlite3');
+    console.error('  npm rebuild better-sqlite3');
+    console.error('Or reinstall:');
+    console.error('  npm install --allow-scripts=better-sqlite3');
+    console.error('');
+    console.error(String(err && err.message ? err.message : err));
+    process.exit(1);
+  }
+}
+
 console.log('========== Offline Show bootstrap ==========');
 console.log(`Node ${process.version} (${process.platform}/${process.arch})`);
 
@@ -39,16 +81,23 @@ try {
 
 console.log('Installing offline-show server dependencies...');
 try {
-  run('npm install --no-audit --no-fund', offlineRoot);
+  // npm 12+ blocks dependency install scripts unless allowScripts / --allow-scripts.
+  // better-sqlite3 must run its script to fetch the native prebuild.
+  const installCmd = npmSupportsAllowScriptsFlag()
+    ? 'npm install --no-audit --no-fund --allow-scripts=better-sqlite3'
+    : 'npm install --no-audit --no-fund';
+  run(installCmd, offlineRoot);
 } catch (err) {
   console.error('');
   console.error('npm install failed.');
   console.error('SQLite uses a native module (better-sqlite3). If you see node-gyp / Visual Studio errors:');
   console.error('  • Prefer Node 20–26 with internet so prebuilt binaries can download');
-  console.error('  • Or install Node 22 LTS from https://nodejs.org/ (Current/odd majors can lag on prebuilds)');
-  console.error('  • Do not need Visual Studio when a matching prebuild exists');
+  console.error('  • Or install Node 22 LTS from https://nodejs.org/');
+  console.error('  • On npm 12+: npm install --allow-scripts=better-sqlite3');
   process.exit(typeof err.status === 'number' ? err.status : 1);
 }
+
+ensureSqliteBinding();
 
 const needsUiBuild = forceRebuild || !fs.existsSync(uiDistIndex);
 

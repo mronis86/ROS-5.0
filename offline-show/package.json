@@ -6,6 +6,9 @@
   "engines": {
     "node": ">=20"
   },
+  "allowScripts": {
+    "better-sqlite3": true
+  },
   "scripts": {
     "build:ui": "node scripts/build-ui.js",
     "start": "node scripts/build-ui.js && node server/server.js",

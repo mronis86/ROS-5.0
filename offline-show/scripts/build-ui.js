@@ -11,7 +11,18 @@ function ensureUiDeps() {
   if (fs.existsSync(viteBin)) return viteBin;
 
   console.log('Installing offline UI dependencies (first time or after update)...');
-  execSync('npm install --no-audit --no-fund', { cwd: uiRoot, stdio: 'inherit' });
+  // npm 12+ may block esbuild's postinstall without allowScripts / --allow-scripts.
+  let installCmd = 'npm install --no-audit --no-fund';
+  try {
+    const ver = String(execSync('npm --version', { encoding: 'utf8' })).trim();
+    const major = parseInt(ver.split('.')[0], 10);
+    if (Number.isFinite(major) && major >= 11) {
+      installCmd += ' --allow-scripts=esbuild';
+    }
+  } catch {
+    /* use default installCmd */
+  }
+  execSync(installCmd, { cwd: uiRoot, stdio: 'inherit' });
   if (!fs.existsSync(viteBin)) {
     throw new Error('vite not found after npm install in offline-show/ui');
   }
