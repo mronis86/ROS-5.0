@@ -10,7 +10,7 @@ if errorlevel 1 (
 where node >nul 2>&1
 if errorlevel 1 (
   echo Node.js is not installed or not on PATH.
-  echo Install from https://nodejs.org/ then run this again.
+  echo Install Node 20+ from https://nodejs.org/ ^(22 LTS recommended^) then run this again.
   popd
   pause
   exit /b 1

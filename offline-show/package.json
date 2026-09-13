@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Slim offline LAN show — isolated from main ROS app",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build:ui": "node scripts/build-ui.js",
     "start": "node scripts/build-ui.js && node server/server.js",
@@ -11,7 +14,7 @@
     "test": "node --test server/*.test.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.9.1",
+    "better-sqlite3": "^12.11.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "socket.io": "^4.8.1",
