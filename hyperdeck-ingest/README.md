@@ -65,7 +65,7 @@ Always set **Target folder** (editor watch folder / share).
 
 1. On launch, set the **Railway session timer** (how long the app keeps polling before disconnect).
 2. Load events, select one, click **Confirm event** to lock it.
-3. Optionally enable **Record during Rehearsal** for testing. By default the app only auto-records when the event is **In Show**.
+3. Optionally choose **Rehearsal or In Show** under the event (default is **In Show only**).
 4. Click **Start follow**.
 5. When a cue marked **Record** is **loaded**, HyperDeck starts recording (if the show-mode gate allows it).
 6. Recording stops (and copies if enabled) when **that cue's timer stops** — not when the next cue loads.

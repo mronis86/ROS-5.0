@@ -170,7 +170,7 @@ class HyperDeckIngestApp:
         self.pattern_var = tk.StringVar()
         self.only_marked_var = tk.BooleanVar(value=True)
         self.auto_copy_var = tk.BooleanVar(value=True)
-        self.record_during_rehearsal_var = tk.BooleanVar(value=False)
+        self.record_gate_var = tk.StringVar(value="in-show")
         self.status_ros = tk.StringVar(value="Not tested")
         self.status_deck = tk.StringVar(value="Disconnected")
         self.status_cue = tk.StringVar(value="—")
@@ -412,6 +412,33 @@ class HyperDeckIngestApp:
         ttk.Label(event_pick, textvariable=self.event_rec_summary_var, style="CardMuted.TLabel").grid(
             row=7, column=0, sticky="w", pady=(4, 0)
         )
+        gate = tk.Frame(event_pick, bg=CARD)
+        gate.grid(row=8, column=0, sticky="ew", pady=(10, 0))
+        ttk.Label(
+            gate,
+            text="After this event is confirmed — auto-record when:",
+            style="Card.TLabel",
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            gate,
+            text="In Show only (show day)",
+            variable=self.record_gate_var,
+            value="in-show",
+            command=self._on_record_gate_changed,
+        ).pack(anchor="w", pady=(4, 0))
+        ttk.Radiobutton(
+            gate,
+            text="Rehearsal or In Show (testing)",
+            variable=self.record_gate_var,
+            value="rehearsal",
+            command=self._on_record_gate_changed,
+        ).pack(anchor="w", pady=(2, 0))
+        ttk.Label(
+            gate,
+            text="Default is In Show only. Pick Rehearsal if you are testing before the show.",
+            style="CardMuted.TLabel",
+            wraplength=360,
+        ).pack(anchor="w", pady=(4, 0))
         self.event_id_var.trace_add("write", lambda *_: self._refresh_event_selection_label())
 
         deck = self._card(left, "HyperDeck")
@@ -474,16 +501,6 @@ class HyperDeckIngestApp:
         flags.grid(row=5, column=1, sticky="w", pady=(8, 0))
         ttk.Checkbutton(flags, text="Only Record-marked cues (required)", variable=self.only_marked_var, state="disabled").pack(anchor="w")
         ttk.Checkbutton(flags, text="Auto-copy after stop", variable=self.auto_copy_var).pack(anchor="w", pady=(4, 0))
-        ttk.Checkbutton(
-            flags,
-            text="Record during Rehearsal (for testing)",
-            variable=self.record_during_rehearsal_var,
-        ).pack(anchor="w", pady=(4, 0))
-        ttk.Label(
-            flags,
-            text="Off = only auto-record when the event is In Show",
-            style="CardMuted.TLabel",
-        ).pack(anchor="w", pady=(2, 0))
 
         cues = self._card(right, "Record cues", fill="both")
         ttk.Label(cues, textvariable=self.cue_list_summary_var, style="CardMuted.TLabel").pack(anchor="w", pady=(0, 6))
@@ -774,14 +791,21 @@ class HyperDeckIngestApp:
                 self._refresh_schedule()
                 ev = self._current_event()
                 marked = sum(1 for item in self.schedule if item_needs_recording(item))
+                gate = (
+                    "Auto-record: Rehearsal or In Show (testing)"
+                    if self._wants_rehearsal_record()
+                    else "Auto-record: In Show only"
+                )
                 self.root.after(
                     0,
                     lambda: messagebox.showinfo(
                         "Event locked",
                         f"{ev.get('name') or 'Event'}\n\n"
-                        f"Record-marked cues: {marked}\n\n"
-                        "Click Start follow when ready. The app will record when a "
-                        "Record-marked cue is loaded and stop when that cue's timer stops.",
+                        f"Record-marked cues: {marked}\n"
+                        f"{gate}\n\n"
+                        "Adjust the auto-record option under the event if needed, then "
+                        "Start follow. The app records when a Record-marked cue is loaded "
+                        "and stops when that cue's timer stops.",
                     ),
                 )
             except Exception as exc:
@@ -1146,7 +1170,7 @@ class HyperDeckIngestApp:
         self.pattern_var.set(c.get("name_pattern") or DEFAULT_PATTERN)
         self.only_marked_var.set(c.get("record_only_marked") is not False)
         self.auto_copy_var.set(c.get("auto_copy") is not False)
-        self.record_during_rehearsal_var.set(bool(c.get("record_during_rehearsal")))
+        self.record_gate_var.set("rehearsal" if c.get("record_during_rehearsal") else "in-show")
         self.event_locked_var.set(False)
         self.event_rec_summary_var.set("Record-marked cues: —")
         self.cue_list_summary_var.set("No Record-marked cues yet")
@@ -1169,7 +1193,7 @@ class HyperDeckIngestApp:
             "target_folder": self.target_folder_var.get(),
             "name_pattern": self.pattern_var.get().strip() or DEFAULT_PATTERN,
             "record_only_marked": bool(self.only_marked_var.get()),
-            "record_during_rehearsal": bool(self.record_during_rehearsal_var.get()),
+            "record_during_rehearsal": self._wants_rehearsal_record(),
             "auto_copy": bool(self.auto_copy_var.get()),
             "poll_seconds": int(self.cfg.get("poll_seconds") or 1),
             "auto_stop_hours": int(self.cfg.get("auto_stop_hours") or 2),
@@ -1314,14 +1338,24 @@ class HyperDeckIngestApp:
 
     def _mode_label(self) -> str:
         mode = self._show_mode if self._show_mode == "in-show" else "rehearsal"
-        if self.record_during_rehearsal_var.get():
+        if self._wants_rehearsal_record():
             return f"{mode} · record OK"
         if mode == "in-show":
             return "in-show · record OK"
         return "rehearsal · waiting for show"
 
+    def _wants_rehearsal_record(self) -> bool:
+        return self.record_gate_var.get() == "rehearsal"
+
+    def _on_record_gate_changed(self) -> None:
+        self.status_mode.set(self._mode_label())
+        if self._wants_rehearsal_record():
+            self.log("Auto-record gate: Rehearsal or In Show")
+        else:
+            self.log("Auto-record gate: In Show only")
+
     def _recording_allowed_for_show_mode(self) -> bool:
-        if bool(self.record_during_rehearsal_var.get()):
+        if self._wants_rehearsal_record():
             return True
         return self._show_mode == "in-show"
 
@@ -1549,7 +1583,7 @@ class HyperDeckIngestApp:
         marked = sum(1 for item in self.schedule if item_needs_recording(item))
         gate = (
             "recording allowed in Rehearsal and In Show"
-            if self.record_during_rehearsal_var.get()
+            if self._wants_rehearsal_record()
             else "recording only when event is In Show"
         )
         self.log(f"Follow started with {marked} Record-marked cue(s) · {gate}", "ok")
