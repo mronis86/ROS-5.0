@@ -68,7 +68,7 @@ Skip: Admin, Content Review, Teleprompter, XML exports, OSC, etc.
 ## Run (download zip from ROS OSC modal)
 
 1. Extract `offline-show.zip` anywhere (e.g. Desktop).
-2. **Requires [Node.js 20+](https://nodejs.org/)** on the show laptop (22 LTS recommended; Current/26+ is OK with this package). First run needs internet for `npm install` (SQLite prebuilds). On npm 12+, install scripts for `better-sqlite3` are allow-listed in this package.
+2. **Requires [Node.js 20+](https://nodejs.org/)** on the show laptop (22 LTS recommended; Current/26+ is OK with this package). First run needs internet for `npm install` (SQLite prebuilds). On npm 12+, `allowScripts` in `package.json` permits `better-sqlite3` (do not use CLI `--allow-scripts` in this project).
 3. Double-click `offline-show\launcher\start-standalone.bat`.
 4. First run installs server dependencies and opens http://127.0.0.1:3004/ — UI is **pre-built** in `ui/dist` inside the zip.
 
