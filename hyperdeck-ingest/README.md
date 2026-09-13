@@ -12,8 +12,8 @@ It connects to a Blackmagic HyperDeck on the LAN, records one clip per marked cu
 1. Select the ROS event → **Confirm event** (locks it and loads Record marks).
 2. Connect to the HyperDeck (TCP **9993**).
 3. **Start follow** — when a **Record-marked** cue is **loaded** or **running**, the deck records.
-4. While following, the app re-reads Record marks from Railway about every 8 seconds (or click **Refresh marks**).
-5. On that cue’s timer **stop**, it stops the deck and copies the clip to the **target folder**.
+4. While following, the app re-reads Record marks from Railway about every **20 seconds** (or click **Refresh marks**). Active cue state still polls about every **1 second** (small `active-timers` request only).
+5. On that cue’s timer **stop** (or jump to another cue), it stops the deck and copies the clip to the **target folder**.
 6. Destination name uses a pattern, default:
 
    `{date} {event} - {segment}` → `260512 Gala - Keynote`

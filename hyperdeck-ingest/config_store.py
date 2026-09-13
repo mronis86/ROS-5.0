@@ -28,7 +28,7 @@ DEFAULTS: dict[str, Any] = {
     "record_during_rehearsal": False,
     "auto_copy": True,
     "poll_seconds": 1,
-    "schedule_refresh_seconds": 8,
+    "schedule_refresh_seconds": 20,
     "auto_stop_hours": 2,
     "auto_stop_minutes": 0,
     "auto_stop_never": False,

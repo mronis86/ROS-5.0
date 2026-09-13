@@ -1386,7 +1386,8 @@ class HyperDeckIngestApp:
         if not eid:
             raise RosApiError("Select an event first")
         now = time.time()
-        refresh_every = max(3, int(self.cfg.get("schedule_refresh_seconds") or 8))
+        # Full run-of-show payload is expensive — keep this throttled (default 20s).
+        refresh_every = max(5, int(self.cfg.get("schedule_refresh_seconds") or 20))
         if (
             not force
             and self.schedule
@@ -1395,6 +1396,7 @@ class HyperDeckIngestApp:
         ):
             return
         api = self._apply_api_from_fields()
+        prev_len = len(self.schedule)
         prev_marked = {
             str(item.get("id"))
             for item in self.schedule
@@ -1408,8 +1410,12 @@ class HyperDeckIngestApp:
             if item_needs_recording(item) and item.get("id") is not None
         }
         marked = len(marked_ids)
-        self.log(f"Schedule: {len(self.schedule)} cues · Record-marked: {marked}")
-        if prev_marked and marked_ids != prev_marked:
+        marks_changed = marked_ids != prev_marked
+        size_changed = len(self.schedule) != prev_len
+        # Avoid log spam — only announce first load, forced refresh, or real changes.
+        if force or prev_len == 0 or marks_changed or size_changed:
+            self.log(f"Schedule: {len(self.schedule)} cues · Record-marked: {marked}")
+        if prev_marked and marks_changed:
             added = sorted(marked_ids - prev_marked)
             removed = sorted(prev_marked - marked_ids)
             if added:
@@ -1417,7 +1423,8 @@ class HyperDeckIngestApp:
             if removed:
                 self.log(f"Cleared Record marks: {', '.join(removed)}")
         try:
-            self._refresh_show_mode(force=True)
+            # Don't force show-mode here — follow tick already polls it on a short throttle.
+            self._refresh_show_mode(force=False)
         except Exception as exc:
             self.log(f"Show mode refresh failed: {exc}", "error")
         self.root.after(0, self._update_record_cue_summary)
@@ -1714,13 +1721,11 @@ class HyperDeckIngestApp:
         state = str(timer.get("timer_state") or "").lower()
         running = timer.get("is_running") is True or state == "running"
         item = self._item_by_id(item_id)
-        if (
-            item is None
-            or (not item_needs_recording(item) and self.only_marked_var.get())
-        ):
-            # Missing cue, or unmarked while loaded — pull latest marks once.
+        # Missing cue id in cache: allow a throttled schedule refresh (never force every poll).
+        # Unmarked loaded cues do NOT force a full schedule fetch — that was spamming Railway.
+        if item is None:
             try:
-                self._refresh_schedule(force=True)
+                self._refresh_schedule(force=False)
                 item = self._item_by_id(item_id)
             except Exception as exc:
                 self.log(f"Schedule refresh failed: {exc}", "error")
