@@ -68,7 +68,7 @@ Always set **Target folder** (editor watch folder / share).
 3. Optionally choose **Rehearsal or In Show** under the event (default is **In Show only**).
 4. Click **Start follow**.
 5. When a cue marked **Record** is **loaded**, HyperDeck starts recording (if the show-mode gate allows it).
-6. Recording stops (and copies if enabled) when **that cue's timer stops** — not when the next cue loads.
+6. Recording stops (and copies if enabled) when **that cue's timer stops**, or when you **jump/load another cue** (ROS replaces the active timer).
 7. The right pane lists Record-marked cues and checks them off as each follow-session recording finishes.
 8. Manual Record / Stop / Copy last clip are always available (manual record ignores the rehearsal gate).
 

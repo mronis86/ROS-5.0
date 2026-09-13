@@ -293,8 +293,38 @@ class HyperDeckIngestApp:
             value_lbl.pack(fill="x", padx=10, pady=(2, 8))
             self._status_cells[title] = {"cell": cell, "title": title_lbl, "value": value_lbl}
 
+        # Pack log first (bottom) so the middle body never eats it.
+        log_wrap = tk.Frame(self.root, bg=BG)
+        log_wrap.pack(side="bottom", fill="x", padx=14, pady=(0, 12))
+        tk.Label(
+            log_wrap, text="LOG", bg=BG, fg=MUTED, font=("Segoe UI", 8, "bold"), anchor="w"
+        ).pack(fill="x", pady=(0, 6))
+        log_card = tk.Frame(log_wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        log_card.pack(fill="x")
+        log_inner = tk.Frame(log_card, bg="#0b1220")
+        log_inner.pack(fill="both", expand=True)
+        self.log_text = tk.Text(
+            log_inner,
+            height=8,
+            bg="#0b1220",
+            fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            wrap="word",
+            borderwidth=0,
+            padx=8,
+            pady=6,
+            font=("Consolas", 9),
+        )
+        log_scroll = ttk.Scrollbar(log_inner, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        self.log_text.pack(side="left", fill="both", expand=True)
+        log_scroll.pack(side="right", fill="y")
+        self.log_text.tag_config("error", foreground=ERR)
+        self.log_text.tag_config("ok", foreground=OK)
+
         body = tk.Frame(self.root, bg=BG)
-        body.pack(fill="both", expand=True, padx=14)
+        body.pack(fill="both", expand=True, padx=14, pady=(0, 8))
         left_shell = tk.Frame(body, bg=BG, width=470)
         left_shell.pack(side="left", fill="y")
         left_shell.pack_propagate(False)
@@ -541,30 +571,6 @@ class HyperDeckIngestApp:
         self.clip_tree.configure(yscrollcommand=scroll.set)
         self.clip_tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-
-        log_wrap = tk.Frame(self.root, bg=BG)
-        log_wrap.pack(fill="x", padx=14, pady=(0, 12))
-        tk.Label(
-            log_wrap, text="LOG", bg=BG, fg=MUTED, font=("Segoe UI", 8, "bold"), anchor="w"
-        ).pack(fill="x", pady=(0, 6))
-        log_card = tk.Frame(log_wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
-        log_card.pack(fill="x")
-        self.log_text = tk.Text(
-            log_card,
-            height=6,
-            bg="#0b1220",
-            fg=FG,
-            insertbackground=FG,
-            relief="flat",
-            wrap="word",
-            borderwidth=0,
-            padx=8,
-            pady=6,
-            font=("Consolas", 9),
-        )
-        self.log_text.pack(fill="x")
-        self.log_text.tag_config("error", foreground=ERR)
-        self.log_text.tag_config("ok", foreground=OK)
 
     @staticmethod
     def _event_date_str(ev: dict) -> str:
@@ -1649,11 +1655,12 @@ class HyperDeckIngestApp:
             time.sleep(poll)
 
     def _cue_timer_stopped(self, timer: dict | None, item_id) -> bool:
-        """True when the given cue's timer has stopped/completed (not merely unloaded)."""
+        """True when the given cue's timer has stopped/completed."""
         if timer is None:
-            return False
+            return True
         if str(timer.get("item_id")) != str(item_id):
-            return False
+            # Jump/load replaced the active cue — previous cue is done for recording.
+            return True
         state = str(timer.get("timer_state") or "").lower()
         running = timer.get("is_running") is True or state == "running"
         if state in ("stopped", "done", "ended", "completed"):
@@ -1675,12 +1682,27 @@ class HyperDeckIngestApp:
 
         timer = self.api.get_active_timer(eid)
 
-        if self._recording_item_id is not None and timer is None:
-            self._stop_and_maybe_copy()
-            self._last_running = False
-            self._last_item_id = None
-            self.root.after(0, lambda: self.status_cue.set("None"))
-            return
+        # Stop HyperDeck when the recorded cue ends OR when ROS jump-loads another cue
+        # (active_timers row is replaced — we never see timer_state=stopped for the old id).
+        if self._recording_item_id is not None:
+            rec_id = self._recording_item_id
+            if timer is None:
+                self.log("Active timer cleared — stopping HyperDeck", "ok")
+                self._stop_and_maybe_copy()
+                self._last_running = False
+                self._last_item_id = None
+                self.root.after(0, lambda: self.status_cue.set("None"))
+                return
+            timer_item = timer.get("item_id")
+            if str(timer_item) != str(rec_id):
+                self.log(
+                    f"Cue jump while recording — stop clip for {rec_id}, now loaded {timer_item}",
+                    "ok",
+                )
+                self._stop_and_maybe_copy()
+            elif self._cue_timer_stopped(timer, rec_id):
+                self.log("Recorded cue timer stopped — stopping HyperDeck", "ok")
+                self._stop_and_maybe_copy()
 
         if not timer:
             self.root.after(0, lambda: self.status_cue.set("None"))
@@ -1709,18 +1731,14 @@ class HyperDeckIngestApp:
         state_label = "running" if running else (state or "loaded")
         if self._recording_item_id is not None and str(self._recording_item_id) == str(item_id):
             state_label = f"{state_label} · recording"
+            if running:
+                self._recording_seen_running = True
         self.root.after(
             0,
             lambda: self.status_cue.set(f"{cue or item_id}  {segment}  [{state_label}]  {rec}"),
         )
         self.root.after(0, lambda: self.status_ros.set("Polling OK"))
         self.root.after(0, lambda: self.status_mode.set(self._mode_label()))
-
-        if self._recording_item_id is not None and str(self._recording_item_id) == str(item_id):
-            if running:
-                self._recording_seen_running = True
-            if self._cue_timer_stopped(timer, self._recording_item_id):
-                self._stop_and_maybe_copy()
 
         if (
             marked
