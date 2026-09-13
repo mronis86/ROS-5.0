@@ -6,6 +6,11 @@ const { probeRailwayTokenWriteAccess } = require('./railway-client');
 
 const RAILWAY_HEALTH_URL =
   process.env.OFFLINE_RAILWAY_HEALTH_URL || 'https://ros-50-production.up.railway.app/health';
+const RAILWAY_DEEP_HEALTH_URL =
+  process.env.OFFLINE_RAILWAY_DEEP_HEALTH_URL ||
+  (RAILWAY_HEALTH_URL.endsWith('/health')
+    ? `${RAILWAY_HEALTH_URL}/deep`
+    : 'https://ros-50-production.up.railway.app/health/deep');
 const INTERNET_PROBE_URLS = (
   process.env.OFFLINE_INTERNET_PROBE_URL ||
   'https://www.msftconnecttest.com/connecttest.txt,https://cloudflare.com/cdn-cgi/trace,https://www.gstatic.com/generate_204'
@@ -15,14 +20,18 @@ const INTERNET_PROBE_URLS = (
   .filter(Boolean);
 const PROBE_TIMEOUT_MS = Number(process.env.OFFLINE_PROBE_TIMEOUT_MS || 4000);
 const CACHE_MS = Number(process.env.OFFLINE_CONNECTIVITY_CACHE_MS || 8000);
+/** Deep Neon probe wakes the DB — cache longer than the live Railway check. */
+const NEON_CACHE_MS = Number(process.env.OFFLINE_NEON_PROBE_CACHE_MS || 60000);
 const WRITE_PROBE_CACHE_MS = Number(process.env.OFFLINE_TOKEN_WRITE_PROBE_CACHE_MS || 60000);
 
 let cache = { at: 0, mode: null, data: null };
 let writeProbeCache = { at: 0, tokenPrefix: null, result: null };
+let neonProbeCache = { at: 0, neon: null };
 
 function clearConnectivityCache() {
   cache = { at: 0, mode: null, data: null };
   writeProbeCache = { at: 0, tokenPrefix: null, result: null };
+  neonProbeCache = { at: 0, neon: null };
 }
 
 function skippedPill(label, reason) {
@@ -77,6 +86,8 @@ async function probeInternet() {
 
 async function probeRailwayAndNeon() {
   const started = Date.now();
+  // /health is liveness-only (no Neon) so UptimeRobot does not wake the DB.
+  // Neon readiness comes from /health/deep, cached separately.
   try {
     const res = await fetchWithTimeout(RAILWAY_HEALTH_URL, {
       method: 'GET',
@@ -84,25 +95,47 @@ async function probeRailwayAndNeon() {
     });
     const body = await res.json().catch(() => ({}));
     const railwayOk = res.ok && body.status === 'healthy';
-    const neonOk =
-      body.dbConnected === true ||
-      body.services?.neon?.connected === true;
-    return {
-      railway: {
-        ok: railwayOk,
-        label: 'Railway',
-        latencyMs: Date.now() - started,
-        status: body.status || (res.ok ? 'unknown' : 'error'),
-        error: railwayOk ? null : body.error || `HTTP ${res.status}`,
-      },
-      neon: {
+    const railway = {
+      ok: railwayOk,
+      label: 'Railway',
+      latencyMs: Date.now() - started,
+      status: body.status || (res.ok ? 'unknown' : 'error'),
+      error: railwayOk ? null : body.error || `HTTP ${res.status}`,
+    };
+
+    const now = Date.now();
+    if (neonProbeCache.neon && now - neonProbeCache.at < NEON_CACHE_MS) {
+      return { railway, neon: neonProbeCache.neon };
+    }
+
+    let neon;
+    try {
+      const deepStarted = Date.now();
+      const deepRes = await fetchWithTimeout(RAILWAY_DEEP_HEALTH_URL, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      const deepBody = await deepRes.json().catch(() => ({}));
+      const neonOk =
+        deepBody.dbConnected === true || deepBody.services?.neon?.connected === true;
+      neon = {
         ok: neonOk,
         label: 'Neon',
+        latencyMs: Date.now() - deepStarted,
+        dbName: deepBody.services?.neon?.dbName || null,
+        error: neonOk ? null : deepBody.error || 'Database not connected',
+      };
+    } catch (e) {
+      neon = {
+        ok: false,
+        label: 'Neon',
         latencyMs: Date.now() - started,
-        dbName: body.services?.neon?.dbName || null,
-        error: neonOk ? null : body.error || 'Database not connected',
-      },
-    };
+        dbName: null,
+        error: e instanceof Error ? e.message : 'Unreachable',
+      };
+    }
+    neonProbeCache = { at: now, neon };
+    return { railway, neon };
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Unreachable';
     return {

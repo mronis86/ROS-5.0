@@ -973,7 +973,7 @@ const EventListPage: React.FC = () => {
               <div className="text-blue-400 text-sm">🔄 Loading events...</div>
             </div>
           )}
-          <div className="bg-slate-800 rounded-lg overflow-hidden border border-slate-600">
+          <div className="bg-slate-800 rounded-lg border border-slate-600">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-slate-700">
@@ -983,21 +983,21 @@ const EventListPage: React.FC = () => {
                         <span className="sr-only">Select</span>
                       </th>
                     )}
-                    <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[220px] w-[28%]">Event Name</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Date</th>
+                    <th className="px-3 py-2 text-left text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[140px] w-[24%]">Event Name</th>
+                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 whitespace-nowrap">Date</th>
                     {activeTab !== 'quickMode' && (
                       <>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Location</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Type</th>
-                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[5.5rem]" title="Broadcast Options">Broadcast</th>
+                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600 min-w-[4.5rem]" title="Broadcast Options">Broadcast</th>
                     <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Duration</th>
-                    <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
+                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Timezone</th>
                       </>
                     )}
                     {activeTab === 'quickMode' && (
                       <th className="px-3 py-2 text-center text-slate-300 font-semibold text-sm border-r border-slate-600">Created</th>
                     )}
-                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm">Actions</th>
+                    <th className="px-2 py-2 text-center text-slate-300 font-semibold text-sm sticky right-0 z-20 bg-slate-700 min-w-[11rem] shadow-[-6px_0_8px_rgba(0,0,0,0.25)]">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1040,8 +1040,8 @@ const EventListPage: React.FC = () => {
                             />
                           </td>
                         )}
-                        <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[220px] w-[28%]">
-                          <div className="flex items-center gap-2 flex-wrap">
+                        <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[140px] w-[24%]">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
                             {event.name}
                             {event.isQuickMode && (
                               <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-purple-600 text-white">
@@ -1050,7 +1050,7 @@ const EventListPage: React.FC = () => {
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
+                        <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center whitespace-nowrap">
                           {formatDate(event.date)}
                         </td>
                         {activeTab !== 'quickMode' && (
@@ -1075,7 +1075,7 @@ const EventListPage: React.FC = () => {
                             {getEventTypeShortLabel(event.eventType || 'Staged Production')}
                           </span>
                         </td>
-                        <td className="px-2 py-2 border-r border-slate-600 min-w-[5.5rem] text-center">
+                        <td className="px-2 py-2 border-r border-slate-600 min-w-[4.5rem] text-center">
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
                             title={getRecordStreamingShort(event.recordStreaming || 'None').title}
@@ -1086,8 +1086,8 @@ const EventListPage: React.FC = () => {
                         <td className="px-3 py-2 text-slate-300 text-sm border-r border-slate-600 text-center">
                           {event.numberOfDays} day{event.numberOfDays > 1 ? 's' : ''}
                         </td>
-                        <td className="px-3 py-2 text-slate-300 border-r border-slate-600">
-                          <span className="text-xs font-mono">
+                        <td className="px-2 py-2 text-slate-300 border-r border-slate-600">
+                          <span className="text-xs font-mono truncate block max-w-[8rem] mx-auto" title={event.timezone || 'America/New_York'}>
                             {event.timezone || 'America/New_York'}
                           </span>
                         </td>
@@ -1098,7 +1098,7 @@ const EventListPage: React.FC = () => {
                             {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
                           </td>
                         )}
-                        <td className="px-2 py-2 min-w-[9.5rem] text-center">
+                        <td className="px-2 py-2 min-w-[11rem] text-center whitespace-nowrap sticky right-0 z-10 bg-slate-800 shadow-[-6px_0_8px_rgba(0,0,0,0.25)]">
                           <EventListRowActions
                             layout="table"
                             mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}
