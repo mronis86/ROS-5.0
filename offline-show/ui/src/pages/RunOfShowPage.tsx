@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Event, LOCATION_OPTIONS } from '../types/Event';
+import { Event, LOCATION_OPTIONS, normalizeDayLocations } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
@@ -10,6 +10,17 @@ import { useAuth } from '../contexts/OfflineAuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient, onCloudModeChange } from '../services/socket-client';
+import {
+  type AudioCalloutKind,
+  type VoCue,
+  formatCalloutChipText,
+  syncCalloutsIntoNotes,
+} from '../lib/audioCallouts';
+import {
+  HEAD_TABLE_PROGRAM_TYPE,
+  ROS_PROGRAM_TYPE_COLORS,
+  buildRosProgramTypes,
+} from '../lib/rosProgramTypes';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import CompleteChangeLog from '../components/CompleteChangeLog';
 import OSCModal from '../components/OSCModal';
@@ -74,12 +85,19 @@ interface ScheduleItem {
   hasPPT: boolean;
   hasQA: boolean;
   needsRecording?: boolean;
+  /**
+   * Optional room when this cue happens off the main program room
+   * (not a breakout). Blank/null = main event room for that day.
+   */
+  otherRoom?: string | null;
   timerId: string;
   customFields: Record<string, string>;
   isPublic: boolean;
   isIndented: boolean;
   /** Clock page display: 'countdown' | 'countUp' | 'timeOfDay' (swap + progress bar) | 'todOnly' (time of day only) */
   timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
+  /** Optional VO / BGM chips in Notes — metadata only, not timeline rows */
+  voCues?: VoCue[];
 }
 
 interface CustomColumn {
@@ -655,6 +673,21 @@ const RunOfShowPage: React.FC = () => {
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [editingNotesItem, setEditingNotesItem] = useState<number | null>(null);
+  const [showVoModal, setShowVoModal] = useState(false);
+  const [editingVoItemId, setEditingVoItemId] = useState<number | null>(null);
+  const [tempVoCues, setTempVoCues] = useState<VoCue[]>([]);
+  const [voDraftTime, setVoDraftTime] = useState('08:45');
+  const [voDraftLabel, setVoDraftLabel] = useState('');
+  const [voDraftKind, setVoDraftKind] = useState<AudioCalloutKind>('vo');
+  const [voDraftUseCuePrefix, setVoDraftUseCuePrefix] = useState(false);
+  const [voDraftCuePrefix, setVoDraftCuePrefix] = useState('');
+  /** Dismissed VO alerts this session: `${itemId}:${voId}` */
+  const [dismissedVoAlerts, setDismissedVoAlerts] = useState<Set<string>>(() => new Set());
+  const [activeVoAlert, setActiveVoAlert] = useState<{
+    itemId: number;
+    segmentName: string;
+    vo: VoCue;
+  } | null>(null);
   const [showSpeakersModal, setShowSpeakersModal] = useState(false);
   const [editingSpeakersItem, setEditingSpeakersItem] = useState<number | null>(null);
   const [tempSpeakersText, setTempSpeakersText] = useState<Speaker[]>([]);
@@ -678,6 +711,9 @@ const RunOfShowPage: React.FC = () => {
   const [breakoutRoomParentId, setBreakoutRoomParentId] = useState<number | null>(null);
   const [numberOfBreakoutRooms, setNumberOfBreakoutRooms] = useState<number>(1);
   const [breakoutRoomsData, setBreakoutRoomsData] = useState<Array<{ location: string; title: string }>>([{ location: 'Great Hall', title: '' }]);
+  const [showOtherRoomModal, setShowOtherRoomModal] = useState(false);
+  const [otherRoomItemId, setOtherRoomItemId] = useState<number | null>(null);
+  const [otherRoomDraft, setOtherRoomDraft] = useState('');
   const [activeTimers, setActiveTimers] = useState<Record<number, boolean>>({});
   const [activeTimerIntervals, setActiveTimerIntervals] = useState<Record<number, NodeJS.Timeout>>({});
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
@@ -1050,6 +1086,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText?: string;
       speakers?: unknown;
       customFields?: Record<string, unknown>;
+      voCues?: VoCue[];
     },
     extra?: React.CSSProperties
   ): React.CSSProperties => ({
@@ -1058,7 +1095,8 @@ const RunOfShowPage: React.FC = () => {
       item.speakersText,
       item.speakers as string | undefined,
       item.customFields,
-      customColumns
+      customColumns,
+      item.voCues?.length ?? 0
     ),
     ...getRowDimStyle(item),
     ...(item.programType === 'Delay Block'
@@ -1093,6 +1131,7 @@ const RunOfShowPage: React.FC = () => {
     speakersText?: string;
     speakers?: unknown;
     customFields?: Record<string, unknown>;
+    voCues?: VoCue[];
   }): React.CSSProperties =>
     isItemDimmed(item.id) || item.programType === 'Delay Block'
       ? getRowContainerStyle(item)
@@ -1102,7 +1141,8 @@ const RunOfShowPage: React.FC = () => {
             item.speakersText,
             item.speakers as string | undefined,
             item.customFields,
-            customColumns
+            customColumns,
+            item.voCues?.length ?? 0
           ),
         };
 
@@ -1672,7 +1712,7 @@ const RunOfShowPage: React.FC = () => {
     }, 150);
   }, [releaseRowEditLock]);
 
-  // Keep row lock while notes/assets/speakers/participants modals are open for that row
+  // Keep row lock while notes/assets/speakers/participants/VO modals are open for that row
   useEffect(() => {
     let activeModalRow: number | null = null;
     if (showNotesModal && editingNotesItem != null && editingNotesItem > 0) {
@@ -1683,6 +1723,8 @@ const RunOfShowPage: React.FC = () => {
       activeModalRow = editingSpeakersItem;
     } else if (showParticipantsModal && editingParticipantsItem != null && editingParticipantsItem > 0) {
       activeModalRow = editingParticipantsItem;
+    } else if (showVoModal && editingVoItemId != null && editingVoItemId > 0) {
+      activeModalRow = editingVoItemId;
     }
 
     if (activeModalRow != null) {
@@ -1705,9 +1747,51 @@ const RunOfShowPage: React.FC = () => {
     editingSpeakersItem,
     showParticipantsModal,
     editingParticipantsItem,
+    showVoModal,
+    editingVoItemId,
     claimRowEditLock,
     releaseRowEditLock,
   ]);
+
+  // Wall-clock VO/BGM alert when local time matches a callout (same minute)
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const current = `${hh}:${mm}`;
+      let found: { itemId: number; segmentName: string; vo: VoCue } | null = null;
+      for (const item of schedule) {
+        const vos = item.voCues;
+        if (!vos?.length) continue;
+        for (const vo of vos) {
+          if (vo.time !== current) continue;
+          const key = `${item.id}:${vo.id}`;
+          if (dismissedVoAlerts.has(key)) continue;
+          found = { itemId: item.id, segmentName: item.segmentName, vo };
+          break;
+        }
+        if (found) break;
+      }
+      setActiveVoAlert(found);
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [schedule, dismissedVoAlerts]);
+
+  // Reset draft fields when opening the VO/BGM modal
+  useEffect(() => {
+    if (!showVoModal || editingVoItemId == null) return;
+    setVoDraftKind('vo');
+    setVoDraftLabel('');
+    setVoDraftUseCuePrefix(false);
+    const parent = schedule.find((s) => s.id === editingVoItemId);
+    const rowCue = parent?.customFields?.cue ? String(parent.customFields.cue).trim() : '';
+    setVoDraftCuePrefix(rowCue);
+    // only reset on open
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showVoModal, editingVoItemId]);
 
   useEffect(() => {
     return () => {
@@ -1821,7 +1905,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
-    const anyModalOpen = showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal;
+    const anyModalOpen = showSpeakersModal || showNotesModal || showVoModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal || showBreakoutRoomModal || showOtherRoomModal || showDelayBlockModal || showAddModal;
     const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
 
     if (shouldPause) {
@@ -1838,7 +1922,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showAddModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -3648,7 +3732,7 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal) {
+    if (showSpeakersModal || showNotesModal || showVoModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal || showBreakoutRoomModal || showOtherRoomModal || showDelayBlockModal || showAddModal) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -3977,36 +4061,23 @@ const RunOfShowPage: React.FC = () => {
     setModalForm(prev => ({ ...prev, day: selectedDay }));
   }, [selectedDay]);
 
-  const programTypes = (() => {
-    const types = [
-      'PreShow/End', 'Podium Transition', 'Panel Transition', 'Full-Stage/Ted-Talk', 'Sub Cue',
-      'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break F&B/B2B', 'Breakout Session', 'Delay Block', 'TBD', 'KILLED'
-    ];
-    const et = String(event?.eventType || '').trim();
-    if (et === 'General Meeting' || et === 'Hollow Square') {
+  const programTypes = useMemo(() => {
+    const types = buildRosProgramTypes(event?.eventType);
+    // Keep Head Table selectable if any cue already uses it (e.g. event type changed later).
+    if (
+      schedule.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
+      !types.includes(HEAD_TABLE_PROGRAM_TYPE)
+    ) {
       const idx = types.indexOf('PreShow/End');
-      if (idx >= 0) types.splice(idx + 1, 0, 'Head Table');
+      if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
+      else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
     }
     return types;
-  })();
+  }, [event?.eventType, schedule]);
 
   // Program Type color mapping
   const programTypeColors: { [key: string]: string } = {
-    'PreShow/End': '#8B5CF6',        // Bright Purple
-    'Head Table': '#4338CA',         // Indigo — GM / Hollow Square
-    'Podium Transition': '#8B4513',  // Dark Brown
-    'Panel Transition': '#404040',   // Darker Grey
-    'Sub Cue': '#F3F4F6',           // White with border
-    'No Transition': '#059669',      // Bright Teal
-    'Video': '#F59E0B',              // Bright Yellow/Orange
-    'Panel+Remote': '#1E40AF',       // Darker Blue
-    'Remote Only': '#60A5FA',        // Light Blue
-    'Break F&B/B2B': '#EC4899',              // Bright Pink
-    'Breakout Session': '#20B2AA',           // Seafoam
-    'Delay Block': '#7C3AED',                 // Violet
-    'TBD': '#6B7280',                // Medium Gray
-    'KILLED': '#DC2626',             // Bright Red
-    'Full-Stage/Ted-Talk': '#EA580C' // Bright Orange
+    ...ROS_PROGRAM_TYPE_COLORS,
   };
 
   // Function to get subtle row background color based on Program Type
@@ -4028,8 +4099,11 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Enhanced function to calculate dynamic row height based on ALL content
-  const getRowHeight = (notes: string, speakersText?: string, participants?: string, customFields?: any, customColumns?: any[]) => {
+  const getRowHeight = (notes: string, speakersText?: string, participants?: string, customFields?: any, customColumns?: any[], voCueCount = 0) => {
     let maxHeight = 6.5; // Default minimum height in rem
+    if (voCueCount > 0) {
+      maxHeight = Math.max(maxHeight, 7);
+    }
     
     // Calculate height based on notes content
     if (notes && notes.trim() !== '') {
@@ -12666,12 +12740,31 @@ const RunOfShowPage: React.FC = () => {
                             <span>⏱</span>
                             <span>Add Delay Block</span>
                           </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                                alert('Only EDITORs can set other room. Please change your role to EDITOR.');
+                                return;
+                              }
+                              handleModalEditing();
+                              setActiveJumpMenu(null);
+                              setOtherRoomItemId(item.id);
+                              setOtherRoomDraft(item.otherRoom || '');
+                              setShowOtherRoomModal(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-white hover:bg-slate-600 flex items-center gap-2 border-t border-slate-600"
+                            title="Mark this cue as happening in another room (not a breakout)"
+                          >
+                            <span>🚪</span>
+                            <span>{item.otherRoom ? `Other Room (${item.otherRoom})` : 'Other Room…'}</span>
+                          </button>
                           {/* Add Breakout Room button - only show for Breakout Session items */}
                           {item.programType === 'Breakout Session' && !indentedCues[item.id] && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleUserEditing();
+                                handleModalEditing();
                                 setActiveJumpMenu(null);
                                 setBreakoutRoomParentId(item.id);
                                 setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
@@ -13279,6 +13372,9 @@ const RunOfShowPage: React.FC = () => {
                         saveToAPI={saveToAPI}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
+                        setEditingVoItemId={setEditingVoItemId}
+                        setShowVoModal={setShowVoModal}
+                        setTempVoCues={setTempVoCues}
                         setViewingAssetsItem={setViewingAssetsItem}
                         setShowViewAssetsModal={setShowViewAssetsModal}
                         setViewingSpeakersItem={setViewingSpeakersItem}
@@ -13898,6 +13994,227 @@ const RunOfShowPage: React.FC = () => {
                  className="flex-1 px-4 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
                >
                  Cancel
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+
+       {/* VO / BGM chips editor */}
+       {showVoModal && editingVoItemId !== null && (
+         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+           <div className="bg-slate-800 rounded-xl p-6 max-w-xl w-full shadow-xl border border-slate-500/50">
+             <h2 className="text-xl font-bold text-white mb-1">VO &amp; Background Music</h2>
+             <p className="text-slate-300 text-sm mb-4">
+               Adds formatted text into Notes for{' '}
+               <span className="text-white font-semibold">
+                 {schedule.find((s) => s.id === editingVoItemId)?.segmentName || 'this cue'}
+               </span>
+               . Wall-clock only — does <span className="text-white font-medium">not</span> change duration or start times.
+             </p>
+
+             <ul className="space-y-2 mb-4 max-h-56 overflow-y-auto">
+               {tempVoCues.length === 0 && (
+                 <li className="text-slate-400 text-sm italic">Nothing yet — add a VO or BGM below.</li>
+               )}
+               {tempVoCues.map((vo) => {
+                 const chipText = formatCalloutChipText(vo);
+                 const isBgm = vo.kind === 'bgm';
+                 return (
+                   <li
+                     key={vo.id}
+                     className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                       isBgm
+                         ? 'border-teal-600/40 bg-teal-950/40'
+                         : 'border-amber-600/40 bg-amber-950/40'
+                     }`}
+                   >
+                     <span className="text-white font-semibold text-sm flex-1 truncate">
+                       {chipText}
+                     </span>
+                     <button
+                       type="button"
+                       className="text-red-300 hover:text-red-200 text-sm font-bold px-2"
+                       onClick={() => setTempVoCues((prev) => prev.filter((x) => x.id !== vo.id))}
+                       title="Remove"
+                     >
+                       ×
+                     </button>
+                   </li>
+                 );
+               })}
+             </ul>
+
+             <div className="space-y-3 mb-5 p-3 rounded-lg bg-slate-900/80 border border-slate-600">
+               <div className="flex flex-wrap gap-2">
+                 <button
+                   type="button"
+                   onClick={() => setVoDraftKind('vo')}
+                   className={`rounded-md px-3 py-1.5 text-sm font-semibold border ${
+                     voDraftKind === 'vo'
+                       ? 'bg-amber-700 border-amber-500 text-white'
+                       : 'bg-slate-700 border-slate-500 text-slate-300'
+                   }`}
+                 >
+                   VO
+                 </button>
+                 <button
+                   type="button"
+                   onClick={() => setVoDraftKind('bgm')}
+                   className={`rounded-md px-3 py-1.5 text-sm font-semibold border ${
+                     voDraftKind === 'bgm'
+                       ? 'bg-teal-700 border-teal-500 text-white'
+                       : 'bg-slate-700 border-slate-500 text-slate-300'
+                   }`}
+                 >
+                   Background Music
+                 </button>
+               </div>
+
+               <div className="flex flex-wrap items-end gap-2">
+                 <label className="flex flex-col gap-1 text-xs text-slate-300">
+                   Time
+                   <input
+                     type="time"
+                     value={voDraftTime}
+                     onChange={(e) => setVoDraftTime(e.target.value)}
+                     className="rounded border border-slate-500 bg-slate-700 px-2 py-1.5 text-white text-sm"
+                   />
+                 </label>
+                 <label className="flex flex-col gap-1 text-xs text-slate-300 flex-1 min-w-[10rem]">
+                   Label
+                   <input
+                     type="text"
+                     value={voDraftLabel}
+                     onChange={(e) => setVoDraftLabel(e.target.value)}
+                     placeholder={voDraftKind === 'bgm' ? 'e.g. underscore bed' : 'e.g. 10 minutes'}
+                     className="rounded border border-slate-500 bg-slate-700 px-2 py-1.5 text-white text-sm"
+                   />
+                 </label>
+               </div>
+
+               <label className="flex items-start gap-2 text-sm text-slate-200 cursor-pointer">
+                 <input
+                   type="checkbox"
+                   className="mt-1"
+                   checked={voDraftUseCuePrefix}
+                   onChange={(e) => {
+                     const on = e.target.checked;
+                     setVoDraftUseCuePrefix(on);
+                     if (on && !voDraftCuePrefix.trim()) {
+                       const parent = schedule.find((s) => s.id === editingVoItemId);
+                       const cue = parent?.customFields?.cue
+                         ? String(parent.customFields.cue).trim()
+                         : '';
+                       setVoDraftCuePrefix(cue);
+                     }
+                   }}
+                 />
+                 <span>
+                   Add <span className="font-semibold text-white">CUE</span> prefix
+                   <span className="block text-xs text-slate-400">
+                     Auto-filled from this row’s cue #. Edit if you need a suffix (e.g. 12A).
+                   </span>
+                 </span>
+               </label>
+
+               {voDraftUseCuePrefix && (
+                 <label className="flex flex-col gap-1 text-xs text-slate-300">
+                   CUE number / suffix
+                   <div className="flex items-center gap-2">
+                     <span className="text-slate-400 font-semibold">CUE</span>
+                     <input
+                       type="text"
+                       value={voDraftCuePrefix}
+                       onChange={(e) => setVoDraftCuePrefix(e.target.value)}
+                       placeholder="Auto from row cue #"
+                       className="flex-1 rounded border border-slate-500 bg-slate-700 px-2 py-1.5 text-white text-sm"
+                     />
+                   </div>
+                 </label>
+               )}
+
+               <button
+                 type="button"
+                 className={`rounded-md text-white text-sm font-semibold px-3 py-1.5 ${
+                   voDraftKind === 'bgm'
+                     ? 'bg-teal-700 hover:bg-teal-600'
+                     : 'bg-amber-700 hover:bg-amber-600'
+                 }`}
+                 onClick={() => {
+                   if (!voDraftTime) return;
+                   const cuePrefix = voDraftUseCuePrefix
+                     ? voDraftCuePrefix.trim() ||
+                       String(
+                         schedule.find((s) => s.id === editingVoItemId)?.customFields?.cue || ''
+                       ).trim()
+                     : undefined;
+                   setTempVoCues((prev) =>
+                     [
+                       ...prev,
+                       {
+                         id: `vo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                         time: voDraftTime,
+                         label: voDraftLabel.trim(),
+                         kind: voDraftKind,
+                         ...(cuePrefix ? { cuePrefix } : {}),
+                       },
+                     ].sort((a, b) => a.time.localeCompare(b.time))
+                   );
+                   setVoDraftLabel('');
+                 }}
+               >
+                 Add {voDraftKind === 'bgm' ? 'BGM' : 'VO'}
+               </button>
+             </div>
+
+             <div className="flex justify-end gap-2">
+               <button
+                 type="button"
+                 className="px-4 py-2 rounded-lg bg-slate-600 hover:bg-slate-500 text-white text-sm"
+                 onClick={() => {
+                   setShowVoModal(false);
+                   setEditingVoItemId(null);
+                   handleModalClosed();
+                 }}
+               >
+                 Cancel
+               </button>
+               <button
+                 type="button"
+                 className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold"
+                 onClick={() => {
+                   const itemId = editingVoItemId;
+                   const next = [...tempVoCues].sort((a, b) => a.time.localeCompare(b.time));
+                   setSchedule((prev) =>
+                     prev.map((row) => {
+                       if (row.id !== itemId) return row;
+                       const previous = Array.isArray(row.voCues) ? row.voCues : [];
+                       const notes = syncCalloutsIntoNotes(row.notes || '', previous, next);
+                       return {
+                         ...row,
+                         voCues: next.length ? next : undefined,
+                         notes,
+                       };
+                     })
+                   );
+                   logChange(
+                     'VO_CUES_UPDATE',
+                     `Updated VO/BGM callouts on cue ${itemId}`,
+                     {
+                       changeType: 'FIELD_CHANGE',
+                       itemId,
+                       fieldName: 'voCues',
+                       newValue: next,
+                     }
+                   );
+                   saveToAPI();
+                   setShowVoModal(false);
+                   setEditingVoItemId(null);
+                   handleModalClosed();
+                 }}
+               >
+                 Save
                </button>
              </div>
            </div>
@@ -15368,6 +15685,50 @@ const RunOfShowPage: React.FC = () => {
         );
       })()}
 
+      {/* Audio callout alert — centered */}
+      {activeVoAlert && timeToastEnabled && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
+          <div className="absolute inset-0 bg-black/50 pointer-events-auto" />
+          <div
+            className={`pointer-events-auto relative mx-4 flex max-w-3xl flex-col items-center gap-4 rounded-2xl border-4 px-10 py-8 text-center shadow-2xl ${
+              activeVoAlert.vo.kind === 'bgm'
+                ? 'border-teal-400 bg-teal-950 shadow-teal-900/60'
+                : 'border-amber-400 bg-amber-950 shadow-amber-900/60'
+            }`}
+          >
+            <div
+              className={`text-3xl font-bold leading-snug ${
+                activeVoAlert.vo.kind === 'bgm' ? 'text-teal-100' : 'text-amber-100'
+              }`}
+            >
+              {formatCalloutChipText(activeVoAlert.vo)}
+            </div>
+            <div
+              className={`text-lg ${
+                activeVoAlert.vo.kind === 'bgm' ? 'text-teal-200/90' : 'text-amber-200/90'
+              }`}
+            >
+              {activeVoAlert.segmentName}
+            </div>
+            <button
+              type="button"
+              className={`mt-2 rounded-xl px-8 py-3 text-lg font-bold text-white ${
+                activeVoAlert.vo.kind === 'bgm'
+                  ? 'bg-teal-600 hover:bg-teal-500'
+                  : 'bg-amber-600 hover:bg-amber-500'
+              }`}
+              onClick={() => {
+                const key = `${activeVoAlert.itemId}:${activeVoAlert.vo.id}`;
+                setDismissedVoAlerts((prev) => new Set(prev).add(key));
+                setActiveVoAlert(null);
+              }}
+            >
+              Fired / Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Time Status Toast */}
       {showTimeToast && timeToastEnabled && (
         <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
@@ -16110,6 +16471,110 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Other Room Modal — mark cue as off main program room (not a breakout) */}
+      {showOtherRoomModal && otherRoomItemId !== null && (() => {
+        const target = schedule.find((i) => i.id === otherRoomItemId);
+        const day = target?.day || selectedDay;
+        const mainRoom =
+          event
+            ? normalizeDayLocations(event.location, event.numberOfDays || 1, event.dayLocations)[day] ||
+              event.location
+            : 'Great Hall';
+        const closeOtherRoomModal = () => {
+          setShowOtherRoomModal(false);
+          setOtherRoomItemId(null);
+          setOtherRoomDraft('');
+          handleModalClosed();
+        };
+        const applyOtherRoom = (value: string | null) => {
+          const trimmed = (value || '').trim();
+          const next =
+            !trimmed || trimmed === mainRoom ? null : trimmed;
+          const oldValue = target?.otherRoom || null;
+          setSchedule((prev) =>
+            prev.map((scheduleItem) =>
+              scheduleItem.id === otherRoomItemId
+                ? { ...scheduleItem, otherRoom: next }
+                : scheduleItem
+            )
+          );
+          logChange(
+            'FIELD_UPDATE',
+            next
+              ? `Set other room for "${target?.segmentName || 'cue'}" to "${next}"`
+              : `Cleared other room for "${target?.segmentName || 'cue'}"`,
+            {
+              changeType: 'FIELD_CHANGE',
+              itemId: otherRoomItemId,
+              itemName: target?.segmentName,
+              fieldName: 'otherRoom',
+              oldValue,
+              newValue: next,
+            }
+          );
+          saveToAPI();
+          closeOtherRoomModal();
+        };
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-lg max-w-md w-full shadow-xl">
+              <div className="p-6">
+                <h2 className="text-xl font-bold text-white mb-1">Other Room</h2>
+                <p className="text-slate-400 text-sm mb-4">
+                  Mark this cue as happening outside the main program room
+                  {mainRoom ? (
+                    <>
+                      {' '}
+                      (<span className="text-slate-300">{mainRoom}</span>)
+                    </>
+                  ) : null}
+                  . Not a breakout — stays on the main timeline.
+                </p>
+                <label className="block text-slate-300 text-sm font-medium mb-2">Room</label>
+                <select
+                  value={otherRoomDraft}
+                  onChange={(e) => setOtherRoomDraft(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500 mb-4"
+                  autoFocus
+                >
+                  <option value="">Main room ({mainRoom})</option>
+                  {LOCATION_OPTIONS.filter((opt) => opt.value !== mainRoom).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex justify-end gap-2">
+                  {target?.otherRoom ? (
+                    <button
+                      type="button"
+                      onClick={() => applyOtherRoom(null)}
+                      className="px-3 py-2 text-sm rounded bg-slate-700 text-slate-200 hover:bg-slate-600 mr-auto"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={closeOtherRoomModal}
+                    className="px-3 py-2 text-sm rounded bg-slate-700 text-slate-200 hover:bg-slate-600"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyOtherRoom(otherRoomDraft)}
+                    className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-500"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Breakout Room Modal */}
       {showBreakoutRoomModal && breakoutRoomParentId !== null && (
