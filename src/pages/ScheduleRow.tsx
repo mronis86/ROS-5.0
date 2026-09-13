@@ -25,6 +25,8 @@ export interface ScheduleRowProps {
   logChangeDebounced: Function;
   logChange?: Function;
   saveToAPI?: Function;
+  /** Immediate Neon persist for REC checkbox (avoids debounced full-schedule race on navigate away). */
+  persistCueRecording?: (itemId: number, needsRecording: boolean, source: 'comms' | 'ros') => void | Promise<void>;
   calculateStartTimeWithOvertime?: (index: number) => string | number;
   calculateStartTime?: (index: number) => string | number;
   setEditingNotesItem?: Function;
@@ -95,6 +97,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   logChangeDebounced,
   logChange,
   saveToAPI,
+  persistCueRecording,
   calculateStartTimeWithOvertime,
   calculateStartTime,
   setEditingNotesItem,
@@ -206,15 +209,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     if (next && confirmRecordingMark) {
       if (!window.confirm(CUE_RECORDING_MARK_WARNING)) return;
     }
+    const recordingSource = resolveRecordingSource(next, {
+      isCommsUser,
+      previous: item.recordingSource,
+    });
     setSchedule((prev: any[]) => prev.map(scheduleItem =>
       scheduleItem.id === item.id
         ? {
             ...scheduleItem,
             needsRecording: next,
-            recordingSource: resolveRecordingSource(next, {
-              isCommsUser,
-              previous: scheduleItem.recordingSource,
-            }),
+            recordingSource,
           }
         : scheduleItem
     ));
@@ -234,10 +238,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         details: {
           fieldType: 'checkbox',
           booleanChange: true,
-          recordingSource: resolveRecordingSource(next, { isCommsUser, previous: item.recordingSource }),
+          recordingSource,
         }
       }
     );
+    // Persist immediately (dedicated PATCH) — debounced full-schedule save alone can be lost on navigate away
+    void Promise.resolve(
+      persistCueRecording?.(item.id, next, recordingSource === 'comms' ? 'comms' : 'ros')
+    ).catch((err) => console.warn('persistCueRecording failed:', err));
   };
 
   const Content = (
@@ -1292,6 +1300,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.logChangeDebounced !== nextProps.logChangeDebounced) return false;
   if (prevProps.logChange !== nextProps.logChange) return false;
   if (prevProps.saveToAPI !== nextProps.saveToAPI) return false;
+  if (prevProps.persistCueRecording !== nextProps.persistCueRecording) return false;
   if (prevProps.setEditingNotesItem !== nextProps.setEditingNotesItem) return false;
   if (prevProps.setShowNotesModal !== nextProps.setShowNotesModal) return false;
   if (prevProps.setViewingAssetsItem !== nextProps.setViewingAssetsItem) return false;

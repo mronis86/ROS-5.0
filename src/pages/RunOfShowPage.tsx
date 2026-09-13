@@ -1812,6 +1812,8 @@ const RunOfShowPage: React.FC = () => {
   // Function to handle user editing state
   const handleUserEditing = () => {
     console.log('✏️ User started editing - pausing sync');
+    // Sync ref immediately so unmount flush / save effects see editing even before React re-renders
+    isUserEditingRef.current = true;
     setIsUserEditing(true);
     
     // Clear existing timeout
@@ -6556,6 +6558,28 @@ const RunOfShowPage: React.FC = () => {
 
   flushSaveToAPIRef.current = performSaveToAPI;
 
+  /** Persist a single cue's REC flag immediately (same path as Comms) so leaving the event does not lose it. */
+  const persistCueRecording = useCallback(
+    async (itemId: number, needsRecording: boolean, source: 'comms' | 'ros' = 'ros') => {
+      if (!event?.id) return;
+      try {
+        const result = await apiClient.setCueRecording(event.id, itemId, needsRecording, source);
+        if (result?.version != null && !Number.isNaN(Number(result.version))) {
+          scheduleVersionRef.current = Number(result.version);
+        }
+        if (Array.isArray(result?.schedule_items)) {
+          lastSyncedScheduleRef.current = result.schedule_items;
+        }
+      } catch (err) {
+        console.warn('Recording PATCH failed — falling back to full schedule save', err);
+        // Let React apply setSchedule + scheduleRef before flushing
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await flushSaveToAPIRef.current?.();
+      }
+    },
+    [event?.id]
+  );
+
   // API functions with debouncing
   const saveToAPI = React.useCallback(
     debounce(() => {
@@ -7521,11 +7545,10 @@ const RunOfShowPage: React.FC = () => {
     // Cleanup on unmount
     return () => {
       console.log('🔌 Disconnecting WebSocket connections for event:', event.id);
-      if (isUserEditingRef.current) {
-        void flushSaveToAPIRef.current?.().catch((err) => {
-          console.warn('Flush save during page cleanup failed:', err);
-        });
-      }
+      // Always attempt flush — REC/other edits may have set schedule before isUserEditingRef synced
+      void flushSaveToAPIRef.current?.().catch((err) => {
+        console.warn('Flush save during page cleanup failed:', err);
+      });
       // sseClient.disconnect(event.id); // DISABLED: SSE causes excessive API calls
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -14297,6 +14320,7 @@ const RunOfShowPage: React.FC = () => {
                         logChangeDebounced={logChangeDebounced}
                         logChange={logChange}
                         saveToAPI={saveToAPI}
+                        persistCueRecording={persistCueRecording}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
                         setEditingVoItemId={setEditingVoItemId}

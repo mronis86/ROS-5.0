@@ -3711,7 +3711,10 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
 
 function canWriteCueRecording(auth) {
   if (!auth) return false;
-  return !!(auth.isAdmin || auth.isEventManager || auth.isBtsCrew || auth.isComms);
+  // Creative is read-only on ROS; everyone else with event access may toggle REC
+  // (Comms page + main Run of Show editors/operators).
+  if (isCreativeOnlyAuth(auth)) return false;
+  return true;
 }
 
 function isCommsOnlyAuth(auth) {
