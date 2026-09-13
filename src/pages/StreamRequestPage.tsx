@@ -25,6 +25,7 @@ const StreamRequestPage: React.FC = () => {
   const [youtubeVideoTitle, setYoutubeVideoTitle] = useState('');
   const [youtubeDescription, setYoutubeDescription] = useState('');
   const [visibility, setVisibility] = useState('');
+  const [streamStartTime, setStreamStartTime] = useState('');
   const [shareWith, setShareWith] = useState('');
   const [requestContactName, setRequestContactName] = useState('');
   const [requestContactEmail, setRequestContactEmail] = useState('');
@@ -61,6 +62,7 @@ const StreamRequestPage: React.FC = () => {
       setYoutubeVideoTitle(ex.youtubeVideoTitle || '');
       setYoutubeDescription(ex.youtubeDescription || '');
       setVisibility(ex.visibility || '');
+      setStreamStartTime(ex.streamStartTime || '');
       setShareWith(ex.shareWith || '');
       setRequestContactName(ex.requestContactName || '');
       setRequestContactEmail(ex.requestContactEmail || '');
@@ -82,6 +84,7 @@ const StreamRequestPage: React.FC = () => {
       youtubeVideoTitle,
       youtubeDescription,
       visibility,
+      streamStartTime,
       shareWith,
       requestContactName,
       requestContactEmail,
@@ -228,6 +231,22 @@ const StreamRequestPage: React.FC = () => {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-200 mb-1">
+                Stream start time
+              </label>
+              <p className="text-xs text-slate-500 mb-1.5">
+                When should the stream go live on the event day?
+              </p>
+              <input
+                required
+                type="time"
+                value={streamStartTime}
+                onChange={(e) => setStreamStartTime(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+              />
             </div>
 
             <div>

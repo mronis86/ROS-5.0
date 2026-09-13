@@ -34,15 +34,18 @@ OK = "#34d399"
 ERR = "#f87171"
 PILL_STOP = "#334155"
 PILL_FOLLOW = "#065f46"
-PILL_REC = "#991b1b"
+PILL_REC = "#dc2626"
+REC_BANNER = "#7f1d1d"
+REC_BANNER_FG = "#fecaca"
+HEADER_REC = "#450a0a"
 
 
 class HyperDeckIngestApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("ROS HyperDeck Ingest")
-        self.root.geometry("1040x760")
-        self.root.minsize(920, 660)
+        self.root.geometry("1100x820")
+        self.root.minsize(960, 720)
         self.root.configure(bg=BG)
 
         self.cfg = load_config()
@@ -68,7 +71,11 @@ class HyperDeckIngestApp:
         self._recording_seen_running = False
         self._completed_record_item_ids: set[str] = set()
         self._last_schedule_refresh = 0.0
+        self._last_show_mode_refresh = 0.0
         self._last_marked_count: int | None = None
+        self._show_mode = "rehearsal"
+        self._last_mode_block_log = 0.0
+        self._ui_kind = "stopped"
         self._session_timer_configured = False
         self.copied_keys = set(str(x) for x in (self.cfg.get("copied_keys") or []))
         self._auto_stop_never = False
@@ -163,28 +170,32 @@ class HyperDeckIngestApp:
         self.pattern_var = tk.StringVar()
         self.only_marked_var = tk.BooleanVar(value=True)
         self.auto_copy_var = tk.BooleanVar(value=True)
+        self.record_during_rehearsal_var = tk.BooleanVar(value=False)
         self.status_ros = tk.StringVar(value="Not tested")
         self.status_deck = tk.StringVar(value="Disconnected")
         self.status_cue = tk.StringVar(value="—")
+        self.status_mode = tk.StringVar(value="—")
         self.status_copy = tk.StringVar(value="—")
         self.auto_stop_default_var = tk.StringVar(value="")
         self.event_locked_var = tk.BooleanVar(value=False)
         self.event_rec_summary_var = tk.StringVar(value="Record-marked cues: —")
+        self.cue_list_summary_var = tk.StringVar(value="No Record-marked cues yet")
 
         header = tk.Frame(self.root, bg=BG)
         header.pack(fill="x", padx=14, pady=(12, 8))
         self.header = header
-        brand = tk.Frame(header, bg=BG)
-        brand.pack(side="left")
-        tk.Label(
-            brand,
+        self.header_brand = tk.Frame(header, bg=BG)
+        self.header_brand.pack(side="left")
+        self.header_title = tk.Label(
+            self.header_brand,
             text="ROS HyperDeck Ingest",
             bg=BG,
             fg=FG,
             font=("Segoe UI", 15, "bold"),
-        ).pack(side="left")
+        )
+        self.header_title.pack(side="left")
         self.follow_pill = tk.Label(
-            brand,
+            self.header_brand,
             text="Stopped",
             bg=PILL_STOP,
             fg="#e2e8f0",
@@ -194,7 +205,7 @@ class HyperDeckIngestApp:
         )
         self.follow_pill.pack(side="left", padx=(12, 0))
         self.auto_stop_pill = tk.Label(
-            brand,
+            self.header_brand,
             text="",
             bg="#1e3a5f",
             fg="#e2e8f0",
@@ -203,7 +214,7 @@ class HyperDeckIngestApp:
             pady=3,
         )
         self.auto_stop_default_label = tk.Label(
-            brand,
+            self.header_brand,
             textvariable=self.auto_stop_default_var,
             bg=BG,
             fg=MUTED,
@@ -212,14 +223,29 @@ class HyperDeckIngestApp:
             pady=3,
         )
         self.auto_stop_default_label.pack(side="left", padx=(8, 0))
-        actions = tk.Frame(header, bg=BG)
-        actions.pack(side="right")
-        ttk.Button(actions, text="Start follow", style="Accent.TButton", command=self.start_follow).pack(
+        self.header_actions = tk.Frame(header, bg=BG)
+        self.header_actions.pack(side="right")
+        ttk.Button(self.header_actions, text="Start follow", style="Accent.TButton", command=self.start_follow).pack(
             side="left"
         )
-        ttk.Button(actions, text="Stop", command=self.stop_follow).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Set timer", command=self.configure_auto_stop_defaults).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Save", command=self._save).pack(side="left", padx=(6, 0))
+        ttk.Button(self.header_actions, text="Stop", command=self.stop_follow).pack(side="left", padx=(6, 0))
+        ttk.Button(self.header_actions, text="Set timer", command=self.configure_auto_stop_defaults).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(self.header_actions, text="Save", command=self._save).pack(side="left", padx=(6, 0))
+
+        self.rec_banner = tk.Frame(self.root, bg=REC_BANNER, highlightbackground="#f87171", highlightthickness=1)
+        rec_inner = tk.Frame(self.rec_banner, bg=REC_BANNER)
+        rec_inner.pack(fill="x", padx=12, pady=8)
+        self.rec_banner_label = tk.Label(
+            rec_inner,
+            text="RECORDING",
+            bg=REC_BANNER,
+            fg=REC_BANNER_FG,
+            font=("Segoe UI", 12, "bold"),
+            anchor="w",
+        )
+        self.rec_banner_label.pack(fill="x")
 
         self.notice_frame = tk.Frame(self.root, bg="#78350f", highlightbackground="#f59e0b", highlightthickness=1)
         notice_inner = tk.Frame(self.notice_frame, bg="#78350f")
@@ -239,29 +265,33 @@ class HyperDeckIngestApp:
 
         status = tk.Frame(self.root, bg=BG)
         status.pack(fill="x", padx=10, pady=(0, 8))
+        self.status_row = status
         tiles = (
             ("ROS", self.status_ros),
             ("Deck", self.status_deck),
             ("Cue", self.status_cue),
+            ("Show mode", self.status_mode),
             ("Copy", self.status_copy),
         )
+        self._status_cells: dict[str, dict] = {}
         for i, (title, var) in enumerate(tiles):
             cell = tk.Frame(status, bg=CARD, highlightbackground=LINE, highlightthickness=1)
             cell.grid(row=0, column=i, sticky="nsew", padx=4)
             status.columnconfigure(i, weight=1, uniform="stat")
-            tk.Label(cell, text=title, bg=CARD, fg=MUTED, font=("Segoe UI", 8, "bold"), anchor="w").pack(
-                fill="x", padx=10, pady=(8, 0)
-            )
-            tk.Label(
+            title_lbl = tk.Label(cell, text=title, bg=CARD, fg=MUTED, font=("Segoe UI", 8, "bold"), anchor="w")
+            title_lbl.pack(fill="x", padx=10, pady=(8, 0))
+            value_lbl = tk.Label(
                 cell,
                 textvariable=var,
                 bg=CARD,
                 fg=FG,
                 font=("Segoe UI", 10),
                 anchor="w",
-                wraplength=230,
+                wraplength=180,
                 justify="left",
-            ).pack(fill="x", padx=10, pady=(2, 8))
+            )
+            value_lbl.pack(fill="x", padx=10, pady=(2, 8))
+            self._status_cells[title] = {"cell": cell, "title": title_lbl, "value": value_lbl}
 
         body = tk.Frame(self.root, bg=BG)
         body.pack(fill="both", expand=True, padx=14)
@@ -444,12 +474,44 @@ class HyperDeckIngestApp:
         flags.grid(row=5, column=1, sticky="w", pady=(8, 0))
         ttk.Checkbutton(flags, text="Only Record-marked cues (required)", variable=self.only_marked_var, state="disabled").pack(anchor="w")
         ttk.Checkbutton(flags, text="Auto-copy after stop", variable=self.auto_copy_var).pack(anchor="w", pady=(4, 0))
+        ttk.Checkbutton(
+            flags,
+            text="Record during Rehearsal (for testing)",
+            variable=self.record_during_rehearsal_var,
+        ).pack(anchor="w", pady=(4, 0))
+        ttk.Label(
+            flags,
+            text="Off = only auto-record when the event is In Show",
+            style="CardMuted.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
+
+        cues = self._card(right, "Record cues", fill="both")
+        ttk.Label(cues, textvariable=self.cue_list_summary_var, style="CardMuted.TLabel").pack(anchor="w", pady=(0, 6))
+        cue_wrap = tk.Frame(cues, bg=CARD)
+        cue_wrap.pack(fill="both", expand=True)
+        cue_cols = ("done", "cue", "segment", "status")
+        self.cue_tree = ttk.Treeview(cue_wrap, columns=cue_cols, show="headings", selectmode="browse", height=8)
+        self.cue_tree.heading("done", text="")
+        self.cue_tree.heading("cue", text="Cue")
+        self.cue_tree.heading("segment", text="Segment")
+        self.cue_tree.heading("status", text="Status")
+        self.cue_tree.column("done", width=36, stretch=False, anchor="center")
+        self.cue_tree.column("cue", width=88, stretch=False)
+        self.cue_tree.column("segment", width=180)
+        self.cue_tree.column("status", width=90, stretch=False, anchor="center")
+        cue_scroll = ttk.Scrollbar(cue_wrap, orient="vertical", command=self.cue_tree.yview)
+        self.cue_tree.configure(yscrollcommand=cue_scroll.set)
+        self.cue_tree.pack(side="left", fill="both", expand=True)
+        cue_scroll.pack(side="right", fill="y")
+        self.cue_tree.tag_configure("done", foreground=OK)
+        self.cue_tree.tag_configure("recording", foreground="#fca5a5")
+        self.cue_tree.tag_configure("pending", foreground=FG)
 
         clips = self._card(right, "HyperDeck clips", fill="both")
         tree_wrap = tk.Frame(clips, bg=CARD)
         tree_wrap.pack(fill="both", expand=True)
         cols = ("idx", "name", "duration", "copied")
-        self.clip_tree = ttk.Treeview(tree_wrap, columns=cols, show="headings", selectmode="browse")
+        self.clip_tree = ttk.Treeview(tree_wrap, columns=cols, show="headings", selectmode="browse", height=7)
         self.clip_tree.heading("idx", text="#")
         self.clip_tree.heading("name", text="Clip")
         self.clip_tree.heading("duration", text="Duration")
@@ -763,14 +825,55 @@ class HyperDeckIngestApp:
         styles = {
             "stopped": ("Stopped", PILL_STOP),
             "following": ("Following", PILL_FOLLOW),
-            "recording": ("Recording", PILL_REC),
+            "recording": ("● RECORDING", PILL_REC),
         }
         text, bg = styles.get(kind, styles["stopped"])
+        self._ui_kind = kind if kind in styles else "stopped"
 
         def apply():
-            self.follow_pill.configure(text=text, bg=bg)
+            self.follow_pill.configure(text=text, bg=bg, fg="#fff" if kind == "recording" else "#e2e8f0")
+            self._apply_recording_chrome(kind == "recording")
 
         self.root.after(0, apply)
+
+    def _apply_recording_chrome(self, recording: bool) -> None:
+        header_bg = HEADER_REC if recording else BG
+        title_fg = "#fecaca" if recording else FG
+        self.root.title("● RECORDING — ROS HyperDeck Ingest" if recording else "ROS HyperDeck Ingest")
+        self.header.configure(bg=header_bg)
+        self.header_brand.configure(bg=header_bg)
+        self.header_actions.configure(bg=header_bg)
+        self.header_title.configure(bg=header_bg, fg=title_fg)
+        self.auto_stop_default_label.configure(bg=header_bg)
+        deck = self._status_cells.get("Deck") or {}
+        if recording:
+            clip = self._recording_clip_name or "HyperDeck"
+            self.rec_banner_label.configure(text=f"● RECORDING  —  {clip}")
+            if not self.rec_banner.winfo_ismapped():
+                self.rec_banner.pack(fill="x", padx=14, pady=(0, 8), after=self.header)
+            for key in ("cell", "title", "value"):
+                widget = deck.get(key)
+                if widget is not None:
+                    widget.configure(bg=REC_BANNER)
+            if deck.get("title") is not None:
+                deck["title"].configure(fg=REC_BANNER_FG)
+            if deck.get("value") is not None:
+                deck["value"].configure(fg="#fff")
+            if deck.get("cell") is not None:
+                deck["cell"].configure(highlightbackground="#f87171")
+        else:
+            if self.rec_banner.winfo_ismapped():
+                self.rec_banner.pack_forget()
+            for key in ("cell", "title", "value"):
+                widget = deck.get(key)
+                if widget is not None:
+                    widget.configure(bg=CARD)
+            if deck.get("title") is not None:
+                deck["title"].configure(fg=MUTED)
+            if deck.get("value") is not None:
+                deck["value"].configure(fg=FG)
+            if deck.get("cell") is not None:
+                deck["cell"].configure(highlightbackground=LINE)
 
     def _format_duration(self, seconds: int) -> str:
         total = max(0, int(seconds))
@@ -1043,8 +1146,11 @@ class HyperDeckIngestApp:
         self.pattern_var.set(c.get("name_pattern") or DEFAULT_PATTERN)
         self.only_marked_var.set(c.get("record_only_marked") is not False)
         self.auto_copy_var.set(c.get("auto_copy") is not False)
+        self.record_during_rehearsal_var.set(bool(c.get("record_during_rehearsal")))
         self.event_locked_var.set(False)
         self.event_rec_summary_var.set("Record-marked cues: —")
+        self.cue_list_summary_var.set("No Record-marked cues yet")
+        self.status_mode.set("—")
         self._refresh_auto_stop_default_label()
         self._refresh_event_selection_label()
 
@@ -1063,6 +1169,7 @@ class HyperDeckIngestApp:
             "target_folder": self.target_folder_var.get(),
             "name_pattern": self.pattern_var.get().strip() or DEFAULT_PATTERN,
             "record_only_marked": bool(self.only_marked_var.get()),
+            "record_during_rehearsal": bool(self.record_during_rehearsal_var.get()),
             "auto_copy": bool(self.auto_copy_var.get()),
             "poll_seconds": int(self.cfg.get("poll_seconds") or 1),
             "auto_stop_hours": int(self.cfg.get("auto_stop_hours") or 2),
@@ -1165,8 +1272,74 @@ class HyperDeckIngestApp:
     def _update_record_cue_summary(self) -> None:
         total = len(self.schedule)
         marked = sum(1 for item in self.schedule if item_needs_recording(item))
+        done = sum(
+            1
+            for item in self.schedule
+            if item_needs_recording(item) and str(item.get("id")) in self._completed_record_item_ids
+        )
         self._last_marked_count = marked
-        self.event_rec_summary_var.set(f"Record-marked cues: {marked} / {total}")
+        self.event_rec_summary_var.set(f"Record-marked cues: {marked} / {total} · done {done}")
+        self.root.after(0, self._render_cue_checklist)
+
+    def _render_cue_checklist(self) -> None:
+        if not hasattr(self, "cue_tree"):
+            return
+        for row in self.cue_tree.get_children():
+            self.cue_tree.delete(row)
+        marked_items = [item for item in self.schedule if item_needs_recording(item)]
+        done_n = 0
+        for item in marked_items:
+            item_id = str(item.get("id") or "")
+            is_recording = self._recording_item_id is not None and str(self._recording_item_id) == item_id
+            is_done = item_id in self._completed_record_item_ids
+            if is_done:
+                done_n += 1
+            if is_recording:
+                mark, status, tag = "●", "recording", "recording"
+            elif is_done:
+                mark, status, tag = "✓", "done", "done"
+            else:
+                mark, status, tag = "○", "pending", "pending"
+            self.cue_tree.insert(
+                "",
+                "end",
+                iid=item_id or None,
+                values=(mark, cue_label(item) or item_id, str(item.get("segmentName") or ""), status),
+                tags=(tag,),
+            )
+        if not marked_items:
+            self.cue_list_summary_var.set("No Record-marked cues yet — mark REC in ROS, then Refresh marks")
+        else:
+            self.cue_list_summary_var.set(f"{done_n} of {len(marked_items)} recorded this follow session")
+
+    def _mode_label(self) -> str:
+        mode = self._show_mode if self._show_mode == "in-show" else "rehearsal"
+        if self.record_during_rehearsal_var.get():
+            return f"{mode} · record OK"
+        if mode == "in-show":
+            return "in-show · record OK"
+        return "rehearsal · waiting for show"
+
+    def _recording_allowed_for_show_mode(self) -> bool:
+        if bool(self.record_during_rehearsal_var.get()):
+            return True
+        return self._show_mode == "in-show"
+
+    def _refresh_show_mode(self, force: bool = False) -> None:
+        eid = self.event_id_var.get().strip()
+        if not eid:
+            return
+        now = time.time()
+        if not force and self._last_show_mode_refresh and (now - self._last_show_mode_refresh) < 5:
+            return
+        api = self._apply_api_from_fields()
+        prev = self._show_mode
+        self._show_mode = api.get_show_mode(eid)
+        self._last_show_mode_refresh = time.time()
+        label = self._mode_label()
+        self.root.after(0, lambda: self.status_mode.set(label))
+        if prev != self._show_mode:
+            self.log(f"Show mode: {self._show_mode}", "ok")
 
     def _refresh_schedule(self, force: bool = False) -> None:
         eid = self.event_id_var.get().strip()
@@ -1203,6 +1376,10 @@ class HyperDeckIngestApp:
                 self.log(f"New Record marks: {', '.join(added)}", "ok")
             if removed:
                 self.log(f"Cleared Record marks: {', '.join(removed)}")
+        try:
+            self._refresh_show_mode(force=True)
+        except Exception as exc:
+            self.log(f"Show mode refresh failed: {exc}", "error")
         self.root.after(0, self._update_record_cue_summary)
 
     def _item_by_id(self, item_id) -> dict | None:
@@ -1303,6 +1480,7 @@ class HyperDeckIngestApp:
             self.log(f"Recording as {name}", "ok")
             self.root.after(0, lambda: self.status_deck.set(f"Recording {name}"))
             self._set_pill("recording")
+            self.root.after(0, self._render_cue_checklist)
 
         self._bg(work)
 
@@ -1320,6 +1498,7 @@ class HyperDeckIngestApp:
         if finished_item_id:
             self._completed_record_item_ids.add(finished_item_id)
         self._recording_seen_running = False
+        self.root.after(0, self._update_record_cue_summary)
         if not self.auto_copy_var.get():
             self._refresh_clips_sync()
             return
@@ -1366,8 +1545,15 @@ class HyperDeckIngestApp:
         self._recording_seen_running = False
         self.following = True
         self._set_pill("following")
+        self.root.after(0, self._update_record_cue_summary)
         marked = sum(1 for item in self.schedule if item_needs_recording(item))
-        self.log(f"Follow started with {marked} Record-marked cue(s)", "ok")
+        gate = (
+            "recording allowed in Rehearsal and In Show"
+            if self.record_during_rehearsal_var.get()
+            else "recording only when event is In Show"
+        )
+        self.log(f"Follow started with {marked} Record-marked cue(s) · {gate}", "ok")
+        self.log(f"Show mode now: {self._show_mode}", "ok")
         if self._auto_stop_never:
             self.log("Polling until session timer expires or you click Stop", "ok")
         elif self._auto_stop_ends_at:
@@ -1448,6 +1634,10 @@ class HyperDeckIngestApp:
             self._refresh_schedule(force=False)
         except Exception as exc:
             self.log(f"Schedule refresh failed: {exc}", "error")
+        try:
+            self._refresh_show_mode(force=False)
+        except Exception as exc:
+            self.log(f"Show mode refresh failed: {exc}", "error")
 
         timer = self.api.get_active_timer(eid)
 
@@ -1468,10 +1658,9 @@ class HyperDeckIngestApp:
         state = str(timer.get("timer_state") or "").lower()
         running = timer.get("is_running") is True or state == "running"
         item = self._item_by_id(item_id)
-        if item is None or (
-            item is not None
-            and not item_needs_recording(item)
-            and state in ("loaded", "running")
+        if (
+            item is None
+            or (not item_needs_recording(item) and self.only_marked_var.get())
         ):
             # Missing cue, or unmarked while loaded — pull latest marks once.
             try:
@@ -1491,6 +1680,7 @@ class HyperDeckIngestApp:
             lambda: self.status_cue.set(f"{cue or item_id}  {segment}  [{state_label}]  {rec}"),
         )
         self.root.after(0, lambda: self.status_ros.set("Polling OK"))
+        self.root.after(0, lambda: self.status_mode.set(self._mode_label()))
 
         if self._recording_item_id is not None and str(self._recording_item_id) == str(item_id):
             if running:
@@ -1504,15 +1694,29 @@ class HyperDeckIngestApp:
             and state in ("loaded", "running")
             and str(item_id) not in self._completed_record_item_ids
         ):
-            name = hyperdeck_record_name(cue=cue, segment=segment or "clip")
-            self.deck.record(name)
-            self._recording_item_id = item_id
-            self._recording_clip_name = name
-            self._recording_meta = item or {}
-            self._recording_seen_running = running
-            self.log(f"Auto-record on load: {name}", "ok")
-            self.root.after(0, lambda: self.status_deck.set(f"Recording {name}"))
-            self._set_pill("recording")
+            if not self._recording_allowed_for_show_mode():
+                now = time.time()
+                if now - self._last_mode_block_log > 20:
+                    self._last_mode_block_log = now
+                    self.log(
+                        "Skipping auto-record — event is in Rehearsal "
+                        "(enable “Record during Rehearsal” to test, or switch ROS to In Show)",
+                    )
+                    self.root.after(
+                        0,
+                        lambda: self.status_mode.set("rehearsal · blocked"),
+                    )
+            else:
+                name = hyperdeck_record_name(cue=cue, segment=segment or "clip")
+                self.deck.record(name)
+                self._recording_item_id = item_id
+                self._recording_clip_name = name
+                self._recording_meta = item or {}
+                self._recording_seen_running = running
+                self.log(f"Auto-record on load: {name}", "ok")
+                self.root.after(0, lambda: self.status_deck.set(f"Recording {name}"))
+                self._set_pill("recording")
+                self.root.after(0, self._render_cue_checklist)
 
         self._last_item_id = item_id
         self._last_running = running

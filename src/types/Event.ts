@@ -24,6 +24,8 @@ export type EventStreamDetails = {
   visibility?: 'Public' | 'Unlisted' | string;
   /** Who should get the player link (Swoogo / posting). */
   shareWith?: string;
+  /** Requested stream start time (HH:MM or free text from form). */
+  streamStartTime?: string;
   requestContactName?: string;
   requestContactEmail?: string;
   requestSubmittedAt?: string;
@@ -47,6 +49,7 @@ export function eventHasStreamRequestInfo(details?: EventStreamDetails | null): 
     String(details.youtubeDescription || '').trim() ||
     String(details.visibility || '').trim() ||
     String(details.shareWith || '').trim() ||
+    String(details.streamStartTime || '').trim() ||
     String(details.requestSubmittedAt || '').trim()
   );
 }
@@ -264,6 +267,7 @@ export function parseEventStreamDetails(raw: unknown): EventStreamDetails | unde
   const youtubeDescription = typeof o.youtubeDescription === 'string' ? o.youtubeDescription : '';
   const visibility = typeof o.visibility === 'string' ? o.visibility : '';
   const shareWith = typeof o.shareWith === 'string' ? o.shareWith : '';
+  const streamStartTime = typeof o.streamStartTime === 'string' ? o.streamStartTime : '';
   const requestContactName = typeof o.requestContactName === 'string' ? o.requestContactName : '';
   const requestContactEmail = typeof o.requestContactEmail === 'string' ? o.requestContactEmail : '';
   const requestSubmittedAt = typeof o.requestSubmittedAt === 'string' ? o.requestSubmittedAt : '';
@@ -276,6 +280,7 @@ export function parseEventStreamDetails(raw: unknown): EventStreamDetails | unde
     !youtubeDescription &&
     !visibility &&
     !shareWith &&
+    !streamStartTime &&
     !requestSubmittedAt
   ) {
     return undefined;
@@ -290,6 +295,7 @@ export function parseEventStreamDetails(raw: unknown): EventStreamDetails | unde
     youtubeDescription,
     visibility,
     shareWith,
+    streamStartTime,
     requestContactName,
     requestContactEmail,
     requestSubmittedAt,
@@ -311,6 +317,7 @@ export function normalizeEventStreamDetails(
   const youtubeDescription = String(details?.youtubeDescription || '').trim();
   const visibility = String(details?.visibility || '').trim();
   const shareWith = String(details?.shareWith || '').trim();
+  const streamStartTime = String(details?.streamStartTime || '').trim();
   const requestContactName = String(details?.requestContactName || '').trim();
   const requestContactEmail = String(details?.requestContactEmail || '').trim();
   const requestSubmittedAt = String(details?.requestSubmittedAt || '').trim();
@@ -323,6 +330,7 @@ export function normalizeEventStreamDetails(
     !youtubeDescription &&
     !visibility &&
     !shareWith &&
+    !streamStartTime &&
     !requestSubmittedAt
   ) {
     return {};
@@ -337,6 +345,7 @@ export function normalizeEventStreamDetails(
     youtubeDescription,
     visibility,
     shareWith,
+    streamStartTime,
     requestContactName,
     requestContactEmail,
     requestSubmittedAt,
@@ -346,6 +355,17 @@ export function normalizeEventStreamDetails(
 /** Ready to go live when RTMP + key are both present (playback URL optional). */
 export function eventStreamDetailsReady(details?: EventStreamDetails | null): boolean {
   return !!(String(details?.rtmpUrl || '').trim() && String(details?.streamKey || '').trim());
+}
+
+/** Broadcast column badge: missing setup, form returned, or RTMP+key ready. */
+export type StreamBroadcastBadgeState = 'needed' | 'request' | 'ready';
+
+export function streamBroadcastBadgeState(
+  details?: EventStreamDetails | null
+): StreamBroadcastBadgeState {
+  if (eventStreamDetailsReady(details)) return 'ready';
+  if (eventHasStreamRequestInfo(details)) return 'request';
+  return 'needed';
 }
 
 export const LOCATION_OPTIONS = [

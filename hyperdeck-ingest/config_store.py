@@ -25,6 +25,7 @@ DEFAULTS: dict[str, Any] = {
     "target_folder": "",
     "name_pattern": DEFAULT_PATTERN,
     "record_only_marked": True,
+    "record_during_rehearsal": False,
     "auto_copy": True,
     "poll_seconds": 1,
     "schedule_refresh_seconds": 8,
@@ -77,6 +78,7 @@ def load_config() -> dict[str, Any]:
     data["auto_stop_hours"] = _clamp_auto_stop_hours(data.get("auto_stop_hours"))
     data["auto_stop_minutes"] = _clamp_auto_stop_minutes(data.get("auto_stop_minutes"))
     data["auto_stop_never"] = data.get("auto_stop_never") is True
+    data["record_during_rehearsal"] = data.get("record_during_rehearsal") is True
     data["copy_method"] = "ftp"
     data["source_folder"] = ""
     if not str(data.get("ftp_user") or "").strip():
@@ -101,6 +103,7 @@ def save_config(data: dict[str, Any]) -> dict[str, Any]:
     merged["auto_stop_hours"] = _clamp_auto_stop_hours(merged.get("auto_stop_hours"))
     merged["auto_stop_minutes"] = _clamp_auto_stop_minutes(merged.get("auto_stop_minutes"))
     merged["auto_stop_never"] = merged.get("auto_stop_never") is True
+    merged["record_during_rehearsal"] = merged.get("record_during_rehearsal") is True
     merged["copy_method"] = "ftp"
     merged["source_folder"] = ""
     if not str(merged.get("ftp_user") or "").strip():

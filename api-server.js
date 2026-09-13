@@ -41,6 +41,7 @@ const {
   notifyTrainingBooking,
   notifyTrainingBookingConfirmation,
   notifyContentReviewAssignedBatch,
+  notifyAdminsStreamRequestSubmitted,
 } = require('./lib/admin-notify-email');
 const { getAppPublicOrigin } = require('./lib/access-portal');
 const {
@@ -3066,6 +3067,27 @@ app.post('/api/stream-request/:token', async (req, res) => {
       return res.status(404).json({ error: 'This event is no longer available.' });
     }
     await touchStreamRequestSubmitted(pool, link.id);
+
+    const editUrl = `${getAppPublicOrigin(req).replace(/\/$/, '')}/`;
+    notifyAdminsStreamRequestSubmitted(pool, {
+      eventName: applied.eventName,
+      eventDate: applied.eventDate,
+      eventId: applied.eventId,
+      editUrl,
+      youtubeChannel: normalized.youtubeChannel,
+      youtubeChannelOther: normalized.youtubeChannelOther,
+      youtubeVideoTitle: normalized.youtubeVideoTitle,
+      youtubeDescription: normalized.youtubeDescription,
+      visibility: normalized.visibility,
+      streamStartTime: normalized.streamStartTime,
+      shareWith: normalized.shareWith,
+      requestContactName: normalized.requestContactName,
+      requestContactEmail: normalized.requestContactEmail,
+      requestSubmittedAt: normalized.requestSubmittedAt,
+    }).catch((err) => {
+      console.warn('[stream-request POST] admin email failed:', err?.message || err);
+    });
+
     res.json({
       ok: true,
       message: 'Thanks — your stream request was saved for this event.',
@@ -3076,6 +3098,7 @@ app.post('/api/stream-request/:token', async (req, res) => {
         youtubeVideoTitle: normalized.youtubeVideoTitle,
         youtubeDescription: normalized.youtubeDescription,
         visibility: normalized.visibility,
+        streamStartTime: normalized.streamStartTime,
         shareWith: normalized.shareWith,
         requestSubmittedAt: normalized.requestSubmittedAt,
       },

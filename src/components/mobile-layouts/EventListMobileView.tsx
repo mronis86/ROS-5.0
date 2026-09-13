@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Event, DAYS_OPTIONS, LOCATION_OPTIONS, eventNeedsStreamDetails, eventStreamDetailsReady } from '../../types/Event';
+import { Event, DAYS_OPTIONS, LOCATION_OPTIONS, eventNeedsStreamDetails } from '../../types/Event';
 import QuickModeBoltIcon from '../QuickModeBoltIcon';
 import EventListRowActions from '../EventListRowActions';
 import EventDisplaySyncToggle from '../EventDisplaySyncToggle';
 import EventLocationCell from '../EventLocationCell';
+import StreamBroadcastStatusMark from '../StreamBroadcastStatusMark';
 
 type Tab = 'upcoming' | 'past' | 'quickMode';
 type MobileSortKey = 'date_asc' | 'date_desc' | 'name_asc';
@@ -325,9 +326,7 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                     <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}>
                       {rec.label}
                       {eventNeedsStreamDetails(event.recordStreaming) ? (
-                        <span className="text-[9px] font-black">
-                          {eventStreamDetailsReady(event.streamDetails) ? '✓' : '!'}
-                        </span>
+                        <StreamBroadcastStatusMark details={event.streamDetails} />
                       ) : null}
                     </span>
                   </div>

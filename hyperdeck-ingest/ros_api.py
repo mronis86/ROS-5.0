@@ -138,3 +138,10 @@ class RosApi:
             except Exception:
                 items = []
         return items if isinstance(items, list) else []
+
+    def get_show_mode(self, event_id: str) -> str:
+        """Return 'in-show' or 'rehearsal' for the event."""
+        data = self._get(f"/api/show-mode/{event_id}")
+        if isinstance(data, dict) and data.get("showMode") == "in-show":
+            return "in-show"
+        return "rehearsal"

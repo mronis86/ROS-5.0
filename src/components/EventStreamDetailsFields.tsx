@@ -46,6 +46,7 @@ const EventStreamDetailsFields: React.FC<Props> = ({
     youtubeDescription: value?.youtubeDescription || '',
     visibility: value?.visibility || '',
     shareWith: value?.shareWith || '',
+    streamStartTime: value?.streamStartTime || '',
     requestContactName: value?.requestContactName || '',
     requestContactEmail: value?.requestContactEmail || '',
     requestSubmittedAt: value?.requestSubmittedAt || '',
@@ -232,6 +233,10 @@ const EventStreamDetailsFields: React.FC<Props> = ({
                 <p className="text-slate-300">
                   <span className="text-slate-500">YouTube visibility:</span>{' '}
                   {details.visibility || '—'}
+                </p>
+                <p className="text-slate-300">
+                  <span className="text-slate-500">Stream start time:</span>{' '}
+                  {details.streamStartTime || '—'}
                 </p>
                 <p className="text-slate-300 whitespace-pre-wrap">
                   <span className="text-slate-500">Share player link with:</span>{' '}

@@ -11,6 +11,7 @@ export type StreamRequestFormPayload = {
     youtubeVideoTitle?: string;
     youtubeDescription?: string;
     visibility?: string;
+    streamStartTime?: string;
     shareWith?: string;
     requestContactName?: string;
     requestContactEmail?: string;

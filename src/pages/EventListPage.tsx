@@ -20,7 +20,7 @@ import {
   eventNeedsStreamDetails,
   parseEventStreamDetails,
   normalizeEventStreamDetails,
-  eventStreamDetailsReady,
+  streamBroadcastBadgeState,
 } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
@@ -38,6 +38,7 @@ import { parseDisplaySyncEnabled, DISPLAY_SYNC_COLUMN_LABEL } from '../lib/displ
 import EventDisplaySyncToggle from '../components/EventDisplaySyncToggle';
 import ShareEventAccessModal from '../components/ShareEventAccessModal';
 import EventStreamDetailsFields from '../components/EventStreamDetailsFields';
+import StreamBroadcastStatusMark from '../components/StreamBroadcastStatusMark';
 
 type EventListTab = 'upcoming' | 'past' | 'quickMode';
 
@@ -1210,23 +1211,21 @@ const EventListPage: React.FC = () => {
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium text-white ${getRecordStreamingColor(event.recordStreaming || 'None')}`}
                             title={
                               eventNeedsStreamDetails(event.recordStreaming)
-                                ? eventStreamDetailsReady(event.streamDetails)
-                                  ? `${getRecordStreamingShort(event.recordStreaming || 'None').title} — RTMP + key saved`
-                                  : `${getRecordStreamingShort(event.recordStreaming || 'None').title} — add RTMP + stream key in Edit`
+                                ? (() => {
+                                    const state = streamBroadcastBadgeState(event.streamDetails);
+                                    const title = getRecordStreamingShort(event.recordStreaming || 'None').title;
+                                    if (state === 'ready') return `${title} — RTMP + key saved`;
+                                    if (state === 'request') {
+                                      return `${title} — form submitted; add RTMP + stream key in Edit`;
+                                    }
+                                    return `${title} — add RTMP + stream key in Edit`;
+                                  })()
                                 : getRecordStreamingShort(event.recordStreaming || 'None').title
                             }
                           >
                             {getRecordStreamingShort(event.recordStreaming || 'None').label}
                             {eventNeedsStreamDetails(event.recordStreaming) ? (
-                              <span
-                                className={`text-[9px] font-black uppercase tracking-wide ${
-                                  eventStreamDetailsReady(event.streamDetails)
-                                    ? 'opacity-90'
-                                    : 'bg-black/30 px-1 rounded'
-                                }`}
-                              >
-                                {eventStreamDetailsReady(event.streamDetails) ? '✓' : '!'}
-                              </span>
+                              <StreamBroadcastStatusMark details={event.streamDetails} />
                             ) : null}
                           </span>
                         </td>
