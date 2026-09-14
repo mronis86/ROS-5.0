@@ -19,6 +19,7 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
+import { itemMarkedByComms, itemNeedsRecording } from '../lib/cueRecording';
 
 type ScheduleItem = {
   id: number;
@@ -39,6 +40,8 @@ type ScheduleItem = {
   isPublic?: boolean;
   isStartCue?: boolean;
   isIndented?: boolean;
+  needsRecording?: boolean;
+  recordingSource?: string | null;
 };
 
 type CustomColumn = { id: string; name: string };
@@ -84,6 +87,26 @@ const DEFAULT_VISIBLE: FieldId[] = [
 ];
 
 const FIELDS_STORAGE_KEY = 'ros-operator-cue-display-fields-v2';
+const LAYOUT_STORAGE_KEY = 'ros-operator-cue-display-layout-v1';
+
+type OperatorLayoutMode = 'compact' | 'spacious';
+
+function loadLayoutMode(): OperatorLayoutMode {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    return raw === 'spacious' ? 'spacious' : 'compact';
+  } catch {
+    return 'compact';
+  }
+}
+
+function saveLayoutMode(mode: OperatorLayoutMode) {
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
 
 const TYPE_COLOR: Record<string, string> = {
   'Podium Transition': '#8B4513',
@@ -168,7 +191,44 @@ const otLabel = (mins: number) => {
   return '0m';
 };
 
-const plain = (html?: string) => (html ? html.replace(/<[^>]*>/g, '').trim() : '');
+const decodeEntities = (s: string) =>
+  s
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
+const plain = (html?: string) =>
+  html ? decodeEntities(html.replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim() : '';
+
+/** Keep list/bold markup for spacious notes (same idea as Photo View). */
+const notesHtml = (raw?: string) => {
+  if (!raw) return '';
+  return String(raw)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n/g, '<br>')
+    .replace(/<(?!\/?(?:br|b|strong|i|em|u|font|span|div|p|ul|ol|li|h[1-6])\b)[^>]*>/gi, '');
+};
+
+const RecBadges: React.FC<{ item?: ScheduleItem | null; size?: 'sm' | 'md' }> = ({ item, size = 'sm' }) => {
+  if (!itemNeedsRecording(item)) return null;
+  const pad = size === 'md' ? 'px-2 py-0.5 text-[11px]' : 'px-1.5 py-0.5 text-[10px]';
+  return (
+    <span className="inline-flex items-center gap-1 shrink-0">
+      <span className={`${pad} rounded font-bold tracking-wide border border-red-500/80 bg-red-950/80 text-red-300`}>
+        REC
+      </span>
+      {itemMarkedByComms(item) ? (
+        <span className={`${pad} rounded font-bold tracking-wide border border-amber-500/70 bg-amber-950/70 text-amber-200`}>
+          COMMS
+        </span>
+      ) : null}
+    </span>
+  );
+};
 
 const speakers = (item?: ScheduleItem | null, max = 8) => {
   if (!item?.speakersText) return '—';
@@ -244,6 +304,8 @@ const OperatorCueDisplayPage: React.FC = () => {
   const [indented, setIndented] = useState<Record<number, { parentId: number }>>({});
   const [visible, setVisible] = useState<Set<FieldId>>(() => loadVisibleFields());
   const [showFields, setShowFields] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<OperatorLayoutMode>(() => loadLayoutMode());
+  const spacious = layoutMode === 'spacious';
   const [events, setEvents] = useState<Event[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [showEventSelector, setShowEventSelector] = useState(false);
@@ -673,11 +735,12 @@ const OperatorCueDisplayPage: React.FC = () => {
 
   const nextRows = useMemo(() => {
     if (dayRows.length === 0) return [] as ScheduleItem[];
-    if (!current) return dayRows.slice(0, 8);
+    const take = spacious ? 5 : 8;
+    if (!current) return dayRows.slice(0, take);
     const i = dayRows.findIndex((s) => s.id === current.id);
-    if (i < 0) return dayRows.slice(0, 8);
-    return dayRows.slice(i + 1, i + 9);
-  }, [dayRows, current]);
+    if (i < 0) return dayRows.slice(0, take);
+    return dayRows.slice(i + 1, i + 1 + take);
+  }, [dayRows, current, spacious]);
 
   const curIdx = current ? schedule.findIndex((s) => s.id === current.id) : -1;
   const startWas =
@@ -724,13 +787,13 @@ const OperatorCueDisplayPage: React.FC = () => {
     if (show('start')) cols.push({ id: 'start', label: 'START', fr: '1.2fr' });
     if (show('pptQa')) cols.push({ id: 'pptQa', label: 'PPT/QA', fr: '0.7fr' });
     if (show('speakers')) cols.push({ id: 'speakers', label: 'SPEAKERS', fr: '1.5fr' });
-    if (show('notes')) cols.push({ id: 'notes', label: 'NOTES', fr: '1.6fr' });
+    if (show('notes')) cols.push({ id: 'notes', label: 'NOTES', fr: spacious ? '2.4fr' : '1.6fr' });
     columns.forEach((c) => {
       const id = `custom:${c.id}` as FieldId;
       if (show(id)) cols.push({ id, label: c.name.toUpperCase(), fr: '1.1fr' });
     });
     return cols;
-  }, [show, columns]);
+  }, [show, columns, spacious]);
 
   const nextGrid = nextCols.map((c) => c.fr).join(' ') || '1fr';
 
@@ -742,7 +805,12 @@ const OperatorCueDisplayPage: React.FC = () => {
       cells.push({
         id: 'cue',
         label: 'CUE',
-        node: <div className="font-bold text-xl">{cueLabel(current)}</div>,
+        node: (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-bold text-xl">{cueLabel(current)}</div>
+            <RecBadges item={current} size="md" />
+          </div>
+        ),
       });
     }
     if (show('programType')) {
@@ -767,7 +835,13 @@ const OperatorCueDisplayPage: React.FC = () => {
         label: 'SEGMENT',
         node: (
           <div>
-            <div className="font-bold text-lg truncate">{current.segmentName || 'Untitled'}</div>
+            <div
+              className={`font-bold text-lg truncate ${
+                itemNeedsRecording(current) ? 'text-red-100' : ''
+              }`}
+            >
+              {current.segmentName || 'Untitled'}
+            </div>
             {show('shotType') && (
               <div className="text-sm text-slate-400 truncate">{current.shotType || '—'}</div>
             )}
@@ -856,16 +930,29 @@ const OperatorCueDisplayPage: React.FC = () => {
   ]);
 
   const detailPanels = useMemo(() => {
-    if (!current) return [] as { id: string; title: string; body: React.ReactNode }[];
-    const panels: { id: string; title: string; body: React.ReactNode }[] = [];
+    if (!current) return [] as { id: string; title: string; body: React.ReactNode; isNotes?: boolean }[];
+    const panels: { id: string; title: string; body: React.ReactNode; isNotes?: boolean }[] = [];
     if (show('speakers')) {
-      panels.push({ id: 'speakers', title: 'SPEAKERS', body: speakers(current, 12) });
+      panels.push({ id: 'speakers', title: 'SPEAKERS', body: speakers(current, spacious ? 16 : 12) });
     }
     if (show('notes')) {
       panels.push({
         id: 'notes',
         title: 'NOTES',
-        body: noteOk ? noteText : '—',
+        isNotes: true,
+        body: noteOk ? (
+          spacious ? (
+            <div
+              className="notes-display text-slate-100 leading-relaxed"
+              style={{ whiteSpace: 'pre-line' }}
+              dangerouslySetInnerHTML={{ __html: notesHtml(current.notes) }}
+            />
+          ) : (
+            noteText
+          )
+        ) : (
+          '—'
+        ),
       });
     }
     if (show('assets')) {
@@ -879,7 +966,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       panels.push({ id, title: c.name.toUpperCase(), body: v || '—' });
     });
     return panels;
-  }, [current, show, columns, noteOk, noteText]);
+  }, [current, show, columns, noteOk, noteText, spacious]);
 
   if (loading) {
     return <div className="fixed inset-0 bg-black text-white grid place-items-center text-xl">Loading…</div>;
@@ -892,7 +979,14 @@ const OperatorCueDisplayPage: React.FC = () => {
     const idx = schedule.findIndex((s) => s.id === item.id);
     const st = idx >= 0 ? adjStart(schedule, idx) : '';
     const ot = idx >= 0 ? cumOt(schedule, idx) : 0;
-    if (colId === 'cue') return <span className="font-bold truncate">{cueLabel(item)}</span>;
+    if (colId === 'cue') {
+      return (
+        <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
+          <span className="font-bold truncate">{cueLabel(item)}</span>
+          <RecBadges item={item} />
+        </span>
+      );
+    }
     if (colId === 'programType') {
       return item.programType ? (
         <span
@@ -905,7 +999,17 @@ const OperatorCueDisplayPage: React.FC = () => {
         '—'
       );
     }
-    if (colId === 'segmentName') return <span className="font-semibold truncate">{item.segmentName || '—'}</span>;
+    if (colId === 'segmentName') {
+      return (
+        <span
+          className={`font-semibold truncate ${
+            itemNeedsRecording(item) ? 'text-red-200' : ''
+          }`}
+        >
+          {item.segmentName || '—'}
+        </span>
+      );
+    }
     if (colId === 'duration') return <span className="font-mono truncate">{durLabel(item)}</span>;
     if (colId === 'start') {
       const was =
@@ -934,7 +1038,15 @@ const OperatorCueDisplayPage: React.FC = () => {
     if (colId === 'speakers') return <span className="truncate text-slate-300">{speakers(item, 3)}</span>;
     if (colId === 'notes') {
       const n = plain(item.notes);
-      return <span className="truncate text-slate-400">{n || '—'}</span>;
+      return (
+        <span
+          className={`text-slate-400 ${
+            spacious ? 'whitespace-normal line-clamp-3 leading-snug' : 'truncate'
+          }`}
+        >
+          {n || '—'}
+        </span>
+      );
     }
     if (colId.startsWith('custom:')) {
       const cid = colId.slice(7);
@@ -1027,6 +1139,24 @@ const OperatorCueDisplayPage: React.FC = () => {
               >
                 Fields
               </button>
+              <button
+                type="button"
+                title="Compact = dense cue sheet. Spacious = Photo-style notes with list spacing."
+                onClick={() => {
+                  setLayoutMode((prev) => {
+                    const next = prev === 'spacious' ? 'compact' : 'spacious';
+                    saveLayoutMode(next);
+                    return next;
+                  });
+                }}
+                className={`px-2 py-0.5 rounded border text-xs ${
+                  spacious
+                    ? 'bg-violet-700 border-violet-500 text-white'
+                    : 'bg-slate-800 border-slate-600 text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                {spacious ? 'Layout: Spacious' : 'Layout: Compact'}
+              </button>
             </div>
           </div>
 
@@ -1104,7 +1234,13 @@ const OperatorCueDisplayPage: React.FC = () => {
               Load a cue on Run of Show to pin it here.
             </div>
           ) : (
-            <div className={`rounded border border-slate-600 overflow-hidden ${currentBg}`}>
+            <div
+              className={`rounded border overflow-hidden ${currentBg} ${
+                itemNeedsRecording(current)
+                  ? 'border-red-500/70 shadow-[inset_0_0_0_1px_rgba(239,68,68,0.35)]'
+                  : 'border-slate-600'
+              }`}
+            >
               <div
                 className="grid gap-3 px-4 py-3 items-start border-b border-slate-700/50"
                 style={{
@@ -1119,21 +1255,45 @@ const OperatorCueDisplayPage: React.FC = () => {
                 ))}
               </div>
 
-              {detailPanels.length > 0 && (
-                <div
-                  className="grid gap-4 px-4 py-3 text-base"
-                  style={{
-                    gridTemplateColumns: `repeat(${Math.min(detailPanels.length, 3)}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {detailPanels.map((p) => (
-                    <div key={p.id} className="min-w-0 max-h-36 overflow-y-auto">
-                      <div className="text-xs text-slate-400 font-bold mb-1">{p.title}</div>
-                      <div className="leading-snug text-slate-100 whitespace-pre-line">{p.body}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {detailPanels.length > 0 && (() => {
+                const sidePanels = spacious
+                  ? detailPanels.filter((p) => !p.isNotes)
+                  : detailPanels;
+                const notesPanel = spacious ? detailPanels.find((p) => p.isNotes) : null;
+                return (
+                  <div className={`px-4 py-3 ${spacious ? 'space-y-3' : ''}`}>
+                    {sidePanels.length > 0 ? (
+                      <div
+                        className="grid gap-4 text-base"
+                        style={{
+                          gridTemplateColumns: `repeat(${Math.min(sidePanels.length, spacious ? 2 : 3)}, minmax(0, 1fr))`,
+                        }}
+                      >
+                        {sidePanels.map((p) => (
+                          <div key={p.id} className="min-w-0">
+                            <div className="text-xs text-slate-400 font-bold mb-1">{p.title}</div>
+                            <div
+                              className={`text-slate-100 whitespace-pre-line ${
+                                spacious ? 'leading-relaxed' : 'leading-snug'
+                              }`}
+                            >
+                              {p.body}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {notesPanel ? (
+                      <div className="min-w-0 rounded-lg border border-slate-700/80 bg-slate-950/50 p-3">
+                        <div className="text-xs text-slate-400 font-bold mb-1.5 tracking-wide">
+                          {notesPanel.title}
+                        </div>
+                        <div className="text-base text-slate-100">{notesPanel.body}</div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -1150,16 +1310,19 @@ const OperatorCueDisplayPage: React.FC = () => {
                 <div key={c.id}>{c.label}</div>
               ))}
             </div>
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-hidden">
               {nextRows.length === 0 ? (
                 <div className="px-3 py-4 text-base text-slate-500">End of schedule</div>
               ) : (
                 nextRows.map((item, i) => {
                   const zebra = i % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
+                  const recRow = itemNeedsRecording(item);
                   return (
                     <div
                       key={item.id}
-                      className={`grid gap-2 px-3 py-2.5 text-sm items-center border-b border-slate-800 ${zebra}`}
+                      className={`grid gap-2 px-3 text-sm items-center border-b border-slate-800 ${zebra} ${
+                        spacious ? 'py-3' : 'py-2.5'
+                      } ${recRow ? 'border-l-2 border-l-red-500/80' : ''}`}
                       style={{ gridTemplateColumns: nextGrid }}
                     >
                       {nextCols.map((c) => (

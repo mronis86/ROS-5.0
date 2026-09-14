@@ -1549,7 +1549,7 @@ class HyperDeckIngestApp:
         if not self.auto_copy_var.get():
             self._refresh_clips_sync()
             return
-        time.sleep(1.5)
+        time.sleep(3.5)
         self._refresh_clips_sync()
         if not self.clips:
             raise CopyError("Stopped, but no clips listed yet")

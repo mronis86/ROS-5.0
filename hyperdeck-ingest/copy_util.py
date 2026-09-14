@@ -91,9 +91,11 @@ def _ftp_get(
         if not remote:
             fallback = _pick_latest_remote_name(ftp, names)
             if fallback:
+                sample = ", ".join(_dedupe_names(names)[:5])
                 if log:
                     log(
-                        f"FTP fallback: no exact match for “{clip_name}”; using latest file “{fallback}”."
+                        f"FTP fallback: no exact match for “{clip_name}”; "
+                        f"using latest file “{fallback}”. Seen: {sample}"
                     )
                 remote = fallback
         if not remote:
@@ -104,6 +106,7 @@ def _ftp_get(
         os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
         if log:
             log(f"FTP GET {remote} → {dest_path}")
+        # HyperDeck names often contain spaces; pass the name as a single RETR argument.
         with open(dest_path, "wb") as fh:
             ftp.retrbinary(f"RETR {remote}", fh.write)
         return dest_path
@@ -150,14 +153,31 @@ def _find_local_file(folder: str, clip_name: str) -> str | None:
 
 
 def _match_remote_name(listing: list[str], clip_name: str) -> str | None:
-    cleaned = _normalize_remote_names(listing)
+    cleaned = _dedupe_names(listing)
     want = _norm(clip_name)
+    if not want:
+        return None
     for name in cleaned:
         if _norm(name) == want:
             return name
     for name in cleaned:
-        if _norm(name).startswith(want) or want.startswith(_norm(name)):
+        stem = _norm(name)
+        if stem.startswith(want) or want.startswith(stem):
             return name
+    # Prefer media names that share several significant tokens with the clip title
+    want_tokens = {t for t in want.replace("-", " ").split() if len(t) > 2}
+    if want_tokens:
+        scored: list[tuple[int, str]] = []
+        for name in cleaned:
+            if not _is_media_file_name(name):
+                continue
+            stem_tokens = {t for t in _norm(name).replace("-", " ").split() if len(t) > 2}
+            overlap = len(want_tokens & stem_tokens)
+            if overlap >= 2:
+                scored.append((overlap, name))
+        if scored:
+            scored.sort(key=lambda item: (item[0], len(_norm(item[1]))))
+            return scored[-1][1]
     return None
 
 
@@ -167,11 +187,25 @@ def _is_media_file_name(name: str) -> bool:
 
 def _switch_to_media_subdir(ftp: FTP, log: LogFn | None = None) -> bool:
     """
-    Some HyperDeck FTP servers expose a root folder like `usb` and store clips inside it.
+    Some HyperDeck FTP servers expose a root folder like `usb`/`ssd1` and store clips inside it.
     If root has no media files, try common/visible subdirs and stay in the one that contains media.
     """
     original = ftp.pwd()
-    preferred = ["usb", "sd", "media", "disk1", "disk2", "slot1", "slot2"]
+    preferred = [
+        "usb",
+        "ssd1",
+        "ssd2",
+        "sd",
+        "sd1",
+        "sd2",
+        "cfast1",
+        "cfast2",
+        "media",
+        "disk1",
+        "disk2",
+        "slot1",
+        "slot2",
+    ]
     discovered = _list_remote_dirs(ftp)
     candidates = []
     seen = set()
@@ -208,7 +242,7 @@ def _list_remote_dirs(ftp: FTP) -> list[str]:
             if str(facts.get("type", "")).lower() == "dir":
                 dirs.append(name)
         if dirs:
-            return _normalize_remote_names(dirs)
+            return _dedupe_names(dirs)
     except Exception:
         pass
     try:
@@ -225,24 +259,16 @@ def _list_remote_dirs(ftp: FTP) -> list[str]:
                 continue
     except Exception:
         pass
-    return _normalize_remote_names(dirs)
+    return _dedupe_names(dirs)
 
 
-def _normalize_remote_names(listing: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    for line in listing:
-        token = line.strip()
-        if not token:
-            continue
-        # LIST fallback line: permissions/date/size filename -> filename is the final token.
-        if " " in token:
-            token = token.split()[-1]
-        if token and token not in (".", ".."):
-            cleaned.append(os.path.basename(token))
-    # Preserve order and uniqueness.
+def _dedupe_names(listing: list[str]) -> list[str]:
     seen = set()
     out: list[str] = []
-    for name in cleaned:
+    for raw in listing:
+        name = os.path.basename(str(raw).strip().rstrip("/"))
+        if not name or name in (".", ".."):
+            continue
         key = name.lower()
         if key in seen:
             continue
@@ -251,25 +277,60 @@ def _normalize_remote_names(listing: list[str]) -> list[str]:
     return out
 
 
+def _filename_from_list_line(line: str) -> str | None:
+    """
+    Parse a classic Unix LIST line. Filename is everything after the 8th field so
+    spaces in HyperDeck clip names are preserved.
+    Example: -rw-r--r-- 1 user group 123 Jan 1 12:00 3 My Clip Name.mp4
+    """
+    s = line.strip()
+    if not s or s.lower().startswith("total"):
+        return None
+    # Skip directories
+    if s.startswith("d"):
+        return None
+    parts = s.split(None, 8)
+    if len(parts) < 9:
+        return None
+    name = parts[8].strip()
+    return name or None
+
+
 def _list_remote_files(ftp: FTP) -> list[str]:
-    # Prefer MLSD when available (reliable filenames, no LIST parsing).
+    # Prefer MLSD when available (reliable filenames, including spaces).
     try:
         names = []
         for name, facts in ftp.mlsd():
             if str(facts.get("type", "")).lower() == "file":
                 names.append(name)
         if names:
-            return _normalize_remote_names(names)
+            return _dedupe_names(names)
     except Exception:
         pass
 
-    names: list[str] = []
     try:
-        names = ftp.nlst()
+        names = [str(n) for n in ftp.nlst()]
+        cleaned = _dedupe_names(names)
+        # NLST can sometimes return LIST-style lines on odd servers — keep only
+        # plausible media basenames / non-permission lines.
+        if cleaned and not any(n.startswith("-") or n.startswith("d") for n in cleaned):
+            return cleaned
     except error_perm:
-        names = []
-        ftp.retrlines("LIST", names.append)
-    return _normalize_remote_names(names)
+        pass
+    except Exception:
+        pass
+
+    lines: list[str] = []
+    try:
+        ftp.retrlines("LIST", lines.append)
+    except Exception:
+        return []
+    parsed = []
+    for line in lines:
+        name = _filename_from_list_line(line)
+        if name:
+            parsed.append(name)
+    return _dedupe_names(parsed)
 
 
 def _parse_mdtm(value: str) -> datetime | None:
