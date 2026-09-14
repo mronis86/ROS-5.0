@@ -21,6 +21,7 @@ import {
   getSyncedNow,
   wallClockLabelToMinutes,
   hhmmToMinutes,
+  isCalloutDue,
 } from '../lib/eventLocalClock';
 import {
   HEAD_TABLE_PROGRAM_TYPE,
@@ -1759,7 +1760,8 @@ const RunOfShowPage: React.FC = () => {
     releaseRowEditLock,
   ]);
 
-  // VO/MUSIC alert when event-local wall clock (server-synced) matches a chip minute
+  // VO/MUSIC alert on event-local clock (server-synced). Sticky until dismiss; 10m catch-up
+  // so background-tab timer throttling does not miss the minute forever.
   useEffect(() => {
     const tick = () => {
       const synced = getSyncedNow(clockOffset);
@@ -1769,7 +1771,7 @@ const RunOfShowPage: React.FC = () => {
         const vos = item.voCues;
         if (!vos?.length) continue;
         for (const vo of vos) {
-          if (vo.time !== current) continue;
+          if (!isCalloutDue(vo.time, current, 10)) continue;
           const key = `${item.id}:${vo.id}`;
           if (dismissedVoAlerts.has(key)) continue;
           found = { itemId: item.id, segmentName: item.segmentName, vo };
@@ -1777,7 +1779,14 @@ const RunOfShowPage: React.FC = () => {
         }
         if (found) break;
       }
-      setActiveVoAlert(found);
+      setActiveVoAlert((prev) => {
+        if (found) return found;
+        if (prev) {
+          const key = `${prev.itemId}:${prev.vo.id}`;
+          if (!dismissedVoAlerts.has(key)) return prev;
+        }
+        return null;
+      });
     };
     tick();
     const id = window.setInterval(tick, 1000);
