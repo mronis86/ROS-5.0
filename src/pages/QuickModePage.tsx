@@ -92,6 +92,23 @@ const QuickModePage: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState('');
   const clockWindowRef = useRef<Window | null>(null);
   const resolvedForUrlRef = useRef<string | null>(null);
+  /** Ignore remote timer echoes briefly after local START/STOP/RESET (stop-all races). */
+  const localControlUntilRef = useRef(0);
+  /** After reset, refuse server rows that would re-apply running/partial remaining. */
+  const resetGuardUntilRef = useRef(0);
+
+  const markLocalControl = (ms = 2000) => {
+    localControlUntilRef.current = Date.now() + ms;
+  };
+
+  const ignoreRemoteTimerSync = () => Date.now() < localControlUntilRef.current;
+
+  const markResetGuard = (ms = 5000) => {
+    resetGuardUntilRef.current = Date.now() + ms;
+    markLocalControl(ms);
+  };
+
+  const inResetGuard = () => Date.now() < resetGuardUntilRef.current;
 
   const eventIdParam = searchParams.get('eventId') ?? '';
   const forceNewSession = searchParams.get('new') === '1';
@@ -230,28 +247,27 @@ const QuickModePage: React.FC = () => {
   }, [eventId, timers]);
 
   const applyServerTimerRow = (data: Record<string, unknown>) => {
+    if (ignoreRemoteTimerSync() || inResetGuard()) return;
     const itemId = Number(data.item_id);
     if (!Number.isFinite(itemId)) return;
-    const durationMs = Math.max(1000, Number(data.duration_seconds || 60) * 1000);
+    const serverDurationMs = Math.max(1000, Number(data.duration_seconds || 60) * 1000);
     const running = data.is_running === true;
     const loaded = data.timer_state === 'loaded' || (data.is_active === true && !running);
     const startedAtMs = running && data.started_at ? new Date(String(data.started_at)).getTime() : null;
     const now = Date.now();
     setTimers((prev) => {
       const exists = prev.some((t) => t.id === itemId);
-      const nextRemaining = running
-        ? Math.max(0, durationMs - (now - (startedAtMs || now)))
-        : loaded
-          ? durationMs
-          : durationMs;
       if (!exists) {
+        const nextRemaining = running
+          ? Math.max(0, serverDurationMs - (now - (startedAtMs || now)))
+          : serverDurationMs;
         return [
           ...prev,
           {
             id: itemId,
             title: String(data.cue_is || `Timer ${itemId}`).replace(/^CUE\s*/i, 'Timer '),
             cue: String(data.cue_is || `CUE ${itemId}`),
-            durationMs,
+            durationMs: serverDurationMs,
             remainingMs: nextRemaining,
             isRunning: running,
             startedAtMs
@@ -260,7 +276,19 @@ const QuickModePage: React.FC = () => {
       }
       return prev.map((t) => {
         if (t.id !== itemId) return running ? { ...t, isRunning: false, startedAtMs: null } : t;
-        return { ...t, durationMs, remainingMs: nextRemaining, isRunning: running, startedAtMs };
+        // Keep programmed durationMs — server duration_seconds is often "remaining from started_at"
+        // after live nudges, and must not overwrite the cue length used by Reset.
+        const nextRemaining = running
+          ? Math.max(0, serverDurationMs - (now - (startedAtMs || now)))
+          : loaded
+            ? t.durationMs
+            : t.remainingMs;
+        return {
+          ...t,
+          remainingMs: nextRemaining,
+          isRunning: running,
+          startedAtMs: running ? startedAtMs : null
+        };
       });
     });
     if (running || loaded) setLoadedTimerId(itemId);
@@ -292,6 +320,7 @@ const QuickModePage: React.FC = () => {
     const callbacks = {
       onTimerUpdated: (data: Record<string, unknown>) => applyServerTimerRow(data),
       onActiveTimersUpdated: (data: unknown) => {
+        if (ignoreRemoteTimerSync() || inResetGuard()) return;
         const row = Array.isArray(data) ? data[0] : data;
         if (!row) {
           setLoadedTimerId(null);
@@ -300,8 +329,13 @@ const QuickModePage: React.FC = () => {
         const r = row as Record<string, unknown>;
         if (r.timer_state === 'stopped' || r.is_active === false) {
           const itemId = Number(r.item_id);
+          const stopAt = Date.now();
           setTimers((prev) =>
-            prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t))
+            prev.map((t) =>
+              t.id === itemId
+                ? { ...t, remainingMs: nowRemainingMs(t, stopAt), isRunning: false, startedAtMs: null }
+                : t
+            )
           );
           setLoadedTimerId((prev) => (prev === itemId ? null : prev));
           return;
@@ -309,23 +343,51 @@ const QuickModePage: React.FC = () => {
         applyServerTimerRow(r);
       },
       onTimerStopped: (data: Record<string, unknown>) => {
+        if (ignoreRemoteTimerSync() || inResetGuard()) return;
         const itemId = Number(data.item_id);
+        const stopAt = Date.now();
         if (Number.isFinite(itemId)) {
-          setTimers((prev) => prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t)));
+          setTimers((prev) =>
+            prev.map((t) =>
+              t.id === itemId
+                ? { ...t, remainingMs: nowRemainingMs(t, stopAt), isRunning: false, startedAtMs: null }
+                : t
+            )
+          );
           setLoadedTimerId((prev) => (prev === itemId ? null : prev));
         }
       },
       onTimersStopped: (data: Record<string, unknown>) => {
+        if (ignoreRemoteTimerSync() || inResetGuard()) return;
         const itemId = Number(data.item_id);
+        const stopAt = Date.now();
         if (Number.isFinite(itemId)) {
-          setTimers((prev) => prev.map((t) => (t.id === itemId ? { ...t, isRunning: false, startedAtMs: null } : t)));
+          setTimers((prev) =>
+            prev.map((t) =>
+              t.id === itemId
+                ? { ...t, remainingMs: nowRemainingMs(t, stopAt), isRunning: false, startedAtMs: null }
+                : t
+            )
+          );
           setLoadedTimerId((prev) => (prev === itemId ? null : prev));
         } else {
-          setTimers((prev) => prev.map((t) => ({ ...t, isRunning: false, startedAtMs: null })));
+          setTimers((prev) =>
+            prev.map((t) => ({
+              ...t,
+              remainingMs: nowRemainingMs(t, stopAt),
+              isRunning: false,
+              startedAtMs: null
+            }))
+          );
           setLoadedTimerId(null);
         }
       },
       onResetAllStates: () => {
+        if (ignoreRemoteTimerSync() || inResetGuard()) {
+          // Local reset already restored remaining → duration; still ensure unload.
+          setLoadedTimerId(null);
+          return;
+        }
         setTimers((prev) => prev.map((t) => ({ ...t, remainingMs: t.durationMs, isRunning: false, startedAtMs: null })));
         setLoadedTimerId(null);
       }
@@ -398,9 +460,82 @@ const QuickModePage: React.FC = () => {
 
   const updateTitle = (id: number, title: string) => setTimers((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
 
+  const syncActiveDuration = async (id: number, durationSeconds: number, running: boolean, cue: string) => {
+    if (!eventId) return;
+    const secs = Math.max(1, Math.floor(durationSeconds));
+    try {
+      if (running) {
+        await callApi('/api/active-timers', 'POST', {
+          event_id: eventId,
+          item_id: id,
+          user_id: 'quick-mode',
+          timer_state: 'running',
+          is_active: true,
+          is_running: true,
+          started_at: new Date().toISOString(),
+          last_loaded_cue_id: id,
+          cue_is: cue,
+          duration_seconds: secs
+        });
+      } else if (loadedTimerId === id) {
+        await callApi(`/api/active-timers/${encodeURIComponent(eventId)}/${id}/duration`, 'PUT', {
+          duration_seconds: secs
+        });
+      }
+    } catch {
+      // local still works
+    }
+  };
+
+  /** Set absolute duration for idle / upcoming timers (not while running). */
+  const setTimerDurationMs = (id: number, nextDurationMs: number) => {
+    const timer = timers.find((t) => t.id === id);
+    if (!timer || timer.isRunning) return;
+    const durationMs = clampDurationMs(nextDurationMs);
+    setTimers((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, durationMs, remainingMs: durationMs, startedAtMs: null } : t))
+    );
+    void syncActiveDuration(id, durationMs / 1000, false, timer.cue);
+  };
+
+  /** Add/subtract time. Running timers nudge remaining; idle timers change duration. */
+  const nudgeTimerSeconds = (id: number, deltaSeconds: number) => {
+    const timer = timers.find((t) => t.id === id);
+    if (!timer || !deltaSeconds) return;
+    const now = Date.now();
+    const deltaMs = deltaSeconds * 1000;
+
+    if (timer.isRunning) {
+      const current = nowRemainingMs(timer, now);
+      const nextRemaining = Math.max(1000, current + deltaMs);
+      // Keep programmed duration as the larger of current program length and new remaining.
+      // Do not shrink durationMs down to leftover time (that broke Reset).
+      const nextDuration = clampDurationMs(Math.max(timer.durationMs, nextRemaining));
+      setTimers((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                durationMs: nextDuration,
+                remainingMs: nextRemaining,
+                isRunning: true,
+                startedAtMs: now
+              }
+            : t
+        )
+      );
+      // Clock API treats duration_seconds as countdown length from started_at (= remaining).
+      void syncActiveDuration(id, nextRemaining / 1000, true, timer.cue);
+      return;
+    }
+
+    setTimerDurationMs(id, timer.durationMs + deltaMs);
+  };
+
   const loadTimer = async (id: number) => {
     const timer = timers.find((t) => t.id === id);
     if (!timer) return;
+    markLocalControl(2500);
     const now = Date.now();
     setTimers((prev) => prev.map((t) => ({ ...t, remainingMs: nowRemainingMs(t, now), isRunning: false, startedAtMs: null })));
     setLoadedTimerId(id);
@@ -444,8 +579,13 @@ const QuickModePage: React.FC = () => {
     const timer = timers.find((t) => t.id === id);
     if (!timer) return;
     if (timer.isRunning) {
+      markLocalControl(2500);
       const stopAt = Date.now();
-      setTimers((prev) => prev.map((t) => (t.id === id ? { ...t, remainingMs: nowRemainingMs(t, stopAt), isRunning: false, startedAtMs: null } : t)));
+      setTimers((prev) =>
+        prev.map((t) =>
+          t.id === id ? { ...t, remainingMs: nowRemainingMs(t, stopAt), isRunning: false, startedAtMs: null } : t
+        )
+      );
       if (eventId) {
         callApi('/api/active-timers/stop', 'PUT', {
           event_id: eventId,
@@ -457,8 +597,10 @@ const QuickModePage: React.FC = () => {
       }
       return;
     }
+    markLocalControl(3000);
     if (loadedTimerId !== id) {
       await loadTimer(id);
+      markLocalControl(3000);
     }
     const startAt = Date.now();
     setTimers((prev) =>
@@ -489,10 +631,57 @@ const QuickModePage: React.FC = () => {
     }
   };
 
-  const resetTimer = (id: number) => {
-    setTimers((prev) => prev.map((t) => (t.id === id ? { ...t, remainingMs: t.durationMs, isRunning: false, startedAtMs: null } : t)));
-    if (loadedTimerId === id) setLoadedTimerId(null);
-    if (eventId) callApi('/api/timers/reset', 'POST', { event_id: eventId, item_id: id }).catch(() => undefined);
+  const resetTimer = async (id: number) => {
+    const timer = timers.find((t) => t.id === id);
+    if (!timer) return;
+    markResetGuard(5000);
+
+    // Restore programmed duration on all cues and unload (matches event-wide /api/timers/reset).
+    setTimers((prev) => {
+      const next = prev.map((t) => ({
+        ...t,
+        remainingMs: t.durationMs,
+        isRunning: false,
+        startedAtMs: null
+      }));
+      if (storageKey) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+      }
+      return next;
+    });
+    setLoadedTimerId(null);
+
+    if (!eventId) return;
+    try {
+      await callApi('/api/active-timers/stop-all', 'PUT', {
+        event_id: eventId,
+        user_id: 'quick-mode',
+        user_name: 'Quick Mode',
+        user_role: 'OPERATOR'
+      });
+    } catch {
+      // ignore
+    }
+    try {
+      await callApi('/api/active-timers/stop', 'PUT', {
+        event_id: eventId,
+        item_id: id,
+        user_id: 'quick-mode',
+        user_name: 'Quick Mode',
+        user_role: 'OPERATOR'
+      });
+    } catch {
+      // ignore
+    }
+    try {
+      await callApi('/api/timers/reset', 'POST', { event_id: eventId, item_id: id });
+    } catch {
+      // local reset already applied
+    }
   };
 
   const removeTimer = (id: number) => {
@@ -566,7 +755,10 @@ const QuickModePage: React.FC = () => {
                 >
                   <div className="text-[10px] font-bold text-slate-300">{t.cue}</div>
                   <div className="truncate text-xs font-semibold text-white">{t.title}</div>
-                  <div className="mt-1 text-[10px] text-slate-400">{state}</div>
+                  <div className="mt-1 flex items-center justify-between gap-2 text-[10px]">
+                    <span className="text-slate-400">{state}</span>
+                    <span className="font-mono tabular-nums text-slate-200">{formatTime(nowRemainingMs(t, nowMs))}</span>
+                  </div>
                 </button>
               );
             })}
@@ -606,55 +798,187 @@ const QuickModePage: React.FC = () => {
           </section>
 
           {selectedTimer ? (
-            <section className="mb-2 rounded-lg border border-slate-600 bg-slate-800 p-2.5 shadow-lg">
+            <section className="mb-3 rounded-lg border border-slate-600 bg-slate-800 p-3 shadow-lg md:p-4">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span className="rounded bg-slate-700 px-2.5 py-1 text-xs font-bold">{selectedTimer.cue}</span>
+                <span
+                  className={`rounded px-2.5 py-1 text-xs font-bold ${
+                    selectedState === 'RUNNING'
+                      ? 'bg-emerald-900/50 text-emerald-200'
+                      : selectedState === 'DONE'
+                        ? 'bg-amber-900/50 text-amber-200'
+                        : selectedState === 'LOADED'
+                          ? 'bg-blue-900/60 text-blue-200'
+                          : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  {selectedState}
+                </span>
+                <input
+                  type="text"
+                  value={selectedTimer.title}
+                  onChange={(e) => updateTitle(selectedTimer.id, e.target.value)}
+                  className="min-w-[12rem] flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white outline-none focus:border-blue-500"
+                  aria-label="Timer name"
+                />
+              </div>
+
+              <div
+                className={`mb-4 rounded-xl border px-4 py-6 text-center md:py-8 ${
+                  selectedState === 'RUNNING'
+                    ? 'border-emerald-500/40 bg-emerald-950/30'
+                    : selectedState === 'DONE'
+                      ? 'border-amber-500/40 bg-amber-950/25'
+                      : selectedState === 'LOADED'
+                        ? 'border-blue-500/40 bg-blue-950/30'
+                        : 'border-slate-600 bg-slate-950/60'
+                }`}
+              >
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  {selectedState === 'DONE' ? 'Time complete' : 'Time remaining'}
+                </div>
+                <div
+                  className={`font-mono text-6xl font-bold tabular-nums tracking-tight md:text-7xl lg:text-8xl ${
+                    selectedState === 'RUNNING'
+                      ? 'text-emerald-300'
+                      : selectedState === 'DONE'
+                        ? 'text-amber-300'
+                        : selectedState === 'LOADED'
+                          ? 'text-blue-200'
+                          : 'text-white'
+                  }`}
+                  aria-live="polite"
+                >
+                  {formatTime(selectedRemaining)}
+                </div>
+                <div className="mt-2 text-sm text-slate-400">
+                  Duration {formatTime(selectedTimer.durationMs)}
+                </div>
+
+                {selectedTimer.isRunning ? (
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                    <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Adjust live
+                    </span>
+                    {[
+                      { label: '−5m', sec: -300 },
+                      { label: '−1m', sec: -60 },
+                      { label: '−10s', sec: -10 },
+                      { label: '+10s', sec: 10 },
+                      { label: '+1m', sec: 60 },
+                      { label: '+5m', sec: 300 }
+                    ].map((btn) => (
+                      <button
+                        key={btn.label}
+                        type="button"
+                        onClick={() => nudgeTimerSeconds(selectedTimer.id, btn.sec)}
+                        className="min-h-[40px] min-w-[3.25rem] rounded-lg border border-emerald-500/50 bg-emerald-950/40 px-3 text-sm font-bold text-emerald-100 hover:bg-emerald-900/60"
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                    <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Set duration
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={Math.floor(selectedTimer.durationMs / 60000)}
+                      onChange={(e) => {
+                        const minutes = Math.max(0, Number.parseInt(e.target.value || '0', 10) || 0);
+                        const seconds = Math.floor((selectedTimer.durationMs / 1000) % 60);
+                        setTimerDurationMs(selectedTimer.id, (minutes * 60 + seconds) * 1000 || 1000);
+                      }}
+                      className="w-16 rounded-lg border border-slate-600 bg-slate-900 px-2 py-2 text-center font-mono text-sm text-white outline-none focus:border-blue-500"
+                      aria-label="Duration minutes"
+                    />
+                    <span className="text-slate-500">m</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={Math.floor((selectedTimer.durationMs / 1000) % 60)}
+                      onChange={(e) => {
+                        const seconds = Math.max(0, Math.min(59, Number.parseInt(e.target.value || '0', 10) || 0));
+                        const minutes = Math.floor(selectedTimer.durationMs / 60000);
+                        setTimerDurationMs(selectedTimer.id, (minutes * 60 + seconds) * 1000 || 1000);
+                      }}
+                      className="w-16 rounded-lg border border-slate-600 bg-slate-900 px-2 py-2 text-center font-mono text-sm text-white outline-none focus:border-blue-500"
+                      aria-label="Duration seconds"
+                    />
+                    <span className="text-slate-500">s</span>
+                    {[
+                      { label: '−5m', sec: -300 },
+                      { label: '−1m', sec: -60 },
+                      { label: '+1m', sec: 60 },
+                      { label: '+5m', sec: 300 }
+                    ].map((btn) => (
+                      <button
+                        key={btn.label}
+                        type="button"
+                        onClick={() => nudgeTimerSeconds(selectedTimer.id, btn.sec)}
+                        className="min-h-[40px] min-w-[3.25rem] rounded-lg border border-slate-500 bg-slate-900 px-3 text-sm font-bold text-slate-100 hover:bg-slate-700"
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded bg-slate-700 px-2 py-1 text-[10px] font-bold">{selectedTimer.cue}</span>
-                <span className={`rounded px-2 py-1 text-[10px] font-bold ${
-                  selectedState === 'RUNNING' ? 'bg-emerald-900/50 text-emerald-200' :
-                  selectedState === 'DONE' ? 'bg-amber-900/50 text-amber-200' :
-                  selectedState === 'LOADED' ? 'bg-blue-900/60 text-blue-200' : 'bg-slate-700 text-slate-300'
-                }`}>{selectedState}</span>
-                <span className="rounded bg-slate-700 px-2 py-1 text-[10px] text-slate-300">Remaining: {formatTime(selectedRemaining)}</span>
-                <span className="rounded bg-slate-700 px-2 py-1 text-[10px] text-slate-300">Base: {formatTime(selectedTimer.durationMs)}</span>
-                <div className="ml-auto flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => loadTimer(selectedTimer.id)}
-                    disabled={loadedTimerId === selectedTimer.id}
-                    className={`rounded px-2.5 py-1 text-[10px] font-semibold ${
-                      loadedTimerId === selectedTimer.id ? 'bg-blue-600 text-white cursor-default' : 'border border-blue-400/80 bg-blue-700/80 text-blue-50 hover:bg-blue-600'
-                    }`}
-                  >
-                    {loadedTimerId === selectedTimer.id ? 'LOADED' : 'LOAD'}
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => loadTimer(selectedTimer.id)}
+                  disabled={loadedTimerId === selectedTimer.id && !selectedTimer.isRunning}
+                  className={`min-h-[44px] rounded-lg px-4 py-2 text-sm font-bold ${
+                    loadedTimerId === selectedTimer.id && !selectedTimer.isRunning
+                      ? 'cursor-default bg-blue-600 text-white'
+                      : 'border border-blue-400/80 bg-blue-700/80 text-blue-50 hover:bg-blue-600'
+                  }`}
+                >
+                  {loadedTimerId === selectedTimer.id && !selectedTimer.isRunning ? 'LOADED' : 'LOAD'}
+                </button>
+                {!selectedTimer.isRunning ? (
                   <button
                     type="button"
                     onClick={() => startStopTimer(selectedTimer.id)}
-                    disabled={!selectedTimer.isRunning && !(loadedTimerId === selectedTimer.id && runningTimers.length === 0)}
-                    className={`rounded px-2.5 py-1 text-[10px] font-semibold ${
-                      selectedTimer.isRunning
-                        ? 'bg-red-600 text-white hover:bg-red-500'
-                        : loadedTimerId === selectedTimer.id && runningTimers.length === 0
-                        ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                        : 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                    disabled={runningTimers.length > 0}
+                    className={`min-h-[44px] min-w-[7rem] rounded-lg px-5 py-2 text-sm font-bold ${
+                      runningTimers.length > 0
+                        ? 'cursor-not-allowed bg-slate-600 text-slate-400'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-500'
                     }`}
                   >
-                    {selectedTimer.isRunning ? 'STOP' : 'START'}
+                    START
                   </button>
-                  <button type="button" onClick={() => resetTimer(selectedTimer.id)} className="rounded border border-slate-500 px-2.5 py-1 text-[10px] font-semibold text-slate-200 hover:bg-slate-700">
-                    Reset
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startStopTimer(selectedTimer.id)}
+                    className="min-h-[44px] min-w-[7rem] rounded-lg bg-red-600 px-5 py-2 text-sm font-bold text-white hover:bg-red-500"
+                  >
+                    STOP
                   </button>
-                  <button type="button" onClick={() => removeTimer(selectedTimer.id)} className="rounded border border-red-500/70 px-2.5 py-1 text-[10px] font-semibold text-red-200 hover:bg-red-900/30">
-                    Remove
-                  </button>
-                </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => resetTimer(selectedTimer.id)}
+                  className="min-h-[44px] rounded-lg border border-slate-500 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700"
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeTimer(selectedTimer.id)}
+                  className="min-h-[44px] rounded-lg border border-red-500/70 px-4 py-2 text-sm font-semibold text-red-200 hover:bg-red-900/30"
+                >
+                  Remove
+                </button>
               </div>
-              <input
-                type="text"
-                value={selectedTimer.title}
-                onChange={(e) => updateTitle(selectedTimer.id, e.target.value)}
-                className="mt-2 w-full rounded border border-slate-600 bg-slate-900 px-3 py-2 text-sm font-semibold text-white outline-none focus:border-blue-500"
-              />
             </section>
           ) : null}
 
@@ -690,8 +1014,56 @@ const QuickModePage: React.FC = () => {
                         >
                           <td className="px-2 py-1.5 font-mono text-[11px] text-slate-200">{timer.cue}</td>
                           <td className="px-2 py-1.5 text-xs text-white">{timer.title || 'Untitled timer'}</td>
-                          <td className="px-2 py-1.5 text-center font-mono text-[11px] text-slate-300">{formatTime(timer.durationMs)}</td>
-                          <td className="px-2 py-1.5 text-center font-mono text-xs text-white">{formatTime(remaining)}</td>
+                          <td className="px-2 py-1.5 text-center font-mono text-[11px] text-slate-300">
+                            <div className="inline-flex flex-col items-center gap-1">
+                              <span>{formatTime(timer.durationMs)}</span>
+                              {!timer.isRunning ? (
+                                <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => nudgeTimerSeconds(timer.id, -60)}
+                                    className="rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold text-slate-200 hover:bg-slate-600"
+                                    title="−1 minute"
+                                  >
+                                    −1m
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => nudgeTimerSeconds(timer.id, 60)}
+                                    className="rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold text-slate-200 hover:bg-slate-600"
+                                    title="+1 minute"
+                                  >
+                                    +1m
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5 text-center font-mono text-xs text-white">
+                            <div className="inline-flex flex-col items-center gap-1">
+                              <span>{formatTime(remaining)}</span>
+                              {timer.isRunning ? (
+                                <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => nudgeTimerSeconds(timer.id, -60)}
+                                    className="rounded bg-emerald-900/70 px-1.5 py-0.5 text-[9px] font-bold text-emerald-100 hover:bg-emerald-800"
+                                    title="−1 minute"
+                                  >
+                                    −1m
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => nudgeTimerSeconds(timer.id, 60)}
+                                    className="rounded bg-emerald-900/70 px-1.5 py-0.5 text-[9px] font-bold text-emerald-100 hover:bg-emerald-800"
+                                    title="+1 minute"
+                                  >
+                                    +1m
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </td>
                           <td className="px-2 py-1.5 text-center">
                             <span className={`rounded px-2 py-1 text-[10px] font-bold ${
                               state === 'RUNNING' ? 'bg-emerald-900/50 text-emerald-200' :
@@ -707,30 +1079,43 @@ const QuickModePage: React.FC = () => {
                                   e.stopPropagation();
                                   loadTimer(timer.id);
                                 }}
-                                disabled={loadedTimerId === timer.id}
+                                disabled={loadedTimerId === timer.id && !timer.isRunning}
                                 className={`rounded px-2 py-1 text-[10px] font-semibold ${
-                                  loadedTimerId === timer.id ? 'bg-blue-600 text-white cursor-default' : 'border border-blue-400/80 bg-blue-700/80 text-blue-50 hover:bg-blue-600'
+                                  loadedTimerId === timer.id && !timer.isRunning
+                                    ? 'bg-blue-600 text-white cursor-default'
+                                    : 'border border-blue-400/80 bg-blue-700/80 text-blue-50 hover:bg-blue-600'
                                 }`}
                               >
-                                {loadedTimerId === timer.id ? 'LOADED' : 'LOAD'}
+                                {loadedTimerId === timer.id && !timer.isRunning ? 'LOADED' : 'LOAD'}
                               </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  startStopTimer(timer.id);
-                                }}
-                                disabled={!timer.isRunning && !(loadedTimerId === timer.id && runningTimers.length === 0)}
-                                className={`rounded px-2 py-1 text-[10px] font-semibold ${
-                                  timer.isRunning
-                                    ? 'bg-red-600 text-white hover:bg-red-500'
-                                    : loadedTimerId === timer.id && runningTimers.length === 0
-                                    ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                                    : 'bg-slate-600 text-slate-400 cursor-not-allowed'
-                                }`}
-                              >
-                                {timer.isRunning ? 'STOP' : 'START'}
-                              </button>
+                              {!timer.isRunning ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startStopTimer(timer.id);
+                                  }}
+                                  disabled={runningTimers.length > 0}
+                                  className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                                    runningTimers.length > 0
+                                      ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                                      : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                                  }`}
+                                >
+                                  START
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startStopTimer(timer.id);
+                                  }}
+                                  className="rounded bg-red-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-red-500"
+                                >
+                                  STOP
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>

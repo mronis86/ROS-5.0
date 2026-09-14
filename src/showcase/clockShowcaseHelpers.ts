@@ -1,3 +1,5 @@
+import { countdownColorForRemaining } from '../lib/countdownColor';
+
 /** Clock page helpers — mirrors production Clock.tsx color/time logic. */
 
 export function formatClockTime(seconds: number): string {
@@ -24,10 +26,7 @@ export function formatClockTimeOfDay(date: Date): string {
 
 /** Same thresholds as Clock.getProgressBarColor */
 export function clockProgressColor(remainingSeconds: number, isRunning = true): string {
-  if (!isRunning) return '#6b7280';
-  if (remainingSeconds > 120) return '#10b981';
-  if (remainingSeconds > 30) return '#f59e0b';
-  return '#ef4444';
+  return countdownColorForRemaining(remainingSeconds, { isRunning });
 }
 
 export function clockRemainingPercent(remainingSeconds: number, totalSeconds: number, isRunning = true): number {

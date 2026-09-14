@@ -14,6 +14,7 @@ import {
   formatNameForTwoLines,
   formatSpeakerLocation,
 } from '../showcase/photoShowcaseHelpers';
+import { countdownColorForRemaining } from '../lib/countdownColor';
 import {
   getMicAssignment,
   MIC_TYPE_OPTIONS,
@@ -94,16 +95,12 @@ function formatTime(seconds: number): string {
 
 function countdownColor(remaining: number, hasTimer: boolean): string {
   if (!hasTimer) return '#ffffff';
-  if (remaining > 120) return '#10b981';
-  if (remaining > 30) return '#f59e0b';
-  return '#ef4444';
+  return countdownColorForRemaining(remaining);
 }
 
 function progressColor(remaining: number): string {
   if (remaining < 0) return '#ef4444';
-  if (remaining > 120) return '#10b981';
-  if (remaining > 30) return '#f59e0b';
-  return '#ef4444';
+  return countdownColorForRemaining(remaining);
 }
 
 const MicManagerPage: React.FC = () => {

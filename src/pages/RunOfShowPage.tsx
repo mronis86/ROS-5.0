@@ -6,6 +6,7 @@ import { apiClient, getApiBaseUrl, EventCueFile, type SpeakerDirectoryRow } from
 import { changeLogService, LocalChange } from '../services/changeLogService';
 import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon-backup-service';
 import { apiJsonHeaders } from '../lib/sessionAuth';
+import { getCountdownPrimaryHex, useCountdownColorMode } from '../lib/countdownColor';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
@@ -20,6 +21,12 @@ import {
   formatCalloutChipText,
   syncCalloutsIntoNotes,
 } from '../lib/audioCallouts';
+import {
+  getEventLocalHHMM,
+  getSyncedNow,
+  wallClockLabelToMinutes,
+  hhmmToMinutes,
+} from '../lib/eventLocalClock';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
@@ -203,6 +210,7 @@ const RunOfShowPage: React.FC = () => {
   const navigate = useNavigate();
   let event: Event = location.state?.event;
   let userRole: string = location.state?.userRole;
+  const countdownColorMode = useCountdownColorMode();
   
   // Authentication state
   const { user, loading: authLoading } = useAuth();
@@ -1991,13 +1999,11 @@ const RunOfShowPage: React.FC = () => {
     releaseRowEditLock,
   ]);
 
-  // Prototype: wall-clock VO alert when local time matches a chip (same minute)
+  // VO/MUSIC alert when event-local wall clock (server-synced) matches a chip minute
   useEffect(() => {
     const tick = () => {
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      const current = `${hh}:${mm}`;
+      const synced = getSyncedNow(clockOffset);
+      const current = getEventLocalHHMM(synced, eventTimezone);
       let found: { itemId: number; segmentName: string; vo: VoCue } | null = null;
       for (const item of schedule) {
         const vos = item.voCues;
@@ -2016,7 +2022,7 @@ const RunOfShowPage: React.FC = () => {
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [schedule, dismissedVoAlerts]);
+  }, [schedule, dismissedVoAlerts, eventTimezone, clockOffset]);
 
   // Reset draft fields when opening the VO/BGM modal
   useEffect(() => {
@@ -3810,27 +3816,25 @@ const RunOfShowPage: React.FC = () => {
     
     if (activeItem) {
       try {
-        const now = getCurrentTimeUTC();
+        const synced = getSyncedNow(clockOffset);
+        const nowMinutes = hhmmToMinutes(getEventLocalHHMM(synced, eventTimezone));
         const itemIndex = schedule.findIndex(item => item.id === activeItem.id);
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
-        if (itemStartTimeStr) {
+        if (itemStartTimeStr && nowMinutes != null) {
           // Store the scheduled time for display
           setScheduledTime(itemStartTimeStr);
-          
-          // Parse the start time string (format: "1:30 PM")
-          const [timePart, period] = itemStartTimeStr.split(' ');
-          const [hours, minutes] = timePart.split(':').map(Number);
-          let hour24 = hours;
-          if (period === 'PM' && hours !== 12) hour24 += 12;
-          if (period === 'AM' && hours === 12) hour24 = 0;
-          
-          // Create a date object for today with the calculated time in event timezone
-          const today = getCurrentTimeUTC();
-          const itemStartTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour24, minutes);
-          
-          const differenceMs = now.getTime() - itemStartTime.getTime();
-          const differenceMinutes = Math.round(differenceMs / (1000 * 60));
+
+          const scheduledMinutes = wallClockLabelToMinutes(itemStartTimeStr);
+          if (scheduledMinutes == null) {
+            console.warn('🍞 Toast: Could not parse scheduled start time:', itemStartTimeStr);
+            return;
+          }
+
+          let differenceMinutes = nowMinutes - scheduledMinutes;
+          // Near midnight wrap (rare for show days, but keep comparison sane)
+          if (differenceMinutes > 12 * 60) differenceMinutes -= 24 * 60;
+          if (differenceMinutes < -12 * 60) differenceMinutes += 24 * 60;
 
           setTimeDifference(Math.abs(differenceMinutes));
           
@@ -5068,7 +5072,7 @@ const RunOfShowPage: React.FC = () => {
       if (remainingSeconds < 0) { // Overrun - red
         return 'bg-red-500';
       } else if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -5088,7 +5092,7 @@ const RunOfShowPage: React.FC = () => {
         if (remainingSeconds < 0) { // Overrun - red
           return 'bg-red-500';
         } else if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -5107,7 +5111,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Color based on remaining time
         if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -5123,7 +5127,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Color based on remaining time
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -5143,7 +5147,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Color based on remaining time
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -5161,7 +5165,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Color based on remaining time
         if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -5177,7 +5181,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Color based on remaining time
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { driftDetector } from '../services/driftDetector';
+import { countdownColorForRemaining, useCountdownColorMode } from '../lib/countdownColor';
 
 interface FullScreenTimerProps {
   isRunning?: boolean;
@@ -59,6 +60,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
+  const countdownColorMode = useCountdownColorMode();
 
   // Debug secondary timer prop (only when it changes)
   useEffect(() => {
@@ -509,19 +511,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     if (hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
-        // Timer is not running, show neutral color
-        return '#6b7280'; // Gray
+        return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
     }
     
-    // Color based on remaining time
-    if (remainingSeconds > 120) { // More than 2 minutes
-      return '#10b981'; // Green
-    } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
-      return '#f59e0b'; // Yellow
-    } else { // Less than 30 seconds
-      return '#ef4444'; // Red
-    }
+    return countdownColorForRemaining(remainingSeconds, { mode: countdownColorMode });
   };
 
   return (

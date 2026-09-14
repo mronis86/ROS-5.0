@@ -12,6 +12,7 @@ import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+import { countdownColorForRemaining } from '../lib/countdownColor';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -198,16 +199,12 @@ const as12 = (h: number, m: number) => {
 
 const countdownColor = (remaining: number) => {
   if (remaining < 0) return '#ef4444';
-  if (remaining > 120) return '#10b981';
-  if (remaining > 30) return '#f59e0b';
-  return '#ef4444';
+  return countdownColorForRemaining(remaining);
 };
 
 const progressColor = (remaining: number) => {
   if (remaining < 0) return '#ef4444';
-  if (remaining > 120) return '#10b981';
-  if (remaining > 30) return '#f59e0b';
-  return '#ef4444';
+  return countdownColorForRemaining(remaining);
 };
 
 const OperatorCueDisplayPage: React.FC = () => {

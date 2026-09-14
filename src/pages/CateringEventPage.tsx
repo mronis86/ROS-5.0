@@ -17,6 +17,7 @@ import {
   normalizeCateringNoteCategory,
   type CateringNoteCategory,
 } from '../lib/cateringNotes';
+import { countdownColorForRemaining } from '../lib/countdownColor';
 
 type ScheduleItem = {
   id: number;
@@ -89,16 +90,12 @@ function formatTime(seconds: number): string {
 
 function countdownColor(remaining: number, hasTimer: boolean): string {
   if (!hasTimer) return '#ffffff';
-  if (remaining > 120) return '#10b981';
-  if (remaining > 30) return '#f59e0b';
-  return '#ef4444';
+  return countdownColorForRemaining(remaining);
 }
 
 function progressBarColor(remaining: number): string {
   if (remaining < 0) return '#ef4444';
-  if (remaining > 120) return '#10b981';
-  if (remaining > 30) return '#f59e0b';
-  return '#ef4444';
+  return countdownColorForRemaining(remaining);
 }
 
 function as12(h24: number, mins: number): string {

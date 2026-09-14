@@ -991,9 +991,17 @@ const EventListPage: React.FC = () => {
         {activeTab === 'quickMode' && (
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4 p-3 bg-purple-950/40 border border-purple-700/50 rounded-lg">
             <p className="text-sm text-purple-200">
-              Quick Mode sessions are timer workspaces. Select entries below to delete old or duplicate sessions.
+              Quick Mode sessions are timer workspaces. Start a new one anytime, or clean up old sessions below.
             </p>
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => navigate('/quick-mode?new=1')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-slate-900 text-sm font-bold rounded-lg"
+              >
+                <QuickModeBoltIcon className="h-3.5 w-3.5" />
+                New Quick Mode
+              </button>
               <button
                 type="button"
                 onClick={() => setQuickModeSelectedIds(new Set(filteredEvents.map((e) => e.id)))}
@@ -1148,10 +1156,20 @@ const EventListPage: React.FC = () => {
                           {activeTab === 'upcoming' 
                             ? 'Add your first upcoming event to get started!'
                             : activeTab === 'quickMode'
-                              ? 'Open Quick Mode to start timers. Sessions appear here for cleanup.'
+                              ? 'Start a new Quick Mode session to create ad-hoc timers. Sessions appear here for cleanup.'
                               : 'Past events will appear here once you have some.'
                           }
                         </p>
+                        {activeTab === 'quickMode' ? (
+                          <button
+                            type="button"
+                            onClick={() => navigate('/quick-mode?new=1')}
+                            className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-slate-900 text-sm font-bold rounded-lg"
+                          >
+                            <QuickModeBoltIcon className="h-4 w-4" />
+                            New Quick Mode
+                          </button>
+                        ) : null}
                       </td>
                     </tr>
                   ) : (
@@ -1289,6 +1307,7 @@ const EventListPage: React.FC = () => {
             isLoading={isLoading}
             onRefresh={() => loadEventsFromSupabase()}
             onAddClick={() => setShowAddModal(true)}
+            onNewQuickMode={() => navigate('/quick-mode?new=1')}
             onOpenQuickModeSession={(event) => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
             quickModeEventCount={quickModeEventCount}
             onBulkDeleteQuickMode={() => openBulkDeleteConfirm(filteredEvents)}

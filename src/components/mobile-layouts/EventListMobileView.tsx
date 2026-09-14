@@ -28,6 +28,7 @@ type EventListMobileViewProps = {
   isLoading: boolean;
   onRefresh: () => void;
   onAddClick: () => void;
+  onNewQuickMode?: () => void;
   onOpenQuickModeSession?: (event: Event) => void;
   quickModeEventCount?: number;
   onBulkDeleteQuickMode?: () => void;
@@ -60,6 +61,7 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   isLoading,
   onRefresh,
   onAddClick,
+  onNewQuickMode,
   onOpenQuickModeSession,
   quickModeEventCount = 0,
   onBulkDeleteQuickMode,
@@ -157,6 +159,16 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
         >
           + Add Event
         </button>
+        {activeTab === 'quickMode' && onNewQuickMode ? (
+          <button
+            type="button"
+            onClick={onNewQuickMode}
+            className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg bg-yellow-600 px-3 py-2 text-sm font-bold text-slate-900 shadow hover:bg-yellow-500"
+          >
+            <QuickModeBoltIcon className="h-4 w-4" />
+            New Quick Mode
+          </button>
+        ) : null}
         {activeTab === 'quickMode' && onBulkDeleteQuickMode && displayedEvents.length > 0 ? (
           <button
             type="button"
@@ -289,9 +301,19 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
               {activeTab === 'upcoming'
                 ? 'Add an event to get started.'
                 : activeTab === 'quickMode'
-                  ? 'Open Quick Mode to start timers.'
+                  ? 'Start a new Quick Mode session to create ad-hoc timers.'
                   : 'Past events will appear here.'}
             </p>
+            {activeTab === 'quickMode' && onNewQuickMode ? (
+              <button
+                type="button"
+                onClick={onNewQuickMode}
+                className="mt-4 inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-yellow-600 px-4 py-2 text-sm font-bold text-slate-900 hover:bg-yellow-500"
+              >
+                <QuickModeBoltIcon className="h-4 w-4" />
+                New Quick Mode
+              </button>
+            ) : null}
           </div>
         ) : (
           displayedEvents.map((event) => {

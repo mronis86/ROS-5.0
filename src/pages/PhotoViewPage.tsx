@@ -19,6 +19,8 @@ import {
 } from '../lib/displaySession';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+import { speakersForSlots } from '../lib/micManager';
+import { getCountdownPrimaryHex, useCountdownColorMode } from '../lib/countdownColor';
 
 interface ScheduleItem {
   id: number;
@@ -71,6 +73,7 @@ const PhotoViewPage: React.FC = () => {
   const [event, setEvent] = useState<Event | null>(initialEvent);
   const [events, setEvents] = useState<Event[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const countdownColorMode = useCountdownColorMode();
 
   // Sync event from URL/location when navigating externally (e.g. from Run of Show link)
   useEffect(() => {
@@ -878,7 +881,7 @@ const PhotoViewPage: React.FC = () => {
       if (remainingSeconds < 0) { // Overrun - red
         return '#ef4444';
       } else if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -896,7 +899,7 @@ const PhotoViewPage: React.FC = () => {
         
         // Color based on remaining time
         if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -912,7 +915,7 @@ const PhotoViewPage: React.FC = () => {
       
       // Color based on remaining time
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -920,7 +923,7 @@ const PhotoViewPage: React.FC = () => {
       }
     }
     
-    return '#10b981'; // Default green
+    return getCountdownPrimaryHex(countdownColorMode); // Default green
   };
 
   // Get countdown color based on remaining time (matches progress bar colors)
@@ -932,7 +935,7 @@ const PhotoViewPage: React.FC = () => {
       
       // Color based on remaining time (matches progress bar)
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -955,7 +958,7 @@ const PhotoViewPage: React.FC = () => {
         
         // Color based on remaining time (matches progress bar)
         if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -971,7 +974,7 @@ const PhotoViewPage: React.FC = () => {
       
       // Color based on remaining time (matches progress bar)
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -979,7 +982,7 @@ const PhotoViewPage: React.FC = () => {
       }
     }
     
-    return '#10b981'; // Default green (matches progress bar)
+    return getCountdownPrimaryHex(countdownColorMode);
   };
 
   // Debug logging for status display - commented out to reduce log spam
@@ -2281,8 +2284,28 @@ const PhotoViewPage: React.FC = () => {
   if (broadcastMode) {
     const currentItem = previewItems[0];
     const nextItem = previewItems[1];
-    const currentSpeakers = parseSpeakers(currentItem).filter((spk: any) => spk && (spk.fullName || spk.photoLink));
-    const nextSpeakers = parseSpeakers(nextItem).filter((spk: any) => spk && (spk.fullName || spk.photoLink));
+    // Slots 1–7, but only show first-filled → last-filled (keep empty gaps in between)
+    const isFilledSpeaker = (spk: { fullName?: string; photoLink?: string } | null | undefined) =>
+      !!(spk && (spk.fullName?.trim() || spk.photoLink));
+    const slotWindow = <T,>(slots: T[]) => {
+      let first = -1;
+      let last = -1;
+      slots.forEach((spk, i) => {
+        if (isFilledSpeaker(spk as { fullName?: string; photoLink?: string } | null)) {
+          if (first < 0) first = i;
+          last = i;
+        }
+      });
+      if (first < 0) return [] as Array<{ slotNumber: number; speaker: T }>;
+      return slots.slice(first, last + 1).map((speaker, offset) => ({
+        slotNumber: first + offset + 1,
+        speaker,
+      }));
+    };
+    const currentSlotCards = slotWindow(speakersForSlots(currentItem?.speakersText));
+    const nextSlotCards = slotWindow(speakersForSlots(nextItem?.speakersText));
+    const slotMaxWidth =
+      currentSlotCards.length <= 2 ? '32%' : currentSlotCards.length <= 4 ? '22%' : '14.5%';
     const cueLabel = currentItem?.customFields?.cue
       ? formatCueDisplay(currentItem.customFields.cue)
       : currentItem
@@ -2437,32 +2460,63 @@ const PhotoViewPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Speakers + notes */}
+            {/* Speakers + notes — slot-aware (gaps kept, trailing empties hidden) */}
             <div className="absolute left-[2%] right-[2%] top-[20%] bottom-[17%] flex gap-[1.5%] min-h-0">
               <div
-                className={`flex items-stretch justify-center gap-[1.2%] min-w-0 ${
+                className={`flex items-stretch justify-center gap-[0.8%] min-w-0 ${
                   hasValidNotes ? 'flex-[1.75]' : 'flex-1'
                 }`}
               >
-                {currentSpeakers.length === 0 ? (
+                {!currentItem || currentSlotCards.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center text-slate-500 text-[clamp(1rem,2vw,1.5rem)]">
                     No speakers on this cue
                   </div>
                 ) : (
-                  currentSpeakers.map((speaker: any, idx: number) => {
+                  currentSlotCards.map(({ slotNumber, speaker }) => {
+                    const z = broadcastZoomScale;
+                    if (!isFilledSpeaker(speaker)) {
+                      return (
+                        <div
+                          key={`slot-${slotNumber}`}
+                          className="flex-1 min-w-0 flex flex-col items-center justify-start"
+                          style={{ maxWidth: slotMaxWidth }}
+                        >
+                          <div
+                            className="w-full aspect-[3/4] rounded-lg overflow-hidden border border-dashed border-slate-700 bg-slate-900/50 flex flex-col items-center justify-center gap-1"
+                            style={{ maxHeight: `${Math.min(78, 62 * z + 8)}%` }}
+                          >
+                            <div
+                              className="font-bold tracking-widest text-slate-500"
+                              style={{ fontSize: `clamp(${0.55 * z}rem, ${1.1 * z}vw, ${0.85 * z}rem)` }}
+                            >
+                              SLOT {slotNumber}
+                            </div>
+                            <div
+                              className="text-slate-600"
+                              style={{ fontSize: `clamp(${0.5 * z}rem, ${0.95 * z}vw, ${0.75 * z}rem)` }}
+                            >
+                              Empty
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
                     const fullName = String(speaker.fullName || 'Unnamed').trim();
                     const titleOrg = [speaker.title, speaker.org].filter(Boolean).join(', ');
-                    const z = broadcastZoomScale;
                     // Notes squeeze columns — use a 2-line name split (no "…") instead of ellipsis.
-                    const nameWithNotes = hasValidNotes;
-                    const nameTwoLine = nameWithNotes ? formatNameForTwoLines(fullName) : null;
+                    const nameTwoLine = hasValidNotes ? formatNameForTwoLines(fullName) : null;
                     return (
                       <div
-                        key={`${speaker.slot}-${idx}`}
-                        className={`flex-1 min-w-0 flex flex-col items-center justify-start ${
-                          hasValidNotes ? 'max-w-[28%]' : 'max-w-[22%]'
-                        }`}
+                        key={`slot-${slotNumber}`}
+                        className="flex-1 min-w-0 flex flex-col items-center justify-start"
+                        style={{ maxWidth: slotMaxWidth }}
                       >
+                        <div
+                          className="mb-1 font-bold tracking-widest text-slate-400"
+                          style={{ fontSize: `clamp(${0.45 * z}rem, ${0.85 * z}vw, ${0.7 * z}rem)` }}
+                        >
+                          SLOT {slotNumber}
+                        </div>
                         <div
                           className="w-full aspect-[3/4] rounded-lg overflow-hidden border border-slate-600 shadow-xl bg-slate-900"
                           style={{ maxHeight: `${Math.min(78, 62 * z + 8)}%` }}
@@ -2482,7 +2536,7 @@ const PhotoViewPage: React.FC = () => {
                           <div
                             className="mt-2 text-center font-bold leading-tight w-full px-0.5"
                             style={{
-                              fontSize: `clamp(${0.82 * z}rem, ${2.05 * z}vw, ${1.7 * z}rem)`,
+                              fontSize: `clamp(${0.72 * z}rem, ${1.75 * z}vw, ${1.45 * z}rem)`,
                             }}
                             title={fullName}
                             dangerouslySetInnerHTML={{ __html: nameTwoLine.html }}
@@ -2491,7 +2545,7 @@ const PhotoViewPage: React.FC = () => {
                           <div
                             className="mt-2 text-center font-bold leading-none whitespace-nowrap overflow-hidden text-ellipsis w-full px-0.5"
                             style={{
-                              fontSize: `clamp(${0.95 * z}rem, ${2.35 * z}vw, ${1.95 * z}rem)`,
+                              fontSize: `clamp(${0.8 * z}rem, ${2 * z}vw, ${1.65 * z}rem)`,
                             }}
                             title={fullName}
                           >
@@ -2501,7 +2555,7 @@ const PhotoViewPage: React.FC = () => {
                         {titleOrg ? (
                           <div
                             className="text-slate-400 text-center max-w-full px-1 mt-1 whitespace-nowrap overflow-hidden text-ellipsis"
-                            style={{ fontSize: `clamp(${0.55 * z}rem, ${1.05 * z}vw, ${0.9 * z}rem)` }}
+                            style={{ fontSize: `clamp(${0.48 * z}rem, ${0.95 * z}vw, ${0.8 * z}rem)` }}
                             title={titleOrg}
                           >
                             {titleOrg}
@@ -2509,8 +2563,8 @@ const PhotoViewPage: React.FC = () => {
                         ) : null}
                         {speaker.location ? (
                           <div
-                            className="mt-1.5 font-semibold text-slate-100 bg-slate-700/90 px-2.5 py-1 rounded-md tracking-wide"
-                            style={{ fontSize: `clamp(${0.7 * z}rem, ${1.45 * z}vw, ${1.2 * z}rem)` }}
+                            className="mt-1.5 font-semibold text-slate-100 bg-slate-700/90 px-2 py-1 rounded-md tracking-wide"
+                            style={{ fontSize: `clamp(${0.6 * z}rem, ${1.25 * z}vw, ${1.05 * z}rem)` }}
                           >
                             {speaker.location}
                           </div>
@@ -2564,21 +2618,36 @@ const PhotoViewPage: React.FC = () => {
                       {nextItem.segmentName || nextItem.programType || '—'}
                     </div>
                   </div>
-                  <div className="flex-1 flex items-center justify-end gap-2 overflow-hidden">
-                    {nextSpeakers.slice(0, 5).map((speaker: any, idx: number) => (
-                      <img
-                        key={`next-${speaker.slot}-${idx}`}
-                        src={speaker.photoLink || '/speaker-placeholder.svg'}
-                        alt={speaker.fullName || ''}
-                        title={speaker.fullName || ''}
-                        className="h-[72%] aspect-[3/4] object-cover rounded border border-slate-600"
-                        style={{ objectPosition: 'center top', maxHeight: '4.5rem' }}
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src = '/speaker-placeholder.svg';
-                        }}
-                      />
-                    ))}
+                  <div className="flex-1 flex items-center justify-end gap-1.5 overflow-hidden">
+                    {nextSlotCards.map(({ slotNumber, speaker }) => {
+                      const filled = isFilledSpeaker(speaker);
+                      if (!filled) {
+                        return (
+                          <div
+                            key={`next-slot-${slotNumber}`}
+                            title={`Slot ${slotNumber} · Empty`}
+                            className="h-[72%] aspect-[3/4] rounded border border-dashed border-slate-700 bg-slate-900/40 flex items-center justify-center text-[9px] font-bold tracking-wide text-slate-600"
+                            style={{ maxHeight: '4.5rem' }}
+                          >
+                            {slotNumber}
+                          </div>
+                        );
+                      }
+                      return (
+                        <img
+                          key={`next-slot-${slotNumber}`}
+                          src={speaker!.photoLink || '/speaker-placeholder.svg'}
+                          alt={speaker!.fullName || `Slot ${slotNumber}`}
+                          title={`Slot ${slotNumber}${speaker!.fullName ? ` · ${speaker!.fullName}` : ''}`}
+                          className="h-[72%] aspect-[3/4] object-cover rounded border border-slate-600"
+                          style={{ objectPosition: 'center top', maxHeight: '4.5rem' }}
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = '/speaker-placeholder.svg';
+                          }}
+                        />
+                      );
+                    })}
                   </div>
                 </>
               ) : (

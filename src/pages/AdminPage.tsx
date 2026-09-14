@@ -9,17 +9,22 @@ import {
   getLogoVariant,
   getLogoVariantId,
   getGreenRoomLayoutId,
+  getCountdownColorModeId,
   LOGO_VARIANTS,
   GREEN_ROOM_LAYOUTS,
+  COUNTDOWN_COLOR_MODES,
   applyLogoVariantId,
   applyGreenRoomLayoutId,
+  applyCountdownColorModeId,
   type LogoVariantId,
   type GreenRoomLayoutId,
+  type CountdownColorModeId,
 } from '../lib/branding';
 import {
   fetchAdminAppSettings,
   saveAdminLogoVariant,
   saveAdminGreenRoomLayout,
+  saveAdminCountdownColorMode,
   syncAdminAppSettingsTable,
 } from '../lib/appSettings';
 import AppLogo from '../components/AppLogo';
@@ -485,6 +490,9 @@ export default function AdminPage() {
   const [accessEmailCopied, setAccessEmailCopied] = useState(false);
   const [logoVariantId, setLogoVariantIdState] = useState<LogoVariantId>(() => getLogoVariantId());
   const [greenRoomLayoutId, setGreenRoomLayoutIdState] = useState<GreenRoomLayoutId>(() => getGreenRoomLayoutId());
+  const [countdownColorModeId, setCountdownColorModeIdState] = useState<CountdownColorModeId>(() =>
+    getCountdownColorModeId()
+  );
   const [logoSettingsLoading, setLogoSettingsLoading] = useState(false);
   const [logoSettingsSaving, setLogoSettingsSaving] = useState(false);
   const [logoSettingsError, setLogoSettingsError] = useState<string | null>(null);
@@ -740,8 +748,10 @@ export default function AdminPage() {
       setLogoSettingsUpdatedAt(settings.updatedAt);
       applyLogoVariantId(settings.logoVariantId);
       applyGreenRoomLayoutId(settings.greenRoomLayoutId);
+      applyCountdownColorModeId(settings.countdownColorModeId);
       setLogoVariantIdState(settings.logoVariantId);
       setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
+      setCountdownColorModeIdState(settings.countdownColorModeId);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to load logo settings');
     } finally {
@@ -757,6 +767,7 @@ export default function AdminPage() {
       const settings = await saveAdminLogoVariant(id);
       setLogoVariantIdState(settings.logoVariantId);
       setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
+      setCountdownColorModeIdState(settings.countdownColorModeId);
       setLogoSettingsUpdatedAt(settings.updatedAt);
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
@@ -774,10 +785,29 @@ export default function AdminPage() {
       const settings = await saveAdminGreenRoomLayout(id);
       setLogoVariantIdState(settings.logoVariantId);
       setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
+      setCountdownColorModeIdState(settings.countdownColorModeId);
       setLogoSettingsUpdatedAt(settings.updatedAt);
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save Green Room layout');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handleCountdownColorModeChange = async (id: CountdownColorModeId) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminCountdownColorMode(id);
+      setLogoVariantIdState(settings.logoVariantId);
+      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
+      setCountdownColorModeIdState(settings.countdownColorModeId);
+      setLogoSettingsUpdatedAt(settings.updatedAt);
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save countdown color');
     } finally {
       setLogoSettingsSaving(false);
     }
@@ -792,8 +822,10 @@ export default function AdminPage() {
       setLogoSettingsUpdatedAt(settings.updatedAt);
       applyLogoVariantId(settings.logoVariantId);
       applyGreenRoomLayoutId(settings.greenRoomLayoutId);
+      applyCountdownColorModeId(settings.countdownColorModeId);
       setLogoVariantIdState(settings.logoVariantId);
       setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
+      setCountdownColorModeIdState(settings.countdownColorModeId);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to create app_settings table');
     } finally {
@@ -3993,7 +4025,7 @@ export default function AdminPage() {
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-white">Branding</h2>
-                <p className="text-slate-400 text-sm">Global logo and Green Room layout. Saved in Neon app_settings.</p>
+                <p className="text-slate-400 text-sm">Global logo, countdown color, and Green Room layout. Saved in Neon app_settings.</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-2">
@@ -4089,6 +4121,53 @@ export default function AdminPage() {
               <span className="ml-2">Last updated {new Date(logoSettingsUpdatedAt).toLocaleString()}.</span>
             ) : null}
           </p>
+
+          <div className="mt-8 pt-6 border-t border-slate-700">
+            <h3 className="text-base font-semibold text-white">Primary countdown color</h3>
+            <p className="text-slate-400 text-sm mt-1 mb-4">
+              Color used when plenty of time remains (&gt;2 min) on Clock, Fullscreen Timer, Photo View, and other
+              countdown surfaces. Amber and red warning colors stay the same.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {COUNTDOWN_COLOR_MODES.map((mode) => {
+                const selected = countdownColorModeId === mode.id;
+                return (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => void handleCountdownColorModeChange(mode.id)}
+                    disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                    className={`rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
+                      selected
+                        ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                        : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-white">{mode.label}</p>
+                        <p className="mt-1 text-sm text-slate-400">{mode.description}</p>
+                      </div>
+                      <span
+                        className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border ${
+                          selected ? 'border-blue-400 bg-blue-500' : 'border-slate-500'
+                        }`}
+                        aria-hidden
+                      />
+                    </div>
+                    <div className="mt-4 flex min-h-[48px] items-center justify-center rounded-lg bg-black px-3 py-2">
+                      <span
+                        className="font-mono text-2xl font-bold tabular-nums tracking-tight"
+                        style={{ color: mode.previewHex }}
+                      >
+                        12:34
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           <div className="mt-8 pt-6 border-t border-slate-700">
             <h3 className="text-base font-semibold text-white">Green Room layout</h3>

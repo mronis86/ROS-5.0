@@ -1,11 +1,15 @@
 import { getApiBaseUrl } from '../services/api-client';
 import { adminFetch } from './adminAuth';
 import {
+  applyCountdownColorModeId,
   applyGreenRoomLayoutId,
   applyLogoVariantId,
+  getCountdownColorModeId,
   getGreenRoomLayoutId,
   getLogoVariantId,
+  parseCountdownColorModeId,
   parseGreenRoomLayoutId,
+  type CountdownColorModeId,
   type GreenRoomLayoutId,
   type LogoVariantId,
 } from './branding';
@@ -13,6 +17,7 @@ import {
 export type AppSettingsResponse = {
   logoVariantId: LogoVariantId;
   greenRoomLayoutId: GreenRoomLayoutId;
+  countdownColorModeId: CountdownColorModeId;
   updatedAt: string | null;
   needsMigration?: boolean;
 };
@@ -20,9 +25,11 @@ export type AppSettingsResponse = {
 function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }): AppSettingsResponse {
   const logoVariantId = data.logoVariantId === 'sinor' ? 'sinor' : 'default';
   const greenRoomLayoutId = parseGreenRoomLayoutId(data.greenRoomLayoutId) ?? 'classic';
+  const countdownColorModeId = parseCountdownColorModeId(data.countdownColorModeId) ?? 'standard';
   return {
     logoVariantId,
     greenRoomLayoutId,
+    countdownColorModeId,
     updatedAt: data.updatedAt ?? null,
     needsMigration: data.needsMigration === true,
   };
@@ -31,6 +38,7 @@ function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }):
 function applySettings(settings: AppSettingsResponse): AppSettingsResponse {
   applyLogoVariantId(settings.logoVariantId);
   applyGreenRoomLayoutId(settings.greenRoomLayoutId);
+  applyCountdownColorModeId(settings.countdownColorModeId);
   return settings;
 }
 
@@ -89,6 +97,23 @@ export async function saveAdminGreenRoomLayout(
   return applySettings(parseSettings(data));
 }
 
+export async function saveAdminCountdownColorMode(
+  countdownColorModeId: CountdownColorModeId
+): Promise<AppSettingsResponse> {
+  const res = await adminFetch('/api/admin/app-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ countdownColorModeId }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to save countdown color (${res.status})`);
+  }
+  return applySettings(parseSettings(data));
+}
+
 export async function syncAdminAppSettingsTable(): Promise<AppSettingsResponse> {
   const res = await adminFetch('/api/admin/app-settings/sync-table', { method: 'POST' });
   const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
@@ -112,6 +137,7 @@ export async function hydrateLogoVariantFromServer(): Promise<LogoVariantId> {
         return settings.logoVariantId;
       } catch {
         applyGreenRoomLayoutId(getGreenRoomLayoutId());
+        applyCountdownColorModeId(getCountdownColorModeId());
         return getLogoVariantId();
       }
     })();

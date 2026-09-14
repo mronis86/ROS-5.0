@@ -3,6 +3,7 @@ import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { startSecondTicker } from '../utils/secondTicker';
+import { countdownColorForRemaining, useCountdownColorMode } from '../lib/countdownColor';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -57,6 +58,7 @@ const Clock: React.FC<ClockProps> = ({
   const [lastActiveItemId, setLastActiveItemId] = useState<number | null>(null);
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  const countdownColorMode = useCountdownColorMode();
 
   // Clock component always runs in WebSocket-only mode
 
@@ -676,13 +678,11 @@ const Clock: React.FC<ClockProps> = ({
     if (supabaseOnly && hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
-        return '#6b7280';
+        return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
     }
-    if (elapsed > progress.total) return '#ef4444'; // Red when overtime
-    if (remaining > 120) return '#10b981';
-    if (remaining > 30) return '#f59e0b';
-    return '#ef4444';
+    if (elapsed > progress.total) return countdownColorForRemaining(0, { mode: countdownColorMode });
+    return countdownColorForRemaining(remaining, { mode: countdownColorMode });
   };
 
   // Get remaining percentage for progress bar (same logic as RunOfShowPage)
@@ -711,19 +711,11 @@ const Clock: React.FC<ClockProps> = ({
     if (supabaseOnly && hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
-        // Timer is not running, show neutral color
-        return '#6b7280'; // Gray
+        return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
     }
     
-    // Color based on remaining time
-    if (remainingSeconds > 120) { // More than 2 minutes
-      return '#10b981'; // Green
-    } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
-      return '#f59e0b'; // Yellow
-    } else { // Less than 30 seconds
-      return '#ef4444'; // Red
-    }
+    return countdownColorForRemaining(remainingSeconds, { mode: countdownColorMode });
   };
 
   // Active cue timer mode: timeOfDay = swap + progress bar; todOnly = time of day only, no progress bar or time remaining
