@@ -2,8 +2,16 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   tokenizeScriptForSpeech,
   alignTranscriptVoicePrompt,
-  normalizeSpeechToken
+  normalizeSpeechToken,
+  type ScriptSpeechToken
 } from '../lib/teleprompter-voice-alignment';
+import {
+  audioConstraintsForMic,
+  computeMicLevelFromTimeDomain,
+  listAudioInputDevices,
+  unlockAndListMics,
+  writeStoredMicId,
+} from '../lib/teleprompter-mic';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { getApiBaseUrl } from '../services/api-client';
@@ -106,10 +114,31 @@ const TeleprompterPage: React.FC = () => {
 
   /** Mic + Web Speech: align transcript to script and scroll */
   const [voiceListenEnabled, setVoiceListenEnabled] = useState(false);
+  const [voiceMicCheckOnly, setVoiceMicCheckOnly] = useState(false);
   const [voiceHighlightLine, setVoiceHighlightLine] = useState<number | null>(null);
+  /** Matched script word index for word-underline highlight. */
+  const [voiceHighlightWordIndex, setVoiceHighlightWordIndex] = useState<number | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<string>('');
   const [voiceInterimPreview, setVoiceInterimPreview] = useState<string>('');
-  const [voiceHighlightEnabled, setVoiceHighlightEnabled] = useState(true);
+  /** off | words (underline) | band (soft fill) */
+  const [voiceHighlightStyle, setVoiceHighlightStyle] = useState<'off' | 'words' | 'band'>('words');
+  const [voiceHighlightColor, setVoiceHighlightColor] = useState<string>(() => {
+    try {
+      return localStorage.getItem('ros.teleprompter.voiceHighlightColor') || '#FBBF24';
+    } catch {
+      return '#FBBF24';
+    }
+  });
+  const [audioInputDevices, setAudioInputDevices] = useState<Array<{ deviceId: string; label: string }>>([]);
+  const [selectedMicId, setSelectedMicId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('ros.teleprompter.micDeviceId') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [voiceMicLevel, setVoiceMicLevel] = useState(0);
+  const [voiceHeardAnything, setVoiceHeardAnything] = useState(false);
   
   // Teleprompter settings
   const [settings, setSettings] = useState<TeleprompterSettings>({
@@ -140,6 +169,7 @@ const TeleprompterPage: React.FC = () => {
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
 
   const voiceListenEnabledRef = useRef(false);
+  const voiceMicCheckOnlyRef = useRef(false);
   /** Script word index — VoicePrompt-style matcher advances from here (final + interim). */
   const voiceCommittedAnchorRef = useRef(0);
   const voiceRecentTranscriptWordsRef = useRef<string[]>([]);
@@ -150,8 +180,17 @@ const TeleprompterPage: React.FC = () => {
   const voiceScrollLoopRafRef = useRef<number | null>(null);
   /** Last line we ran a full scroll snap; same-line speech only nudges pixels (avoids per-word snapping). */
   const voiceScrollSnapLineRef = useRef(-1);
+  /** performance.now() of last successful word advance — drives pause / pace. */
+  const voiceLastMatchAtRef = useRef(0);
+  /** Smoothed spoken words/sec from match timing. */
+  const voiceSpeechRateWpsRef = useRef(2.4);
+  /** Current scroll velocity px/s (smoothed toward speech pace). */
+  const voiceScrollVelocityRef = useRef(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const speechRecognitionRef = useRef<any>(null);
+  const voiceMicStreamRef = useRef<MediaStream | null>(null);
+  const voiceAudioCtxRef = useRef<AudioContext | null>(null);
+  const voiceLevelRafRef = useRef<number | null>(null);
 
   // Handle disconnect timer confirmation
   const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
@@ -645,33 +684,68 @@ const TeleprompterPage: React.FC = () => {
   const clearVoiceScrollTarget = useCallback(() => {
     voiceDesiredScrollTopRef.current = null;
     voiceScrollSnapLineRef.current = -1;
+    voiceLastMatchAtRef.current = 0;
+    voiceSpeechRateWpsRef.current = 2.4;
+    voiceScrollVelocityRef.current = 0;
   }, []);
 
-  /** Gentle downward drift while staying on the same script line (finals add words, not snaps). */
-  const nudgeVoiceScrollByPixels = useCallback((delta: number) => {
-    const el = previewScrollRef.current;
-    if (!el || userRole !== 'SCROLLER' || delta === 0) return;
-    const maxS = Math.max(0, el.scrollHeight - el.clientHeight);
-    const base = voiceDesiredScrollTopRef.current ?? el.scrollTop;
-    voiceDesiredScrollTopRef.current = Math.max(0, Math.min(base + delta, maxS));
-  }, [userRole]);
-
-  /** Sets scroll goal only; continuous RAF loop below eases scrollTop (reduces interim jitter). */
-  const setVoiceScrollDesiredFromLine = useCallback(
-    (lineIndex: number) => {
+  /**
+   * Point the cruise target at the matched word on the guide.
+   * Skips blank/break-line gaps so the next spoken line stays visible.
+   */
+  const setVoiceScrollDesiredFromWord = useCallback(
+    (wordIndex: number, tokens: ScriptSpeechToken[]) => {
       const container = previewScrollRef.current;
+      if (!container || userRole !== 'SCROLLER' || tokens.length === 0) return;
+
+      const wi = Math.max(0, Math.min(wordIndex, tokens.length - 1));
+      let lineIndex = tokens[wi].lineIndex;
+
+      let lineStart = wi;
+      while (lineStart > 0 && tokens[lineStart - 1].lineIndex === lineIndex) lineStart--;
+      let lineEnd = wi;
+      while (lineEnd < tokens.length - 1 && tokens[lineEnd + 1].lineIndex === lineIndex) lineEnd++;
+      const wordsOnLine = Math.max(1, lineEnd - lineStart + 1);
+      const frac = (wi - lineStart + 0.4) / wordsOnLine;
+
+      // If blank lines follow, peek toward the next spoken line once we're mid/late on this line
+      const nextSpokenTok = tokens.find((t) => t.lineIndex > lineIndex);
+      const blankGap =
+        nextSpokenTok != null ? nextSpokenTok.lineIndex - lineIndex - 1 : 0;
+      if (blankGap > 0 && frac >= 0.45) {
+        lineIndex = nextSpokenTok!.lineIndex;
+      }
+
       const lineEl = lineRefsMap.current.get(lineIndex);
-      if (!container || !lineEl || userRole !== 'SCROLLER') return;
-      const c = container.getBoundingClientRect();
-      const r = lineEl.getBoundingClientRect();
-      const guideY = c.top + c.height * (guideLinePosition / 100);
-      const lineCenterY = r.top + r.height / 2;
-      const delta = lineCenterY - guideY;
-      const raw = container.scrollTop + delta;
-      const target = Math.max(0, Math.min(raw, container.scrollHeight - container.clientHeight));
-      voiceDesiredScrollTopRef.current = target;
+      if (!lineEl) return;
+
+      const cRect = container.getBoundingClientRect();
+      const lRect = lineEl.getBoundingClientRect();
+      const layoutH = container.offsetHeight || 1;
+      const scale = cRect.height / layoutH || 1;
+      const lineTopInContent =
+        (lRect.top - cRect.top) / scale + container.scrollTop;
+
+      const guideFrac = guideLinePosition / 100;
+      const lineH = lineEl.offsetHeight || settings.fontSize * settings.lineHeight * 1.35;
+      const useFrac = blankGap > 0 && frac >= 0.45 ? 0.25 : Math.min(0.75, 0.2 + frac * 0.5);
+      const raw =
+        lineTopInContent - container.clientHeight * guideFrac + lineH * useFrac;
+      const maxS = Math.max(0, container.scrollHeight - container.clientHeight);
+      const target = Math.max(0, Math.min(raw, maxS));
+      const cur = voiceDesiredScrollTopRef.current ?? container.scrollTop;
+
+      if (target < cur - lineH * 0.75) return;
+
+      // Blank gaps can be tall — allow a bigger target step so we don't stall in whitespace
+      const maxTargetStep = lineH * (blankGap > 0 ? Math.min(8, 2 + blankGap) : 3.5);
+      if (target > cur + maxTargetStep) {
+        voiceDesiredScrollTopRef.current = cur + maxTargetStep;
+      } else {
+        voiceDesiredScrollTopRef.current = target;
+      }
     },
-    [userRole, guideLinePosition]
+    [userRole, guideLinePosition, settings.fontSize, settings.lineHeight]
   );
 
   useEffect(() => {
@@ -684,20 +758,71 @@ const TeleprompterPage: React.FC = () => {
     }
 
     const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
+    let lastTs = performance.now();
 
-    const tick = () => {
+    const tick = (ts: number) => {
       const el = previewScrollRef.current;
+      const dt = Math.min(0.05, Math.max(0.008, (ts - lastTs) / 1000));
+      lastTs = ts;
+
       if (el && voiceDesiredScrollTopRef.current !== null) {
         const maxS = Math.max(0, el.scrollHeight - el.clientHeight);
         const tgt = Math.max(0, Math.min(voiceDesiredScrollTopRef.current, maxS));
         const cur = el.scrollTop;
         const diff = tgt - cur;
-        if (Math.abs(diff) < 0.9) {
+        const distance = Math.abs(diff);
+
+        if (distance < 0.5) {
           el.scrollTop = tgt;
+          voiceScrollVelocityRef.current *= 0.92;
         } else {
-          el.scrollTop = cur + diff * 0.075;
+          const sinceMatchSec =
+            voiceLastMatchAtRef.current > 0
+              ? (ts - voiceLastMatchAtRef.current) / 1000
+              : 99;
+
+          // Only fully stop after a real silence (~2.5s). Brief gaps keep a crawl.
+          const HARD_PAUSE_SEC = 2.5;
+          if (sinceMatchSec > HARD_PAUSE_SEC) {
+            voiceScrollVelocityRef.current *= 0.9;
+            if (voiceScrollVelocityRef.current < 6) {
+              voiceScrollVelocityRef.current = 0;
+            }
+          } else {
+            const wps = Math.max(1.2, Math.min(7, voiceSpeechRateWpsRef.current));
+            const wordsPerLine = 8;
+            let desiredPxPerSec = (wps / wordsPerLine) * lineHeightPx;
+
+            const lagLines = distance / Math.max(1, lineHeightPx);
+            if (lagLines > 0.35) {
+              desiredPxPerSec *= 1 + Math.min(2.8, lagLines * 1.1);
+            }
+            if (sinceMatchSec < 0.45) {
+              desiredPxPerSec *= 1.12;
+            } else if (sinceMatchSec > 1.2) {
+              // Natural breath / clause gap — keep crawling toward the line
+              desiredPxPerSec *= 0.42;
+            }
+
+            desiredPxPerSec *= Math.max(0.45, settings.scrollSpeed / 50);
+
+            const crawlFloor = lineHeightPx * (sinceMatchSec > 1.2 ? 0.35 : 1.0);
+            const maxPx = lineHeightPx * 5.5;
+            desiredPxPerSec = Math.max(crawlFloor, Math.min(maxPx, desiredPxPerSec));
+
+            voiceScrollVelocityRef.current =
+              voiceScrollVelocityRef.current * 0.72 + desiredPxPerSec * 0.28;
+          }
+
+          const step = Math.min(distance, Math.max(0, voiceScrollVelocityRef.current) * dt);
+          if (step > 0) {
+            el.scrollTop = cur + Math.sign(diff) * step;
+          }
         }
+
+        // Keep hidden outer scriptRef in sync for any legacy listeners (overflow:hidden)
         if (scriptRef.current) scriptRef.current.scrollTop = el.scrollTop;
+
         if (eventId) {
           const now = Date.now();
           if (now - lastScrollBroadcastRef.current >= 100) {
@@ -717,39 +842,262 @@ const TeleprompterPage: React.FC = () => {
         voiceScrollLoopRafRef.current = null;
       }
     };
-  }, [voiceListenEnabled, userRole, eventId, settings.fontSize, settings.lineHeight, guideLinePosition]);
-
+  }, [
+    voiceListenEnabled,
+    userRole,
+    eventId,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.scrollSpeed,
+    guideLinePosition,
+  ]);
   const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);
+
+  const clearVoiceHighlight = useCallback(() => {
+    setVoiceHighlightLine(null);
+    setVoiceHighlightWordIndex(null);
+  }, []);
+
+  const hexWithAlpha = useCallback((hex: string, alpha: string) => {
+    const raw = hex.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(raw)) return `${raw}${alpha}`;
+    if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+      const r = raw[1];
+      const g = raw[2];
+      const b = raw[3];
+      return `#${r}${r}${g}${g}${b}${b}${alpha}`;
+    }
+    return raw;
+  }, []);
+
+  /** Spoken words underlined up to the match cursor (Words highlight mode). */
+  const renderVoiceLineText = useCallback(
+    (line: string, lineIndex: number) => {
+      if (!line) return '\u00A0';
+
+      const useWords =
+        voiceListenEnabled &&
+        voiceHighlightStyle === 'words' &&
+        voiceHighlightWordIndex != null;
+
+      if (!useWords) return line;
+
+      const parts = line.split(/(\s+)/);
+      let tokenIdx = scriptSpeechTokens.findIndex((t) => t.lineIndex === lineIndex);
+      if (tokenIdx < 0) return line;
+
+      return parts.map((part, i) => {
+        if (!part || /^\s+$/.test(part)) {
+          return <React.Fragment key={i}>{part}</React.Fragment>;
+        }
+        // Stage directions / non-speech bits stay plain and don't consume match tokens
+        if (/^\[[^\]]*\]$/.test(part.trim())) {
+          return <React.Fragment key={i}>{part}</React.Fragment>;
+        }
+        const norm = normalizeSpeechToken(part);
+        const expected = tokenIdx >= 0 ? scriptSpeechTokens[tokenIdx] : null;
+        if (!norm || !expected || expected.lineIndex !== lineIndex || expected.word !== norm) {
+          return <React.Fragment key={i}>{part}</React.Fragment>;
+        }
+        const thisWordIdx = tokenIdx;
+        tokenIdx += 1;
+        const spoken = thisWordIdx <= voiceHighlightWordIndex!;
+        const current = thisWordIdx === voiceHighlightWordIndex;
+        return (
+          <span
+            key={i}
+            style={
+              spoken
+                ? {
+                    textDecoration: 'underline',
+                    textDecorationColor: voiceHighlightColor,
+                    textDecorationThickness: current ? '3px' : '2px',
+                    textUnderlineOffset: '6px',
+                    color: current ? voiceHighlightColor : undefined,
+                  }
+                : undefined
+            }
+          >
+            {part}
+          </span>
+        );
+      });
+    },
+    [
+      voiceListenEnabled,
+      voiceHighlightStyle,
+      voiceHighlightWordIndex,
+      voiceHighlightColor,
+      scriptSpeechTokens,
+    ]
+  );
 
   useEffect(() => {
     voiceCommittedAnchorRef.current = 0;
     voiceRecentTranscriptWordsRef.current = [];
     lastVoiceInterimProcessedRef.current = '';
     clearVoiceScrollTarget();
-    setVoiceHighlightLine(null);
-  }, [scriptText, clearVoiceScrollTarget]);
-
+    clearVoiceHighlight();
+  }, [scriptText, clearVoiceScrollTarget, clearVoiceHighlight]);
   useEffect(() => {
     voiceListenEnabledRef.current = voiceListenEnabled;
   }, [voiceListenEnabled]);
 
   useEffect(() => {
-    if (!voiceListenEnabled || userRole !== 'SCROLLER') {
-      clearVoiceScrollTarget();
-      if (speechRecognitionRef.current) {
-        const rec = speechRecognitionRef.current;
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
-        try {
-          rec.stop();
-        } catch {
-          /* ignore */
-        }
-        speechRecognitionRef.current = null;
+    voiceMicCheckOnlyRef.current = voiceMicCheckOnly;
+  }, [voiceMicCheckOnly]);
+
+  const stopVoiceMicCapture = useCallback(() => {
+    if (voiceLevelRafRef.current != null) {
+      cancelAnimationFrame(voiceLevelRafRef.current);
+      voiceLevelRafRef.current = null;
+    }
+    if (voiceAudioCtxRef.current) {
+      void voiceAudioCtxRef.current.close().catch(() => {});
+      voiceAudioCtxRef.current = null;
+    }
+    if (voiceMicStreamRef.current) {
+      voiceMicStreamRef.current.getTracks().forEach((t) => t.stop());
+      voiceMicStreamRef.current = null;
+    }
+    setVoiceMicLevel(0);
+  }, []);
+
+  const refreshAudioInputs = useCallback(async (opts?: { unlock?: boolean }) => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      let tempStream: MediaStream | null = null;
+      if (opts?.unlock) {
+        // Permission unlock so Chrome fills real deviceId + labels
+        tempStream = (
+          await unlockAndListMics(selectedMicId || undefined)
+        ).stream;
       }
-      setVoiceInterimPreview('');
-      if (!voiceListenEnabled) setVoiceStatus('');
+      const inputs = await listAudioInputDevices();
+      setAudioInputDevices(inputs);
+      if (tempStream && !voiceListenEnabledRef.current) {
+        tempStream.getTracks().forEach((t) => t.stop());
+      } else if (tempStream && voiceListenEnabledRef.current) {
+        // Listening — keep using existing capture; drop unlock stream
+        tempStream.getTracks().forEach((t) => t.stop());
+      }
+    } catch (err) {
+      const name = err instanceof DOMException ? err.name : '';
+      setVoiceStatus(
+        name === 'NotAllowedError'
+          ? 'Microphone blocked — allow mic for localhost:3003, then click List mics.'
+          : 'Could not list microphones.'
+      );
+    }
+  }, [selectedMicId]);
+
+  useEffect(() => {
+    if (userRole !== 'SCROLLER') return;
+    void refreshAudioInputs();
+    const onChange = () => void refreshAudioInputs();
+    navigator.mediaDevices?.addEventListener?.('devicechange', onChange);
+    return () => navigator.mediaDevices?.removeEventListener?.('devicechange', onChange);
+  }, [userRole, refreshAudioInputs]);
+
+  const startVoiceLevelMeter = useCallback(async (deviceId: string) => {
+    stopVoiceMicCapture();
+    const stream = await navigator.mediaDevices.getUserMedia(audioConstraintsForMic(deviceId));
+    voiceMicStreamRef.current = stream;
+    const devices = await listAudioInputDevices();
+    setAudioInputDevices(devices);
+
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return stream;
+
+    const ctx = new AudioCtx();
+    voiceAudioCtxRef.current = ctx;
+    if (ctx.state === 'suspended') await ctx.resume();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const tickLevel = () => {
+      analyser.getByteTimeDomainData(data);
+      setVoiceMicLevel(computeMicLevelFromTimeDomain(data));
+      voiceLevelRafRef.current = requestAnimationFrame(tickLevel);
+    };
+    voiceLevelRafRef.current = requestAnimationFrame(tickLevel);
+    return stream;
+  }, [stopVoiceMicCapture]);
+
+  // Meter-only mic check (SpeechRecognition mutes getUserMedia meters in Chrome — keep them separate)
+  useEffect(() => {
+    if (!voiceListenEnabled || !voiceMicCheckOnly || userRole !== 'SCROLLER') {
+      return;
+    }
+
+    let cancelled = false;
+    setVoiceStatus('Opening mic for audio meter…');
+    setVoiceHeardAnything(false);
+    setVoiceInterimPreview('');
+
+    (async () => {
+      try {
+        await startVoiceLevelMeter(selectedMicId);
+        if (cancelled) return;
+        setVoiceStatus('Meter live — talk and watch the bars. (Speech-to-text is separate: use Auto-scroll.)');
+      } catch (err) {
+        if (cancelled) return;
+        const name = err instanceof DOMException ? err.name : '';
+        setVoiceStatus(
+          name === 'NotAllowedError'
+            ? 'Microphone blocked — allow mic for this site.'
+            : name === 'NotFoundError' || name === 'OverconstrainedError'
+              ? 'Could not open that mic — pick System default or another device.'
+              : 'Could not open microphone.'
+        );
+        setVoiceListenEnabled(false);
+        setVoiceMicCheckOnly(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      stopVoiceMicCapture();
+    };
+  }, [
+    voiceListenEnabled,
+    voiceMicCheckOnly,
+    selectedMicId,
+    userRole,
+    startVoiceLevelMeter,
+    stopVoiceMicCapture,
+  ]);
+
+  // Speech-to-text follow (no concurrent meter stream — Chrome exclusive mic)
+  useEffect(() => {
+    if (!voiceListenEnabled || voiceMicCheckOnly || userRole !== 'SCROLLER') {
+      if (!voiceListenEnabled || voiceMicCheckOnly) {
+        if (speechRecognitionRef.current) {
+          const rec = speechRecognitionRef.current;
+          rec.onresult = null;
+          rec.onerror = null;
+          rec.onend = null;
+          rec.onaudiostart = null;
+          rec.onspeechstart = null;
+          try {
+            rec.stop();
+          } catch {
+            /* ignore */
+          }
+          speechRecognitionRef.current = null;
+        }
+      }
+      if (!voiceListenEnabled) {
+        clearVoiceScrollTarget();
+        if (!voiceMicCheckOnly) stopVoiceMicCapture();
+        setVoiceInterimPreview('');
+        setVoiceHeardAnything(false);
+        if (!voiceMicCheckOnly) setVoiceStatus('');
+      }
       return;
     }
 
@@ -760,10 +1108,12 @@ const TeleprompterPage: React.FC = () => {
         : null;
 
     if (!SpeechRecognitionApi) {
-      setVoiceStatus('Speech recognition is not supported in this browser.');
+      setVoiceStatus('Speech recognition needs Chrome or Edge.');
       setVoiceListenEnabled(false);
       return;
     }
+
+    let cancelled = false;
 
     setIsManualMode(false);
     setIsAutoPlaying(false);
@@ -773,13 +1123,17 @@ const TeleprompterPage: React.FC = () => {
       autoPlayAnimationRef.current = null;
     }
 
-    setVoiceStatus('Listening — line highlight on finals; same-line nudges while you speak.');
-    voiceScrollSnapLineRef.current = -1;
+    setVoiceHeardAnything(false);
+    setVoiceInterimPreview('');
+    setVoiceStatus('Claiming selected mic, then starting speech recognition…');
     lastVoiceInterimProcessedRef.current = '';
 
     if (previewScrollRef.current) {
       voiceDesiredScrollTopRef.current = previewScrollRef.current.scrollTop;
     }
+    voiceLastMatchAtRef.current = 0;
+    voiceSpeechRateWpsRef.current = 2.4;
+    voiceScrollVelocityRef.current = 0;
 
     if (scriptSpeechTokens.length > 0 && previewScrollRef.current) {
       const scrollEl = previewScrollRef.current;
@@ -789,185 +1143,223 @@ const TeleprompterPage: React.FC = () => {
       const lineClamped = Math.max(0, Math.min(maxLine, approxLine));
       const wi = scriptSpeechTokens.findIndex((t) => t.lineIndex >= lineClamped);
       voiceCommittedAnchorRef.current = wi >= 0 ? wi : 0;
+      // Start snap at the visible line so the first match can't yank us back to line 0
+      voiceScrollSnapLineRef.current = lineClamped;
+      // Don't highlight until speech actually matches a line
+      clearVoiceHighlight();
     } else {
       voiceCommittedAnchorRef.current = 0;
+      voiceScrollSnapLineRef.current = 0;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rec: any = new (SpeechRecognitionApi as any)();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'en-US';
-    rec.maxAlternatives = 3;
-
-    /**
-     * - `final`: snap forward on new line, nudge on same line; highlight line (stable).
-     * - `interim-nudge`: same-line tiny nudges only (no line snap, no highlight → avoids jitter).
-     */
-    const applyVoiceAlign = (
-      heardWordList: string[],
-      mode: 'final' | 'interim-nudge'
-    ): boolean => {
-      if (scriptSpeechTokens.length === 0 || heardWordList.length === 0) return false;
-      const prevIdx = voiceCommittedAnchorRef.current;
-      const align = alignTranscriptVoicePrompt(
-        scriptSpeechTokens,
-        heardWordList,
-        voiceCommittedAnchorRef.current
-      );
-      if (!align) return false;
-
-      if (mode === 'interim-nudge') {
-        const prevSnap = voiceScrollSnapLineRef.current;
-        if (prevSnap >= 0 && align.lineIndex !== prevSnap) {
-          return false;
-        }
-      }
-
-      voiceCommittedAnchorRef.current = align.scriptWordIndex;
-
-      if (mode === 'final' && voiceHighlightEnabled) {
-        setVoiceHighlightLine(align.lineIndex);
-      }
-
-      const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
-      const pxPerWord = lineHeightPx / 6.75;
-
-      if (mode === 'interim-nudge') {
-        const prevSnap = voiceScrollSnapLineRef.current;
-        if (prevSnap < 0) return true;
-        const progressed = Math.max(0, align.scriptWordIndex - prevIdx);
-        if (progressed > 0) {
-          nudgeVoiceScrollByPixels(progressed * pxPerWord * 0.42);
-        }
-        return true;
-      }
-
-      const prevSnap = voiceScrollSnapLineRef.current;
-      if (align.lineIndex > prevSnap) {
-        voiceScrollSnapLineRef.current = align.lineIndex;
-        setVoiceScrollDesiredFromLine(align.lineIndex);
-      } else if (align.lineIndex === prevSnap) {
-        const progressed = Math.max(0, align.scriptWordIndex - prevIdx);
-        if (progressed > 0) {
-          nudgeVoiceScrollByPixels(progressed * pxPerWord);
-        }
-      }
-      return true;
-    };
-
-    rec.onresult = (event: { resultIndex: number; results: { length: number; [i: number]: { 0: { transcript: string }; isFinal: boolean } } }) => {
-      let interim = '';
-      let finalText = '';
-      let newFinalWordCount = 0;
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const piece = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalText += piece;
-          const words = piece
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean)
-            .map(normalizeSpeechToken)
-            .filter((w) => w.length > 0);
-          newFinalWordCount += words.length;
-          words.forEach((w) => voiceRecentTranscriptWordsRef.current.push(w));
-          if (voiceRecentTranscriptWordsRef.current.length > 120) {
-            voiceRecentTranscriptWordsRef.current = voiceRecentTranscriptWordsRef.current.slice(-120);
-          }
-        } else {
-          interim += piece;
-        }
-      }
-      const interimWords = interim
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .map(normalizeSpeechToken)
-        .filter((w) => w.length > 0);
-      const combined = [...voiceRecentTranscriptWordsRef.current, ...interimWords];
-      setVoiceInterimPreview(combined.slice(-14).join(' '));
-
-      if (scriptSpeechTokens.length === 0) return;
-
-      const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
-      const pxPerWord = lineHeightPx / 6.75;
-
-      const finalTrim = finalText.trim();
-      if (finalTrim.length > 0) {
-        const fromFinal = finalTrim
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]/g, '')
-          .trim()
-          .split(/\s+/)
-          .filter(Boolean)
-          .map(normalizeSpeechToken)
-          .filter((w) => w.length > 0);
-        const anchorBefore = voiceCommittedAnchorRef.current;
-        const aligned = applyVoiceAlign(fromFinal, 'final');
-        const anchorAfter = voiceCommittedAnchorRef.current;
-        if (newFinalWordCount > 0) {
-          if (!aligned) {
-            nudgeVoiceScrollByPixels(
-              newFinalWordCount * pxPerWord * (voiceScrollSnapLineRef.current >= 0 ? 0.85 : 0.5)
-            );
-          } else if (anchorAfter === anchorBefore) {
-            nudgeVoiceScrollByPixels(Math.max(1, newFinalWordCount) * pxPerWord * 0.65);
-          }
-        }
-      }
-
-      if (interim && interim !== lastVoiceInterimProcessedRef.current && interim.trim().length > 5) {
-        lastVoiceInterimProcessedRef.current = interim;
-        const recent = interim
-          .trim()
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(-8)
-          .map(normalizeSpeechToken)
-          .filter((w) => w.length > 0);
-        applyVoiceAlign(recent, 'interim-nudge');
-      }
-    };
-
-    rec.onerror = (e: { error: string }) => {
-      if (e.error === 'not-allowed') {
-        setVoiceStatus('Microphone blocked — allow mic for this site.');
+    const startRecognition = async () => {
+      // Briefly open the chosen device so Chrome prefers it, then release for SpeechRecognition
+      try {
+        stopVoiceMicCapture();
+        const claim = await navigator.mediaDevices.getUserMedia(audioConstraintsForMic(selectedMicId));
+        const devices = await listAudioInputDevices();
+        setAudioInputDevices(devices);
+        claim.getTracks().forEach((t) => t.stop());
+      } catch (err) {
+        if (cancelled) return;
+        const name = err instanceof DOMException ? err.name : '';
+        setVoiceStatus(
+          name === 'NotAllowedError'
+            ? 'Microphone blocked — allow mic for this site.'
+            : 'Could not open the selected microphone.'
+        );
         setVoiceListenEnabled(false);
-      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
-        setVoiceStatus(`Voice: ${e.error}`);
+        return;
       }
-    };
 
-    rec.onend = () => {
-      if (voiceListenEnabledRef.current && speechRecognitionRef.current) {
-        window.setTimeout(() => {
-          try {
-            if (voiceListenEnabledRef.current && speechRecognitionRef.current) {
-              speechRecognitionRef.current.start();
-            }
-          } catch {
-            /* already running */
+      if (cancelled) return;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rec: any = new (SpeechRecognitionApi as any)();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      rec.maxAlternatives = 3;
+
+      const lastWordIndexOnLine = (lineIndex: number): number => {
+        let last = -1;
+        for (let i = 0; i < scriptSpeechTokens.length; i++) {
+          if (scriptSpeechTokens[i].lineIndex === lineIndex) last = i;
+          if (scriptSpeechTokens[i].lineIndex > lineIndex) break;
+        }
+        return last >= 0 ? last : voiceCommittedAnchorRef.current;
+      };
+
+      const nextSpokenLineAfter = (lineIndex: number): number => {
+        for (let i = 0; i < scriptSpeechTokens.length; i++) {
+          if (scriptSpeechTokens[i].lineIndex > lineIndex) {
+            return scriptSpeechTokens[i].lineIndex;
           }
-        }, 250);
+        }
+        return lineIndex + 1;
+      };
+
+      const applyVoiceAlign = (heardWordList: string[]): boolean => {
+        if (scriptSpeechTokens.length === 0 || heardWordList.length === 0) return false;
+        const prevIdx = voiceCommittedAnchorRef.current;
+        const align = alignTranscriptVoicePrompt(
+          scriptSpeechTokens,
+          heardWordList,
+          voiceCommittedAnchorRef.current
+        );
+        if (!align) return false;
+
+        if (align.scriptWordIndex <= prevIdx) return false;
+
+        const floorLine = Math.max(0, voiceScrollSnapLineRef.current);
+        if (align.lineIndex < floorLine) return false;
+
+        // Next line with real words — blank/break lines don't count as a "step"
+        const nextSpoken = nextSpokenLineAfter(floorLine);
+        const maxLine = Math.max(floorLine + 1, nextSpoken);
+        const cappedWord =
+          align.lineIndex > maxLine
+            ? lastWordIndexOnLine(maxLine)
+            : align.scriptWordIndex;
+        const nextIdx = Math.max(prevIdx + 1, Math.min(cappedWord, align.scriptWordIndex));
+        if (nextIdx <= prevIdx) return false;
+
+        const nextLine = scriptSpeechTokens[nextIdx]?.lineIndex ?? floorLine;
+        const advanced = nextIdx - prevIdx;
+        const nowMatch = performance.now();
+        const prevMatchAt = voiceLastMatchAtRef.current;
+        if (prevMatchAt > 0 && advanced > 0) {
+          const dtSec = (nowMatch - prevMatchAt) / 1000;
+          if (dtSec > 0.06 && dtSec < 2.8) {
+            const instantWps = advanced / dtSec;
+            voiceSpeechRateWpsRef.current =
+              voiceSpeechRateWpsRef.current * 0.62 + instantWps * 0.38;
+          }
+        } else if (advanced > 0) {
+          voiceSpeechRateWpsRef.current = Math.max(voiceSpeechRateWpsRef.current, 2.6);
+        }
+        voiceLastMatchAtRef.current = nowMatch;
+
+        voiceCommittedAnchorRef.current = nextIdx;
+        voiceScrollSnapLineRef.current = Math.max(floorLine, nextLine);
+
+        if (voiceHighlightStyle !== 'off') {
+          setVoiceHighlightLine(nextLine);
+          setVoiceHighlightWordIndex(nextIdx);
+        }
+        setVoiceScrollDesiredFromWord(nextIdx, scriptSpeechTokens);
+        return true;
+      };
+
+      rec.onaudiostart = () => {
+        if (!cancelled) setVoiceStatus('Speech engine listening — speak the script…');
+      };
+      rec.onspeechstart = () => {
+        if (!cancelled) setVoiceStatus('Hearing speech — matching to script…');
+      };
+
+      rec.onresult = (event: {
+        resultIndex: number;
+        results: { length: number; [i: number]: { 0: { transcript: string }; isFinal: boolean } };
+      }) => {
+        let interim = '';
+        let finalText = '';
+        let newFinalWordCount = 0;
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const piece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalText += piece;
+            const words = piece
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean)
+              .map(normalizeSpeechToken)
+              .filter((w) => w.length > 0);
+            newFinalWordCount += words.length;
+            words.forEach((w) => voiceRecentTranscriptWordsRef.current.push(w));
+            if (voiceRecentTranscriptWordsRef.current.length > 120) {
+              voiceRecentTranscriptWordsRef.current = voiceRecentTranscriptWordsRef.current.slice(-120);
+            }
+          } else {
+            interim += piece;
+          }
+        }
+        const interimWords = interim
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .map(normalizeSpeechToken)
+          .filter((w) => w.length > 0);
+        const combined = [...voiceRecentTranscriptWordsRef.current, ...interimWords];
+        const preview = combined.slice(-16).join(' ');
+        setVoiceInterimPreview(preview);
+        if (preview.trim()) setVoiceHeardAnything(true);
+
+        if (scriptSpeechTokens.length === 0) return;
+
+        // Match against a short recent window only — keeps scroll locked to spoken text
+        const alignTail = combined.slice(-10);
+        const finalTrim = finalText.trim();
+        if (finalTrim.length > 0 || newFinalWordCount > 0) {
+          applyVoiceAlign(alignTail);
+        }
+
+        if (interim && interim !== lastVoiceInterimProcessedRef.current && interim.trim().length > 3) {
+          lastVoiceInterimProcessedRef.current = interim;
+          applyVoiceAlign(alignTail);
+        }
+      };
+
+      rec.onerror = (e: { error: string }) => {
+        if (e.error === 'not-allowed') {
+          setVoiceStatus('Microphone blocked — allow mic for this site.');
+          setVoiceListenEnabled(false);
+        } else if (e.error === 'no-speech') {
+          setVoiceStatus('No speech yet — speak louder, or Mic check the meter first.');
+        } else if (e.error === 'audio-capture') {
+          setVoiceStatus('Audio capture failed — try Mic check, then Auto-scroll again.');
+          setVoiceListenEnabled(false);
+        } else if (e.error !== 'aborted') {
+          setVoiceStatus(`Voice: ${e.error}`);
+        }
+      };
+
+      rec.onend = () => {
+        if (voiceListenEnabledRef.current && !voiceMicCheckOnlyRef.current && speechRecognitionRef.current) {
+          window.setTimeout(() => {
+            try {
+              if (voiceListenEnabledRef.current && !voiceMicCheckOnlyRef.current && speechRecognitionRef.current) {
+                speechRecognitionRef.current.start();
+              }
+            } catch {
+              /* already running */
+            }
+          }, 250);
+        }
+      };
+
+      speechRecognitionRef.current = rec;
+      try {
+        rec.start();
+        setVoiceStatus('Listening for script — Chrome/Edge speech engine active.');
+      } catch {
+        setVoiceStatus('Could not start speech recognition.');
+        setVoiceListenEnabled(false);
       }
     };
 
-    speechRecognitionRef.current = rec;
-    try {
-      rec.start();
-    } catch {
-      setVoiceStatus('Could not start microphone.');
-      setVoiceListenEnabled(false);
-    }
+    void startRecognition();
 
     return () => {
+      cancelled = true;
       clearVoiceScrollTarget();
       if (speechRecognitionRef.current) {
         const r = speechRecognitionRef.current;
         r.onresult = null;
         r.onerror = null;
         r.onend = null;
+        r.onaudiostart = null;
+        r.onspeechstart = null;
         try {
           r.stop();
         } catch {
@@ -978,16 +1370,19 @@ const TeleprompterPage: React.FC = () => {
     };
   }, [
     voiceListenEnabled,
+    voiceMicCheckOnly,
+    selectedMicId,
     userRole,
     scriptSpeechTokens,
-    voiceHighlightEnabled,
+    voiceHighlightStyle,
     settings.fontSize,
     settings.lineHeight,
-    setVoiceScrollDesiredFromLine,
-    nudgeVoiceScrollByPixels,
-    clearVoiceScrollTarget
+    setVoiceScrollDesiredFromWord,
+    clearVoiceScrollTarget,
+    clearVoiceHighlight,
+    stopVoiceMicCapture,
   ]);
-  
+
   // Parse script into lines
   const scriptLines = scriptText.split('\n');
   
@@ -1081,7 +1476,7 @@ const TeleprompterPage: React.FC = () => {
     voiceRecentTranscriptWordsRef.current = [];
     lastVoiceInterimProcessedRef.current = '';
     clearVoiceScrollTarget();
-    setVoiceHighlightLine(null);
+    clearVoiceHighlight();
   };
   
   /**
@@ -1333,62 +1728,218 @@ const TeleprompterPage: React.FC = () => {
                   {/* Voice-follow: Web Speech + script alignment */}
                   <div>
                     <label className="mb-2 block text-xs text-slate-300">Voice follow:</label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setVoiceListenEnabled((v) => {
-                          if (v) setVoiceHighlightLine(null);
-                          return !v;
-                        });
-                      }}
-                      disabled={userRole !== 'SCROLLER'}
-                      className={`w-full px-3 py-2 rounded text-xs font-bold transition-colors ${
-                        userRole !== 'SCROLLER'
-                          ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
-                          : voiceListenEnabled
-                            ? 'bg-rose-700 text-white hover:bg-rose-600 animate-pulse'
-                            : 'bg-cyan-700 text-white hover:bg-cyan-600'
-                      }`}
-                    >
-                      {voiceListenEnabled ? '🎙️ Stop listening' : '🎙️ Listen & auto-scroll'}
-                    </button>
-                    <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-400">
-                      <input
-                        type="checkbox"
-                        className="rounded border-slate-500"
-                        checked={voiceHighlightEnabled}
+                    <label className="mb-1 block text-[10px] text-slate-400">Microphone</label>
+                    <div className="mb-2 flex gap-1">
+                      <select
+                        value={selectedMicId}
+                        disabled={userRole !== 'SCROLLER'}
                         onChange={(e) => {
-                          setVoiceHighlightEnabled(e.target.checked);
-                          if (!e.target.checked) setVoiceHighlightLine(null);
+                          const id = e.target.value;
+                          setSelectedMicId(id);
+                          writeStoredMicId(id);
                         }}
-                      />
-                      Highlight matched line
-                    </label>
+                        className="min-w-0 flex-1 rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-[11px] text-white disabled:opacity-50"
+                      >
+                        <option value="">System default</option>
+                        {audioInputDevices.map((d) => (
+                          <option key={d.deviceId} value={d.deviceId}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={userRole !== 'SCROLLER'}
+                        onClick={() => void refreshAudioInputs({ unlock: true })}
+                        className="shrink-0 rounded border border-cyan-700/70 bg-cyan-950/40 px-2 py-1 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-900/50 disabled:opacity-50"
+                        title="Allow mic access and load device names"
+                      >
+                        List mics
+                      </button>
+                    </div>
+                    <p className="mb-2 text-[10px] text-slate-500">
+                      {audioInputDevices.length === 0
+                        ? 'Click List mics (allow permission) so devices appear.'
+                        : `${audioInputDevices.length} mic(s) found. Selection is saved.`}
+                    </p>
+                    {voiceListenEnabled && voiceMicCheckOnly && (
+                      <div className="mb-2 rounded-lg border border-slate-600 bg-slate-950/80 p-2">
+                        <div className="mb-1.5 flex items-center justify-between text-[10px]">
+                          <span className="font-semibold uppercase tracking-wide text-slate-300">Audio meter</span>
+                          <span
+                            className={
+                              voiceMicLevel > 12
+                                ? 'font-semibold text-emerald-300'
+                                : voiceMicLevel > 4
+                                  ? 'text-amber-300'
+                                  : 'text-slate-500'
+                            }
+                          >
+                            {voiceMicLevel > 12 ? 'LIVE' : voiceMicLevel > 4 ? 'low' : 'silent'}
+                            {' · '}
+                            {voiceMicLevel}%
+                          </span>
+                        </div>
+                        <div
+                          className="flex h-8 items-end gap-0.5"
+                          role="meter"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={voiceMicLevel}
+                          aria-label="Microphone audio level"
+                        >
+                          {Array.from({ length: 20 }, (_, i) => {
+                            const threshold = (i + 1) * 5;
+                            const active = voiceMicLevel >= threshold;
+                            const color =
+                              i < 12
+                                ? active
+                                  ? 'bg-emerald-400'
+                                  : 'bg-slate-800'
+                                : i < 16
+                                  ? active
+                                    ? 'bg-amber-400'
+                                    : 'bg-slate-800'
+                                  : active
+                                    ? 'bg-rose-500'
+                                    : 'bg-slate-800';
+                            return (
+                              <div
+                                key={i}
+                                className={`min-w-0 flex-1 rounded-sm ${color} transition-colors duration-75`}
+                                style={{ height: `${35 + i * 3.25}%` }}
+                              />
+                            );
+                          })}
+                        </div>
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          Speak — bars should bounce. Switch mics above if silent.
+                        </p>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (voiceListenEnabled && voiceMicCheckOnly) {
+                            setVoiceListenEnabled(false);
+                            setVoiceMicCheckOnly(false);
+                            clearVoiceHighlight();
+                            return;
+                          }
+                          setVoiceMicCheckOnly(true);
+                          setVoiceListenEnabled(true);
+                          clearVoiceHighlight();
+                        }}
+                        disabled={userRole !== 'SCROLLER'}
+                        className={`rounded px-2 py-2 text-[11px] font-bold transition-colors ${
+                          userRole !== 'SCROLLER'
+                            ? 'cursor-not-allowed bg-slate-600 text-slate-400'
+                            : voiceListenEnabled && voiceMicCheckOnly
+                              ? 'animate-pulse bg-amber-700 text-white hover:bg-amber-600'
+                              : 'bg-amber-900/80 text-amber-100 hover:bg-amber-800'
+                        }`}
+                      >
+                        {voiceListenEnabled && voiceMicCheckOnly ? 'Stop meter' : 'Mic meter'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (voiceListenEnabled && !voiceMicCheckOnly) {
+                            setVoiceListenEnabled(false);
+                            clearVoiceHighlight();
+                            return;
+                          }
+                          setVoiceMicCheckOnly(false);
+                          setVoiceListenEnabled(true);
+                          clearVoiceHighlight();
+                        }}
+                        disabled={userRole !== 'SCROLLER'}
+                        className={`rounded px-2 py-2 text-[11px] font-bold transition-colors ${
+                          userRole !== 'SCROLLER'
+                            ? 'cursor-not-allowed bg-slate-600 text-slate-400'
+                            : voiceListenEnabled && !voiceMicCheckOnly
+                              ? 'animate-pulse bg-rose-700 text-white hover:bg-rose-600'
+                              : 'bg-cyan-700 text-white hover:bg-cyan-600'
+                        }`}
+                      >
+                        {voiceListenEnabled && !voiceMicCheckOnly ? 'Stop listen' : 'Auto-scroll'}
+                      </button>
+                    </div>
+                    <div className="mt-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          Highlight
+                        </div>
+                        {voiceHighlightStyle !== 'off' ? (
+                          <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                            Color
+                            <input
+                              type="color"
+                              value={/^#[0-9a-fA-F]{6}$/.test(voiceHighlightColor) ? voiceHighlightColor : '#FBBF24'}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                setVoiceHighlightColor(next);
+                                try {
+                                  localStorage.setItem('ros.teleprompter.voiceHighlightColor', next);
+                                } catch {
+                                  /* ignore */
+                                }
+                              }}
+                              className="h-6 w-8 cursor-pointer rounded border border-slate-600 bg-slate-800 p-0"
+                              title="Highlight color"
+                            />
+                          </label>
+                        ) : null}
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {(
+                          [
+                            { id: 'off', label: 'Off' },
+                            { id: 'words', label: 'Words' },
+                            { id: 'band', label: 'Band' },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setVoiceHighlightStyle(opt.id);
+                              if (opt.id === 'off') clearVoiceHighlight();
+                            }}
+                            className={`rounded px-1.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                              voiceHighlightStyle === opt.id
+                                ? 'bg-slate-200 text-slate-900'
+                                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        Words underlines spoken text · Band soft-fills the line
+                      </p>
+                    </div>
                     {voiceStatus ? (
                       <p className="mt-1 text-xs text-amber-200">{voiceStatus}</p>
                     ) : null}
-                    {voiceListenEnabled && voiceInterimPreview ? (
+                    {voiceListenEnabled && !voiceMicCheckOnly ? (
                       <p
-                        className="mt-1 truncate font-mono text-xs text-slate-400"
-                        title={voiceInterimPreview}
+                        className={`mt-1 min-h-[2.5rem] break-words font-mono text-xs ${
+                          voiceHeardAnything ? 'text-emerald-200' : 'text-slate-500'
+                        }`}
+                        title={voiceInterimPreview || undefined}
                       >
-                        {voiceInterimPreview}
+                        {voiceInterimPreview
+                          ? `Heard: ${voiceInterimPreview}`
+                          : 'Waiting for speech-to-text words…'}
                       </p>
                     ) : null}
                     <p className="mt-1 text-[10px] leading-snug text-slate-500">
-                      Chrome / Edge, localhost or HTTPS, mic allowed. Manual turns off while listening — no ▶ Play.{' '}
-                      <span className="font-mono">[brackets]</span> ignored for matching.                       Line glow updates on <span className="font-medium text-slate-400">final</span> text
-                      (less jitter). Scroll: new line on finals, gentle same-line nudge on partials. Matcher
-                      from{' '}
-                      <a
-                        href="https://github.com/chgeuer/voice_prompt"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-cyan-400 underline"
-                      >
-                        chgeuer/voice_prompt
-                      </a>
-                      .
+                      1) List mics → pick device → <span className="text-slate-300">Mic meter</span> (bars only).
+                      2) Then <span className="text-slate-300">Auto-scroll</span> for speech matching.
+                      Chrome speech engine can&apos;t share the mic with the meter, so they stay separate.
                     </p>
                   </div>
                   
@@ -1674,19 +2225,11 @@ const TeleprompterPage: React.FC = () => {
                   position: 'relative'
                 }}
                 ref={(el) => {
-                  // Store the preview scroll container ref
-                  if (el) {
-                    previewScrollRef.current = el;
-                  }
-                  // Only sync if we're not in auto-play mode (to prevent position reset)
-                  if (el && scriptRef.current && !isAutoPlaying) {
-                    // Force immediate sync without any delay
-                    el.scrollTop = scriptRef.current.scrollTop;
-                    // Also ensure the main container scroll is synced back
-                    if (scriptRef.current.scrollTop !== el.scrollTop) {
-                      scriptRef.current.scrollTop = el.scrollTop;
-                    }
-                  }
+                  // Callback refs re-fire on every re-render (e.g. voice highlight).
+                  // Never copy scriptRef.scrollTop here — for SCROLLER that outer
+                  // container is overflow:hidden (scrollTop stays 0) and would yank
+                  // the preview to the top on every match update.
+                  previewScrollRef.current = el;
                 }}
                 onScroll={(e) => {
                   // Sync main script scroll with preview scroll
@@ -1750,14 +2293,25 @@ const TeleprompterPage: React.FC = () => {
                     const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
                     
                     const voiceLineActive =
-                      voiceListenEnabled && voiceHighlightEnabled && voiceHighlightLine === index;
+                      voiceListenEnabled &&
+                      voiceHighlightStyle === 'band' &&
+                      voiceHighlightLine === index;
+
+                    const voiceHighlightCss: React.CSSProperties = voiceLineActive
+                      ? {
+                          backgroundColor: hexWithAlpha(voiceHighlightColor, '40'),
+                          borderRadius: 4,
+                          boxShadow: `inset 0 0 0 1px ${hexWithAlpha(voiceHighlightColor, '88')}`,
+                          paddingLeft: '0.5rem',
+                          paddingRight: '0.5rem',
+                        }
+                      : {};
 
                     return (
                       <div 
                         key={index} 
-                        className={`mb-2 rounded transition-[box-shadow,background-color] duration-300 ${
-                          voiceLineActive ? 'bg-amber-500/15 shadow-[0_0_0_2px_rgba(251,191,36,0.7)]' : ''
-                        }`}
+                        className="mb-2 transition-[background-color,box-shadow] duration-200"
+                        style={voiceHighlightCss}
                         data-line-number={index}
                         ref={(el) => {
                           if (el) lineRefsMap.current.set(index, el);
@@ -1799,7 +2353,7 @@ const TeleprompterPage: React.FC = () => {
                         )}
                         
                         {/* Current line text */}
-                        <div>{line || '\u00A0'}</div>
+                        <div>{renderVoiceLineText(line, index)}</div>
                       </div>
                     );
                   })}

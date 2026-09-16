@@ -252,11 +252,14 @@ export function alignTranscriptVoicePrompt(
   if (heardWords.length === 0 || scriptTokens.length === 0) return null;
 
   const wc = Math.max(0, Math.min(wordCursor, scriptTokens.length - 1));
-  const searchStart = Math.max(0, wc - 2);
-  /** Chrome often emits short finals; widen end window so the phrase can still be found. */
-  const searchEnd = Math.min(scriptTokens.length - 1, wc + Math.max(36, heardWords.length * 5));
-  /** Single-word finals fail matchLen≥2; allow one strong match when the heard chunk is short. */
-  const minMatchLen = heardWords.length <= 4 ? 1 : 2;
+  const searchStart = Math.max(0, wc - 1);
+  /** Keep the window tight so duplicate words don't yank us far ahead. */
+  const searchEnd = Math.min(
+    scriptTokens.length - 1,
+    wc + Math.min(14, Math.max(6, heardWords.length * 2 + 2))
+  );
+  /** Prefer multi-word confirmation; allow a single strong match only for short finals. */
+  const minMatchLen = heardWords.length <= 2 ? 1 : 2;
 
   let bestPos = -1;
   let bestScore = -1;
@@ -269,7 +272,7 @@ export function alignTranscriptVoicePrompt(
       let hi = heardStart;
       let skips = 0;
 
-      while (si <= searchEnd && hi < heardWords.length && skips < 3) {
+      while (si <= searchEnd && hi < heardWords.length && skips < 2) {
         const scriptWord = scriptTokens[si]?.word ?? '';
         const heardWord = heardWords[hi];
 
@@ -311,15 +314,17 @@ export function alignTranscriptVoicePrompt(
       }
 
       const effectiveEnd = si - 1;
-      if (matchLen < minMatchLen || significantMatches < 1) continue;
+      if (matchLen < minMatchLen) continue;
+      if (significantMatches < 1 && matchLen < 2) continue;
 
       const jumpDistance = scriptPos - wc;
-      if (jumpDistance < -2) continue;
-      if (jumpDistance > 18 && matchLen < 4) continue;
-      if (jumpDistance > 12 && matchLen < 3) continue;
+      if (jumpDistance < -1) continue;
+      if (jumpDistance > 8 && matchLen < 3) continue;
+      if (jumpDistance > 4 && matchLen < 2) continue;
 
-      const proximityBonus = 1.0 - Math.max(0, jumpDistance) / 100;
-      const score = matchLen + significantMatches * 0.5 + proximityBonus;
+      // Strong proximity bias — closer matches always beat far ones with similar length
+      const proximityBonus = 3.0 - Math.max(0, jumpDistance) * 0.35;
+      const score = matchLen * 1.4 + significantMatches * 0.6 + proximityBonus;
 
       if (score > bestScore) {
         bestScore = score;
@@ -328,12 +333,12 @@ export function alignTranscriptVoicePrompt(
     }
   }
 
-  if (bestPos < 0 || bestPos < wc - 1) {
-    /** Last resort: last heard token (≥3 chars) matches script just ahead of cursor (common 1-word finals). */
-    if (heardWords.length >= 1 && heardWords.length <= 4) {
+  if (bestPos < 0 || bestPos < wc) {
+    /** Last resort: next exact/fuzzy word within a few tokens (no long leaps). */
+    if (heardWords.length >= 1 && heardWords.length <= 3) {
       const tail = [...heardWords].reverse().find((h) => h.length >= 3);
       if (tail) {
-        for (let i = wc; i <= Math.min(scriptTokens.length - 1, wc + 24); i++) {
+        for (let i = wc; i <= Math.min(scriptTokens.length - 1, wc + 5); i++) {
           if (wordsMatchVoicePrompt(scriptTokens[i].word, tail)) {
             const np = Math.max(wc, i);
             if (np > wc) {
@@ -347,9 +352,10 @@ export function alignTranscriptVoicePrompt(
   }
 
   const newPos = Math.max(wc, bestPos);
-  const maxJump = Math.max(10, Math.round(heardWords.length * 1.8));
+  /** Cap advance so one noisy recognition can't skip a whole paragraph. */
+  const maxJump = Math.min(6, Math.max(2, Math.round(heardWords.length * 1.1)));
   const cappedPos = Math.min(newPos, wc + maxJump);
-  if (cappedPos === wc) return null;
+  if (cappedPos <= wc) return null;
 
   return {
     scriptWordIndex: cappedPos,
