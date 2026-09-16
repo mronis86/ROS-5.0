@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
 import AppHeader from './AppHeader';
@@ -10,26 +11,39 @@ interface AuthGuardProps {
   children: React.ReactNode;
 }
 
+/** Public Quick Mode operator links: /quick-mode?op=ros_qmop_… (no sign-in). */
+function isPublicQuickModeOperatorPath(pathname: string, search: string): boolean {
+  if (pathname !== '/quick-mode') return false;
+  const op = new URLSearchParams(search).get('op') || '';
+  return op.startsWith('ros_qmop_') && op.length > 'ros_qmop_'.length + 16;
+}
+
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
+  const location = useLocation();
   const { user, loading, accessStatus, refreshAccessStatus } = useAuth();
   const [showAuthModal, setShowAuthModal] = React.useState(false);
   const [refreshingAccess, setRefreshingAccess] = React.useState(false);
   const [hideAuthBranding, setHideAuthBranding] = React.useState(false);
 
+  const publicQuickMode = isPublicQuickModeOperatorPath(location.pathname, location.search);
+
   const canUseApp =
-    !loading &&
-    !!user &&
-    accessStatus === 'approved';
+    publicQuickMode ||
+    (!loading && !!user && accessStatus === 'approved');
 
   const showGate = !canUseApp;
 
   React.useEffect(() => {
+    if (publicQuickMode) {
+      setShowAuthModal(false);
+      return;
+    }
     if (!loading && !user) {
       setShowAuthModal(true);
     } else if (user) {
       setShowAuthModal(false);
     }
-  }, [user, loading]);
+  }, [user, loading, publicQuickMode]);
 
   const pendingApproval =
     isNeonAuthEnabled && user && accessStatus !== 'approved' && accessStatus !== 'rejected';

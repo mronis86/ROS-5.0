@@ -966,7 +966,9 @@ const QuickModePage: React.FC = () => {
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-semibold text-white">Public operator link</div>
                 <p className="mt-1 text-[11px] text-slate-400">
-                  Stable URL for QR / bookmark. Re-enable or expire without changing the token.
+                  Click <span className="text-amber-200 font-semibold">Enable</span> to create a stable{' '}
+                  <span className="font-mono text-slate-300">op=ros_qmop_…</span> token in the URL.
+                  Share / QR that link — no sign-in. Re-enable or expire without changing the token.
                 </p>
                 {publicUrl ? (
                   <div className="mt-2 break-all rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-[10px] text-slate-300">
