@@ -110,10 +110,37 @@ const QuickModePage: React.FC = () => {
   const clockWindowRef = useRef<Window | null>(null);
   const resolvedForUrlRef = useRef<string | null>(null);
   const publicBootstrappedRef = useRef<string | null>(null);
+  /** False until we've loaded timers from localStorage (signed-in) or server (public). */
+  const scheduleReadyRef = useRef(false);
+  const [scheduleReady, setScheduleReady] = useState(false);
   /** Ignore remote timer echoes briefly after local START/STOP/RESET (stop-all races). */
   const localControlUntilRef = useRef(0);
   /** After reset, refuse server rows that would re-apply running/partial remaining. */
   const resetGuardUntilRef = useRef(0);
+
+  const markScheduleReady = useCallback(() => {
+    scheduleReadyRef.current = true;
+    setScheduleReady(true);
+  }, []);
+
+  const mapSessionTimers = useCallback((raw: unknown): QuickTimer[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((t: any) => t && Number.isFinite(Number(t.id)))
+      .map((t: any) => {
+        const id = Number(t.id);
+        const durationMs = clampDurationMs(Number(t.durationMs) || 60_000);
+        return {
+          id,
+          title: typeof t.title === 'string' && t.title.trim() ? t.title : `Timer ${id}`,
+          cue: typeof t.cue === 'string' && t.cue.trim() ? t.cue : `CUE ${id}`,
+          durationMs,
+          remainingMs: Math.max(0, Number(t.remainingMs) || durationMs),
+          isRunning: false,
+          startedAtMs: null,
+        };
+      });
+  }, []);
 
   const markLocalControl = (ms = 2000) => {
     localControlUntilRef.current = Date.now() + ms;
@@ -191,32 +218,9 @@ const QuickModePage: React.FC = () => {
           p.delete('new');
           return p;
         }, { replace: true });
-        if (Array.isArray(data.timers) && data.timers.length > 0) {
-          const key = `${STORAGE_KEY_PREFIX}${data.eventId}`;
-          const hasLocal = (() => {
-            try {
-              const raw = localStorage.getItem(key);
-              if (!raw) return false;
-              const parsed = JSON.parse(raw);
-              return Array.isArray(parsed) && parsed.length > 0;
-            } catch {
-              return false;
-            }
-          })();
-          if (!hasLocal) {
-            setTimers(
-              data.timers.map((t) => ({
-                id: Number(t.id),
-                title: t.title || `Timer ${t.id}`,
-                cue: t.cue || `CUE ${t.id}`,
-                durationMs: clampDurationMs(Number(t.durationMs) || 60_000),
-                remainingMs: Math.max(0, Number(t.remainingMs) || Number(t.durationMs) || 60_000),
-                isRunning: false,
-                startedAtMs: null,
-              }))
-            );
-          }
-        }
+        // Public link: server schedule is source of truth (do not prefer stale localStorage).
+        setTimers(mapSessionTimers(data.timers));
+        markScheduleReady();
       } catch (err) {
         if (cancelled) return;
         setPublicLinkError(err instanceof Error ? err.message : 'Failed to open public operator link');
@@ -228,7 +232,7 @@ const QuickModePage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [opParam, operatorToken, setSearchParams]);
+  }, [opParam, operatorToken, setSearchParams, mapSessionTimers, markScheduleReady]);
 
   useEffect(() => {
     if (opParam) return;
@@ -305,12 +309,22 @@ const QuickModePage: React.FC = () => {
   }, [publicExpiresAt, operatorToken]);
 
   useEffect(() => {
+    // Public operator sessions load from the server bootstrap — don't overwrite with device localStorage.
+    if (opParam) return;
     if (!storageKey) return;
+    scheduleReadyRef.current = false;
+    setScheduleReady(false);
     try {
       const raw = localStorage.getItem(storageKey);
-      if (!raw) return;
+      if (!raw) {
+        markScheduleReady();
+        return;
+      }
       const parsed = JSON.parse(raw) as QuickTimer[];
-      if (!Array.isArray(parsed)) return;
+      if (!Array.isArray(parsed)) {
+        markScheduleReady();
+        return;
+      }
       const hydrated = parsed
         .filter((t) => t && Number.isFinite(Number(t.id)))
         .map((t) => ({
@@ -324,10 +338,63 @@ const QuickModePage: React.FC = () => {
         }));
       setTimers(hydrated);
       setSelectedTimerId((prev) => (prev != null && hydrated.some((t) => t.id === prev) ? prev : hydrated[0]?.id ?? null));
+      markScheduleReady();
     } catch {
-      // ignore invalid localStorage data
+      markScheduleReady();
     }
-  }, [storageKey]);
+  }, [storageKey, opParam, markScheduleReady]);
+
+  // Public: refresh schedule from run_of_show_data so we match the signed-in session (not localStorage).
+  useEffect(() => {
+    if (!opParam || !operatorToken || !eventId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${getApiBaseUrl()}/api/run-of-show-data/${encodeURIComponent(eventId)}`,
+          { headers: qmJsonHeaders() }
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const items = Array.isArray(data?.schedule_items) ? data.schedule_items : [];
+        const mapped: QuickTimer[] = items
+          .filter((item: any) => item && Number.isFinite(Number(item.id)))
+          .map((item: any) => {
+            const id = Number(item.id);
+            const hours = Number(item.durationHours) || 0;
+            const minutes = Number(item.durationMinutes) || 0;
+            const seconds = Number(item.durationSeconds) || 0;
+            const durationMs = clampDurationMs(
+              ((hours * 3600 + minutes * 60 + seconds) || 60) * 1000
+            );
+            const cue =
+              (item.customFields && item.customFields.cue) || item.cue || `CUE ${id}`;
+            return {
+              id,
+              title: String(item.segmentName || `Timer ${id}`),
+              cue: String(cue),
+              durationMs,
+              remainingMs: durationMs,
+              isRunning: false,
+              startedAtMs: null,
+            };
+          });
+        if (cancelled) return;
+        setTimers(mapped);
+        markScheduleReady();
+        setSyncMessage(
+          mapped.length
+            ? `Loaded ${mapped.length} timer${mapped.length === 1 ? '' : 's'} from session`
+            : 'No timers on server yet — add some on the signed-in Quick Mode page'
+        );
+      } catch {
+        // Keep bootstrap timers if GET fails
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [opParam, operatorToken, eventId, qmJsonHeaders, markScheduleReady]);
 
   useEffect(() => {
     setSelectedTimerId((prev) => (prev != null && timers.some((t) => t.id === prev) ? prev : timers[0]?.id ?? null));
@@ -339,7 +406,7 @@ const QuickModePage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!storageKey) return;
+    if (!storageKey || !scheduleReady) return;
     try {
       const snapshot = timers.map((t) => ({
         ...t,
@@ -351,10 +418,10 @@ const QuickModePage: React.FC = () => {
     } catch {
       // ignore
     }
-  }, [timers, storageKey]);
+  }, [timers, storageKey, scheduleReady]);
 
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || !scheduleReady) return;
     let cancelled = false;
     const syncSchedule = async () => {
       try {
@@ -388,7 +455,7 @@ const QuickModePage: React.FC = () => {
       cancelled = true;
       window.clearTimeout(id);
     };
-  }, [eventId, timers, qmJsonHeaders]);
+  }, [eventId, timers, qmJsonHeaders, scheduleReady]);
 
   const applyServerTimerRow = (data: Record<string, unknown>) => {
     if (ignoreRemoteTimerSync() || inResetGuard()) return;
