@@ -1,7 +1,7 @@
 /**
  * Event-local wall clock helpers for VO/MUSIC alerts and similar show-time UI.
- * Prefer server-synced Date.now()+clockOffset, then format in the event timezone
- * — never browser getHours()/getMinutes() alone.
+ * Prefer server-synced Date.now()+clockOffset, then interpret times in the event timezone
+ * as absolute UTC moments — never browser getHours()/getMinutes() alone.
  */
 
 export function getSyncedNow(clockOffsetMs = 0): Date {
@@ -26,38 +26,51 @@ export function resolveShowTimezone(
   return 'America/New_York';
 }
 
+type ZonedParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function getZonedParts(date: Date, timeZone: string): ZonedParts {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((p) => p.type === type)?.value ?? NaN);
+  let hour = get('hour');
+  if (hour === 24) hour = 0;
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: Number.isFinite(hour) ? hour : 0,
+    minute: get('minute') || 0,
+    second: get('second') || 0,
+  };
+}
+
 /** "HH:MM" (24h) for `date` in `timeZone`. Never silently uses the browser zone when a tz was requested. */
 export function getEventLocalHHMM(date: Date, timeZone?: string | null): string {
-  const requested = typeof timeZone === 'string' ? timeZone.trim() : '';
-  const tz = resolveShowTimezone(requested || null);
-
-  const formatParts = (zone: string) => {
-    // hourCycle h23 is more reliable across engines than hour12:false alone.
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(date);
-    let hh = Number(parts.find((p) => p.type === 'hour')?.value ?? NaN);
-    const mm = parts.find((p) => p.type === 'minute')?.value ?? '00';
-    const dayPeriod = parts.find((p) => p.type === 'dayPeriod')?.value?.toLowerCase();
-    if (Number.isFinite(hh) && dayPeriod) {
-      if (dayPeriod.startsWith('p') && hh < 12) hh += 12;
-      if (dayPeriod.startsWith('a') && hh === 12) hh = 0;
-    }
-    if (!Number.isFinite(hh)) hh = 0;
-    if (hh === 24) hh = 0;
-    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-  };
-
+  const tz = resolveShowTimezone(typeof timeZone === 'string' ? timeZone.trim() : null);
   try {
-    return formatParts(tz);
+    const z = getZonedParts(date, tz);
+    return `${String(z.hour).padStart(2, '0')}:${String(z.minute).padStart(2, '0')}`;
   } catch {
     try {
-      return formatParts('America/New_York');
+      const z = getZonedParts(date, 'America/New_York');
+      return `${String(z.hour).padStart(2, '0')}:${String(z.minute).padStart(2, '0')}`;
     } catch {
-      // Absolute last resort — still prefer UTC wall clock over a random laptop zone.
       const hh = String(date.getUTCHours()).padStart(2, '0');
       const mm = String(date.getUTCMinutes()).padStart(2, '0');
       return `${hh}:${mm}`;
@@ -104,18 +117,48 @@ export function normalizeCalloutTimeToHHMM(time: string): string | null {
 }
 
 /**
- * True when event-local now is at the callout minute, or within `graceMinutes` after
- * (covers background-tab timer throttling so the toast is not missed forever).
+ * Convert an event-venue wall-clock "HH:MM" on the same calendar day as `ref`
+ * (in that timezone) into an absolute UTC epoch ms.
+ * Everyone with the same wall clock + timezone gets the same UTC instant.
+ */
+export function eventWallClockToUtcMs(
+  calloutTime: string,
+  timeZone: string | null | undefined,
+  ref: Date = new Date()
+): number | null {
+  const mins = wallClockLabelToMinutes(calloutTime);
+  if (mins == null) return null;
+  const wantH = Math.floor(mins / 60);
+  const wantM = mins % 60;
+  const tz = resolveShowTimezone(timeZone);
+  const day = getZonedParts(ref, tz);
+
+  // Iterate: guess UTC, read back in event TZ, correct until it matches desired wall time.
+  let guess = Date.UTC(day.year, day.month - 1, day.day, wantH, wantM, 0);
+  for (let i = 0; i < 4; i++) {
+    const got = getZonedParts(new Date(guess), tz);
+    const gotDay = Date.UTC(got.year, got.month - 1, got.day);
+    const wantDay = Date.UTC(day.year, day.month - 1, day.day);
+    const msDiff =
+      gotDay - wantDay + ((got.hour - wantH) * 60 + (got.minute - wantM)) * 60_000 + got.second * 1000;
+    if (msDiff === 0) break;
+    guess -= msDiff;
+  }
+  return guess;
+}
+
+/**
+ * True when synced now is at/after the callout's absolute UTC instant (event wall clock),
+ * within `graceMinutes` (covers background-tab timer throttling).
  */
 export function isCalloutDue(
   calloutTime: string,
-  eventLocalHHMM: string,
+  syncedNow: Date,
+  timeZone?: string | null,
   graceMinutes = 10
 ): boolean {
-  const calloutMins = wallClockLabelToMinutes(calloutTime);
-  const nowMins = hhmmToMinutes(eventLocalHHMM);
-  if (calloutMins == null || nowMins == null) return false;
-  let delta = nowMins - calloutMins;
-  if (delta < 0) delta += 24 * 60;
-  return delta >= 0 && delta <= Math.max(0, graceMinutes);
+  const dueMs = eventWallClockToUtcMs(calloutTime, timeZone, syncedNow);
+  if (dueMs == null) return false;
+  const delta = syncedNow.getTime() - dueMs;
+  return delta >= 0 && delta <= Math.max(0, graceMinutes) * 60_000;
 }

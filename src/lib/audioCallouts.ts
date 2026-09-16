@@ -4,7 +4,7 @@ export type AudioCalloutKind = 'vo' | 'bgm';
 
 export interface VoCue {
   id: string;
-  /** 24h "HH:MM" */
+  /** 24h "HH:MM" venue wall clock */
   time: string;
   /** Optional short label (also written into Notes as formatted text) */
   label?: string;
@@ -12,6 +12,8 @@ export interface VoCue {
   kind?: AudioCalloutKind;
   /** Optional CUE-style prefix (e.g. "12A" → shows as CUE 12A) */
   cuePrefix?: string;
+  /** IANA zone this wall-clock time belongs to (locked at save so all clients fire together) */
+  timeZone?: string;
 }
 
 export function formatCalloutTime(time: string): string {
@@ -128,12 +130,15 @@ export function normalizeVoCues(raw: unknown): VoCue[] {
       const label = typeof v?.label === 'string' ? v.label : '';
       const cuePrefix =
         typeof v?.cuePrefix === 'string' && v.cuePrefix.trim() ? v.cuePrefix.trim() : undefined;
+      const timeZone =
+        typeof v?.timeZone === 'string' && v.timeZone.trim() ? v.timeZone.trim() : undefined;
       return {
         id,
         time,
         label,
         kind,
         ...(cuePrefix ? { cuePrefix } : {}),
+        ...(timeZone ? { timeZone } : {}),
       } as VoCue;
     })
     .filter(Boolean) as VoCue[];

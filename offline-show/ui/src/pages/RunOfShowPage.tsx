@@ -22,6 +22,7 @@ import {
   wallClockLabelToMinutes,
   hhmmToMinutes,
   isCalloutDue,
+  resolveShowTimezone,
 } from '../lib/eventLocalClock';
 import {
   HEAD_TABLE_PROGRAM_TYPE,
@@ -1760,18 +1761,18 @@ const RunOfShowPage: React.FC = () => {
     releaseRowEditLock,
   ]);
 
-  // VO/MUSIC alert on event-local clock (server-synced). Sticky until dismiss; 10m catch-up
-  // so background-tab timer throttling does not miss the minute forever.
+  // VO/MUSIC alert: venue wall-clock → absolute UTC instant (same moment for every client).
   useEffect(() => {
     const tick = () => {
       const synced = getSyncedNow(clockOffset);
-      const current = getEventLocalHHMM(synced, eventTimezone);
+      const fallbackTz = resolveShowTimezone(eventTimezone);
       let found: { itemId: number; segmentName: string; vo: VoCue } | null = null;
       for (const item of schedule) {
         const vos = item.voCues;
         if (!vos?.length) continue;
         for (const vo of vos) {
-          if (!isCalloutDue(vo.time, current, 10)) continue;
+          const tz = resolveShowTimezone((vo as any).timeZone, fallbackTz);
+          if (!isCalloutDue(vo.time, synced, tz, 10)) continue;
           const key = `${item.id}:${vo.id}`;
           if (dismissedVoAlerts.has(key)) continue;
           found = { itemId: item.id, segmentName: item.segmentName, vo };

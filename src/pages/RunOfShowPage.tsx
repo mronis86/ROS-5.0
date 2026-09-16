@@ -2026,20 +2026,23 @@ const RunOfShowPage: React.FC = () => {
     releaseRowEditLock,
   ]);
 
-  // VO/MUSIC alert on event-local clock (server-synced). Sticky until dismiss; 10m catch-up
-  // so background-tab timer throttling does not miss the minute forever.
-  // Independent of the early/late Time Toast toggle — remote operators still need callouts.
+  // VO/MUSIC alert: venue wall-clock → absolute UTC instant (same moment for every client).
+  // Sticky until dismiss; 10m catch-up so background-tab throttling does not miss it forever.
+  // Independent of the early/late Time Toast toggle.
   useEffect(() => {
     const tick = () => {
       const synced = getSyncedNow(clockOffset);
-      const tz = resolveShowTimezone(eventTimezone);
-      const current = getEventLocalHHMM(synced, tz);
+      const fallbackTz = resolveShowTimezone(
+        calendarTimezoneRef.current,
+        eventTimezone
+      );
       let found: { itemId: number; segmentName: string; vo: VoCue } | null = null;
       for (const item of schedule) {
         const vos = item.voCues;
         if (!vos?.length) continue;
         for (const vo of vos) {
-          if (!isCalloutDue(vo.time, current, 10)) continue;
+          const tz = resolveShowTimezone(vo.timeZone, fallbackTz);
+          if (!isCalloutDue(vo.time, synced, tz, 10)) continue;
           const key = `${item.id}:${vo.id}`;
           if (dismissedVoAlerts.has(key)) continue;
           found = { itemId: item.id, segmentName: item.segmentName, vo };
@@ -15080,7 +15083,12 @@ const RunOfShowPage: React.FC = () => {
                <span className="text-white font-semibold">
                  {schedule.find((s) => s.id === editingVoItemId)?.segmentName || 'this cue'}
                </span>
-               . Wall-clock only — does <span className="text-white font-medium">not</span> change duration or start times.
+               . Times are <span className="text-white font-medium">venue wall clock</span> (
+               <span className="font-mono text-cyan-300">
+                 {resolveShowTimezone(calendarTimezoneRef.current, eventTimezone)}
+               </span>
+               ) — every client fires at the same absolute moment. Does{' '}
+               <span className="text-white font-medium">not</span> change duration or start times.
              </p>
 
              <ul className="space-y-2 mb-4 max-h-56 overflow-y-auto">
@@ -15221,6 +15229,10 @@ const RunOfShowPage: React.FC = () => {
                      : undefined;
                    const normalizedTime =
                      normalizeCalloutTimeToHHMM(voDraftTime) || voDraftTime;
+                   const venueTz = resolveShowTimezone(
+                     calendarTimezoneRef.current,
+                     eventTimezone
+                   );
                    setTempVoCues((prev) =>
                      [
                        ...prev,
@@ -15229,6 +15241,7 @@ const RunOfShowPage: React.FC = () => {
                          time: normalizedTime,
                          label: voDraftLabel.trim(),
                          kind: voDraftKind,
+                         timeZone: venueTz,
                          ...(cuePrefix ? { cuePrefix } : {}),
                        },
                      ].sort((a, b) => a.time.localeCompare(b.time))
@@ -15257,10 +15270,18 @@ const RunOfShowPage: React.FC = () => {
                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold"
                  onClick={() => {
                    const itemId = editingVoItemId;
+                   const venueTz = resolveShowTimezone(
+                     calendarTimezoneRef.current,
+                     eventTimezone
+                   );
                    const next = [...tempVoCues]
                      .map((vo) => {
                        const normalized = normalizeCalloutTimeToHHMM(vo.time);
-                       return normalized ? { ...vo, time: normalized } : vo;
+                       return {
+                         ...vo,
+                         time: normalized || vo.time,
+                         timeZone: vo.timeZone || venueTz,
+                       };
                      })
                      .sort((a, b) => a.time.localeCompare(b.time));
                    setSchedule((prev) =>
