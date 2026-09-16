@@ -14,7 +14,7 @@ export function stripBracketHintsForSpeech(text: string): string {
 export function normalizeSpeechToken(raw: string): string {
   return raw
     .toLowerCase()
-    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u2018\u2019']/g, "'")
     .replace(/[^a-z0-9']/g, '');
 }
 
@@ -239,110 +239,171 @@ export function isSignificantSpeechToken(w: string): boolean {
   return w.length >= 4;
 }
 
+export type VoicePromptAlignResult = {
+  scriptWordIndex: number;
+  lineIndex: number;
+  matchLen: number;
+  significantMatches: number;
+  jumpDistance: number;
+  /** True when the reader skipped ahead and we locked onto a later phrase. */
+  isSkipAhead: boolean;
+};
+
 /**
- * Local fuzzy alignment near `wordCursor` (script word index), ported from
- * https://github.com/chgeuer/voice_prompt/blob/master/assets/js/hooks/teleprompter.js `processHeardText`.
+ * Local fuzzy alignment near `wordCursor`, plus confident skip-ahead when the
+ * reader jumps to a later phrase in the script.
  */
 export function alignTranscriptVoicePrompt(
   scriptTokens: ScriptSpeechToken[],
   heardWordsIn: string[],
   wordCursor: number
-): { scriptWordIndex: number; lineIndex: number } | null {
+): VoicePromptAlignResult | null {
   const heardWords = heardWordsIn.map(normalizeSpeechToken).filter((w) => w.length > 0);
   if (heardWords.length === 0 || scriptTokens.length === 0) return null;
 
   const wc = Math.max(0, Math.min(wordCursor, scriptTokens.length - 1));
   const searchStart = Math.max(0, wc - 1);
-  /** Keep the window tight so duplicate words don't yank us far ahead. */
-  const searchEnd = Math.min(
+  const localEnd = Math.min(
     scriptTokens.length - 1,
-    wc + Math.min(14, Math.max(6, heardWords.length * 2 + 2))
+    wc + Math.min(12, Math.max(6, heardWords.length * 2 + 2))
   );
-  /** Prefer multi-word confirmation; allow a single strong match only for short finals. */
+  const skipAheadEnd = Math.min(
+    scriptTokens.length - 1,
+    wc + Math.min(120, Math.max(40, heardWords.length * 10))
+  );
   const minMatchLen = heardWords.length <= 2 ? 1 : 2;
 
-  let bestPos = -1;
-  let bestScore = -1;
+  type Cand = {
+    end: number;
+    start: number;
+    matchLen: number;
+    significantMatches: number;
+    score: number;
+  };
 
-  for (let scriptPos = searchStart; scriptPos <= searchEnd; scriptPos++) {
-    for (let heardStart = 0; heardStart < heardWords.length; heardStart++) {
-      let matchLen = 0;
-      let significantMatches = 0;
-      let si = scriptPos;
-      let hi = heardStart;
-      let skips = 0;
+  const scoreCandidate = (
+    scriptPos: number,
+    matchLen: number,
+    significantMatches: number,
+    allowFar: boolean
+  ): number | null => {
+    const jumpDistance = scriptPos - wc;
+    if (jumpDistance < -1) return null;
+    if (!allowFar) {
+      if (jumpDistance > 6 && matchLen < 3) return null;
+      if (jumpDistance > 3 && matchLen < 2) return null;
+    } else {
+      if (jumpDistance < 8) return null;
+      if (matchLen < 3 || significantMatches < 2) return null;
+      if (jumpDistance > 24 && matchLen < 4) return null;
+      if (jumpDistance > 48 && (matchLen < 5 || significantMatches < 3)) return null;
+    }
+    const proximityBonus = allowFar
+      ? 1.5 + matchLen * 0.2
+      : 4.0 - Math.max(0, jumpDistance) * 0.55;
+    return matchLen * 1.5 + significantMatches * 0.75 + proximityBonus;
+  };
 
-      while (si <= searchEnd && hi < heardWords.length && skips < 2) {
-        const scriptWord = scriptTokens[si]?.word ?? '';
-        const heardWord = heardWords[hi];
+  const findBest = (searchEnd: number, allowFar: boolean): Cand | null => {
+    let best: Cand | null = null;
+    for (let scriptPos = searchStart; scriptPos <= searchEnd; scriptPos++) {
+      for (let heardStart = 0; heardStart < heardWords.length; heardStart++) {
+        let matchLen = 0;
+        let significantMatches = 0;
+        let si = scriptPos;
+        let hi = heardStart;
+        let skips = 0;
 
-        if (!heardWord) {
-          hi++;
-          continue;
-        }
-        if (!scriptWord) {
-          si++;
-          continue;
-        }
+        while (si <= searchEnd && hi < heardWords.length && skips < 2) {
+          const scriptWord = scriptTokens[si]?.word ?? '';
+          const heardWord = heardWords[hi];
 
-        if (wordsMatchVoicePrompt(scriptWord, heardWord)) {
-          matchLen++;
-          if (isSignificantSpeechToken(scriptWord)) significantMatches++;
-          si++;
-          hi++;
-          skips = 0;
-        } else {
-          let skipped = false;
-          if (hi + 1 < heardWords.length) {
-            const nextHeard = heardWords[hi + 1];
-            if (wordsMatchVoicePrompt(scriptWord, nextHeard)) {
-              hi++;
-              skips++;
-              skipped = true;
-            }
+          if (!heardWord) {
+            hi++;
+            continue;
           }
-          if (!skipped && si + 1 <= searchEnd) {
-            const nextScript = scriptTokens[si + 1]?.word ?? '';
-            if (nextScript && wordsMatchVoicePrompt(nextScript, heardWord)) {
-              si++;
-              skips++;
-              skipped = true;
-            }
+          if (!scriptWord) {
+            si++;
+            continue;
           }
-          if (!skipped) break;
+
+          if (wordsMatchVoicePrompt(scriptWord, heardWord)) {
+            matchLen++;
+            if (isSignificantSpeechToken(scriptWord)) significantMatches++;
+            si++;
+            hi++;
+            skips = 0;
+          } else {
+            let skipped = false;
+            if (hi + 1 < heardWords.length) {
+              const nextHeard = heardWords[hi + 1];
+              if (wordsMatchVoicePrompt(scriptWord, nextHeard)) {
+                hi++;
+                skips++;
+                skipped = true;
+              }
+            }
+            if (!skipped && si + 1 <= searchEnd) {
+              const nextScript = scriptTokens[si + 1]?.word ?? '';
+              if (nextScript && wordsMatchVoicePrompt(nextScript, heardWord)) {
+                si++;
+                skips++;
+                skipped = true;
+              }
+            }
+            if (!skipped) break;
+          }
         }
-      }
 
-      const effectiveEnd = si - 1;
-      if (matchLen < minMatchLen) continue;
-      if (significantMatches < 1 && matchLen < 2) continue;
+        const effectiveEnd = si - 1;
+        if (matchLen < minMatchLen) continue;
+        if (significantMatches < 1 && matchLen < 2) continue;
 
-      const jumpDistance = scriptPos - wc;
-      if (jumpDistance < -1) continue;
-      if (jumpDistance > 8 && matchLen < 3) continue;
-      if (jumpDistance > 4 && matchLen < 2) continue;
+        const score = scoreCandidate(scriptPos, matchLen, significantMatches, allowFar);
+        if (score == null) continue;
 
-      // Strong proximity bias — closer matches always beat far ones with similar length
-      const proximityBonus = 3.0 - Math.max(0, jumpDistance) * 0.35;
-      const score = matchLen * 1.4 + significantMatches * 0.6 + proximityBonus;
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestPos = effectiveEnd;
+        if (
+          !best ||
+          score > best.score ||
+          (score === best.score && effectiveEnd < best.end)
+        ) {
+          best = {
+            end: effectiveEnd,
+            start: scriptPos,
+            matchLen,
+            significantMatches,
+            score
+          };
+        }
       }
     }
+    return best;
+  };
+
+  const localBest = findBest(localEnd, false);
+  const skipBest = heardWords.length >= 3 ? findBest(skipAheadEnd, true) : null;
+
+  let chosen = localBest;
+  if (skipBest && (!localBest || skipBest.score > localBest.score + 1.25)) {
+    chosen = skipBest;
   }
 
-  if (bestPos < 0 || bestPos < wc) {
-    /** Last resort: next exact/fuzzy word within a few tokens (no long leaps). */
+  if (!chosen || chosen.end < wc) {
     if (heardWords.length >= 1 && heardWords.length <= 3) {
       const tail = [...heardWords].reverse().find((h) => h.length >= 3);
       if (tail) {
-        for (let i = wc; i <= Math.min(scriptTokens.length - 1, wc + 5); i++) {
+        for (let i = wc; i <= Math.min(scriptTokens.length - 1, wc + 4); i++) {
           if (wordsMatchVoicePrompt(scriptTokens[i].word, tail)) {
             const np = Math.max(wc, i);
             if (np > wc) {
-              return { scriptWordIndex: np, lineIndex: scriptTokens[np].lineIndex };
+              return {
+                scriptWordIndex: np,
+                lineIndex: scriptTokens[np].lineIndex,
+                matchLen: 1,
+                significantMatches: isSignificantSpeechToken(tail) ? 1 : 0,
+                jumpDistance: np - wc,
+                isSkipAhead: false
+              };
             }
           }
         }
@@ -351,14 +412,21 @@ export function alignTranscriptVoicePrompt(
     return null;
   }
 
-  const newPos = Math.max(wc, bestPos);
-  /** Cap advance so one noisy recognition can't skip a whole paragraph. */
-  const maxJump = Math.min(6, Math.max(2, Math.round(heardWords.length * 1.1)));
-  const cappedPos = Math.min(newPos, wc + maxJump);
+  const jumpDistance = chosen.start - wc;
+  const isSkipAhead = jumpDistance >= 8 && chosen.matchLen >= 3;
+  const newPos = Math.max(wc, chosen.end);
+  const maxJump = isSkipAhead
+    ? newPos - wc
+    : Math.min(4, Math.max(2, Math.round(heardWords.length * 0.95)));
+  const cappedPos = Math.min(newPos, wc + Math.max(1, maxJump));
   if (cappedPos <= wc) return null;
 
   return {
     scriptWordIndex: cappedPos,
-    lineIndex: scriptTokens[cappedPos].lineIndex
+    lineIndex: scriptTokens[cappedPos].lineIndex,
+    matchLen: chosen.matchLen,
+    significantMatches: chosen.significantMatches,
+    jumpDistance: cappedPos - wc,
+    isSkipAhead
   };
 }

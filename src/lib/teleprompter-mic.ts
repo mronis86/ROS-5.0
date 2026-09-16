@@ -48,12 +48,28 @@ export async function unlockAndListMics(preferredDeviceId?: string): Promise<{
   return { devices, stream };
 }
 
-export function audioConstraintsForMic(deviceId: string): MediaStreamConstraints {
+export function audioConstraintsForMic(
+  deviceId: string,
+  opts?: { exactDevice?: boolean }
+): MediaStreamConstraints {
+  if (!deviceId) {
+    return { audio: { echoCancellation: true, noiseSuppression: true } };
+  }
+  const exact = opts?.exactDevice === true;
   return {
-    audio: deviceId
-      ? { deviceId: { ideal: deviceId }, echoCancellation: true, noiseSuppression: true }
-      : { echoCancellation: true, noiseSuppression: true },
+    audio: {
+      deviceId: exact ? { exact: deviceId } : { ideal: deviceId },
+      echoCancellation: true,
+      noiseSuppression: true,
+    },
   };
+}
+
+/** Edge Chromium — SpeechRecognition is pickier about mic handoff than Chrome. */
+export function isEdgeBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  return /\bEdg\//.test(ua) || /\bEdge\//.test(ua);
 }
 
 export function computeMicLevelFromTimeDomain(data: Uint8Array): number {

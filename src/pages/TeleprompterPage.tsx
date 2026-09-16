@@ -8,6 +8,7 @@ import {
 import {
   audioConstraintsForMic,
   computeMicLevelFromTimeDomain,
+  isEdgeBrowser,
   listAudioInputDevices,
   unlockAndListMics,
   writeStoredMicId,
@@ -186,6 +187,8 @@ const TeleprompterPage: React.FC = () => {
   const voiceSpeechRateWpsRef = useRef(2.4);
   /** Current scroll velocity px/s (smoothed toward speech pace). */
   const voiceScrollVelocityRef = useRef(0);
+  /** Current matched script word — RAF recomputes guide target from this each frame. */
+  const voiceFollowWordRef = useRef<number | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const speechRecognitionRef = useRef<any>(null);
   const voiceMicStreamRef = useRef<MediaStream | null>(null);
@@ -687,65 +690,67 @@ const TeleprompterPage: React.FC = () => {
     voiceLastMatchAtRef.current = 0;
     voiceSpeechRateWpsRef.current = 2.4;
     voiceScrollVelocityRef.current = 0;
+    voiceFollowWordRef.current = null;
   }, []);
 
   /**
-   * Point the cruise target at the matched word on the guide.
-   * Skips blank/break-line gaps so the next spoken line stays visible.
+   * How far (in scrollTop px) to move so the matched word sits on the guide.
+   * Uses live on-screen positions — highlight vs guide — not a stale content offset.
    */
-  const setVoiceScrollDesiredFromWord = useCallback(
-    (wordIndex: number, tokens: ScriptSpeechToken[]) => {
+  const measureScrollDeltaWordToGuide = useCallback(
+    (wordIndex: number, tokens: ScriptSpeechToken[]): number | null => {
       const container = previewScrollRef.current;
-      if (!container || userRole !== 'SCROLLER' || tokens.length === 0) return;
+      if (!container || tokens.length === 0) return null;
 
       const wi = Math.max(0, Math.min(wordIndex, tokens.length - 1));
-      let lineIndex = tokens[wi].lineIndex;
-
-      let lineStart = wi;
-      while (lineStart > 0 && tokens[lineStart - 1].lineIndex === lineIndex) lineStart--;
-      let lineEnd = wi;
-      while (lineEnd < tokens.length - 1 && tokens[lineEnd + 1].lineIndex === lineIndex) lineEnd++;
-      const wordsOnLine = Math.max(1, lineEnd - lineStart + 1);
-      const frac = (wi - lineStart + 0.4) / wordsOnLine;
-
-      // If blank lines follow, peek toward the next spoken line once we're mid/late on this line
-      const nextSpokenTok = tokens.find((t) => t.lineIndex > lineIndex);
-      const blankGap =
-        nextSpokenTok != null ? nextSpokenTok.lineIndex - lineIndex - 1 : 0;
-      if (blankGap > 0 && frac >= 0.45) {
-        lineIndex = nextSpokenTok!.lineIndex;
-      }
-
-      const lineEl = lineRefsMap.current.get(lineIndex);
-      if (!lineEl) return;
+      const lineIndex = tokens[wi].lineIndex;
 
       const cRect = container.getBoundingClientRect();
-      const lRect = lineEl.getBoundingClientRect();
-      const layoutH = container.offsetHeight || 1;
-      const scale = cRect.height / layoutH || 1;
-      const lineTopInContent =
-        (lRect.top - cRect.top) / scale + container.scrollTop;
+      if (cRect.height < 2) return null;
+      const guideY = cRect.top + (guideLinePosition / 100) * cRect.height;
 
-      const guideFrac = guideLinePosition / 100;
-      const lineH = lineEl.offsetHeight || settings.fontSize * settings.lineHeight * 1.35;
-      const useFrac = blankGap > 0 && frac >= 0.45 ? 0.25 : Math.min(0.75, 0.2 + frac * 0.5);
-      const raw =
-        lineTopInContent - container.clientHeight * guideFrac + lineH * useFrac;
-      const maxS = Math.max(0, container.scrollHeight - container.clientHeight);
-      const target = Math.max(0, Math.min(raw, maxS));
-      const cur = voiceDesiredScrollTopRef.current ?? container.scrollTop;
+      // Prefer the actual highlighted word DOM node when present
+      const wordEl = container.querySelector(
+        `[data-voice-word="${wi}"]`
+      ) as HTMLElement | null;
 
-      if (target < cur - lineH * 0.75) return;
-
-      // Blank gaps can be tall — allow a bigger target step so we don't stall in whitespace
-      const maxTargetStep = lineH * (blankGap > 0 ? Math.min(8, 2 + blankGap) : 3.5);
-      if (target > cur + maxTargetStep) {
-        voiceDesiredScrollTopRef.current = cur + maxTargetStep;
+      let wordY: number;
+      if (wordEl) {
+        const wRect = wordEl.getBoundingClientRect();
+        wordY = wRect.top + wRect.height * 0.5;
       } else {
-        voiceDesiredScrollTopRef.current = target;
+        const lineEl = lineRefsMap.current.get(lineIndex);
+        if (!lineEl) return null;
+        let lineStart = wi;
+        while (lineStart > 0 && tokens[lineStart - 1].lineIndex === lineIndex) lineStart--;
+        let lineEnd = wi;
+        while (lineEnd < tokens.length - 1 && tokens[lineEnd + 1].lineIndex === lineIndex) {
+          lineEnd++;
+        }
+        const wordsOnLine = Math.max(1, lineEnd - lineStart + 1);
+        const frac = (wi - lineStart + 0.5) / wordsOnLine;
+        const lRect = lineEl.getBoundingClientRect();
+        wordY = lRect.top + lRect.height * Math.min(0.85, Math.max(0.15, frac));
       }
+
+      // Positive => word is below the guide => scroll down
+      const deltaScreen = wordY - guideY;
+      const scaleY = cRect.height / (container.offsetHeight || 1);
+      if (!Number.isFinite(scaleY) || scaleY < 0.05) return null;
+      return deltaScreen / scaleY;
     },
-    [userRole, guideLinePosition, settings.fontSize, settings.lineHeight]
+    [guideLinePosition]
+  );
+
+  const setVoiceScrollDesiredFromWord = useCallback(
+    (wordIndex: number, _tokens: ScriptSpeechToken[]) => {
+      if (userRole !== 'SCROLLER') return;
+      voiceFollowWordRef.current = wordIndex;
+      // Target is refreshed from live measurements in the RAF loop
+      const el = previewScrollRef.current;
+      if (el) voiceDesiredScrollTopRef.current = el.scrollTop;
+    },
+    [userRole]
   );
 
   useEffect(() => {
@@ -758,6 +763,7 @@ const TeleprompterPage: React.FC = () => {
     }
 
     const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
+    const tokens = tokenizeScriptForSpeech(scriptText);
     let lastTs = performance.now();
 
     const tick = (ts: number) => {
@@ -765,70 +771,61 @@ const TeleprompterPage: React.FC = () => {
       const dt = Math.min(0.05, Math.max(0.008, (ts - lastTs) / 1000));
       lastTs = ts;
 
-      if (el && voiceDesiredScrollTopRef.current !== null) {
-        const maxS = Math.max(0, el.scrollHeight - el.clientHeight);
-        const tgt = Math.max(0, Math.min(voiceDesiredScrollTopRef.current, maxS));
-        const cur = el.scrollTop;
-        const diff = tgt - cur;
-        const distance = Math.abs(diff);
-
-        if (distance < 0.5) {
-          el.scrollTop = tgt;
-          voiceScrollVelocityRef.current *= 0.92;
-        } else {
+      if (el && voiceFollowWordRef.current != null && tokens.length > 0) {
+        const delta = measureScrollDeltaWordToGuide(voiceFollowWordRef.current, tokens);
+        if (delta != null && Number.isFinite(delta)) {
+          const maxS = Math.max(0, el.scrollHeight - el.clientHeight);
+          const absDelta = Math.abs(delta);
           const sinceMatchSec =
             voiceLastMatchAtRef.current > 0
               ? (ts - voiceLastMatchAtRef.current) / 1000
               : 99;
 
-          // Only fully stop after a real silence (~2.5s). Brief gaps keep a crawl.
-          const HARD_PAUSE_SEC = 2.5;
-          if (sinceMatchSec > HARD_PAUSE_SEC) {
-            voiceScrollVelocityRef.current *= 0.9;
-            if (voiceScrollVelocityRef.current < 6) {
-              voiceScrollVelocityRef.current = 0;
-            }
+          if (sinceMatchSec > 2.5 && absDelta < lineHeightPx * 0.35) {
+            // Real pause and nearly aligned — hold
+            voiceScrollVelocityRef.current *= 0.85;
+          } else if (absDelta < 1.5) {
+            // Already on guide
+            voiceScrollVelocityRef.current *= 0.6;
           } else {
-            const wps = Math.max(1.2, Math.min(7, voiceSpeechRateWpsRef.current));
-            const wordsPerLine = 8;
-            let desiredPxPerSec = (wps / wordsPerLine) * lineHeightPx;
+            // Close the on-screen gap: word below guide → positive delta → scroll down
+            const lagLines = absDelta / Math.max(1, lineHeightPx);
+            const wps = Math.max(1.4, Math.min(7.5, voiceSpeechRateWpsRef.current));
 
-            const lagLines = distance / Math.max(1, lineHeightPx);
-            if (lagLines > 0.35) {
-              desiredPxPerSec *= 1 + Math.min(2.8, lagLines * 1.1);
-            }
-            if (sinceMatchSec < 0.45) {
-              desiredPxPerSec *= 1.12;
-            } else if (sinceMatchSec > 1.2) {
-              // Natural breath / clause gap — keep crawling toward the line
-              desiredPxPerSec *= 0.42;
-            }
+            // Fraction of the visual error to close this frame (snappier when farther behind)
+            let closeFrac =
+              lagLines > 1.2 ? 0.55 : lagLines > 0.5 ? 0.42 : lagLines > 0.2 ? 0.32 : 0.22;
+            if (sinceMatchSec > 1.2) closeFrac *= 0.55;
 
-            desiredPxPerSec *= Math.max(0.45, settings.scrollSpeed / 50);
+            // Also keep a speech-rate floor so we don't stall while talking
+            const paceStep = ((wps / 8) * lineHeightPx) * dt;
+            const gapStep = delta * closeFrac;
+            let step =
+              Math.sign(delta) *
+              Math.max(Math.abs(gapStep), delta > 0 ? paceStep * 0.35 : 0);
 
-            const crawlFloor = lineHeightPx * (sinceMatchSec > 1.2 ? 0.35 : 1.0);
-            const maxPx = lineHeightPx * 5.5;
-            desiredPxPerSec = Math.max(crawlFloor, Math.min(maxPx, desiredPxPerSec));
+            // Cap speed (~5–9 lines/sec) so catch-up is quick but not a hard snap
+            const maxStep = lineHeightPx * (lagLines > 1 ? 9 : 5.5) * dt;
+            if (Math.abs(step) > maxStep) step = Math.sign(step) * maxStep;
 
-            voiceScrollVelocityRef.current =
-              voiceScrollVelocityRef.current * 0.72 + desiredPxPerSec * 0.28;
+            // Never scroll past closing the gap this frame
+            if (Math.abs(step) > absDelta) step = delta;
+
+            const next = Math.max(0, Math.min(el.scrollTop + step, maxS));
+            el.scrollTop = next;
+            voiceDesiredScrollTopRef.current = next;
+            voiceScrollVelocityRef.current = step / Math.max(dt, 0.008);
           }
 
-          const step = Math.min(distance, Math.max(0, voiceScrollVelocityRef.current) * dt);
-          if (step > 0) {
-            el.scrollTop = cur + Math.sign(diff) * step;
-          }
-        }
+          if (scriptRef.current) scriptRef.current.scrollTop = el.scrollTop;
 
-        // Keep hidden outer scriptRef in sync for any legacy listeners (overflow:hidden)
-        if (scriptRef.current) scriptRef.current.scrollTop = el.scrollTop;
-
-        if (eventId) {
-          const now = Date.now();
-          if (now - lastScrollBroadcastRef.current >= 100) {
-            const currentLine = Math.floor(el.scrollTop / Math.max(1, lineHeightPx));
-            socketClient.emitScriptScroll(el.scrollTop, currentLine, settings.fontSize);
-            lastScrollBroadcastRef.current = now;
+          if (eventId) {
+            const now = Date.now();
+            if (now - lastScrollBroadcastRef.current >= 100) {
+              const currentLine = Math.floor(el.scrollTop / Math.max(1, lineHeightPx));
+              socketClient.emitScriptScroll(el.scrollTop, currentLine, settings.fontSize);
+              lastScrollBroadcastRef.current = now;
+            }
           }
         }
       }
@@ -846,14 +843,14 @@ const TeleprompterPage: React.FC = () => {
     voiceListenEnabled,
     userRole,
     eventId,
+    scriptText,
+    measureScrollDeltaWordToGuide,
     settings.fontSize,
     settings.lineHeight,
     settings.scrollSpeed,
     guideLinePosition,
   ]);
-  const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);
-
-  const clearVoiceHighlight = useCallback(() => {
+  const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);  const clearVoiceHighlight = useCallback(() => {
     setVoiceHighlightLine(null);
     setVoiceHighlightWordIndex(null);
   }, []);
@@ -875,22 +872,20 @@ const TeleprompterPage: React.FC = () => {
     (line: string, lineIndex: number) => {
       if (!line) return '\u00A0';
 
-      const useWords =
-        voiceListenEnabled &&
-        voiceHighlightStyle === 'words' &&
-        voiceHighlightWordIndex != null;
-
-      if (!useWords) return line;
+      // Always tag words while listening so scroll can measure highlight vs guide
+      if (!voiceListenEnabled) return line;
 
       const parts = line.split(/(\s+)/);
       let tokenIdx = scriptSpeechTokens.findIndex((t) => t.lineIndex === lineIndex);
       if (tokenIdx < 0) return line;
 
+      const useUnderline =
+        voiceHighlightStyle === 'words' && voiceHighlightWordIndex != null;
+
       return parts.map((part, i) => {
         if (!part || /^\s+$/.test(part)) {
           return <React.Fragment key={i}>{part}</React.Fragment>;
         }
-        // Stage directions / non-speech bits stay plain and don't consume match tokens
         if (/^\[[^\]]*\]$/.test(part.trim())) {
           return <React.Fragment key={i}>{part}</React.Fragment>;
         }
@@ -901,11 +896,13 @@ const TeleprompterPage: React.FC = () => {
         }
         const thisWordIdx = tokenIdx;
         tokenIdx += 1;
-        const spoken = thisWordIdx <= voiceHighlightWordIndex!;
-        const current = thisWordIdx === voiceHighlightWordIndex;
+        const spoken =
+          useUnderline && voiceHighlightWordIndex != null && thisWordIdx <= voiceHighlightWordIndex;
+        const current = useUnderline && thisWordIdx === voiceHighlightWordIndex;
         return (
           <span
             key={i}
+            data-voice-word={thisWordIdx}
             style={
               spoken
                 ? {
@@ -1153,23 +1150,49 @@ const TeleprompterPage: React.FC = () => {
     }
 
     const startRecognition = async () => {
-      // Briefly open the chosen device so Chrome prefers it, then release for SpeechRecognition
+      const onEdge = isEdgeBrowser();
+      // Briefly open the chosen device so the browser prefers it, then release for SpeechRecognition
       try {
         stopVoiceMicCapture();
-        const claim = await navigator.mediaDevices.getUserMedia(audioConstraintsForMic(selectedMicId));
+        const claim = await navigator.mediaDevices.getUserMedia(
+          audioConstraintsForMic(selectedMicId, { exactDevice: onEdge && !!selectedMicId })
+        );
         const devices = await listAudioInputDevices();
         setAudioInputDevices(devices);
         claim.getTracks().forEach((t) => t.stop());
+        // Edge needs a longer handoff before SpeechRecognition can grab the mic
+        await new Promise((r) => setTimeout(r, onEdge ? 550 : 120));
       } catch (err) {
         if (cancelled) return;
         const name = err instanceof DOMException ? err.name : '';
-        setVoiceStatus(
-          name === 'NotAllowedError'
-            ? 'Microphone blocked — allow mic for this site.'
-            : 'Could not open the selected microphone.'
-        );
-        setVoiceListenEnabled(false);
-        return;
+        if (onEdge && name === 'OverconstrainedError' && selectedMicId) {
+          // Fall back to default mic if Edge rejects exact deviceId
+          try {
+            const claim = await navigator.mediaDevices.getUserMedia(audioConstraintsForMic(''));
+            claim.getTracks().forEach((t) => t.stop());
+            await new Promise((r) => setTimeout(r, 550));
+            setVoiceStatus('Edge couldn’t lock that mic — using system default. Set Edge’s default mic in Windows Sound settings if needed.');
+          } catch (err2) {
+            const name2 = err2 instanceof DOMException ? err2.name : '';
+            setVoiceStatus(
+              name2 === 'NotAllowedError'
+                ? 'Microphone blocked — allow mic for this site in Edge.'
+                : 'Could not open the microphone in Edge.'
+            );
+            setVoiceListenEnabled(false);
+            return;
+          }
+        } else {
+          setVoiceStatus(
+            name === 'NotAllowedError'
+              ? onEdge
+                ? 'Microphone blocked — allow mic for this site in Edge (lock icon in address bar).'
+                : 'Microphone blocked — allow mic for this site.'
+              : 'Could not open the selected microphone.'
+          );
+          setVoiceListenEnabled(false);
+          return;
+        }
       }
 
       if (cancelled) return;
@@ -1179,7 +1202,7 @@ const TeleprompterPage: React.FC = () => {
       rec.continuous = true;
       rec.interimResults = true;
       rec.lang = 'en-US';
-      rec.maxAlternatives = 3;
+      rec.maxAlternatives = onEdge ? 1 : 3;
 
       const lastWordIndexOnLine = (lineIndex: number): number => {
         let last = -1;
@@ -1214,14 +1237,27 @@ const TeleprompterPage: React.FC = () => {
         const floorLine = Math.max(0, voiceScrollSnapLineRef.current);
         if (align.lineIndex < floorLine) return false;
 
-        // Next line with real words — blank/break lines don't count as a "step"
-        const nextSpoken = nextSpokenLineAfter(floorLine);
-        const maxLine = Math.max(floorLine + 1, nextSpoken);
-        const cappedWord =
-          align.lineIndex > maxLine
-            ? lastWordIndexOnLine(maxLine)
-            : align.scriptWordIndex;
-        const nextIdx = Math.max(prevIdx + 1, Math.min(cappedWord, align.scriptWordIndex));
+        let nextIdx: number;
+        if (align.isSkipAhead) {
+          // Reader jumped ahead — snap to the matched phrase (don't drip one line at a time)
+          nextIdx = align.scriptWordIndex;
+        } else {
+          // Normal reading: advance at most one spoken line / a few words per tick
+          const nextSpoken = nextSpokenLineAfter(floorLine);
+          const maxLine = Math.max(floorLine + 1, nextSpoken);
+          const cappedWord =
+            align.lineIndex > maxLine
+              ? lastWordIndexOnLine(maxLine)
+              : align.scriptWordIndex;
+          const maxWordAdvance = Math.max(
+            2,
+            Math.min(5, Math.round(voiceSpeechRateWpsRef.current * 0.85))
+          );
+          nextIdx = Math.min(
+            prevIdx + maxWordAdvance,
+            Math.max(prevIdx + 1, Math.min(cappedWord, align.scriptWordIndex))
+          );
+        }
         if (nextIdx <= prevIdx) return false;
 
         const nextLine = scriptSpeechTokens[nextIdx]?.lineIndex ?? floorLine;
@@ -1231,7 +1267,9 @@ const TeleprompterPage: React.FC = () => {
         if (prevMatchAt > 0 && advanced > 0) {
           const dtSec = (nowMatch - prevMatchAt) / 1000;
           if (dtSec > 0.06 && dtSec < 2.8) {
-            const instantWps = advanced / dtSec;
+            const instantWps = align.isSkipAhead
+              ? Math.min(6, advanced / Math.max(dtSec, 0.25))
+              : advanced / dtSec;
             voiceSpeechRateWpsRef.current =
               voiceSpeechRateWpsRef.current * 0.62 + instantWps * 0.38;
           }
@@ -1297,8 +1335,8 @@ const TeleprompterPage: React.FC = () => {
 
         if (scriptSpeechTokens.length === 0) return;
 
-        // Match against a short recent window only — keeps scroll locked to spoken text
-        const alignTail = combined.slice(-10);
+        // Longer tail helps detect skip-ahead to a later phrase
+        const alignTail = combined.slice(-14);
         const finalTrim = finalText.trim();
         if (finalTrim.length > 0 || newFinalWordCount > 0) {
           applyVoiceAlign(alignTail);
@@ -1317,7 +1355,11 @@ const TeleprompterPage: React.FC = () => {
         } else if (e.error === 'no-speech') {
           setVoiceStatus('No speech yet — speak louder, or Mic check the meter first.');
         } else if (e.error === 'audio-capture') {
-          setVoiceStatus('Audio capture failed — try Mic check, then Auto-scroll again.');
+          setVoiceStatus(
+            isEdgeBrowser()
+              ? 'Edge audio capture failed — close other tabs using the mic, allow mic permission, then try Auto-scroll again.'
+              : 'Audio capture failed — try Mic check, then Auto-scroll again.'
+          );
           setVoiceListenEnabled(false);
         } else if (e.error !== 'aborted') {
           setVoiceStatus(`Voice: ${e.error}`);
@@ -1326,6 +1368,7 @@ const TeleprompterPage: React.FC = () => {
 
       rec.onend = () => {
         if (voiceListenEnabledRef.current && !voiceMicCheckOnlyRef.current && speechRecognitionRef.current) {
+          const restartMs = isEdgeBrowser() ? 450 : 250;
           window.setTimeout(() => {
             try {
               if (voiceListenEnabledRef.current && !voiceMicCheckOnlyRef.current && speechRecognitionRef.current) {
@@ -1334,16 +1377,24 @@ const TeleprompterPage: React.FC = () => {
             } catch {
               /* already running */
             }
-          }, 250);
+          }, restartMs);
         }
       };
 
       speechRecognitionRef.current = rec;
       try {
         rec.start();
-        setVoiceStatus('Listening for script — Chrome/Edge speech engine active.');
+        setVoiceStatus(
+          isEdgeBrowser()
+            ? 'Listening (Edge) — if silent, set Windows default mic to this device, then retry Auto-scroll.'
+            : 'Listening for script — Chrome speech engine active.'
+        );
       } catch {
-        setVoiceStatus('Could not start speech recognition.');
+        setVoiceStatus(
+          isEdgeBrowser()
+            ? 'Could not start Edge speech recognition — try Mic meter first, or use Chrome.'
+            : 'Could not start speech recognition.'
+        );
         setVoiceListenEnabled(false);
       }
     };
