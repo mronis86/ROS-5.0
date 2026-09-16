@@ -3,9 +3,11 @@ import { adminFetch } from './adminAuth';
 import {
   applyCountdownColorModeId,
   applyGreenRoomLayoutId,
+  applyHideFullscreenTimerOption,
   applyLogoVariantId,
   getCountdownColorModeId,
   getGreenRoomLayoutId,
+  getHideFullscreenTimerOption,
   getLogoVariantId,
   parseCountdownColorModeId,
   parseGreenRoomLayoutId,
@@ -18,6 +20,7 @@ export type AppSettingsResponse = {
   logoVariantId: LogoVariantId;
   greenRoomLayoutId: GreenRoomLayoutId;
   countdownColorModeId: CountdownColorModeId;
+  hideFullscreenTimerOption: boolean;
   updatedAt: string | null;
   needsMigration?: boolean;
 };
@@ -30,6 +33,7 @@ function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }):
     logoVariantId,
     greenRoomLayoutId,
     countdownColorModeId,
+    hideFullscreenTimerOption: data.hideFullscreenTimerOption === true,
     updatedAt: data.updatedAt ?? null,
     needsMigration: data.needsMigration === true,
   };
@@ -39,6 +43,7 @@ function applySettings(settings: AppSettingsResponse): AppSettingsResponse {
   applyLogoVariantId(settings.logoVariantId);
   applyGreenRoomLayoutId(settings.greenRoomLayoutId);
   applyCountdownColorModeId(settings.countdownColorModeId);
+  applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
   return settings;
 }
 
@@ -114,6 +119,23 @@ export async function saveAdminCountdownColorMode(
   return applySettings(parseSettings(data));
 }
 
+export async function saveAdminHideFullscreenTimerOption(
+  hideFullscreenTimerOption: boolean
+): Promise<AppSettingsResponse> {
+  const res = await adminFetch('/api/admin/app-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hideFullscreenTimerOption }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to save display option (${res.status})`);
+  }
+  return applySettings(parseSettings(data));
+}
+
 export async function syncAdminAppSettingsTable(): Promise<AppSettingsResponse> {
   const res = await adminFetch('/api/admin/app-settings/sync-table', { method: 'POST' });
   const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
@@ -138,6 +160,7 @@ export async function hydrateLogoVariantFromServer(): Promise<LogoVariantId> {
       } catch {
         applyGreenRoomLayoutId(getGreenRoomLayoutId());
         applyCountdownColorModeId(getCountdownColorModeId());
+        applyHideFullscreenTimerOption(getHideFullscreenTimerOption());
         return getLogoVariantId();
       }
     })();

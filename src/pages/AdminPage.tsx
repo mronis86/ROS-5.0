@@ -10,12 +10,14 @@ import {
   getLogoVariantId,
   getGreenRoomLayoutId,
   getCountdownColorModeId,
+  getHideFullscreenTimerOption,
   LOGO_VARIANTS,
   GREEN_ROOM_LAYOUTS,
   COUNTDOWN_COLOR_MODES,
   applyLogoVariantId,
   applyGreenRoomLayoutId,
   applyCountdownColorModeId,
+  applyHideFullscreenTimerOption,
   type LogoVariantId,
   type GreenRoomLayoutId,
   type CountdownColorModeId,
@@ -25,6 +27,7 @@ import {
   saveAdminLogoVariant,
   saveAdminGreenRoomLayout,
   saveAdminCountdownColorMode,
+  saveAdminHideFullscreenTimerOption,
   syncAdminAppSettingsTable,
 } from '../lib/appSettings';
 import AppLogo from '../components/AppLogo';
@@ -354,13 +357,24 @@ function platformLevelDot(level: PlatformCheckLevel): string {
 }
 
 function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
   const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+  const s = Math.floor(seconds % 60);
   if (m < 60) return `${m}m ${s}s`;
   const h = Math.floor(m / 60);
   const mm = m % 60;
-  return `${h}h ${mm}m`;
+  if (h < 24) return `${h}h ${mm}m`;
+  const d = Math.floor(h / 24);
+  const hh = h % 24;
+  return `${d}d ${hh}h`;
+}
+
+function connectedSecondsFromJoinedAt(joinedAt?: string | null): number | null {
+  if (!joinedAt) return null;
+  const ms = Date.parse(joinedAt);
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.floor((Date.now() - ms) / 1000));
 }
 
 interface PresenceViewer {
@@ -368,6 +382,8 @@ interface PresenceViewer {
   userName: string;
   userEmail: string;
   userRole: string;
+  joinedAt?: string | null;
+  connectedSeconds?: number | null;
 }
 
 interface PresenceEvent {
@@ -492,6 +508,9 @@ export default function AdminPage() {
   const [greenRoomLayoutId, setGreenRoomLayoutIdState] = useState<GreenRoomLayoutId>(() => getGreenRoomLayoutId());
   const [countdownColorModeId, setCountdownColorModeIdState] = useState<CountdownColorModeId>(() =>
     getCountdownColorModeId()
+  );
+  const [hideFullscreenTimerOption, setHideFullscreenTimerOptionState] = useState(
+    () => getHideFullscreenTimerOption()
   );
   const [logoSettingsLoading, setLogoSettingsLoading] = useState(false);
   const [logoSettingsSaving, setLogoSettingsSaving] = useState(false);
@@ -739,19 +758,35 @@ export default function AdminPage() {
     [selectedOrphanIds, selectedDeletedIds, deletedCalendarEvents, fetchEventLifecycle]
   );
 
+  const applyAllLogoSettings = (settings: {
+    logoVariantId: LogoVariantId;
+    greenRoomLayoutId: GreenRoomLayoutId;
+    countdownColorModeId: CountdownColorModeId;
+    hideFullscreenTimerOption: boolean;
+    updatedAt: string | null;
+    needsMigration?: boolean;
+  }) => {
+    applyLogoVariantId(settings.logoVariantId);
+    applyGreenRoomLayoutId(settings.greenRoomLayoutId);
+    applyCountdownColorModeId(settings.countdownColorModeId);
+    applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
+    setLogoVariantIdState(settings.logoVariantId);
+    setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
+    setCountdownColorModeIdState(settings.countdownColorModeId);
+    setHideFullscreenTimerOptionState(settings.hideFullscreenTimerOption);
+    setLogoSettingsUpdatedAt(settings.updatedAt);
+    if (settings.needsMigration != null) {
+      setLogoSettingsNeedsMigration(settings.needsMigration === true);
+    }
+  };
+
   const fetchLogoSettings = useCallback(async () => {
     setLogoSettingsLoading(true);
     setLogoSettingsError(null);
     try {
       const settings = await fetchAdminAppSettings();
+      applyAllLogoSettings(settings);
       setLogoSettingsNeedsMigration(settings.needsMigration === true);
-      setLogoSettingsUpdatedAt(settings.updatedAt);
-      applyLogoVariantId(settings.logoVariantId);
-      applyGreenRoomLayoutId(settings.greenRoomLayoutId);
-      applyCountdownColorModeId(settings.countdownColorModeId);
-      setLogoVariantIdState(settings.logoVariantId);
-      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
-      setCountdownColorModeIdState(settings.countdownColorModeId);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to load logo settings');
     } finally {
@@ -765,10 +800,7 @@ export default function AdminPage() {
     setLogoSettingsError(null);
     try {
       const settings = await saveAdminLogoVariant(id);
-      setLogoVariantIdState(settings.logoVariantId);
-      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
-      setCountdownColorModeIdState(settings.countdownColorModeId);
-      setLogoSettingsUpdatedAt(settings.updatedAt);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save logo setting');
@@ -783,10 +815,7 @@ export default function AdminPage() {
     setLogoSettingsError(null);
     try {
       const settings = await saveAdminGreenRoomLayout(id);
-      setLogoVariantIdState(settings.logoVariantId);
-      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
-      setCountdownColorModeIdState(settings.countdownColorModeId);
-      setLogoSettingsUpdatedAt(settings.updatedAt);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save Green Room layout');
@@ -801,13 +830,25 @@ export default function AdminPage() {
     setLogoSettingsError(null);
     try {
       const settings = await saveAdminCountdownColorMode(id);
-      setLogoVariantIdState(settings.logoVariantId);
-      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
-      setCountdownColorModeIdState(settings.countdownColorModeId);
-      setLogoSettingsUpdatedAt(settings.updatedAt);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save countdown color');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handleHideFullscreenTimerChange = async (hide: boolean) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminHideFullscreenTimerOption(hide);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save display option');
     } finally {
       setLogoSettingsSaving(false);
     }
@@ -818,14 +859,8 @@ export default function AdminPage() {
     setLogoSettingsError(null);
     try {
       const settings = await syncAdminAppSettingsTable();
+      applyAllLogoSettings({ ...settings, needsMigration: false });
       setLogoSettingsNeedsMigration(false);
-      setLogoSettingsUpdatedAt(settings.updatedAt);
-      applyLogoVariantId(settings.logoVariantId);
-      applyGreenRoomLayoutId(settings.greenRoomLayoutId);
-      applyCountdownColorModeId(settings.countdownColorModeId);
-      setLogoVariantIdState(settings.logoVariantId);
-      setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
-      setCountdownColorModeIdState(settings.countdownColorModeId);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to create app_settings table');
     } finally {
@@ -3136,7 +3171,9 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-          <p className="text-slate-500 text-sm mb-4">Active events and viewers (refreshes every 15s)</p>
+          <p className="text-slate-500 text-sm mb-4">
+            Active events and viewers (refreshes every 15s). Connected time is how long that browser tab has been on the event since the current socket joined.
+          </p>
           {presenceError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
               Error loading presence: {presenceError}
@@ -3160,13 +3197,32 @@ export default function AdminPage() {
                     <p className="text-slate-500 text-sm">No viewers</p>
                   ) : (
                     <ul className="divide-y divide-slate-700/60">
-                      {(ev.viewers ?? []).map((v, i) => (
+                      {(ev.viewers ?? []).map((v, i) => {
+                        const connectedSecs =
+                          connectedSecondsFromJoinedAt(v.joinedAt) ??
+                          (typeof v.connectedSeconds === 'number' ? v.connectedSeconds : null);
+                        const connectedLabel =
+                          connectedSecs == null ? null : formatUptime(connectedSecs);
+                        const longOpen = connectedSecs != null && connectedSecs >= 12 * 60 * 60;
+                        return (
                         <li key={`${ev.eventId}-${v.userId}-${i}`} className="py-2 first:pt-0 last:pb-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                           <span className="text-white font-medium">{v.userName || v.userEmail || v.userId}</span>
                           {v.userEmail && v.userName !== v.userEmail && (
                             <span className="text-slate-400 truncate">{v.userEmail}</span>
                           )}
                           <span className="text-slate-500 text-xs px-2 py-0.5 rounded bg-slate-700/80">{v.userRole}</span>
+                          {connectedLabel && (
+                            <span
+                              className={`text-xs px-2 py-0.5 rounded tabular-nums ${
+                                longOpen
+                                  ? 'bg-amber-900/50 text-amber-200 border border-amber-700/50'
+                                  : 'bg-slate-700/80 text-slate-300'
+                              }`}
+                              title={v.joinedAt ? `Joined ${new Date(v.joinedAt).toLocaleString()}` : 'Connected duration'}
+                            >
+                              Connected {connectedLabel}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => disconnectUser(ev.eventId, v.userId)}
@@ -3177,7 +3233,8 @@ export default function AdminPage() {
                             {disconnectingUserId === v.userId ? 'Disconnecting…' : 'Disconnect'}
                           </button>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   )}
                 </li>
@@ -4025,7 +4082,7 @@ export default function AdminPage() {
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-white">Branding</h2>
-                <p className="text-slate-400 text-sm">Global logo, countdown color, and Green Room layout. Saved in Neon app_settings.</p>
+                <p className="text-slate-400 text-sm">Global logo, countdown color, display options, and Green Room layout. Saved in Neon app_settings.</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-2">
@@ -4167,6 +4224,36 @@ export default function AdminPage() {
                 );
               })}
             </div>
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-slate-700">
+            <h3 className="text-base font-semibold text-white">Display Mode modal</h3>
+            <p className="text-slate-400 text-sm mt-1 mb-4">
+              Controls which options appear in Run of Show → Select Display Mode. Direct URLs still work if someone
+              has the link.
+            </p>
+            <label
+              className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+                hideFullscreenTimerOption
+                  ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                  : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+              } ${logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration ? 'opacity-60' : ''}`}
+            >
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={hideFullscreenTimerOption}
+                disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                onChange={(e) => void handleHideFullscreenTimerChange(e.target.checked)}
+              />
+              <span>
+                <span className="block font-semibold text-white">Hide Fullscreen Timer option</span>
+                <span className="block mt-1 text-sm text-slate-400">
+                  Only show Clock in the display picker. Useful when teams should use Clock instead of the older
+                  fullscreen timer.
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className="mt-8 pt-6 border-t border-slate-700">

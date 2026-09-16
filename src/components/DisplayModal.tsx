@@ -1,4 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import {
+  getHideFullscreenTimerOption,
+  HIDE_FULLSCREEN_TIMER_CHANGE_EVENT,
+} from '../lib/branding';
+import { fetchPublicAppSettings } from '../lib/appSettings';
 
 const STORAGE_KEY = 'ros_display_open_external';
 
@@ -18,6 +23,7 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
   onSelectClock,
 }) => {
   const [openMode, setOpenMode] = useState<DisplayOpenMode>('external');
+  const [hideFullscreenTimer, setHideFullscreenTimer] = useState(() => getHideFullscreenTimerOption());
 
   useEffect(() => {
     if (!isOpen) return;
@@ -29,7 +35,28 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
     } catch {
       // ignore
     }
+    setHideFullscreenTimer(getHideFullscreenTimerOption());
+    void fetchPublicAppSettings()
+      .then((settings) => {
+        setHideFullscreenTimer(settings.hideFullscreenTimerOption === true);
+      })
+      .catch(() => {
+        // keep cached value
+      });
   }, [isOpen]);
+
+  useEffect(() => {
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ hideFullscreenTimerOption?: boolean }>).detail;
+      if (typeof detail?.hideFullscreenTimerOption === 'boolean') {
+        setHideFullscreenTimer(detail.hideFullscreenTimerOption);
+      } else {
+        setHideFullscreenTimer(getHideFullscreenTimerOption());
+      }
+    };
+    window.addEventListener(HIDE_FULLSCREEN_TIMER_CHANGE_EVENT, onChange);
+    return () => window.removeEventListener(HIDE_FULLSCREEN_TIMER_CHANGE_EVENT, onChange);
+  }, []);
 
   const setMode = (mode: DisplayOpenMode) => {
     setOpenMode(mode);
@@ -96,26 +123,28 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
             </label>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              onSelectFullscreenTimer(openMode);
-              onClose();
-            }}
-            className="w-full p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
+          {!hideFullscreenTimer && (
+            <button
+              type="button"
+              onClick={() => {
+                onSelectFullscreenTimer(openMode);
+                onClose();
+              }}
+              className="w-full p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-left"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold">Fullscreen Timer</h3>
+                  <p className="text-slate-400 text-sm">Large countdown display for stage / confidence</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-white font-semibold">Fullscreen Timer</h3>
-                <p className="text-slate-400 text-sm">Large countdown display for stage / confidence</p>
-              </div>
-            </div>
-          </button>
+            </button>
+          )}
 
           <button
             type="button"

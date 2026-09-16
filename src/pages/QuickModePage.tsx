@@ -1,9 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
-import { apiAuthFetch, apiJsonHeaders } from '../lib/sessionAuth';
+import { apiJsonHeaders, getApiAccessToken } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { resolveQuickModeEventId } from '../lib/quickModeEvent';
+import {
+  fetchQmOperatorLinkStatus,
+  fetchQmOperatorSession,
+  formatQmExpiry,
+  qmLinkIsActive,
+  updateQmOperatorLink,
+  type QmOperatorLinkStatus,
+} from '../lib/quickModeOperatorLink';
 
 type QuickTimer = {
   id: number;
@@ -90,8 +98,18 @@ const QuickModePage: React.FC = () => {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [isCompanionSyncing, setIsCompanionSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  const [operatorToken, setOperatorToken] = useState<string | null>(null);
+  const [publicLinkExpired, setPublicLinkExpired] = useState(false);
+  const [publicLinkError, setPublicLinkError] = useState('');
+  const [publicExpiresAt, setPublicExpiresAt] = useState<string | null>(null);
+  const [linkStatus, setLinkStatus] = useState<QmOperatorLinkStatus | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkMessage, setLinkMessage] = useState('');
+  const [showLinkPanel, setShowLinkPanel] = useState(false);
+  const [copyOk, setCopyOk] = useState(false);
   const clockWindowRef = useRef<Window | null>(null);
   const resolvedForUrlRef = useRef<string | null>(null);
+  const publicBootstrappedRef = useRef<string | null>(null);
   /** Ignore remote timer echoes briefly after local START/STOP/RESET (stop-all races). */
   const localControlUntilRef = useRef(0);
   /** After reset, refuse server rows that would re-apply running/partial remaining. */
@@ -112,10 +130,109 @@ const QuickModePage: React.FC = () => {
 
   const eventIdParam = searchParams.get('eventId') ?? '';
   const forceNewSession = searchParams.get('new') === '1';
+  const opParam = searchParams.get('op') ?? '';
+  const isPublicOperator = Boolean(operatorToken);
+  const isSignedIn = Boolean(getApiAccessToken());
 
   const storageKey = useMemo(() => (eventId ? `${STORAGE_KEY_PREFIX}${eventId}` : ''), [eventId]);
 
+  const qmJsonHeaders = useCallback((): Record<string, string> => {
+    if (operatorToken) {
+      return { 'Content-Type': 'application/json', Authorization: `Bearer ${operatorToken}` };
+    }
+    return apiJsonHeaders();
+  }, [operatorToken]);
+
   useEffect(() => {
+    if (!opParam) {
+      setOperatorToken(null);
+      setPublicLinkExpired(false);
+      setPublicLinkError('');
+      setPublicExpiresAt(null);
+      publicBootstrappedRef.current = null;
+      return;
+    }
+
+    if (publicBootstrappedRef.current === opParam && operatorToken === opParam) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status, data } = await fetchQmOperatorSession(opParam);
+        if (cancelled) return;
+        if (status === 410 || data.expired) {
+          setPublicLinkExpired(true);
+          setPublicLinkError(data.error || 'This public operator link has expired.');
+          setPublicExpiresAt(data.expiresAt || null);
+          setOperatorToken(null);
+          if (data.eventId) setEventId(String(data.eventId));
+          publicBootstrappedRef.current = opParam;
+          return;
+        }
+        if (!data.ok || !data.eventId) {
+          setPublicLinkExpired(false);
+          setPublicLinkError(data.error || 'Invalid public operator link.');
+          setOperatorToken(null);
+          publicBootstrappedRef.current = opParam;
+          return;
+        }
+        setPublicLinkExpired(false);
+        setPublicLinkError('');
+        setPublicExpiresAt(data.expiresAt || null);
+        setOperatorToken(data.token || opParam);
+        resolvedForUrlRef.current = data.eventId;
+        publicBootstrappedRef.current = opParam;
+        setEventId(data.eventId);
+        setEventIdError('');
+        setSearchParams((prev) => {
+          const p = new URLSearchParams(prev);
+          p.set('eventId', data.eventId);
+          p.set('op', opParam);
+          p.delete('new');
+          return p;
+        }, { replace: true });
+        if (Array.isArray(data.timers) && data.timers.length > 0) {
+          const key = `${STORAGE_KEY_PREFIX}${data.eventId}`;
+          const hasLocal = (() => {
+            try {
+              const raw = localStorage.getItem(key);
+              if (!raw) return false;
+              const parsed = JSON.parse(raw);
+              return Array.isArray(parsed) && parsed.length > 0;
+            } catch {
+              return false;
+            }
+          })();
+          if (!hasLocal) {
+            setTimers(
+              data.timers.map((t) => ({
+                id: Number(t.id),
+                title: t.title || `Timer ${t.id}`,
+                cue: t.cue || `CUE ${t.id}`,
+                durationMs: clampDurationMs(Number(t.durationMs) || 60_000),
+                remainingMs: Math.max(0, Number(t.remainingMs) || Number(t.durationMs) || 60_000),
+                isRunning: false,
+                startedAtMs: null,
+              }))
+            );
+          }
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setPublicLinkError(err instanceof Error ? err.message : 'Failed to open public operator link');
+        setOperatorToken(null);
+        publicBootstrappedRef.current = opParam;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [opParam, operatorToken, setSearchParams]);
+
+  useEffect(() => {
+    if (opParam) return;
+
     // Skip re-resolve when this mount just updated the URL with the new event id
     if (!forceNewSession && eventIdParam && resolvedForUrlRef.current === eventIdParam) {
       setEventId((prev) => (prev === eventIdParam ? prev : eventIdParam));
@@ -158,7 +275,34 @@ const QuickModePage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [eventIdParam, forceNewSession, setSearchParams]);
+  }, [eventIdParam, forceNewSession, opParam, setSearchParams]);
+
+  const refreshLinkStatus = useCallback(async () => {
+    if (!eventId || !isSignedIn || isPublicOperator) {
+      setLinkStatus(null);
+      return;
+    }
+    const status = await fetchQmOperatorLinkStatus(eventId);
+    setLinkStatus(status);
+  }, [eventId, isSignedIn, isPublicOperator]);
+
+  useEffect(() => {
+    void refreshLinkStatus();
+  }, [refreshLinkStatus]);
+
+  useEffect(() => {
+    if (!publicExpiresAt || !operatorToken) return;
+    const tick = () => {
+      if (Date.parse(publicExpiresAt) <= Date.now()) {
+        setPublicLinkExpired(true);
+        setPublicLinkError('This public operator link has expired.');
+        setOperatorToken(null);
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 10_000);
+    return () => window.clearInterval(id);
+  }, [publicExpiresAt, operatorToken]);
 
   useEffect(() => {
     if (!storageKey) return;
@@ -228,7 +372,7 @@ const QuickModePage: React.FC = () => {
         };
         const res = await fetch(`${getApiBaseUrl()}/api/run-of-show-data`, {
           method: 'POST',
-          headers: apiJsonHeaders(),
+          headers: qmJsonHeaders(),
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -244,7 +388,7 @@ const QuickModePage: React.FC = () => {
       cancelled = true;
       window.clearTimeout(id);
     };
-  }, [eventId, timers]);
+  }, [eventId, timers, qmJsonHeaders]);
 
   const applyServerTimerRow = (data: Record<string, unknown>) => {
     if (ignoreRemoteTimerSync() || inResetGuard()) return;
@@ -303,8 +447,10 @@ const QuickModePage: React.FC = () => {
 
     const hydrateFromApi = async () => {
       try {
-        const res = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`);
-        if (!res || !res.ok || cancelled) return;
+        const res = await fetch(`${getApiBaseUrl()}/api/active-timers/${eventId}`, {
+          headers: qmJsonHeaders(),
+        });
+        if (!res.ok || cancelled) return;
         const rows = await res.json();
         const row = Array.isArray(rows) ? rows[0] : rows;
         if (row && row.is_active !== false && row.timer_state !== 'stopped') {
@@ -398,7 +544,7 @@ const QuickModePage: React.FC = () => {
       cancelled = true;
       socketClient.disconnect(eventId);
     };
-  }, [eventId]);
+  }, [eventId, qmJsonHeaders]);
 
   const openClock = () => {
     if (!eventId) return;
@@ -429,13 +575,47 @@ const QuickModePage: React.FC = () => {
   const callApi = async (path: string, method: 'POST' | 'PUT', body: Record<string, any>) => {
     const res = await fetch(`${getApiBaseUrl()}${path}`, {
       method,
-      headers: apiJsonHeaders(),
+      headers: qmJsonHeaders(),
       body: JSON.stringify(body)
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
       console.error('Quick Mode API error:', path, res.status, detail);
       throw new Error(`HTTP ${res.status}`);
+    }
+  };
+
+  const runLinkAction = async (body: { hours?: number; expireNow?: boolean; rotate?: boolean }) => {
+    if (!eventId) return;
+    setLinkBusy(true);
+    setLinkMessage('');
+    setCopyOk(false);
+    try {
+      const result = await updateQmOperatorLink(eventId, body);
+      if (!result.ok) {
+        setLinkMessage(result.error || 'Failed to update public link');
+        return;
+      }
+      setLinkStatus(result);
+      if (body.expireNow) setLinkMessage('Public link expired — QR/bookmark kept, access off.');
+      else if (body.rotate) setLinkMessage('Token regenerated — update QR/bookmarks.');
+      else setLinkMessage(`Public link active until ${formatQmExpiry(result.expiresAt)}.`);
+    } catch (err) {
+      setLinkMessage(err instanceof Error ? err.message : 'Failed to update public link');
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
+  const copyPublicUrl = async () => {
+    const url = linkStatus?.operatorUrl;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyOk(true);
+      window.setTimeout(() => setCopyOk(false), 2000);
+    } catch {
+      setLinkMessage('Could not copy — select the URL manually.');
     }
   };
 
@@ -690,35 +870,81 @@ const QuickModePage: React.FC = () => {
     if (selectedTimerId === id) setSelectedTimerId(null);
   };
 
+  if (publicLinkExpired || (opParam && publicLinkError && !operatorToken)) {
+    return (
+      <div className="fixed inset-0 z-0 flex flex-col items-center justify-center bg-slate-900 px-6 text-white">
+        <div className="max-w-md rounded-xl border border-slate-700 bg-slate-800/90 p-6 text-center shadow-xl">
+          <h1 className="text-xl font-bold text-white">Quick Mode link unavailable</h1>
+          <p className="mt-3 text-sm text-slate-300">
+            {publicLinkError || 'This public operator link has expired.'}
+          </p>
+          {publicExpiresAt && (
+            <p className="mt-2 text-xs text-slate-500">Expired: {formatQmExpiry(publicExpiresAt)}</p>
+          )}
+          <p className="mt-4 text-xs text-slate-400">
+            Ask a signed-in operator to re-enable the same QR/bookmark link (token stays the same).
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const linkActive = qmLinkIsActive(linkStatus?.expiresAt);
+  const publicUrl = linkStatus?.operatorUrl || '';
+
   return (
     <div className="fixed inset-0 z-0 flex flex-col bg-slate-900 text-white">
       <header className="shrink-0 border-b border-slate-700 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-3 py-2 md:px-4">
         <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              onClick={() => navigate('/', { state: { tab: 'quickMode' } })}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-slate-800 hover:text-white"
-              aria-label="Back to event list"
-              title="Back to event list"
-            >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
+            {!isPublicOperator && (
+              <button
+                type="button"
+                onClick={() => navigate('/', { state: { tab: 'quickMode' } })}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-slate-300 hover:border-slate-500 hover:bg-slate-800 hover:text-white"
+                aria-label="Back to event list"
+                title="Back to event list"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            )}
             <div className="hidden h-7 w-px shrink-0 bg-slate-600/80 sm:block" aria-hidden />
             <div className="min-w-0">
               <h1 className="text-base font-bold md:text-lg">Quick Mode</h1>
-              <p className="text-[11px] text-slate-400">Ad-hoc timers — uses a real event ID for clock sync</p>
+              <p className="text-[11px] text-slate-400">
+                {isPublicOperator
+                  ? `Public operator${publicExpiresAt ? ` · until ${formatQmExpiry(publicExpiresAt)}` : ''}`
+                  : 'Ad-hoc timers — uses a real event ID for clock sync'}
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {isPublicOperator && (
+              <span className="rounded border border-amber-500/60 bg-amber-950/50 px-2 py-1 text-[10px] font-semibold text-amber-200">
+                Public operator
+              </span>
+            )}
             <div className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-[11px] text-slate-200">
               Event ID:{' '}
               <span className={`font-mono ${eventIdError ? 'text-red-300' : 'text-purple-300'}`}>
                 {eventIdError || eventId || 'loading...'}
               </span>
             </div>
+            {isSignedIn && !isPublicOperator && (
+              <button
+                type="button"
+                onClick={() => setShowLinkPanel((v) => !v)}
+                className={`rounded border px-2 py-1 text-[11px] font-semibold ${
+                  linkActive
+                    ? 'border-amber-500/70 text-amber-200 hover:bg-amber-900/30'
+                    : 'border-slate-500 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                {showLinkPanel ? 'Hide public link' : linkActive ? 'Public link on' : 'Public link'}
+              </button>
+            )}
             <button
               type="button"
               onClick={openClock}
@@ -734,6 +960,75 @@ const QuickModePage: React.FC = () => {
             <span className="rounded bg-amber-900/70 px-2 py-1 text-[10px] text-amber-200">Done: {totals.done}</span>
           </div>
         </div>
+        {showLinkPanel && isSignedIn && !isPublicOperator && (
+          <div className="mx-auto mt-2 max-w-[1800px] rounded-lg border border-slate-600 bg-slate-950/80 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-white">Public operator link</div>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Stable URL for QR / bookmark. Re-enable or expire without changing the token.
+                </p>
+                {publicUrl ? (
+                  <div className="mt-2 break-all rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-[10px] text-slate-300">
+                    {publicUrl}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[11px] text-slate-500">No link yet — enable below to create one.</p>
+                )}
+                <p className="mt-2 text-[11px] text-slate-400">
+                  Status:{' '}
+                  <span className={linkActive ? 'text-emerald-300' : 'text-slate-400'}>
+                    {linkActive ? 'Active' : linkStatus?.exists ? 'Expired / off' : 'Not created'}
+                  </span>
+                  {linkStatus?.expiresAt ? ` · ${formatQmExpiry(linkStatus.expiresAt)}` : ''}
+                </p>
+                {linkMessage && <p className="mt-1 text-[11px] text-cyan-300">{linkMessage}</p>}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[4, 8, 12, 24].map((hours) => (
+                  <button
+                    key={hours}
+                    type="button"
+                    disabled={linkBusy || !eventId}
+                    onClick={() => void runLinkAction({ hours })}
+                    className="rounded border border-amber-600/70 bg-amber-950/40 px-2 py-1 text-[10px] font-semibold text-amber-100 hover:bg-amber-900/50 disabled:opacity-50"
+                  >
+                    Enable {hours}h
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  disabled={linkBusy || !publicUrl}
+                  onClick={() => void copyPublicUrl()}
+                  className="rounded border border-slate-500 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {copyOk ? 'Copied' : 'Copy URL'}
+                </button>
+                <button
+                  type="button"
+                  disabled={linkBusy || !linkStatus?.exists}
+                  onClick={() => void runLinkAction({ expireNow: true })}
+                  className="rounded border border-slate-600 px-2 py-1 text-[10px] font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                >
+                  Expire now
+                </button>
+                <button
+                  type="button"
+                  disabled={linkBusy || !linkStatus?.exists}
+                  onClick={() => {
+                    if (window.confirm('Regenerate token? Existing QR codes and bookmarks will stop working.')) {
+                      void runLinkAction({ hours: 8, rotate: true });
+                    }
+                  }}
+                  className="rounded border border-red-700/60 px-2 py-1 text-[10px] font-semibold text-red-200 hover:bg-red-950/40 disabled:opacity-50"
+                  title="Emergency only — breaks printed QR / bookmarks"
+                >
+                  Regenerate
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       <div className="mx-auto flex min-h-0 w-full max-w-[1800px] flex-1 overflow-hidden">

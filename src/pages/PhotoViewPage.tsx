@@ -2487,13 +2487,13 @@ const PhotoViewPage: React.FC = () => {
                           >
                             <div
                               className="font-bold tracking-widest text-slate-500"
-                              style={{ fontSize: `clamp(${0.55 * z}rem, ${1.1 * z}vw, ${0.85 * z}rem)` }}
+                              style={{ fontSize: `clamp(${0.65 * z}rem, ${1.35 * z}vw, ${1 * z}rem)` }}
                             >
                               SLOT {slotNumber}
                             </div>
                             <div
                               className="text-slate-600"
-                              style={{ fontSize: `clamp(${0.5 * z}rem, ${0.95 * z}vw, ${0.75 * z}rem)` }}
+                              style={{ fontSize: `clamp(${0.6 * z}rem, ${1.15 * z}vw, ${0.9 * z}rem)` }}
                             >
                               Empty
                             </div>
@@ -2513,7 +2513,7 @@ const PhotoViewPage: React.FC = () => {
                       >
                         <div
                           className="mb-1 font-bold tracking-widest text-slate-400"
-                          style={{ fontSize: `clamp(${0.45 * z}rem, ${0.85 * z}vw, ${0.7 * z}rem)` }}
+                          style={{ fontSize: `clamp(${0.55 * z}rem, ${1.05 * z}vw, ${0.85 * z}rem)` }}
                         >
                           SLOT {slotNumber}
                         </div>
@@ -2536,7 +2536,7 @@ const PhotoViewPage: React.FC = () => {
                           <div
                             className="mt-2 text-center font-bold leading-tight w-full px-0.5"
                             style={{
-                              fontSize: `clamp(${0.72 * z}rem, ${1.75 * z}vw, ${1.45 * z}rem)`,
+                              fontSize: `clamp(${0.9 * z}rem, ${2.2 * z}vw, ${1.8 * z}rem)`,
                             }}
                             title={fullName}
                             dangerouslySetInnerHTML={{ __html: nameTwoLine.html }}
@@ -2545,7 +2545,7 @@ const PhotoViewPage: React.FC = () => {
                           <div
                             className="mt-2 text-center font-bold leading-none whitespace-nowrap overflow-hidden text-ellipsis w-full px-0.5"
                             style={{
-                              fontSize: `clamp(${0.8 * z}rem, ${2 * z}vw, ${1.65 * z}rem)`,
+                              fontSize: `clamp(${1 * z}rem, ${2.5 * z}vw, ${2.05 * z}rem)`,
                             }}
                             title={fullName}
                           >
@@ -2555,7 +2555,7 @@ const PhotoViewPage: React.FC = () => {
                         {titleOrg ? (
                           <div
                             className="text-slate-400 text-center max-w-full px-1 mt-1 whitespace-nowrap overflow-hidden text-ellipsis"
-                            style={{ fontSize: `clamp(${0.48 * z}rem, ${0.95 * z}vw, ${0.8 * z}rem)` }}
+                            style={{ fontSize: `clamp(${0.6 * z}rem, ${1.2 * z}vw, ${1 * z}rem)` }}
                             title={titleOrg}
                           >
                             {titleOrg}
@@ -2564,7 +2564,7 @@ const PhotoViewPage: React.FC = () => {
                         {speaker.location ? (
                           <div
                             className="mt-1.5 font-semibold text-slate-100 bg-slate-700/90 px-2 py-1 rounded-md tracking-wide"
-                            style={{ fontSize: `clamp(${0.6 * z}rem, ${1.25 * z}vw, ${1.05 * z}rem)` }}
+                            style={{ fontSize: `clamp(${0.75 * z}rem, ${1.5 * z}vw, ${1.25 * z}rem)` }}
                           >
                             {speaker.location}
                           </div>

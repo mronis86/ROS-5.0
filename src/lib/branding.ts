@@ -153,6 +153,39 @@ export function applyCountdownColorModeId(id: CountdownColorModeId): void {
   window.dispatchEvent(new CustomEvent(LOGO_VARIANT_CHANGE_EVENT, { detail: { countdownColorModeId: id } }));
 }
 
+export const HIDE_FULLSCREEN_TIMER_STORAGE_KEY = 'ros.hideFullscreenTimerOption';
+export const HIDE_FULLSCREEN_TIMER_CHANGE_EVENT = 'ros:hide-fullscreen-timer-change';
+
+let cachedHideFullscreenTimerOption: boolean | null = null;
+
+function readHideFullscreenTimerFromStorage(): boolean | null {
+  try {
+    const raw = localStorage.getItem(HIDE_FULLSCREEN_TIMER_STORAGE_KEY);
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function getHideFullscreenTimerOption(): boolean {
+  if (cachedHideFullscreenTimerOption != null) return cachedHideFullscreenTimerOption;
+  return readHideFullscreenTimerFromStorage() ?? false;
+}
+
+export function applyHideFullscreenTimerOption(hide: boolean): void {
+  cachedHideFullscreenTimerOption = !!hide;
+  try {
+    localStorage.setItem(HIDE_FULLSCREEN_TIMER_STORAGE_KEY, hide ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+  window.dispatchEvent(
+    new CustomEvent(HIDE_FULLSCREEN_TIMER_CHANGE_EVENT, { detail: { hideFullscreenTimerOption: !!hide } })
+  );
+}
+
 let cachedLogoVariantId: LogoVariantId | null = null;
 
 function readLogoVariantFromStorage(): LogoVariantId | null {

@@ -88,6 +88,19 @@ const {
   emitGuestSocketUpdate,
 } = require('./lib/event-guest-links');
 const {
+  isMissingQmOpTableError,
+  ensureQmOpLinkSchema,
+  assertQuickModeEvent,
+  getQmOpLinkByEvent,
+  ensureQmOpLink,
+  lookupQmOpByToken,
+  touchQmOpLinkUsed,
+  loadQmOpSessionPayload,
+  linkPayload,
+  isQmOpToken,
+  DEFAULT_HOURS: QM_OP_DEFAULT_HOURS,
+} = require('./lib/quick-mode-operator-links');
+const {
   isMissingStreamRequestTableError,
   ensureStreamRequestLinkSchema,
   ensureStreamRequestLink,
@@ -1021,12 +1034,17 @@ app.get('/api/admin/presence', async (req, res) => {
     const events = eventIds.map((origId) => {
       const eid = String(origId);
       const m = presenceByEvent.get(origId);
-      const viewers = m ? Array.from(m.values()).map((v) => ({
-        userId: v.userId,
-        userName: v.userName || '',
-        userEmail: v.userEmail || '',
-        userRole: v.userRole || 'VIEWER'
-      })) : [];
+      const viewers = m ? Array.from(m.values()).map((v) => {
+        const joinedAtMs = typeof v.joinedAt === 'number' ? v.joinedAt : null;
+        return {
+          userId: v.userId,
+          userName: v.userName || '',
+          userEmail: v.userEmail || '',
+          userRole: v.userRole || 'VIEWER',
+          joinedAt: joinedAtMs ? new Date(joinedAtMs).toISOString() : null,
+          connectedSeconds: joinedAtMs ? Math.max(0, Math.floor((Date.now() - joinedAtMs) / 1000)) : null,
+        };
+      }) : [];
       return {
         eventId: eid,
         eventName: idToName.get(eid) || `Event ${eid}`,
@@ -2938,6 +2956,126 @@ app.post('/api/calendar-events/:id/guest-link', async (req, res) => {
     }
     console.error('[guest-link create]', error);
     res.status(500).json({ error: error.message || 'Failed to create guest link' });
+  }
+});
+
+/** Get stable public Quick Mode operator link status (signed-in). */
+app.get('/api/calendar-events/:id/quick-mode-operator-link', async (req, res) => {
+  try {
+    if (!req.auth || (req.auth.type !== 'user' && req.auth.type !== 'neon_user')) {
+      return res.status(401).json({ error: 'Sign in required.' });
+    }
+    const eventId = String(req.params.id || '').trim();
+    if (!eventId) return res.status(400).json({ error: 'Event id required.' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'You do not have access to this event.' });
+    }
+    await ensureQmOpLinkSchema(pool);
+    const check = await assertQuickModeEvent(pool, eventId);
+    if (!check.ok) return res.status(check.status).json({ error: check.error });
+
+    const row = await getQmOpLinkByEvent(pool, eventId);
+    if (!row) {
+      return res.json({ ok: true, exists: false, active: false, defaultHours: QM_OP_DEFAULT_HOURS });
+    }
+    return res.json({ ok: true, exists: true, ...linkPayload(row, req) });
+  } catch (error) {
+    if (isMissingQmOpTableError(error)) {
+      return res.status(503).json({
+        error: 'Run migration 066_create_quick_mode_operator_links.sql on Neon to enable public Quick Mode links.',
+        needsMigration: true,
+      });
+    }
+    console.error('[qm-op-link GET]', error);
+    res.status(500).json({ error: error.message || 'Failed to load Quick Mode operator link' });
+  }
+});
+
+/**
+ * Create or update public Quick Mode operator link (stable token).
+ * Body: { hours?: number, expireNow?: boolean, rotate?: boolean }
+ */
+app.post('/api/calendar-events/:id/quick-mode-operator-link', async (req, res) => {
+  try {
+    if (!req.auth || (req.auth.type !== 'user' && req.auth.type !== 'neon_user')) {
+      return res.status(401).json({ error: 'Sign in required.' });
+    }
+    const eventId = String(req.params.id || '').trim();
+    if (!eventId) return res.status(400).json({ error: 'Event id required.' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'You do not have access to this event.' });
+    }
+    await ensureQmOpLinkSchema(pool);
+    const check = await assertQuickModeEvent(pool, eventId);
+    if (!check.ok) return res.status(check.status).json({ error: check.error });
+
+    const hours = req.body?.hours != null ? Number(req.body.hours) : QM_OP_DEFAULT_HOURS;
+    const expireNow = req.body?.expireNow === true;
+    const rotate = req.body?.rotate === true;
+    const link = await ensureQmOpLink(pool, {
+      eventId,
+      accessId: req.auth.accessId,
+      req,
+      hours,
+      expireNow,
+      rotate,
+    });
+    res.json({ ok: true, ...link });
+  } catch (error) {
+    if (isMissingQmOpTableError(error)) {
+      return res.status(503).json({
+        error: 'Run migration 066_create_quick_mode_operator_links.sql on Neon to enable public Quick Mode links.',
+        needsMigration: true,
+      });
+    }
+    console.error('[qm-op-link POST]', error);
+    res.status(500).json({ error: error.message || 'Failed to update Quick Mode operator link' });
+  }
+});
+
+/** Public bootstrap for unsigned Quick Mode operator page — no sign-in. */
+app.get('/api/quick-mode-operator/:token', async (req, res) => {
+  try {
+    const rawToken = String(req.params.token || '').trim();
+    if (!isQmOpToken(rawToken)) {
+      return res.status(404).json({ error: 'Invalid Quick Mode operator link.', expired: false });
+    }
+    await ensureQmOpLinkSchema(pool);
+    const row = await lookupQmOpByToken(pool, rawToken);
+    if (!row) {
+      return res.status(404).json({ error: 'Invalid Quick Mode operator link.', expired: false });
+    }
+    const expired = !row.expires_at || new Date(row.expires_at) <= new Date();
+    if (expired) {
+      return res.status(410).json({
+        ok: false,
+        expired: true,
+        eventId: String(row.event_id),
+        expiresAt: row.expires_at,
+        error: 'This Quick Mode operator link has expired.',
+      });
+    }
+    const session = await loadQmOpSessionPayload(pool, row.event_id);
+    if (!session) {
+      return res.status(404).json({ error: 'This Quick Mode session is no longer available.' });
+    }
+    await touchQmOpLinkUsed(pool, row.id);
+    res.json({
+      ok: true,
+      expired: false,
+      expiresAt: row.expires_at,
+      token: rawToken,
+      ...session,
+    });
+  } catch (error) {
+    if (isMissingQmOpTableError(error)) {
+      return res.status(503).json({
+        error: 'Public Quick Mode operator links are not available yet.',
+        needsMigration: true,
+      });
+    }
+    console.error('[quick-mode-operator GET]', error);
+    res.status(500).json({ error: error.message || 'Failed to load Quick Mode operator session' });
   }
 });
 
@@ -7946,7 +8084,7 @@ app.post('/api/timers/mitti-end', async (req, res) => {
 // ========================================
 
 // Presence: who's viewing Run of Show per event (in-memory, no DB)
-const presenceByEvent = new Map(); // eventId -> Map(socketId -> { userId, userName, userRole })
+const presenceByEvent = new Map(); // eventId -> Map(socketId -> { userId, userName, userEmail, userRole, joinedAt })
 /** Latest Content Review cue selection per event (master/slave follow). */
 const contentReviewLastSelection = new Map(); // eventId -> { itemId, fromUserId, fromUserName }
 const socketToEvent = new Map();   // socketId -> eventId (for cleanup on disconnect)
@@ -8116,7 +8254,17 @@ io.on('connection', (socket) => {
     const { eventId, userId, userName, userEmail, userRole } = data || {};
     if (!eventId || !userId) return;
     if (!presenceByEvent.has(eventId)) presenceByEvent.set(eventId, new Map());
-    presenceByEvent.get(eventId).set(socket.id, { userId, userName: userName || '', userEmail: userEmail || '', userRole: userRole || 'VIEWER' });
+    const eventPresence = presenceByEvent.get(eventId);
+    const existing = eventPresence.get(socket.id);
+    // Keep original join time across role/name refreshes on the same socket
+    const joinedAt = existing?.joinedAt || Date.now();
+    eventPresence.set(socket.id, {
+      userId,
+      userName: userName || '',
+      userEmail: userEmail || '',
+      userRole: userRole || 'VIEWER',
+      joinedAt,
+    });
     socketToEvent.set(socket.id, eventId);
     console.log(`👁️ Presence: ${userName || userId} joined event:${eventId}`);
     broadcastPresence(eventId);
