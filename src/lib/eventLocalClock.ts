@@ -8,16 +8,36 @@ export function getSyncedNow(clockOffsetMs = 0): Date {
   return new Date(Date.now() + (Number.isFinite(clockOffsetMs) ? clockOffsetMs : 0));
 }
 
-/** "HH:MM" (24h) for `date` in `timeZone`. Falls back to the date's local zone if tz is empty/invalid. */
+/** First non-empty IANA timezone from candidates (calendar → settings → fallback). */
+export function resolveShowTimezone(
+  ...candidates: Array<string | null | undefined>
+): string {
+  for (const raw of candidates) {
+    const tz = typeof raw === 'string' ? raw.trim() : '';
+    if (!tz) continue;
+    try {
+      // Validate IANA id — throws on garbage like "Eastern Time"
+      Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+      return tz;
+    } catch {
+      continue;
+    }
+  }
+  return 'America/New_York';
+}
+
+/** "HH:MM" (24h) for `date` in `timeZone`. Never silently uses the browser zone when a tz was requested. */
 export function getEventLocalHHMM(date: Date, timeZone?: string | null): string {
-  const tz = typeof timeZone === 'string' ? timeZone.trim() : '';
-  try {
-    // en-GB + hour12:false avoids en-US quirks that can emit 12h hours for afternoon times.
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      ...(tz ? { timeZone: tz } : {}),
+  const requested = typeof timeZone === 'string' ? timeZone.trim() : '';
+  const tz = resolveShowTimezone(requested || null);
+
+  const formatParts = (zone: string) => {
+    // hourCycle h23 is more reliable across engines than hour12:false alone.
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
       hour: '2-digit',
       minute: '2-digit',
-      hour12: false,
+      hourCycle: 'h23',
     }).formatToParts(date);
     let hh = Number(parts.find((p) => p.type === 'hour')?.value ?? NaN);
     const mm = parts.find((p) => p.type === 'minute')?.value ?? '00';
@@ -29,16 +49,27 @@ export function getEventLocalHHMM(date: Date, timeZone?: string | null): string 
     if (!Number.isFinite(hh)) hh = 0;
     if (hh === 24) hh = 0;
     return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  };
+
+  try {
+    return formatParts(tz);
   } catch {
-    const hh = String(date.getHours()).padStart(2, '0');
-    const mm = String(date.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm}`;
+    try {
+      return formatParts('America/New_York');
+    } catch {
+      // Absolute last resort — still prefer UTC wall clock over a random laptop zone.
+      const hh = String(date.getUTCHours()).padStart(2, '0');
+      const mm = String(date.getUTCMinutes()).padStart(2, '0');
+      return `${hh}:${mm}`;
+    }
   }
 }
 
-/** Minutes since midnight from "HH:MM" (24h). */
+/** Minutes since midnight from "HH:MM" or "HH:MM:SS" (24h). */
 export function hhmmToMinutes(hhmm: string): number | null {
-  const m = String(hhmm || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  const m = String(hhmm || '')
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
   if (!m) return null;
   const h = Number(m[1]);
   const min = Number(m[2]);
@@ -50,7 +81,7 @@ export function hhmmToMinutes(hhmm: string): number | null {
 export function wallClockLabelToMinutes(label: string): number | null {
   const raw = String(label || '').trim();
   if (!raw) return null;
-  const ampm = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const ampm = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
   if (ampm) {
     let h = Number(ampm[1]);
     const min = Number(ampm[2]);

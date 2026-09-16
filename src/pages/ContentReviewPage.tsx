@@ -39,7 +39,9 @@ import {
   type AudioCalloutKind,
   type VoCue,
   formatCalloutChipText,
+  formatSettleCueNoteText,
   normalizeVoCues,
+  prependSettleCueNote,
   syncCalloutsIntoNotes,
 } from '../lib/audioCallouts';
 import { calculateScheduleStartTime } from '../lib/scheduleStartTime';
@@ -3111,6 +3113,43 @@ const ContentReviewPage: React.FC = () => {
     setIsSavingVoCues(false);
   }, [displayItem, eventId, isSavingVoCues, tempVoCues, saveCuePatch, notesDirty, notesDraft]);
 
+  const addSettleCueNote = useCallback(async () => {
+    if (!displayItem || !eventId || isDisplayCueLockedByOther || !editModeEnabled) return;
+    const cue = String(displayItem.customFields?.cue || '').trim();
+    if (!cue) {
+      alert('Set a CUE number on this row first.');
+      return;
+    }
+    const noteText = formatSettleCueNoteText(cue);
+    const baseNotes = notesDirty ? notesDraft : displayItem.notes || '';
+    if (baseNotes.includes(noteText)) return;
+
+    const nextNotes = prependSettleCueNote(baseNotes, cue);
+    const result = await saveCuePatch(displayItem.id, (it) => ({
+      ...it,
+      notes: prependSettleCueNote(it.notes || '', cue),
+    }));
+    if (result.ok) {
+      setNotesDraft(nextNotes);
+      setNotesDirty(false);
+      if (notesEditorRef.current) {
+        notesEditorRef.current.innerHTML = notesForEditor(nextNotes);
+      }
+      touchCueEditActivity(displayItem.id);
+    } else {
+      alert(result.error || 'Could not add SettleCue note.');
+    }
+  }, [
+    displayItem,
+    eventId,
+    isDisplayCueLockedByOther,
+    editModeEnabled,
+    notesDirty,
+    notesDraft,
+    saveCuePatch,
+    touchCueEditActivity,
+  ]);
+
   const applyNotesFormatting = useCallback((action: string, value?: string) => {
     const editor = notesEditorRef.current;
     if (!editor) return;
@@ -4660,14 +4699,24 @@ const ContentReviewPage: React.FC = () => {
                     <span className="text-xs font-bold uppercase tracking-wide text-slate-200">Notes</span>
                     <div className="flex flex-wrap items-center gap-2">
                       {editModeEnabled && !isDisplayCueLockedByOther ? (
-                        <button
-                          type="button"
-                          onClick={openVoModal}
-                          className="inline-flex items-center rounded border border-dashed border-slate-400/80 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:border-amber-400 hover:text-amber-100 transition-colors"
-                          title="Add VO or Background Music into Notes"
-                        >
-                          + VO / BGM
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={openVoModal}
+                            className="inline-flex items-center rounded border border-dashed border-slate-400/80 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:border-amber-400 hover:text-amber-100 transition-colors"
+                            title="Add VO or Background Music into Notes"
+                          >
+                            + VO / BGM
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void addSettleCueNote()}
+                            className="inline-flex items-center rounded border border-dashed border-blue-400/80 px-2 py-0.5 text-[11px] font-semibold text-blue-200 hover:border-blue-300 hover:text-blue-100 transition-colors"
+                            title="Add Cue N.1 Settle Motion & Presenters into Notes"
+                          >
+                            + SettleCue
+                          </button>
+                        </>
                       ) : null}
                       {editModeEnabled ? (
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">

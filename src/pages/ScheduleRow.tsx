@@ -1,5 +1,6 @@
 import React from 'react';
 import { CUE_RECORDING_MARK_WARNING, itemMarkedByComms, resolveRecordingSource } from '../lib/cueRecording';
+import { formatSettleCueNoteText, prependSettleCueNote } from '../lib/audioCallouts';
 
 export interface ScheduleRowProps {
   item: any;
@@ -886,20 +887,83 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           style={{ width: columnWidths.notes }}
         >
           {!isLockedByOther && currentUserRole !== 'VIEWER' && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleModalEditing?.();
-                setTempVoCues?.(Array.isArray(item.voCues) ? item.voCues.map((v: any) => ({ ...v })) : []);
-                setEditingVoItemId?.(item.id);
-                setShowVoModal?.(true);
-              }}
-              className="self-start inline-flex items-center rounded border border-dashed border-slate-500/70 px-2 py-0.5 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-100 transition-colors"
-              title="Add VO or Background Music into Notes"
-            >
-              + VO / BGM
-            </button>
+            <div className="flex flex-wrap items-center gap-1 self-start">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleModalEditing?.();
+                  setTempVoCues?.(Array.isArray(item.voCues) ? item.voCues.map((v: any) => ({ ...v })) : []);
+                  setEditingVoItemId?.(item.id);
+                  setShowVoModal?.(true);
+                }}
+                className="inline-flex items-center rounded border border-dashed border-slate-500/70 px-2 py-0.5 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-100 transition-colors"
+                title="Add VO or Background Music into Notes"
+              >
+                + VO / BGM
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can add SettleCue notes. Please change your role to EDITOR.');
+                    return;
+                  }
+                  const cue = String(item.customFields?.cue || '').trim();
+                  if (!cue) {
+                    alert('Set a CUE number on this row first.');
+                    return;
+                  }
+                  const noteText = formatSettleCueNoteText(cue);
+                  const prevNotes = String(item.notes || '');
+                  if (prevNotes.includes(noteText)) {
+                    return;
+                  }
+                  handleUserEditing?.();
+                  setSchedule((prev: any[]) =>
+                    prev.map((scheduleItem) =>
+                      scheduleItem.id === item.id
+                        ? {
+                            ...scheduleItem,
+                            notes: prependSettleCueNote(scheduleItem.notes || '', cue),
+                          }
+                        : scheduleItem
+                    )
+                  );
+                  if (logChange) {
+                    logChange(
+                      'NOTES_UPDATE',
+                      `Added SettleCue note "${noteText}" on "${item.segmentName}"`,
+                      {
+                        changeType: 'FIELD_CHANGE',
+                        itemId: item.id,
+                        itemName: item.segmentName,
+                        fieldName: 'notes',
+                        details: { settleCue: noteText },
+                      }
+                    );
+                  } else {
+                    logChangeDebounced(
+                      'NOTES_UPDATE',
+                      `Added SettleCue note "${noteText}" on "${item.segmentName}"`,
+                      {
+                        changeType: 'FIELD_CHANGE',
+                        itemId: item.id,
+                        itemName: item.segmentName,
+                        fieldName: 'notes',
+                        details: { settleCue: noteText },
+                      }
+                    );
+                  }
+                  if (saveToAPI) saveToAPI();
+                }}
+                className="inline-flex items-center rounded border border-dashed border-blue-500/70 px-2 py-0.5 text-xs font-semibold text-blue-200 hover:border-blue-400 hover:text-blue-100 transition-colors"
+                title="Add Cue N.1 Settle Motion & Presenters into Notes"
+              >
+                + SettleCue
+              </button>
+            </div>
           )}
           <div
             onClick={() => {

@@ -19,6 +19,7 @@ import {
   type AudioCalloutKind,
   type VoCue,
   formatCalloutChipText,
+  normalizeVoCues,
   syncCalloutsIntoNotes,
 } from '../lib/audioCallouts';
 import {
@@ -27,6 +28,8 @@ import {
   wallClockLabelToMinutes,
   hhmmToMinutes,
   isCalloutDue,
+  normalizeCalloutTimeToHHMM,
+  resolveShowTimezone,
 } from '../lib/eventLocalClock';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
@@ -204,6 +207,27 @@ function resolveSessionRole(
   if (!role || !['VIEWER', 'EDITOR', 'OPERATOR'].includes(role)) return 'VIEWER';
   if (role === 'OPERATOR' && !canSelectOperatorRole(user)) return 'VIEWER';
   return role as SessionRole;
+}
+
+/** Ensure voCues times are padded 24h HH:MM for toast matching across clients. */
+function withNormalizedVoCues<T extends { voCues?: VoCue[]; vo_cues?: unknown }>(item: T): T {
+  const raw = (item as any).voCues ?? (item as any).vo_cues;
+  const normalized = normalizeVoCues(raw)
+    .map((vo) => {
+      const time = normalizeCalloutTimeToHHMM(vo.time);
+      return time ? { ...vo, time } : vo;
+    });
+  if (!normalized.length) {
+    const { vo_cues: _drop, ...rest } = item as T & { vo_cues?: unknown };
+    return { ...(rest as T), voCues: undefined };
+  }
+  const { vo_cues: _drop, ...rest } = item as T & { vo_cues?: unknown };
+  return { ...(rest as T), voCues: normalized };
+}
+
+function normalizeScheduleVoCues(items: any[] | null | undefined): any[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((item) => withNormalizedVoCues(item));
 }
 
 const RunOfShowPage: React.FC = () => {
@@ -760,6 +784,8 @@ const RunOfShowPage: React.FC = () => {
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
+  /** Calendar venue TZ — wins over ROS settings so laptop/default NY does not override. */
+  const calendarTimezoneRef = useRef<string | null>(null);
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -2002,10 +2028,12 @@ const RunOfShowPage: React.FC = () => {
 
   // VO/MUSIC alert on event-local clock (server-synced). Sticky until dismiss; 10m catch-up
   // so background-tab timer throttling does not miss the minute forever.
+  // Independent of the early/late Time Toast toggle — remote operators still need callouts.
   useEffect(() => {
     const tick = () => {
       const synced = getSyncedNow(clockOffset);
-      const current = getEventLocalHHMM(synced, eventTimezone);
+      const tz = resolveShowTimezone(eventTimezone);
+      const current = getEventLocalHHMM(synced, tz);
       let found: { itemId: number; segmentName: string; vo: VoCue } | null = null;
       for (const item of schedule) {
         const vos = item.voCues;
@@ -2044,6 +2072,10 @@ const RunOfShowPage: React.FC = () => {
     const rowCue = parent?.customFields?.cue ? String(parent.customFields.cue).trim() : '';
     // Prefill for when user opts into CUE prefix; do not force it on
     setVoDraftCuePrefix(rowCue);
+    // Default time picker to event-local now (not the laptop zone)
+    setVoDraftTime(
+      getEventLocalHHMM(getSyncedNow(clockOffset), resolveShowTimezone(eventTimezone))
+    );
     // only reset on open
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showVoModal, editingVoItemId]);
@@ -6555,7 +6587,10 @@ const RunOfShowPage: React.FC = () => {
           if (current.version != null) {
             scheduleVersionRef.current = Number(current.version);
           }
-          const merged = mergeSchedulePreservingLocalEdits(items, scheduleRef.current);
+          const merged = mergeSchedulePreservingLocalEdits(
+            normalizeScheduleVoCues(items),
+            scheduleRef.current
+          );
           setSchedule(merged);
           if (Array.isArray(current.custom_columns) && !isUserEditingRef.current) {
             setCustomColumns(current.custom_columns);
@@ -6659,7 +6694,7 @@ const RunOfShowPage: React.FC = () => {
         });
         
         // Force a new array reference to ensure React detects the change
-        const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
+        const newSchedule = normalizeScheduleVoCues(data.schedule_items);
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
         rememberSyncedSchedule(data);
@@ -6667,9 +6702,15 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
-        if (data.settings?.timezone) {
-          setEventTimezone(data.settings.timezone);
-        }
+        // Prefer calendar venue timezone; fall back to ROS settings (never laptop zone).
+        setEventTimezone(
+          resolveShowTimezone(
+            calendarTimezoneRef.current,
+            event?.timezone,
+            data.settings?.timezone,
+            eventTimezoneRef.current
+          )
+        );
         if (data.settings?.locked_start_times && typeof data.settings.locked_start_times === 'object') {
           const mapped: Record<number, string> = {};
           for (const [k, v] of Object.entries(data.settings.locked_start_times as Record<string, unknown>)) {
@@ -6835,7 +6876,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Update data without affecting timers
         // Force a new array reference to ensure React detects the change
-        const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
+        const newSchedule = normalizeScheduleVoCues(data.schedule_items);
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
         rememberSyncedSchedule(data);
@@ -6892,13 +6933,47 @@ const RunOfShowPage: React.FC = () => {
     setTimeout(() => setIsForcingClockSync(false), 2500);
   };
 
-  // Prefer calendar event timezone; ROS settings.timezone may also set it after schedule load
+  // Venue timezone: prefer calendar event, then fetch calendar if location.state omitted it.
   useEffect(() => {
+    let cancelled = false;
+    const applyCalendarTz = (tz?: string | null) => {
+      if (cancelled || !tz) return;
+      const resolved = resolveShowTimezone(tz);
+      calendarTimezoneRef.current = resolved;
+      setEventTimezone(resolved);
+    };
+
     if (event?.timezone) {
       console.log('🌍 Setting event timezone from location.state:', event.timezone);
-      setEventTimezone(event.timezone);
+      applyCalendarTz(event.timezone);
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [event?.timezone]);
+
+    if (!event?.id) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      try {
+        const cal = await DatabaseService.getCalendarEvent(event.id);
+        const tz = cal?.schedule_data?.timezone;
+        if (tz) {
+          console.log('🌍 Setting event timezone from calendar:', tz);
+          applyCalendarTz(tz);
+        }
+      } catch (e) {
+        console.warn('🌍 Could not load calendar timezone:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, event?.timezone]);
 
 
   // Setup WebSocket-only real-time connections (no SSE, no polling)
@@ -6932,7 +7007,10 @@ const RunOfShowPage: React.FC = () => {
             }
           }
           if (scheduleItems && Array.isArray(scheduleItems)) {
-            const merged = mergeSchedulePreservingLocalEdits(scheduleItems, scheduleRef.current);
+            const merged = mergeSchedulePreservingLocalEdits(
+              normalizeScheduleVoCues(scheduleItems),
+              scheduleRef.current
+            );
             setSchedule(merged);
             rememberSyncedSchedule(data);
             // Star marker lives in startCueId state (not only item.isStartCue) — sync from schedule.
@@ -6960,6 +7038,16 @@ const RunOfShowPage: React.FC = () => {
             if (data.settings.dayStartTimes !== undefined) {
               setDayStartTimes(data.settings.dayStartTimes);
               console.log('✅ Real-time: Day start times updated');
+            }
+            if (data.settings.timezone) {
+              setEventTimezone(
+                resolveShowTimezone(
+                  calendarTimezoneRef.current,
+                  event?.timezone,
+                  data.settings.timezone,
+                  eventTimezoneRef.current
+                )
+              );
             }
           }
           
@@ -10467,7 +10555,7 @@ const RunOfShowPage: React.FC = () => {
           item.id,
           isResolumeSynced(hybridTimerData?.activeTimer)
             ? RESOLUME_RUNNING_ROW_CLASS
-            : 'bg-green-950'
+            : 'bg-[#053816] ring-2 ring-inset ring-green-400'
         );
         return;
       }
@@ -10811,7 +10899,7 @@ const RunOfShowPage: React.FC = () => {
         </div>
       ) : null}
       {/* Audio callout alert — centered */}
-      {activeVoAlert && timeToastEnabled && (
+      {activeVoAlert && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
           <div className="absolute inset-0 bg-black/50 pointer-events-auto" />
           <div
@@ -12811,7 +12899,7 @@ const RunOfShowPage: React.FC = () => {
                     <>
                       <div className="font-bold text-black">Time Toast is on</div>
                       <div className="mt-1.5 font-medium text-neutral-900">
-                        Shows a popup when a cue starts early, late, or on time.
+                        Shows a popup when a cue starts early, late, or on time. VO/BGM callouts still show even if this is off.
                       </div>
                       <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn off</div>
                     </>
@@ -12819,7 +12907,7 @@ const RunOfShowPage: React.FC = () => {
                     <>
                       <div className="font-bold text-black">Time Toast is off</div>
                       <div className="mt-1.5 font-medium text-neutral-900">
-                        Turn on to get popup alerts when a cue starts early, late, or on time.
+                        Turn on to get popup alerts when a cue starts early, late, or on time. VO/BGM callouts still show either way.
                       </div>
                       <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn on</div>
                     </>
@@ -15131,12 +15219,14 @@ const RunOfShowPage: React.FC = () => {
                          schedule.find((s) => s.id === editingVoItemId)?.customFields?.cue || ''
                        ).trim()
                      : undefined;
+                   const normalizedTime =
+                     normalizeCalloutTimeToHHMM(voDraftTime) || voDraftTime;
                    setTempVoCues((prev) =>
                      [
                        ...prev,
                        {
                          id: `vo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-                         time: voDraftTime,
+                         time: normalizedTime,
                          label: voDraftLabel.trim(),
                          kind: voDraftKind,
                          ...(cuePrefix ? { cuePrefix } : {}),
@@ -15167,7 +15257,12 @@ const RunOfShowPage: React.FC = () => {
                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold"
                  onClick={() => {
                    const itemId = editingVoItemId;
-                   const next = [...tempVoCues].sort((a, b) => a.time.localeCompare(b.time));
+                   const next = [...tempVoCues]
+                     .map((vo) => {
+                       const normalized = normalizeCalloutTimeToHHMM(vo.time);
+                       return normalized ? { ...vo, time: normalized } : vo;
+                     })
+                     .sort((a, b) => a.time.localeCompare(b.time));
                    setSchedule((prev) =>
                      prev.map((row) => {
                        if (row.id !== itemId) return row;

@@ -15696,7 +15696,7 @@ const RunOfShowPage: React.FC = () => {
       })()}
 
       {/* Audio callout alert — centered */}
-      {activeVoAlert && timeToastEnabled && (
+      {activeVoAlert && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
           <div className="absolute inset-0 bg-black/50 pointer-events-auto" />
           <div
