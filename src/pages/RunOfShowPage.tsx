@@ -225,9 +225,85 @@ function withNormalizedVoCues<T extends { voCues?: VoCue[]; vo_cues?: unknown }>
   return { ...(rest as T), voCues: normalized };
 }
 
-function normalizeScheduleVoCues(items: any[] | null | undefined): any[] {
+function generateRandomTimerId(used?: Set<string>): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  do {
+    result = '';
+    for (let i = 0; i < 5; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+  } while (used?.has(result));
+  used?.add(result);
+  return result;
+}
+
+/** Fill blank timerIds so the Timer column never falls back to the literal "TIMER". */
+function ensureScheduleTimerIds(
+  items: any[],
+  options?: { preferExisting?: any[] | null; assignMissing?: boolean }
+): { items: any[]; changed: boolean } {
+  const preferExisting = options?.preferExisting;
+  const assignMissing = options?.assignMissing !== false;
+  const preferById = new Map(
+    (preferExisting || [])
+      .filter((i) => i && i.id != null)
+      .map((i) => [Number(i.id), i])
+  );
+  const used = new Set<string>();
+  for (const item of items) {
+    const t = typeof item?.timerId === 'string' ? item.timerId.trim().toUpperCase() : '';
+    if (t) used.add(t);
+  }
+  for (const item of preferExisting || []) {
+    const t = typeof item?.timerId === 'string' ? item.timerId.trim().toUpperCase() : '';
+    if (t) used.add(t);
+  }
+
+  let changed = false;
+  const next = items.map((item) => {
+    if (!item || item.programType === 'Delay Block') return item;
+    const existing = typeof item.timerId === 'string' ? item.timerId.trim() : '';
+    if (existing) {
+      return existing === item.timerId ? item : { ...item, timerId: existing };
+    }
+
+    const preferred = preferById.get(Number(item.id));
+    const preferredTid =
+      preferred && typeof preferred.timerId === 'string' ? preferred.timerId.trim() : '';
+    if (preferredTid) {
+      changed = true;
+      used.add(preferredTid.toUpperCase());
+      return { ...item, timerId: preferredTid };
+    }
+
+    if (!assignMissing) return item;
+
+    const timerId = generateRandomTimerId(used);
+    changed = true;
+    return { ...item, timerId };
+  });
+  return { items: next, changed };
+}
+
+function normalizeScheduleVoCues(
+  items: any[] | null | undefined,
+  preferExisting?: any[] | null,
+  assignMissing = true
+): any[] {
   if (!Array.isArray(items)) return [];
-  return items.map((item) => withNormalizedVoCues(item));
+  const withVo = items.map((item) => withNormalizedVoCues(item));
+  return ensureScheduleTimerIds(withVo, { preferExisting, assignMissing }).items;
+}
+
+function normalizeScheduleWithTimerIds(
+  items: any[] | null | undefined,
+  preferExisting?: any[] | null,
+  assignMissing = true
+): { items: any[]; changed: boolean } {
+  if (!Array.isArray(items)) return { items: [], changed: false };
+  const withVo = items.map((item) => withNormalizedVoCues(item));
+  return ensureScheduleTimerIds(withVo, { preferExisting, assignMissing });
 }
 
 const RunOfShowPage: React.FC = () => {
@@ -1816,13 +1892,22 @@ const RunOfShowPage: React.FC = () => {
         if (lock?.userId === myId) protectIds.add(Number(rowId));
       }
     }
-    if (protectIds.size === 0) return remoteItems;
     const localById = new Map((localItems || []).map((item: any) => [Number(item.id), item]));
-    console.log('🔒 Sync merge: preserving local rows', Array.from(protectIds));
+    if (protectIds.size === 0 && localById.size === 0) return remoteItems;
+    if (protectIds.size > 0) {
+      console.log('🔒 Sync merge: preserving local rows', Array.from(protectIds));
+    }
     return remoteItems.map((remote: any) => {
       const id = Number(remote.id);
       if (protectIds.has(id) && localById.has(id)) {
         return localById.get(id);
+      }
+      // Keep a local timerId when remote still has none (backfill in flight)
+      const local = localById.get(id);
+      const remoteTid = typeof remote?.timerId === 'string' ? remote.timerId.trim() : '';
+      const localTid = typeof local?.timerId === 'string' ? local.timerId.trim() : '';
+      if (!remoteTid && localTid) {
+        return { ...remote, timerId: localTid };
       }
       return remote;
     });
@@ -6591,7 +6676,7 @@ const RunOfShowPage: React.FC = () => {
             scheduleVersionRef.current = Number(current.version);
           }
           const merged = mergeSchedulePreservingLocalEdits(
-            normalizeScheduleVoCues(items),
+            normalizeScheduleVoCues(items, scheduleRef.current, false),
             scheduleRef.current
           );
           setSchedule(merged);
@@ -6697,10 +6782,17 @@ const RunOfShowPage: React.FC = () => {
         });
         
         // Force a new array reference to ensure React detects the change
-        const newSchedule = normalizeScheduleVoCues(data.schedule_items);
+        const { items: newSchedule, changed: timerIdsBackfilled } = normalizeScheduleWithTimerIds(
+          data.schedule_items
+        );
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
         rememberSyncedSchedule(data);
+        // Persist backfilled timerIds so the Timer column stays unique after reload
+        if (timerIdsBackfilled && currentUserRoleRef.current !== 'VIEWER') {
+          console.log('🆔 Backfilled missing timerIds — scheduling save');
+          handleUserEditing();
+        }
         
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
@@ -6796,14 +6888,20 @@ const RunOfShowPage: React.FC = () => {
           try {
           const parsedSchedule = JSON.parse(savedSchedule);
             console.log('🔍 Parsed schedule from localStorage:', parsedSchedule);
-          // Migrate existing items to include day property
+          // Migrate existing items to include day property + backfill timerIds
           const migratedSchedule = parsedSchedule.map((item: any) => ({
             ...item,
             day: item.day || 1
           }));
-          setSchedule(migratedSchedule);
-          console.log('📥 Loaded schedule from localStorage:', migratedSchedule.length, 'items');
-            console.log('🔍 First few items:', migratedSchedule.slice(0, 3));
+          const { items: ensuredSchedule, changed: timerIdsBackfilled } =
+            normalizeScheduleWithTimerIds(migratedSchedule);
+          setSchedule(ensuredSchedule);
+          if (timerIdsBackfilled && currentUserRoleRef.current !== 'VIEWER') {
+            console.log('🆔 Backfilled missing timerIds from localStorage — scheduling save');
+            handleUserEditing();
+          }
+          console.log('📥 Loaded schedule from localStorage:', ensuredSchedule.length, 'items');
+            console.log('🔍 First few items:', ensuredSchedule.slice(0, 3));
           } catch (error) {
             console.error('❌ Error parsing schedule from localStorage:', error);
             console.log('🔍 Raw localStorage data:', savedSchedule);
@@ -6846,9 +6944,14 @@ const RunOfShowPage: React.FC = () => {
           ...item,
           day: item.day || 1
         }));
-        setSchedule(migratedSchedule);
-        console.log('📥 Loaded schedule from localStorage after error:', migratedSchedule.length, 'items');
-          console.log('🔍 First few items after error:', migratedSchedule.slice(0, 3));
+        const { items: ensuredSchedule, changed: timerIdsBackfilled } =
+          normalizeScheduleWithTimerIds(migratedSchedule);
+        setSchedule(ensuredSchedule);
+        if (timerIdsBackfilled && currentUserRoleRef.current !== 'VIEWER') {
+          handleUserEditing();
+        }
+        console.log('📥 Loaded schedule from localStorage after error:', ensuredSchedule.length, 'items');
+          console.log('🔍 First few items after error:', ensuredSchedule.slice(0, 3));
         } catch (parseError) {
           console.error('❌ Error parsing schedule from localStorage after error:', parseError);
           console.log('🔍 Raw localStorage data after error:', savedSchedule);
@@ -6879,7 +6982,12 @@ const RunOfShowPage: React.FC = () => {
         
         // Update data without affecting timers
         // Force a new array reference to ensure React detects the change
-        const newSchedule = normalizeScheduleVoCues(data.schedule_items);
+        // Prefer local timerIds; do not invent new ones on poll (avoids ID churn)
+        const newSchedule = normalizeScheduleVoCues(
+          data.schedule_items,
+          scheduleRef.current,
+          false
+        );
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
         rememberSyncedSchedule(data);
@@ -7011,7 +7119,7 @@ const RunOfShowPage: React.FC = () => {
           }
           if (scheduleItems && Array.isArray(scheduleItems)) {
             const merged = mergeSchedulePreservingLocalEdits(
-              normalizeScheduleVoCues(scheduleItems),
+              normalizeScheduleVoCues(scheduleItems, scheduleRef.current, false),
               scheduleRef.current
             );
             setSchedule(merged);
@@ -8594,16 +8702,6 @@ const RunOfShowPage: React.FC = () => {
 
 
   const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string; id?: number }) => {
-    // Generate random Timer ID
-    const generateRandomTimerId = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let result = '';
-      for (let i = 0; i < 5; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
-    
     const item: ScheduleItem = {
       ...newItem,
       id: newItem.id && newItem.id > 0 ? newItem.id : modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now(),
@@ -8732,16 +8830,6 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id || !user?.id) return false;
     
     try {
-      // Generate random Timer ID
-      const generateRandomTimerId = () => {
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-        let result = '';
-        for (let i = 0; i < 5; i++) {
-          result += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        return result;
-      };
-      
       // Format segment name as "Location - Breakout Title"
       const segmentName = `${location} - ${breakoutTitle}`;
       
@@ -8761,16 +8849,6 @@ const RunOfShowPage: React.FC = () => {
         
         // Format the new CUE number (e.g., "CUE 2A", "CUE 2B")
         const newCueNumber = baseCueNumber ? `CUE ${baseCueNumber}${letterSuffix}` : `CUE ${letterSuffix}`;
-        
-        // Generate random Timer ID
-        const generateRandomTimerId = () => {
-          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-          let result = '';
-          for (let i = 0; i < 5; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
-          }
-          return result;
-        };
         
         return {
           id: Date.now() + Math.floor(Math.random() * 10000), // Ensure unique IDs
@@ -9759,6 +9837,11 @@ const RunOfShowPage: React.FC = () => {
   // Handle Excel/CSV import (source: 'Excel' | 'CSV' for logging)
   const handleExcelImport = async (importedData: any[], source: 'Excel' | 'CSV' = 'Excel') => {
     try {
+      const usedTimerIds = new Set(
+        schedule
+          .map((item) => (typeof item.timerId === 'string' ? item.timerId.trim().toUpperCase() : ''))
+          .filter(Boolean)
+      );
       console.log(`📊 Processing ${source} import:`, importedData);
       
       // Confirm with user before adding data
@@ -9818,7 +9901,13 @@ const RunOfShowPage: React.FC = () => {
               : row.recordingSource === 'ros' || row.recording_source === 'ros'
                 ? 'ros'
                 : null,
-          timerId: row.timerId || '',
+          timerId: (typeof row.timerId === 'string' && row.timerId.trim())
+            ? (() => {
+                const tid = row.timerId.trim();
+                usedTimerIds.add(tid.toUpperCase());
+                return tid;
+              })()
+            : generateRandomTimerId(usedTimerIds),
           isPublic: row.isPublic || false,
           isIndented: row.isIndented || false,
           day: row.day ?? selectedDay,
@@ -10087,16 +10176,6 @@ const RunOfShowPage: React.FC = () => {
   const duplicateScheduleItem = (itemId: number) => {
     const itemToDuplicate = schedule.find(item => item.id === itemId);
     if (!itemToDuplicate) return;
-    
-    // Generate random Timer ID for the duplicate
-    const generateRandomTimerId = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let result = '';
-      for (let i = 0; i < 5; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
     
     // Find the index of the item to duplicate
     const sourceIndex = schedule.findIndex(item => item.id === itemId);

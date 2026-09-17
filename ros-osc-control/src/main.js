@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, powerSaveBlocker } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const osc = require('osc');
 require('dotenv').config();
 
@@ -13,12 +14,67 @@ const config = {
   apiMode: process.env.API_MODE || 'RAILWAY',
   localApiUrl: process.env.LOCAL_API_URL || 'http://localhost:3001',
   railwayApiUrl: process.env.RAILWAY_API_URL || 'https://ros-50-production.up.railway.app',
+  // Integration token (ros_itok_…) — Admin → Integration API tokens (read, control)
+  apiToken: (process.env.API_TOKEN || process.env.RAILWAY_API_TOKEN || '').trim(),
   oscPort: parseInt(process.env.OSC_LISTEN_PORT) || 57121,
   oscHost: process.env.OSC_LISTEN_HOST || '0.0.0.0'
 };
 
 function getApiUrl() {
   return config.apiMode === 'LOCAL' ? config.localApiUrl : config.railwayApiUrl;
+}
+
+function getConfigPath() {
+  return path.join(app.getPath('userData'), 'ros-osc-config.json');
+}
+
+function loadPersistedConfig() {
+  try {
+    const file = getConfigPath();
+    if (!fs.existsSync(file)) return;
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (saved.apiMode === 'LOCAL' || saved.apiMode === 'RAILWAY') {
+      config.apiMode = saved.apiMode;
+    }
+    if (typeof saved.apiToken === 'string' && saved.apiToken.trim()) {
+      if (!(process.env.API_TOKEN || process.env.RAILWAY_API_TOKEN)) {
+        config.apiToken = saved.apiToken.trim();
+      }
+    }
+    console.log('📋 Loaded persisted config from', file);
+  } catch (err) {
+    console.warn('⚠️ Could not load persisted config:', err.message);
+  }
+}
+
+function savePersistedConfig() {
+  try {
+    const file = getConfigPath();
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        {
+          apiMode: config.apiMode,
+          apiToken: config.apiToken || ''
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+  } catch (err) {
+    console.warn('⚠️ Could not save config:', err.message);
+  }
+}
+
+function publicConfig() {
+  return {
+    apiMode: config.apiMode,
+    apiUrl: getApiUrl(),
+    apiToken: config.apiToken || '',
+    oscPort: config.oscPort,
+    oscHost: config.oscHost
+  };
 }
 
 function createWindow() {
@@ -271,22 +327,23 @@ function addOscLog(type, message, data) {
 }
 
 // IPC Handlers
-ipcMain.handle('get-config', () => {
-  return {
-    apiMode: config.apiMode,
-    apiUrl: getApiUrl(),
-    oscPort: config.oscPort,
-    oscHost: config.oscHost
-  };
-});
+ipcMain.handle('get-config', () => publicConfig());
 
 ipcMain.handle('set-api-mode', (event, mode) => {
   config.apiMode = mode;
+  savePersistedConfig();
   console.log('🔧 API mode changed to:', mode);
-  return {
-    apiMode: config.apiMode,
-    apiUrl: getApiUrl()
-  };
+  return publicConfig();
+});
+
+ipcMain.handle('set-api-token', (event, token) => {
+  config.apiToken = String(token || '').trim();
+  savePersistedConfig();
+  const preview = config.apiToken
+    ? `${config.apiToken.slice(0, 12)}… (${config.apiToken.length} chars)`
+    : '(empty)';
+  console.log('🔑 API token updated:', preview);
+  return publicConfig();
 });
 
 ipcMain.handle('get-osc-log', () => {
@@ -295,7 +352,9 @@ ipcMain.handle('get-osc-log', () => {
 
 // App lifecycle
 app.whenReady().then(() => {
+  loadPersistedConfig();
   console.log('🚀 App ready, creating window...');
+  console.log('🔑 API token:', config.apiToken ? 'set' : 'not set');
   createWindow();
   
   console.log('🎵 Initializing OSC...');
@@ -328,4 +387,5 @@ console.log('🚀 ROS OSC Control Starting...');
 console.log('📡 API Mode:', config.apiMode);
 console.log('🌐 API URL:', getApiUrl());
 console.log('🎵 OSC Port:', config.oscPort);
+console.log('🔑 API token via env:', !!(process.env.API_TOKEN || process.env.RAILWAY_API_TOKEN));
 

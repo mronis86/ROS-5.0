@@ -100,6 +100,35 @@ body {
   cursor: pointer;
 }
 
+.api-token-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.api-token-field label {
+  font-size: 0.9rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.api-token-field input {
+  width: 220px;
+  max-width: 28vw;
+  padding: 0.5rem 0.75rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.api-token-field input:focus {
+  outline: none;
+  border-color: #60a5fa;
+}
+
 /* Buttons */
 .btn {
   padding: 0.5rem 1rem;

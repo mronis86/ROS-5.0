@@ -25,6 +25,17 @@
             <option value="RAILWAY">Railway (Deployed)</option>
           </select>
         </div>
+        <div class="api-token-field">
+          <label for="apiTokenInput">API Token:</label>
+          <input
+            id="apiTokenInput"
+            type="password"
+            placeholder="ros_itok_… (read, control)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="saveApiTokenBtn" class="btn btn-secondary" type="button" title="Save integration token">Save</button>
+        </div>
         <div class="auto-refresh-controls">
           <label>
             <input type="checkbox" id="autoRefreshCheckbox">

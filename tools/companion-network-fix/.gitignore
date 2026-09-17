@@ -1,0 +1,5 @@
+certs/*.cer
+certs/*.crt
+certs/*.pem
+certs/*.log
+*.log

@@ -1,6 +1,6 @@
 {
   "name": "ros-osc-control",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Run of Show OSC Control - Electron app that never sleeps, receives OSC commands to control events",
   "main": "src/main.js",
   "scripts": {

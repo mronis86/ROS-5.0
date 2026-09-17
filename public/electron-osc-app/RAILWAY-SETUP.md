@@ -33,7 +33,21 @@ The `.env` file is set to:
 ```env
 API_MODE=RAILWAY
 RAILWAY_API_URL=https://ros-50-production.up.railway.app
+# Optional: API_TOKEN=ros_itok_…   (or set in the app UI)
 ```
+
+## 🔑 API Token (required when Railway auth is enforced)
+
+Same token as Companion:
+
+1. Web app → **Admin** → **Integration API tokens** → create with scopes **`read, control`**
+2. Copy the `ros_itok_…` value once
+3. In the Electron app header: paste into **API Token** → **Save**
+
+Token is stored in the app userData folder (`ros-osc-config.json`). You can also set `API_TOKEN` or `RAILWAY_API_TOKEN` in `.env`.
+
+With `REQUIRE_API_AUTH=writes`: GETs may work without a token; load/start/stop need the token.  
+With `REQUIRE_API_AUTH=all`: paste the token before loading events.
 
 ## 🎯 Benefits of Railway Mode
 

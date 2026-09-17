@@ -11,47 +11,63 @@ $publicDir = Join-Path $ProjectRoot 'public'
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
 Write-Host "========== Building portable Electron app =========="
-Push-Location (Join-Path $ProjectRoot 'ros-osc-control')
-try {
-    npm install 2>$null
-    npm run build:portable
-} catch {
-    Write-Warning "Portable Electron build failed or skipped: $_"
-} finally {
-    Pop-Location
-}
-
-Write-Host "========== Creating portable zip from ros-osc-control/dist =========="
 $ZipPath = Join-Path $publicDir 'ROS-OSC-Control-portable.zip'
-$WinUnpacked = Join-Path $OscDist 'win-unpacked'
-if (-not (Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
-if (Test-Path $OscDist) {
-    try {
-        Compress-Archive -Path $OscDist -DestinationPath $ZipPath -Force
-        Write-Host "Created ROS-OSC-Control-portable.zip from dist"
-    } catch {
-        if (Test-Path $WinUnpacked) {
-            Compress-Archive -Path $WinUnpacked -DestinationPath $ZipPath -Force
-            Write-Host "Created ROS-OSC-Control-portable.zip from win-unpacked (exe was in use)"
-        } else {
-            Write-Warning "Could not create zip - dist or win-unpacked not found"
-        }
-    }
+$OscDistFresh = Join-Path (Join-Path $ProjectRoot 'ros-osc-control') 'dist-fresh'
+$WinUnpackedFresh = Join-Path $OscDistFresh 'win-unpacked'
+$existingZipOk = (Test-Path $ZipPath) -and ((Get-Item $ZipPath).Length -gt 50MB)
+
+if ($existingZipOk) {
+    $zipMb = [math]::Round((Get-Item $ZipPath).Length / 1MB, 1)
+    Write-Host "Keeping existing ROS-OSC-Control-portable.zip ($zipMb MB) - skip Electron rebuild"
 } else {
-    Write-Warning "ros-osc-control/dist not found. Build it first: cd ros-osc-control && npm run build:portable"
+    Push-Location (Join-Path $ProjectRoot 'ros-osc-control')
+    try {
+        npm install 2>$null
+        # Prefer unlocked output folder when classic dist\win-unpacked is file-locked
+        npm run build:portable
+    } catch {
+        Write-Warning "Portable Electron build failed or skipped: $_"
+    } finally {
+        Pop-Location
+    }
+
+    Write-Host "========== Creating portable zip from ros-osc-control/dist =========="
+    $WinUnpacked = Join-Path $OscDist 'win-unpacked'
+    if (-not (Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
+    $zipSource = $null
+    if (Test-Path $WinUnpackedFresh) { $zipSource = $WinUnpackedFresh }
+    elseif (Test-Path $WinUnpacked) { $zipSource = $WinUnpacked }
+    if ($zipSource) {
+        try {
+            if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue }
+            Compress-Archive -Path $zipSource -DestinationPath $ZipPath -Force
+            Write-Host "Created ROS-OSC-Control-portable.zip from $zipSource"
+        } catch {
+            Write-Warning "Could not create portable zip: $_"
+        }
+    } else {
+        Write-Warning 'ros-osc-control win-unpacked not found. Build it first: cd ros-osc-control; npm run build:portable'
+    }
 }
 
 Write-Host "========== Building Vite app (prebuild + companion zips) =========="
 Push-Location $ProjectRoot
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 try {
     npm install 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit $LASTEXITCODE" }
     npm run build
+    if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit $LASTEXITCODE" }
     node scripts/zip-companion-module-full.js
     node scripts/zip-companion-module-resolume-full.js
+    node scripts/zip-companion-module-mitti-full.js
     node scripts/zip-offline-show.js
     node scripts/zip-spout-bridge.js
     node scripts/zip-vmix-datasource-bridge.js
+    node scripts/zip-hyperdeck-ingest.js
 } finally {
+    $ErrorActionPreference = $prevEap
     Pop-Location
 }
 
@@ -124,6 +140,7 @@ function Copy-DeployZip($fileName) {
 Copy-DeployZip 'ROS-OSC-Control-portable.zip'
 Copy-DeployZip 'companion-module-runofshow-full.zip'
 Copy-DeployZip 'companion-module-runofshow-resolume-full.zip'
+Copy-DeployZip 'companion-module-runofshow-mitti-full.zip'
 Copy-DeployZip 'offline-show.zip'
 Copy-DeployZip 'ros-led-spout.zip'
 Copy-DeployZip 'ros-vmix-datasource-bridge.zip'
@@ -142,6 +159,7 @@ $RedirectsContent = @"
 /companion-module-runofshow.zip                 /companion-module-runofshow.zip                 200
 /companion-module-runofshow-full.zip            /companion-module-runofshow-full.zip            200
 /companion-module-runofshow-resolume-full.zip   /companion-module-runofshow-resolume-full.zip   200
+/companion-module-runofshow-mitti-full.zip      /companion-module-runofshow-mitti-full.zip      200
 /ros-osc-python-app.zip                         /ros-osc-python-app.zip                         200
 /ROS-OSC-Control-portable.zip                   /ROS-OSC-Control-portable.zip                   200
 /electron-osc-app.zip                           /electron-osc-app.zip                           200
@@ -176,6 +194,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/companion-module-runofshow-resolume-full.zip"
   to = "/companion-module-runofshow-resolume-full.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/companion-module-runofshow-mitti-full.zip"
+  to = "/companion-module-runofshow-mitti-full.zip"
   status = 200
   force = true
 

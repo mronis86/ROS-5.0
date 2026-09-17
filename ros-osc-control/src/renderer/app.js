@@ -23,6 +23,27 @@ let startCueId = null; // Store the START cue ID for quick access
 let eventTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 let allEvents = []; // Global events array
 
+/** Apply Bearer token for all axios calls (integration token ros_itok_…). */
+function applyAuthHeaders() {
+  const token = (config.apiToken || '').trim();
+  if (token) {
+    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+  } else {
+    delete axios.defaults.headers.common.Authorization;
+  }
+}
+
+function authErrorMessage(error) {
+  const status = error?.response?.status;
+  if (status === 401 || status === 403) {
+    return 'API auth failed — set Integration Token (ros_itok_…) with read, control';
+  }
+  if (error?.message === 'Network Error') {
+    return 'Network error — cannot reach API (check URL / firewall / Umbrella)';
+  }
+  return error?.response?.data?.error || error?.message || 'Request failed';
+}
+
 // OSC Log Entry function
 function addOSCLogEntry(message, type = 'info') {
   console.log(`📝 OSC Log [${type.toUpperCase()}]: ${message}`);
@@ -38,10 +59,16 @@ async function init() {
     // Get config from main process
     console.log('📋 Getting config from main process...');
     config = await ipcRenderer.invoke('get-config');
-    console.log('📋 Config loaded:', config);
+    console.log('📋 Config loaded:', {
+      ...config,
+      apiToken: config.apiToken ? `${String(config.apiToken).slice(0, 12)}…` : '(empty)'
+    });
+    applyAuthHeaders();
     
     // Update UI with config
     document.getElementById('apiModeSelect').value = config.apiMode;
+    const tokenInput = document.getElementById('apiTokenInput');
+    if (tokenInput) tokenInput.value = config.apiToken || '';
     document.getElementById('oscAddress').textContent = `${config.oscHost}:${config.oscPort}`;
     
     // Setup IPC listeners first
@@ -220,12 +247,32 @@ function setupEventListeners() {
   document.getElementById('apiModeSelect').addEventListener('change', async (e) => {
     const newMode = e.target.value;
     config = await ipcRenderer.invoke('set-api-mode', newMode);
+    applyAuthHeaders();
     console.log('🔧 API mode changed:', config);
     showToast(`API mode changed to ${newMode}`);
     
     // Reload events
     await loadEvents();
   });
+
+  // Integration API token
+  const saveTokenBtn = document.getElementById('saveApiTokenBtn');
+  if (saveTokenBtn) {
+    saveTokenBtn.addEventListener('click', async () => {
+      const token = (document.getElementById('apiTokenInput')?.value || '').trim();
+      config = await ipcRenderer.invoke('set-api-token', token);
+      applyAuthHeaders();
+      if (token) {
+        showToast('API token saved');
+      } else {
+        showToast('API token cleared');
+      }
+      await loadEvents();
+      if (currentEvent) {
+        connectToSocketIO(currentEvent.id);
+      }
+    });
+  }
   
   // Refresh button
   document.getElementById('refreshBtn').addEventListener('click', async () => {
@@ -565,7 +612,9 @@ async function loadEvents(filter = 'upcoming') {
     
   } catch (error) {
     console.error('❌ Error loading events:', error);
-    eventList.innerHTML = `<div class="loading">Error loading events: ${error.message}</div>`;
+    const msg = authErrorMessage(error);
+    eventList.innerHTML = `<div class="loading">Error loading events: ${escapeHtml(msg)}</div>`;
+    showToast(msg);
   }
 }
 
@@ -901,11 +950,11 @@ async function loadCueById(itemId) {
   }
   
   try {
-    // Stop any running timers first
-    await stopAllTimers();
+    // Stop main + subtimers first (Companion parity)
+    await stopBeforeLoad();
     
     // Calculate duration
-    const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
+    const totalSeconds = (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
     
     // Find row number
     const rowNumber = schedule.findIndex(s => s.id === itemId) + 1;
@@ -916,7 +965,7 @@ async function loadCueById(itemId) {
       event_id: currentEvent.id,
       item_id: itemId,
       user_id: 'osc-electron-app',
-      duration_seconds: totalSeconds,
+      duration_seconds: totalSeconds || 300,
       row_is: rowNumber,
       cue_is: cueNumber,
       timer_id: item.timerId || `TMR${itemId}`
@@ -926,7 +975,7 @@ async function loadCueById(itemId) {
     activeItemId = itemId;
     timerProgress[itemId] = {
       elapsed: 0,
-      total: totalSeconds,
+      total: totalSeconds || 300,
       startedAt: null
     };
     activeTimers = {};
@@ -943,16 +992,31 @@ async function loadCueById(itemId) {
 }
 
 // Load cue by cue number
+function normalizeCueKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^cue\s+/i, '');
+}
+
+function itemMatchesCueNumber(item, cueNumber) {
+  const target = normalizeCueKey(cueNumber);
+  if (!target) return false;
+  const candidates = [
+    item.customFields?.cue,
+    item.timerId,
+    item.id
+  ];
+  return candidates.some((c) => c != null && normalizeCueKey(c) === target);
+}
+
 async function loadCueByCueNumber(cueNumber) {
   console.log('🔵 Loading cue by number:', cueNumber);
   
   // Filter schedule by selected day first (like RunOfShowPage.tsx)
   const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
   
-  const item = filteredSchedule.find(s => {
-    const itemCue = s.customFields?.cue || s.timerId || '';
-    return itemCue.toString().toLowerCase() === cueNumber.toString().toLowerCase();
-  });
+  const item = filteredSchedule.find((s) => itemMatchesCueNumber(s, cueNumber));
   
   if (!item) {
     console.warn('⚠️ Cue not found:', cueNumber, 'for Day', selectedDay);
@@ -1052,29 +1116,52 @@ async function stopCue() {
   await stopAllTimers();
 }
 
-// Stop all timers
+/** Stop main timer + all subtimers (same sequence as Companion load_cue). */
 async function stopAllTimers() {
-  if (!currentEvent || !activeItemId) return;
-  
+  if (!currentEvent) return;
+
+  let stopItemId = activeItemId;
   try {
-    // Call API to stop timer - using correct endpoint
-    await axios.post(`${config.apiUrl}/api/timers/stop`, {
-      event_id: currentEvent.id,
-      item_id: activeItemId
+    const response = await axios.get(`${config.apiUrl}/api/active-timers/${currentEvent.id}`);
+    const row = Array.isArray(response.data) && response.data[0] ? response.data[0] : response.data;
+    if (row?.item_id != null) {
+      stopItemId = parseInt(row.item_id, 10);
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not fetch active timer before stop:', err.message);
+  }
+
+  if (stopItemId) {
+    try {
+      await axios.post(`${config.apiUrl}/api/timers/stop`, {
+        event_id: currentEvent.id,
+        item_id: stopItemId
+      });
+      console.log('✅ Main timer stopped');
+    } catch (error) {
+      console.warn('⚠️ Stop main timer:', error.message);
+    }
+  }
+
+  try {
+    await axios.put(`${config.apiUrl}/api/sub-cue-timers/stop`, {
+      event_id: currentEvent.id
     });
-    
-    // Update local state
-    activeTimers = {};
-    
-    // Update display
+    console.log('✅ Sub-cue timers stopped');
+  } catch (error) {
+    console.warn('⚠️ Stop sub-cue timers:', error.message);
+  }
+
+  activeTimers = {};
+  try {
     updateCurrentCueDisplay();
     renderSchedule();
-    
-    console.log('✅ All timers stopped');
-    
-  } catch (error) {
-    console.error('❌ Error stopping timers:', error);
-  }
+  } catch (_) {}
+}
+
+async function stopBeforeLoad() {
+  // Always clear main + subtimers before loading a new cue (Companion parity)
+  await stopAllTimers();
 }
 
 // Load next cue
@@ -1284,10 +1371,7 @@ async function startSubTimer(cueNumber) {
   const filteredSchedule = schedule.filter(item => (item.day || 1) === selectedDay);
   
   // Find the item by cue number
-  const item = filteredSchedule.find(s => 
-    (s.customFields?.cue && s.customFields.cue.toString() === cueNumber) ||
-    (s.timerId && s.timerId.toString() === cueNumber)
-  );
+  const item = filteredSchedule.find((s) => itemMatchesCueNumber(s, cueNumber));
   
   if (!item) {
     console.warn('⚠️ Cue not found:', cueNumber);
@@ -1332,86 +1416,83 @@ async function startSubTimer(cueNumber) {
   }
 }
 
-// Adjust timer duration via OSC command
+// Adjust timer duration via OSC command (matches Companion: base = active_timer.duration_seconds)
 async function adjustTimer(minutes) {
   console.log('⏱️ Adjusting timer duration by', minutes, 'minutes');
   
-  if (!currentEvent || !activeItemId) {
-    console.warn('⚠️ No active timer to adjust');
+  if (!currentEvent) {
+    console.warn('⚠️ No event loaded');
     return;
   }
   
   try {
-    // Find the active item in schedule
-    const item = schedule.find(s => s.id === activeItemId);
-    if (!item) {
-      console.warn('⚠️ Active item not found in schedule');
+    const secondsDelta = minutes * 60;
+    let itemId = activeItemId;
+    let currentDur = null;
+
+    // Prefer live active timer duration (Companion parity)
+    try {
+      const response = await axios.get(`${config.apiUrl}/api/active-timers/${currentEvent.id}`);
+      const row = Array.isArray(response.data) && response.data[0] ? response.data[0] : response.data;
+      if (row?.item_id != null) {
+        itemId = parseInt(row.item_id, 10);
+        if (row.duration_seconds != null && Number.isFinite(Number(row.duration_seconds))) {
+          currentDur = Number(row.duration_seconds);
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Could not fetch active timer for adjust:', err.message);
+    }
+
+    if (!itemId) {
+      console.warn('⚠️ No active timer to adjust');
       return;
     }
-    
-    // Calculate new duration
-    const currentDurationMinutes = (item.durationHours || 0) * 60 + (item.durationMinutes || 0);
-    const newDurationMinutes = Math.max(0, currentDurationMinutes + minutes);
-    
-    const newHours = Math.floor(newDurationMinutes / 60);
-    const newMinutes = newDurationMinutes % 60;
-    const newSeconds = item.durationSeconds || 0;
-    const newTotalSeconds = newHours * 3600 + newMinutes * 60 + newSeconds;
-    
-    console.log(`⏱️ Adjusting from ${currentDurationMinutes}m to ${newDurationMinutes}m`);
-    
-    // Step 1: Update the schedule in run_of_show_data table (for row duration display)
-    const updatedSchedule = schedule.map(s => 
-      s.id === activeItemId 
-        ? { ...s, durationHours: newHours, durationMinutes: newMinutes, durationSeconds: newSeconds }
-        : s
-    );
-    
-    try {
-      // First, get the current run_of_show_data to preserve custom_columns and settings
-      const currentDataResponse = await axios.get(`${config.apiUrl}/api/run-of-show-data/${currentEvent.id}`);
-      const currentData = currentDataResponse.data;
-      
-      // Update with preserved data
-      await axios.post(`${config.apiUrl}/api/run-of-show-data`, {
-        event_id: currentEvent.id,
-        event_name: currentData.event_name,
-        event_date: currentData.event_date,
-        schedule_items: updatedSchedule,
-        custom_columns: currentData.custom_columns || [],
-        settings: currentData.settings || {},
-        last_modified_by: 'osc-electron-app',
-        last_modified_by_name: 'OSC Control',
-        last_modified_by_role: 'OPERATOR'
-      });
-      console.log('✅ Schedule row duration updated in database');
-    } catch (error) {
-      console.warn('⚠️ Could not update schedule:', error.message);
-      console.error(error);
+
+    const item = schedule.find((s) => Number(s.id) === Number(itemId));
+    const fallbackDur = item
+      ? (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
+      : 300;
+    const progressDur = timerProgress[itemId]?.total;
+    const current = Number.isFinite(currentDur)
+      ? currentDur
+      : Number.isFinite(Number(progressDur))
+        ? Number(progressDur)
+        : Number.isFinite(Number(fallbackDur))
+          ? Number(fallbackDur)
+          : 300;
+
+    const newTotalSeconds = Math.max(1, Math.floor(current + secondsDelta));
+    const newHours = Math.floor(newTotalSeconds / 3600);
+    const newMinutes = Math.floor((newTotalSeconds % 3600) / 60);
+    const newSeconds = newTotalSeconds % 60;
+
+    console.log(`⏱️ Adjusting from ${current}s to ${newTotalSeconds}s (${minutes > 0 ? '+' : ''}${minutes} min)`);
+
+    // Update hybrid/active timer duration (primary path — same as Companion)
+    await axios.put(`${config.apiUrl}/api/active-timers/${currentEvent.id}/${itemId}/duration`, {
+      duration_seconds: newTotalSeconds
+    });
+    console.log('✅ Active timer duration updated');
+
+    // Keep local schedule/UI in sync for this session
+    if (item) {
+      schedule = schedule.map((s) =>
+        Number(s.id) === Number(itemId)
+          ? { ...s, durationHours: newHours, durationMinutes: newMinutes, durationSeconds: newSeconds }
+          : s
+      );
     }
-    
-    // Step 2: Update the timer duration in active_timers table (for hybrid timer)
-    try {
-      await axios.put(`${config.apiUrl}/api/active-timers/${currentEvent.id}/${activeItemId}/duration`, {
-        duration_seconds: newTotalSeconds
-      });
-      console.log('✅ Hybrid timer duration updated');
-    } catch (error) {
-      console.warn('⚠️ Could not update hybrid timer:', error.message);
+    activeItemId = itemId;
+    if (timerProgress[itemId]) {
+      timerProgress[itemId].total = newTotalSeconds;
+    } else {
+      timerProgress[itemId] = { elapsed: 0, total: newTotalSeconds, startedAt: null };
     }
-    
-    // Update local schedule
-    schedule = updatedSchedule;
-    
-    // Update timer progress total
-    if (timerProgress[activeItemId]) {
-      timerProgress[activeItemId].total = newTotalSeconds;
-    }
-    
-    // Update display
+
     updateCurrentCueDisplay();
     renderSchedule();
-    
+
     const sign = minutes > 0 ? '+' : '';
     console.log(`✅ Timer adjusted by ${sign}${minutes} minutes`);
     showToast(`Timer ${sign}${minutes} min`);
@@ -1982,8 +2063,11 @@ function connectToSocketIO(eventId) {
   console.log('📡 Connecting to Socket.IO for event:', eventId);
   
   // Connect to the API server's Socket.IO
+  const token = (config.apiToken || '').trim();
   socket = io(config.apiUrl, {
-    transports: ['websocket', 'polling']
+    transports: ['websocket', 'polling'],
+    auth: token ? { token } : undefined,
+    extraHeaders: token ? { Authorization: `Bearer ${token}` } : undefined
   });
   
   socket.on('connect', () => {
@@ -1993,8 +2077,9 @@ function connectToSocketIO(eventId) {
     socket.emit('join-event', eventId);
     console.log(`📡 Joined event room: event:${eventId}`);
     
-    // Show disconnect timer selection modal
-    showDisconnectTimerModal();
+    // Default Never disconnect for reliable OSC backup (no modal interrupt)
+    startDisconnectTimer(0);
+    showToast('Connected — auto-disconnect: Never');
   });
   
   // Listen for server time sync
