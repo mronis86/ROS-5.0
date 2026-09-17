@@ -151,6 +151,35 @@ main {
   font-size: 1rem;
 }
 
+.event-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.55rem;
+}
+
+.event-tab {
+  flex: 1;
+  padding: 0.4rem 0.55rem;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.event-tab:hover {
+  color: var(--text);
+  border-color: #3d516e;
+}
+
+.event-tab.active {
+  background: #0c4a6e;
+  border-color: var(--accent);
+  color: #e0f2fe;
+}
+
 .grid-conn {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

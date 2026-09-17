@@ -79,6 +79,14 @@
             </p>
             <label>
               Event
+              <div class="event-tabs" role="tablist" aria-label="Event list filter">
+                <button type="button" class="event-tab active" data-event-filter="upcoming" role="tab" aria-selected="true">
+                  Upcoming
+                </button>
+                <button type="button" class="event-tab" data-event-filter="past" role="tab" aria-selected="false">
+                  Past
+                </button>
+              </div>
               <select id="eventSelect">
                 <option value="">— select or paste UUID —</option>
               </select>

@@ -129,10 +129,25 @@ class BridgeController {
     this.emit();
   }
 
-  async applyCue(itemId, timerRow = {}) {
+  async applyCue(itemId, timerRow = {}, options = {}) {
     if (!this.running || !this.config) return;
     const id = parseInt(String(itemId), 10);
     if (!Number.isFinite(id)) return;
+
+    const force = options.force === true;
+    // Duration ± broadcasts timerUpdated with the SAME item_id. Re-running
+    // DataSourceSelectRow can jump vMix to an adjacent cue (e.g. 6 → 5) when the
+    // CSV feed refreshes or header indexing differs. Match pollOnce: keep selection.
+    if (!force && id === this.lastItemId && this.status.matches?.some((m) => m.ok)) {
+      this.status.cue = {
+        itemId: id,
+        cueIs: timerRow.cue_is || timerRow.cueIs || this.status.cue?.cueIs || null,
+        timerState: timerRow.timer_state || this.status.cue?.timerState || null,
+        isRunning: timerRow.is_running != null ? timerRow.is_running : this.status.cue?.isRunning,
+      };
+      this.emit();
+      return;
+    }
 
     this.lastItemId = id;
     this.status.cue = {

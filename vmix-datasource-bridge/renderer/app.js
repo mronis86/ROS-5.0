@@ -37,7 +37,91 @@ const els = {
 /** @type {{ name: string, tables: string[] }[]} */
 let catalog = [];
 let bindingState = [];
+/** @type {any[]} */
+let loadedEvents = [];
+/** @type {'upcoming' | 'past'} */
+let eventFilter = 'upcoming';
 
+function eventDateMs(ev) {
+  const raw = ev?.date || ev?.event_date || ev?.eventDate || '';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function formatEventDate(ev) {
+  const ms = eventDateMs(ev);
+  if (ms == null) return '';
+  try {
+    return new Date(ms).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+}
+
+function filterAndSortEvents(events, filter) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  const list = Array.isArray(events) ? events.slice() : [];
+
+  const filtered = list.filter((ev) => {
+    const ms = eventDateMs(ev);
+    if (ms == null) return filter === 'upcoming';
+    return filter === 'upcoming' ? ms >= todayMs : ms < todayMs;
+  });
+
+  filtered.sort((a, b) => {
+    const am = eventDateMs(a);
+    const bm = eventDateMs(b);
+    if (am == null && bm == null) return String(a.name || '').localeCompare(String(b.name || ''));
+    if (am == null) return 1;
+    if (bm == null) return -1;
+    // Upcoming: soonest first. Past: most recent first.
+    return filter === 'upcoming' ? am - bm : bm - am;
+  });
+
+  return filtered;
+}
+
+function renderEventSelect(preferredId) {
+  const selectedId = preferredId || els.eventId.value.trim() || els.eventSelect.value || '';
+  const events = filterAndSortEvents(loadedEvents, eventFilter);
+  els.eventSelect.innerHTML =
+    `<option value="">— select (${eventFilter}, ${events.length}) —</option>` +
+    events
+      .map((ev) => {
+        const id = ev.id || '';
+        const dateLabel = formatEventDate(ev);
+        const name = ev.name || ev.title || 'Event';
+        const label = dateLabel
+          ? `${dateLabel} — ${name} (${String(id).slice(0, 8)}…)`
+          : `${name} (${String(id).slice(0, 8)}…)`;
+        return `<option value="${escapeAttr(id)}">${escapeHtml(label)}</option>`;
+      })
+      .join('');
+
+  if (selectedId && [...els.eventSelect.options].some((o) => o.value === selectedId)) {
+    els.eventSelect.value = selectedId;
+  } else {
+    els.eventSelect.value = '';
+  }
+}
+
+function setEventFilter(next) {
+  eventFilter = next === 'past' ? 'past' : 'upcoming';
+  document.querySelectorAll('.event-tab').forEach((btn) => {
+    const active = btn.getAttribute('data-event-filter') === eventFilter;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  renderEventSelect();
+}
 /** @type {{ hours: number, minutes: number, never: boolean }} */
 let autoStopPrefs = { hours: 2, minutes: 0, never: false };
 
@@ -665,17 +749,16 @@ async function init() {
       showToast(result.message || 'Failed to load events', true);
       return;
     }
-    const events = result.events || [];
-    els.eventSelect.innerHTML =
-      '<option value="">— select —</option>' +
-      events
-        .map((ev) => {
-          const id = ev.id || '';
-          const label = `${ev.name || ev.title || 'Event'} (${String(id).slice(0, 8)}…)`;
-          return `<option value="${escapeAttr(id)}">${escapeHtml(label)}</option>`;
-        })
-        .join('');
-    showToast(`Loaded ${events.length} events`);
+    loadedEvents = result.events || [];
+    renderEventSelect(els.eventId.value.trim());
+    const visible = filterAndSortEvents(loadedEvents, eventFilter).length;
+    showToast(`Loaded ${loadedEvents.length} events · ${visible} ${eventFilter}`);
+  });
+
+  document.querySelectorAll('.event-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setEventFilter(btn.getAttribute('data-event-filter') || 'upcoming');
+    });
   });
 
   document.getElementById('btn-test-vmix').addEventListener('click', async () => {
