@@ -20,7 +20,11 @@ import {
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
-import { formatShowDelayBanner } from '../lib/showDelay';
+import {
+  formatShowDelayStatus,
+  parseShowStartOvertimeMinutes,
+  resolveGreenRoomDelayMinutes,
+} from '../lib/showDelay';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -111,6 +115,8 @@ const GreenRoomPage: React.FC = () => {
   const isInitialLoadRef = useRef(true);
   const eventTitleWrapRef = useRef<HTMLDivElement>(null);
   const eventTitleRef = useRef<HTMLDivElement>(null);
+  const titleFitWidthRef = useRef(0);
+  const [titleScale, setTitleScale] = useState(1);
   
   // Overtime data (same as RunOfShowPage)
   const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
@@ -125,87 +131,56 @@ const GreenRoomPage: React.FC = () => {
     DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
   }, [event?.id]);
 
-  // Fit event title: large by default; wrap to 2 lines before shrinking small
+  // Fit event title on one line via scale (never clip / never orphan a second line)
   useLayoutEffect(() => {
     const wrap = eventTitleWrapRef.current;
     const el = eventTitleRef.current;
     if (!wrap || !el) return;
+    titleFitWidthRef.current = 0;
 
     const fit = () => {
-      const available = wrap.clientWidth;
-      if (available <= 0) return;
+      const available = Math.floor(wrap.clientWidth);
+      if (available < 48) return;
+      if (Math.abs(available - titleFitWidthRef.current) < 4 && titleFitWidthRef.current > 0) {
+        return;
+      }
+      titleFitWidthRef.current = available;
 
-      const maxPx = 80;
-      const minPx = 40;
-      const lineHeight = 1.15;
-      const twoLineMaxH = (size: number) => size * lineHeight * 2 + 4;
-
-      el.style.lineHeight = String(lineHeight);
-      el.style.width = '100%';
-      el.style.maxWidth = '100%';
-      el.style.overflow = 'visible';
-      el.style.textOverflow = 'clip';
-
-      // 1) Prefer a single large line when it fits
+      el.style.transform = 'scale(1)';
+      el.style.fontSize = '72px';
       el.style.whiteSpace = 'nowrap';
-      el.style.overflowWrap = 'normal';
-      el.style.wordBreak = 'normal';
-      el.style.fontSize = `${maxPx}px`;
-      if (el.scrollWidth <= available) return;
-
-      // 2) Otherwise use up to 2 lines and take the largest size that fits
-      el.style.whiteSpace = 'normal';
-      el.style.overflowWrap = 'break-word';
-      el.style.wordBreak = 'normal';
-
-      let lo = minPx;
-      let hi = maxPx;
-      let best = minPx;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        el.style.fontSize = `${mid}px`;
-        if (el.scrollHeight <= twoLineMaxH(mid)) {
-          best = mid;
-          lo = mid + 1;
-        } else {
-          hi = mid - 1;
-        }
-      }
-
-      // 3) Still overflowing at min: allow mid-word breaks, keep size as large as possible
-      el.style.fontSize = `${best}px`;
-      if (el.scrollHeight > twoLineMaxH(best)) {
-        el.style.overflowWrap = 'anywhere';
-        el.style.wordBreak = 'break-word';
-        lo = minPx;
-        hi = maxPx;
-        best = minPx;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          el.style.fontSize = `${mid}px`;
-          if (el.scrollHeight <= twoLineMaxH(mid)) {
-            best = mid;
-            lo = mid + 1;
-          } else {
-            hi = mid - 1;
-          }
-        }
-        el.style.fontSize = `${best}px`;
-      }
+      el.style.display = 'inline-block';
+      el.style.width = 'max-content';
+      el.style.maxWidth = 'none';
+      el.style.overflow = 'visible';
+      void el.offsetWidth;
+      const need = el.scrollWidth || 1;
+      const next = Math.min(1, available / need);
+      el.style.transform = `scale(${next})`;
+      el.style.transformOrigin = 'center center';
+      setTitleScale((prev) => (Math.abs(prev - next) < 0.01 ? prev : next));
     };
 
     fit();
-    // Timer box width changes (e.g. PRE SHOW COUNTDOWN) shrink the title slot — re-fit
-    const parent = wrap.parentElement;
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    let debounceId = 0;
+    const ro =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            window.clearTimeout(debounceId);
+            debounceId = window.setTimeout(() => {
+              titleFitWidthRef.current = 0;
+              fit();
+            }, 80);
+          })
+        : null;
     ro?.observe(wrap);
-    if (parent) ro?.observe(parent);
     window.addEventListener('resize', fit);
     return () => {
       ro?.disconnect();
+      window.clearTimeout(debounceId);
       window.removeEventListener('resize', fit);
     };
-  }, [event?.name, showPreshowCountdownLabel, timerState]);
+  }, [event?.name, showPreshowCountdownLabel, timerState, showStartOvertime]);
 
   // Event list for selector (like PhotoViewPage)
   const [events, setEvents] = useState<Event[]>([]);
@@ -596,9 +571,13 @@ const GreenRoomPage: React.FC = () => {
             setOvertimeMinutes(overtimeData || {});
             
             if (showStartOvertimeData !== null) {
-              overtimeValue = (showStartOvertimeData as any).show_start_overtime ?? (showStartOvertimeData as any).overtimeMinutes ?? 0;
-              startCueIdValue = (showStartOvertimeData as any).item_id ?? (showStartOvertimeData as any).itemId ?? null;
-              setShowStartOvertime(currentShowMode === 'in-show' ? overtimeValue : 0);
+              overtimeValue = parseShowStartOvertimeMinutes(showStartOvertimeData);
+              startCueIdValue =
+                (showStartOvertimeData as any).item_id ??
+                (showStartOvertimeData as any).itemId ??
+                null;
+              // Keep real offset in state; rehearsal zeroes it only in start-time math
+              setShowStartOvertime(overtimeValue);
               if (startCueIdValue) setStartCueId(startCueIdValue);
             } else {
               setShowStartOvertime(0);
@@ -899,11 +878,30 @@ const GreenRoomPage: React.FC = () => {
         runDataSyncRef.current?.();
         setSyncCountdown(20);
       },
+      onOvertimeUpdate: (data: any) => {
+        if (!data || String(data.event_id) !== String(event?.id)) return;
+        const itemId = Number(data.item_id);
+        const minutes = Number(data.overtimeMinutes ?? data.overtime_minutes ?? 0) || 0;
+        if (!Number.isFinite(itemId)) return;
+        setOvertimeMinutes((prev) => ({ ...prev, [itemId]: minutes }));
+      },
+      onShowStartOvertimeUpdate: (data: any) => {
+        if (!data || String(data.event_id) !== String(event?.id)) return;
+        const minutes = parseShowStartOvertimeMinutes(data);
+        const itemId = data.item_id ?? data.itemId;
+        if (itemId != null) setStartCueId(Number(itemId));
+        setShowStartOvertime(minutes);
+      },
+      onShowStartOvertimeReset: (data: { event_id?: string }) => {
+        if (data?.event_id != null && String(data.event_id) === String(event?.id)) {
+          setShowStartOvertime(0);
+        }
+      },
       onScheduleUpdated: () => {
-        // Green Room 20s-only for schedule/overtime - ignore WebSocket
+        // Green Room 20s-only for schedule - ignore WebSocket
       },
       onRunOfShowDataUpdated: () => {
-        // Green Room 20s-only for schedule/overtime - ignore WebSocket
+        // Green Room 20s-only for schedule - ignore WebSocket
       },
       onConnectionChange: (connected: boolean) => {
         // Removed verbose logging to prevent console spam
@@ -1076,11 +1074,14 @@ const GreenRoomPage: React.FC = () => {
         }
         
         if (showStartOvertimeData !== null) {
-          const overtimeValue = (showStartOvertimeData as any).show_start_overtime || showStartOvertimeData.overtimeMinutes || 0;
-          freshShowStartOvertime = currentShowMode === 'rehearsal' ? 0 : overtimeValue;
-          setShowStartOvertime(freshShowStartOvertime);
-          if (overtimeValue !== 0) {
-            console.log('✅ GreenRoom: Loaded show start overtime:', overtimeValue, 'applied:', freshShowStartOvertime);
+          const minutes = parseShowStartOvertimeMinutes(showStartOvertimeData);
+          freshShowStartOvertime = currentShowMode === 'rehearsal' ? 0 : minutes;
+          setShowStartOvertime(minutes);
+          const startId =
+            (showStartOvertimeData as any).item_id ?? (showStartOvertimeData as any).itemId ?? null;
+          if (startId != null) setStartCueId(Number(startId));
+          if (minutes !== 0) {
+            console.log('✅ GreenRoom: Loaded show start overtime:', minutes, 'applied:', freshShowStartOvertime);
           }
         }
         
@@ -1423,20 +1424,28 @@ const GreenRoomPage: React.FC = () => {
       onRunOfShowDataUpdated: () => {
         // Green Room 20s-only for schedule/overtime - ignore WebSocket
       },
-      onOvertimeUpdate: () => {
-        // Green Room 20s-only for schedule/overtime - ignore WebSocket
+      onOvertimeUpdate: (data: any) => {
+        if (!data || String(data.event_id) !== String(event?.id)) return;
+        const itemId = Number(data.item_id);
+        const minutes = Number(data.overtimeMinutes ?? data.overtime_minutes ?? 0) || 0;
+        if (!Number.isFinite(itemId)) return;
+        setOvertimeMinutes((prev) => ({ ...prev, [itemId]: minutes }));
       },
-      onShowStartOvertimeUpdate: () => {
-        // Green Room 20s-only for schedule/overtime - ignore WebSocket
+      onShowStartOvertimeUpdate: (data: any) => {
+        if (!data || String(data.event_id) !== String(event?.id)) return;
+        const minutes = parseShowStartOvertimeMinutes(data);
+        const itemId = data.item_id ?? data.itemId;
+        if (itemId != null) setStartCueId(Number(itemId));
+        setShowStartOvertime(minutes);
       },
       onOvertimeReset: (data: { event_id?: string }) => {
-        if (data?.event_id === event?.id) {
+        if (data?.event_id != null && String(data.event_id) === String(event?.id)) {
           setOvertimeMinutes({});
           runDataSyncRef.current?.();
         }
       },
       onShowStartOvertimeReset: (data: { event_id?: string }) => {
-        if (data?.event_id === event?.id) {
+        if (data?.event_id != null && String(data.event_id) === String(event?.id)) {
           setShowStartOvertime(0);
           runDataSyncRef.current?.();
         }
@@ -1588,6 +1597,18 @@ const GreenRoomPage: React.FC = () => {
     const progress = timerProgress[activeItemId];
     return progress.total - progress.elapsed < 0;
   };
+
+  const activeRemainingSeconds =
+    activeItemId != null && timerProgress[activeItemId] && timerState === 'running'
+      ? timerProgress[activeItemId].total - timerProgress[activeItemId].elapsed
+      : null;
+  const audienceDelayMinutes = resolveGreenRoomDelayMinutes({
+    showStartOvertime,
+    remainingSeconds: activeRemainingSeconds,
+    timerRunning: timerState === 'running',
+  });
+  const delayStatusLabel = formatShowDelayStatus(audienceDelayMinutes);
+  const hasShowDelay = delayStatusLabel != null;
 
   if (isLoading) {
     return (
@@ -1852,10 +1873,16 @@ const GreenRoomPage: React.FC = () => {
         )}
 
         <div className="p-6 flex items-center gap-10 min-w-0">
-          <div ref={eventTitleWrapRef} className="flex-1 min-w-0 self-center text-center pr-4">
+          <div ref={eventTitleWrapRef} className="flex-1 min-w-0 self-center text-center pr-6 overflow-hidden">
             <div
               ref={eventTitleRef}
-              className="text-white font-bold text-center mx-auto"
+              className="text-white font-bold text-center leading-tight inline-block"
+              style={{
+                fontSize: 72,
+                whiteSpace: 'nowrap',
+                transform: `scale(${titleScale})`,
+                transformOrigin: 'center center',
+              }}
             >
               {event?.name || 'Current Event'}
             </div>
@@ -1863,22 +1890,36 @@ const GreenRoomPage: React.FC = () => {
           
           <div className={`rounded-lg p-4 text-center flex-shrink-0 ${
             isRos
-              ? isOvertime()
-                ? 'bg-red-950 border border-red-500'
+              ? hasShowDelay
+                ? audienceDelayMinutes > 0
+                  ? 'bg-amber-950 border border-amber-400'
+                  : 'bg-emerald-950 border border-emerald-500'
                 : timerState === 'running'
                 ? 'bg-slate-800 border border-red-500'
                 : timerState === 'loaded'
                 ? 'bg-slate-800 border border-emerald-500'
                 : 'bg-slate-800 border border-slate-600'
-              : isOvertime()
-              ? 'bg-red-800'
+              : hasShowDelay
+              ? audienceDelayMinutes > 0
+                ? 'bg-amber-600'
+                : 'bg-green-700'
               : 'bg-red-600'
           }`}>
-          <div className={`font-semibold mb-2 ${isRos ? 'text-slate-300 text-xl' : 'text-white text-xl'}`}>
-            {isOvertime()
-              ? 'OVER TIME'
-              : showPreshowCountdownLabel
-                ? 'PRE SHOW COUNTDOWN'
+          <div
+            className={`font-semibold mb-2 text-xl ${
+              hasShowDelay
+                ? audienceDelayMinutes > 0
+                  ? 'text-amber-200'
+                  : 'text-emerald-200'
+                : isRos
+                  ? 'text-slate-300'
+                  : 'text-white'
+            }`}
+          >
+            {showPreshowCountdownLabel
+              ? 'PRE SHOW COUNTDOWN'
+              : delayStatusLabel
+                ? delayStatusLabel
                 : timerState === 'loaded'
                   ? 'LOADED'
                   : timerState === 'running'
@@ -1906,22 +1947,6 @@ const GreenRoomPage: React.FC = () => {
           </div>
         </div>
       </div>
-
-        {showMode === 'in-show' && formatShowDelayBanner(showStartOvertime) ? (
-          <div
-            className={`mx-6 mb-2 rounded-lg px-4 py-2 text-center text-lg font-bold ${
-              showStartOvertime > 0
-                ? isRos
-                  ? 'bg-red-950 border border-red-500 text-red-200'
-                  : 'bg-red-700 text-white'
-                : isRos
-                  ? 'bg-emerald-950 border border-emerald-500 text-emerald-200'
-                  : 'bg-green-700 text-white'
-            }`}
-          >
-            {formatShowDelayBanner(showStartOvertime)}
-          </div>
-        ) : null}
 
         <div className="flex-1 overflow-y-auto p-6 min-h-0 [&::-webkit-scrollbar]:hidden"
           style={{

@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import RetroTvGuideList from '../components/stream-guide/RetroTvGuideList';
 import NoLiveStreamFrame from '../components/stream-guide/NoLiveStreamFrame';
-import { buildDashboardSummaryFromExistingApis } from '../lib/buildDashboardSummary';
 import {
   filterByTimeRange,
-  filterRecordStreamingEvents,
+  filterPublicStreamGuideEvents,
   formatLongDate,
   getLocationColor,
   getRecordStreamingColor,
@@ -16,28 +15,23 @@ import {
   liveProgramKey,
   type LiveProgramInfo,
 } from '../lib/streamGuideLive';
-import { DatabaseService } from '../services/database';
+import { getApiBaseUrl } from '../services/api-client';
 import type { DashboardEventSummary, DashboardSummaryResponse } from '../types/dashboard';
 import './StreamGuidePage.css';
 
 type StreamView = 'live' | 'guide';
 
 async function loadStreamGuideEvents(): Promise<DashboardEventSummary[]> {
-  let data: DashboardSummaryResponse | null = await DatabaseService.getDashboardSummary();
-
-  if (!data?.events?.length) {
-    try {
-      data = await buildDashboardSummaryFromExistingApis({
-        getCalendarEvents: () => DatabaseService.getCalendarEvents(),
-        getRunOfShowData: (eventId) => DatabaseService.getRunOfShowData(eventId),
-        getContentReviewData: (eventId) => DatabaseService.getContentReviewData(eventId),
-      });
-    } catch (err) {
-      console.error('Stream guide fallback load failed:', err);
-    }
+  const base = getApiBaseUrl().replace(/\/$/, '');
+  const res = await fetch(`${base}/api/stream-guide/summary`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    throw new Error(`Stream guide unavailable (${res.status})`);
   }
-
-  return (data?.events || []).filter((e) => !e.isQuickMode);
+  const data = (await res.json()) as DashboardSummaryResponse;
+  return filterPublicStreamGuideEvents(data?.events || []);
 }
 
 function formatClock(now: Date): string {
@@ -85,7 +79,7 @@ const StreamGuidePage: React.FC = () => {
   const livePrograms = useMemo(() => findLivePrograms(events, now), [events, now]);
 
   const guideEvents = useMemo(
-    () => sortEventsByDate(filterByTimeRange(filterRecordStreamingEvents(events), 'upcoming'), 'upcoming'),
+    () => sortEventsByDate(filterByTimeRange(filterPublicStreamGuideEvents(events), 'upcoming'), 'upcoming'),
     [events]
   );
 

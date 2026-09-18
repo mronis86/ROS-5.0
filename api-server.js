@@ -2747,6 +2747,98 @@ app.get('/api/dashboard/summary', async (req, res) => {
   }
 });
 
+/** Public TV guide — Streaming / Stream+Rec calendar events only (no auth). */
+function isPublicStreamGuideMode(recordStreaming) {
+  const v = String(recordStreaming || '').trim();
+  return v === 'Streaming' || v === 'Stream+Rec';
+}
+
+app.get('/api/stream-guide/summary', async (req, res) => {
+  try {
+    const [calendarResult, rosResult] = await Promise.all([
+      pool.query(`SELECT * FROM calendar_events WHERE deleted_at IS NULL ORDER BY date ASC`),
+      pool.query('SELECT event_id, settings, schedule_items, updated_at FROM run_of_show_data'),
+    ]);
+
+    const rosByEventId = new Map();
+    for (const row of rosResult.rows || []) {
+      rosByEventId.set(String(row.event_id), row);
+    }
+
+    function resolveLinkedId(map, calendarRow) {
+      const sd = calendarRow.schedule_data || {};
+      const candidates = [String(calendarRow.id), sd.eventId].filter(Boolean);
+      for (const id of candidates) {
+        if (map.has(id)) return id;
+      }
+      return null;
+    }
+
+    function resolveLinkedRow(map, calendarRow) {
+      const id = resolveLinkedId(map, calendarRow);
+      return id ? { id, row: map.get(id) } : { id: null, row: null };
+    }
+
+    const emptyReview = {
+      totalCues: 0,
+      approvedCues: 0,
+      pendingCues: 0,
+      needsUpdateCues: 0,
+      openCues: 0,
+      hasReviewData: false,
+    };
+
+    const events = [];
+    for (const row of calendarResult.rows || []) {
+      const normalized = normalizeCalendarEvent(row);
+      const sd = normalized.schedule_data || {};
+      const recordStreaming = sd.recordStreaming || 'None';
+      if (!isPublicStreamGuideMode(recordStreaming)) continue;
+      if (isQuickModeScheduleData(sd, normalized.name)) continue;
+
+      const eventDate =
+        typeof normalized.date === 'string'
+          ? normalized.date.slice(0, 10)
+          : normalized.date instanceof Date
+            ? normalized.date.toISOString().slice(0, 10)
+            : String(normalized.date || '').slice(0, 10);
+
+      const rosLink = resolveLinkedRow(rosByEventId, normalized);
+      const rosRow = rosLink.row;
+      const scheduleItems = rosRow?.schedule_items || [];
+      const settings = rosRow?.settings || {};
+      const numberOfDays = sd.numberOfDays || 1;
+      const dayInfo = buildDashboardDayBlocks(eventDate, numberOfDays, settings, scheduleItems);
+
+      events.push({
+        id: String(normalized.id),
+        name: normalized.name || 'Untitled event',
+        date: eventDate,
+        location: sd.location || 'Great Hall',
+        numberOfDays,
+        timezone: sd.timezone || 'America/New_York',
+        eventType: sd.eventType || 'Staged Production',
+        recordStreaming,
+        isQuickMode: false,
+        rosEventId: rosLink.id,
+        masterStartTime: dayInfo.masterStartTime,
+        dayStartTimes: dayInfo.dayStartTimes,
+        scheduleItemCount: scheduleItems.length,
+        dayBlocks: dayInfo.blocks,
+        hasScheduleTimes: dayInfo.hasScheduleTimes,
+        contentReview: emptyReview,
+        rosUpdatedAt: rosRow?.updated_at || null,
+      });
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json({ events, generatedAt: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error fetching public stream guide summary:', error);
+    res.status(500).json({ error: 'Failed to fetch stream guide' });
+  }
+});
+
 app.get('/api/calendar-events/:id', async (req, res) => {
   try {
     const { id } = req.params;

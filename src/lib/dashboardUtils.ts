@@ -120,6 +120,15 @@ export function filterRecordStreamingEvents(events: DashboardEventSummary[]): Da
   );
 }
 
+/** Public Stream Guide — live/broadcast events only (not Record-only). */
+export function filterPublicStreamGuideEvents(events: DashboardEventSummary[]): DashboardEventSummary[] {
+  return events.filter(
+    (e) =>
+      !e.isQuickMode &&
+      (e.recordStreaming === 'Streaming' || e.recordStreaming === 'Stream+Rec')
+  );
+}
+
 /** Open content reviews — optional 30-day window when viewing upcoming only. */
 export function filterOpenContentReviewEvents(
   events: DashboardEventSummary[],
