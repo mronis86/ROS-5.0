@@ -1510,6 +1510,39 @@ async function runComplaintLineSyncTable(db) {
   `);
 }
 
+async function runCueCardsSyncTables(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.cue_card_decks (
+      event_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT 'Cue Cards',
+      slides JSONB NOT NULL DEFAULT '[]'::jsonb,
+      cue_ranges JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by TEXT
+    )
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.cue_card_comments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id TEXT NOT NULL,
+      slide_id TEXT NOT NULL,
+      comment_text TEXT NOT NULL DEFAULT '',
+      comment_type VARCHAR(50) NOT NULL DEFAULT 'GENERAL',
+      author TEXT NOT NULL DEFAULT 'Unknown',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_cue_card_comments_event
+      ON public.cue_card_comments (event_id)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_cue_card_comments_slide
+      ON public.cue_card_comments (event_id, slide_id)
+  `);
+}
+
 async function runCateringNotesSyncTable(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS public.catering_notes (
@@ -8536,6 +8569,42 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Cue Cards: scroller slide index → viewers
+  socket.on('cueCardsSlideUpdate', (data) => {
+    const { eventId, slideIndex, slideId } = data || {};
+    if (!eventId) return;
+    socket.to(`event:${eventId}`).emit('cueCardsSlideSync', {
+      eventId,
+      slideIndex,
+      slideId,
+      timestamp: Date.now(),
+    });
+  });
+
+  // Cue Cards: deck content changed (slides / cue ranges)
+  socket.on('cueCardsDeckUpdate', (data) => {
+    const { eventId, deck } = data || {};
+    if (!eventId) return;
+    socket.to(`event:${eventId}`).emit('cueCardsDeckSync', {
+      eventId,
+      deck,
+      timestamp: Date.now(),
+    });
+  });
+
+  // Cue Cards: comment add/edit/delete
+  socket.on('cueCardsCommentUpdate', (data) => {
+    const { eventId, action, comment, commentId } = data || {};
+    if (!eventId) return;
+    io.to(`event:${eventId}`).emit('cueCardsCommentSync', {
+      eventId,
+      action,
+      comment,
+      commentId,
+      timestamp: Date.now(),
+    });
+  });
+
   // Handle overtime update event
   socket.on('overtimeUpdate', (data) => {
     const { event_id, item_id, overtimeMinutes } = data;
@@ -9312,6 +9381,138 @@ app.delete('/api/script-comments/:commentId', async (req, res) => {
   }
 });
 
+// ========================================
+// Cue Cards API (web slides + comments)
+// ========================================
+
+app.get('/api/cue-cards/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId required' });
+
+    let deckResult = await pool.query(
+      'SELECT * FROM cue_card_decks WHERE event_id = $1',
+      [eventId]
+    );
+    if (deckResult.rows.length === 0) {
+      deckResult = await pool.query(
+        `INSERT INTO cue_card_decks (event_id, title, slides, cue_ranges)
+         VALUES ($1, 'Cue Cards', '[]'::jsonb, '[]'::jsonb)
+         ON CONFLICT (event_id) DO UPDATE SET event_id = EXCLUDED.event_id
+         RETURNING *`,
+        [eventId]
+      );
+    }
+
+    const commentsResult = await pool.query(
+      'SELECT * FROM cue_card_comments WHERE event_id = $1 ORDER BY created_at ASC',
+      [eventId]
+    );
+
+    res.json({
+      deck: deckResult.rows[0],
+      comments: commentsResult.rows,
+    });
+  } catch (error) {
+    console.error('Error fetching cue cards:', error);
+    res.status(500).json({ error: 'Failed to fetch cue cards' });
+  }
+});
+
+app.put('/api/cue-cards/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { title, slides, cueRanges, cue_ranges, updatedBy, updated_by } = req.body || {};
+    if (!eventId) return res.status(400).json({ error: 'eventId required' });
+
+    const slidesJson = JSON.stringify(Array.isArray(slides) ? slides : []);
+    const rangesJson = JSON.stringify(
+      Array.isArray(cueRanges) ? cueRanges : Array.isArray(cue_ranges) ? cue_ranges : []
+    );
+    const who = updatedBy || updated_by || null;
+    const titleVal = typeof title === 'string' && title.trim() ? title.trim() : 'Cue Cards';
+
+    const result = await pool.query(
+      `INSERT INTO cue_card_decks (event_id, title, slides, cue_ranges, updated_at, updated_by)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, NOW(), $5)
+       ON CONFLICT (event_id) DO UPDATE SET
+         title = EXCLUDED.title,
+         slides = EXCLUDED.slides,
+         cue_ranges = EXCLUDED.cue_ranges,
+         updated_at = NOW(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING *`,
+      [eventId, titleVal, slidesJson, rangesJson, who]
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error saving cue cards:', error);
+    res.status(500).json({ error: 'Failed to save cue cards' });
+  }
+});
+
+app.post('/api/cue-cards/:eventId/comments', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { slideId, slide_id, text, comment_text, type, comment_type, author } = req.body || {};
+    const slide = slideId || slide_id;
+    const body = text ?? comment_text ?? '';
+    const commentType = type || comment_type || 'GENERAL';
+    if (!eventId || !slide) {
+      return res.status(400).json({ error: 'eventId and slideId required' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO cue_card_comments (event_id, slide_id, comment_text, comment_type, author)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [eventId, String(slide), String(body), String(commentType), String(author || 'Unknown')]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating cue card comment:', error);
+    res.status(500).json({ error: 'Failed to create comment' });
+  }
+});
+
+app.put('/api/cue-cards/:eventId/comments/:commentId', async (req, res) => {
+  try {
+    const { eventId, commentId } = req.params;
+    const { text, comment_text, type, comment_type } = req.body || {};
+    const body = text ?? comment_text;
+    const commentType = type || comment_type;
+
+    const result = await pool.query(
+      `UPDATE cue_card_comments
+       SET comment_text = COALESCE($1, comment_text),
+           comment_type = COALESCE($2, comment_type),
+           updated_at = NOW()
+       WHERE id = $3 AND event_id = $4
+       RETURNING *`,
+      [body != null ? String(body) : null, commentType != null ? String(commentType) : null, commentId, eventId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Comment not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating cue card comment:', error);
+    res.status(500).json({ error: 'Failed to update comment' });
+  }
+});
+
+app.delete('/api/cue-cards/:eventId/comments/:commentId', async (req, res) => {
+  try {
+    const { eventId, commentId } = req.params;
+    await pool.query('DELETE FROM cue_card_comments WHERE id = $1 AND event_id = $2', [
+      commentId,
+      eventId,
+    ]);
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting cue card comment:', error);
+    res.status(500).json({ error: 'Failed to delete comment' });
+  }
+});
+
 // Error handler for multer / parse-agenda and unhandled API errors
 app.get('/api/monitor/snapshot', async (req, res) => {
   try {
@@ -9416,6 +9617,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ complaint_line_notes table synced');
     } catch (err) {
       console.warn('⚠️ complaint_line_notes sync skipped:', err.message || err);
+    }
+    try {
+      await runCueCardsSyncTables(pool);
+      console.log('✅ cue_card_decks / cue_card_comments tables synced');
+    } catch (err) {
+      console.warn('⚠️ cue cards sync skipped:', err.message || err);
     }
     try {
       await runCateringNotesSyncTable(pool);

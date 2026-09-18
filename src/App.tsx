@@ -37,6 +37,7 @@ import MicManagerPage from './pages/MicManagerPage';
 import OperatorCueDisplayPage from './pages/OperatorCueDisplayPage';
 import ScriptsFollowPage from './pages/ScriptsFollowPage';
 import TeleprompterPage from './pages/TeleprompterPage';
+import CueCardsPage from './pages/CueCardsPage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import QuickModePage from './pages/QuickModePage';
@@ -73,6 +74,7 @@ function AppContent() {
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
   const isTeleprompter = location.pathname === '/teleprompter';
+  const isCueCards = location.pathname === '/cue-cards';
   const isGoogleSheets = location.pathname === '/google-sheets-vmix';
   const isLocalXML = location.pathname === '/lower-thirds-xml' || location.pathname === '/schedule-xml' || location.pathname === '/custom-columns-xml';
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
@@ -117,6 +119,7 @@ function AppContent() {
     isOperatorCueDisplay ||
     isScriptsFollow ||
     isTeleprompter ||
+    isCueCards ||
     isGoogleSheets ||
     isLocalXML ||
     isNetlifyXML ||
@@ -137,7 +140,7 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
       
       {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && (
         <AuthGuard>
@@ -170,6 +173,7 @@ function AppContent() {
             <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
+            <Route path="/cue-cards" element={<CueCardsPage />} />
           </Routes>
           </div>
         </AuthGuard>

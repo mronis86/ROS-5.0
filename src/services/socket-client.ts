@@ -465,6 +465,39 @@ class SocketClient {
     }
   }
 
+  /** Cue Cards: scroller advances slide for viewers */
+  emitCueCardsSlide(slideIndex: number, slideId?: string | null) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('cueCardsSlideUpdate', {
+        eventId: this.eventId,
+        slideIndex,
+        slideId: slideId || null,
+      });
+    }
+  }
+
+  /** Cue Cards: deck (slides / cue ranges) changed */
+  emitCueCardsDeck(deck: any) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('cueCardsDeckUpdate', {
+        eventId: this.eventId,
+        deck,
+      });
+    }
+  }
+
+  /** Cue Cards: comment add/edit/delete */
+  emitCueCardsComment(action: 'add' | 'edit' | 'delete', comment?: any, commentId?: string) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('cueCardsCommentUpdate', {
+        eventId: this.eventId,
+        action,
+        comment,
+        commentId,
+      });
+    }
+  }
+
   // Get the raw socket instance for custom event listeners
   getSocket() {
     return this.socket;
