@@ -20,7 +20,9 @@ import {
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { speakersForSlots } from '../lib/micManager';
-import { getCountdownPrimaryHex, useCountdownColorMode } from '../lib/countdownColor';
+import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
+import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { formatShowDelayBanner } from '../lib/showDelay';
 
 interface ScheduleItem {
   id: number;
@@ -356,6 +358,18 @@ const PhotoViewPage: React.FC = () => {
   // Hybrid timer data (same pattern as RunOfShowPage)
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null, secondaryTimer: null });
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
+  const photoActiveItemId =
+    hybridTimerData?.activeTimer?.item_id != null
+      ? Number(hybridTimerData.activeTimer.item_id)
+      : activeItemId;
+  const photoActiveProgramType =
+    photoActiveItemId != null
+      ? schedule.find((s) => Number(s.id) === Number(photoActiveItemId))?.programType
+      : null;
+  const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
+    timer: hybridTimerData?.activeTimer,
+    programType: photoActiveProgramType,
+  });
   
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
@@ -872,6 +886,7 @@ const PhotoViewPage: React.FC = () => {
 
   // Get progress bar color based on remaining time (matches FullScreenTimer)
   const getProgressBarColor = () => {
+    if (usePreshowRainbowColors) return RAINBOW_COUNTDOWN_GRADIENT;
     // Use hybrid timer first (same pattern as RunOfShowPage)
     if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
@@ -928,6 +943,7 @@ const PhotoViewPage: React.FC = () => {
 
   // Get countdown color based on remaining time (matches progress bar colors)
   const getCountdownColor = () => {
+    if (usePreshowRainbowColors) return 'transparent';
     // Use hybrid timer first (same pattern as RunOfShowPage)
     if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
@@ -2433,10 +2449,12 @@ const PhotoViewPage: React.FC = () => {
                     )}
                   </div>
                   <div
-                    className="font-mono font-bold tabular-nums leading-none tracking-tight bg-slate-800 px-[0.6em] py-[0.3em] rounded-lg border border-slate-600"
+                    className={`font-mono font-bold tabular-nums leading-none tracking-tight bg-slate-800 px-[0.6em] py-[0.3em] rounded-lg border border-slate-600 ${
+                      usePreshowRainbowColors ? 'ros-rainbow-text' : ''
+                    }`}
                     style={{
                       fontSize: 'clamp(1.2rem, 2.8vw, 2.2rem)',
-                      color: getCountdownColor(),
+                      ...(usePreshowRainbowColors ? {} : { color: getCountdownColor() }),
                     }}
                   >
                     {formatTime(getRemainingTime())}
@@ -2451,10 +2469,12 @@ const PhotoViewPage: React.FC = () => {
               {/* Progress — below header content so it never intersects labels */}
               <div className="relative mt-3 mb-2 h-2.5 w-full bg-slate-800/90 overflow-hidden rounded-full">
                 <div
-                  className="absolute top-0 right-0 h-full transition-all duration-1000 rounded-full"
+                  className={`absolute top-0 right-0 h-full transition-all duration-1000 rounded-full ${
+                    usePreshowRainbowColors ? 'ros-rainbow-fill' : ''
+                  }`}
                   style={{
                     width: `${getRemainingPercentage()}%`,
-                    background: getProgressBarColor(),
+                    ...(usePreshowRainbowColors ? {} : { background: getProgressBarColor() }),
                   }}
                 />
               </div>
@@ -2735,6 +2755,17 @@ const PhotoViewPage: React.FC = () => {
       <div className="flex justify-between items-start mb-6">
         <div>
           <h1 className="text-2xl font-bold">{event?.name || 'Current Event'}</h1>
+          {showMode === 'in-show' && formatShowDelayBanner(showStartOvertime) ? (
+            <div
+              className={`mt-2 inline-flex rounded-md px-3 py-1 text-sm font-bold ${
+                showStartOvertime > 0
+                  ? 'bg-red-900/50 border border-red-500 text-red-200'
+                  : 'bg-emerald-900/50 border border-emerald-500 text-emerald-200'
+              }`}
+            >
+              {formatShowDelayBanner(showStartOvertime)}
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-3 mt-2">
             <span className="text-sm text-gray-300">{currentTime.toLocaleTimeString()}</span>
             <span className="text-xs text-slate-400" title="Overtime, start time, and duration update every 20 seconds">Sync in: {syncCountdown}s</span>
@@ -2936,7 +2967,12 @@ const PhotoViewPage: React.FC = () => {
           
           {/* Timer Display with Color - stays on right */}
           <div className="relative">
-            <div className="text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600" style={{ color: getCountdownColor() }}>
+            <div
+              className={`text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600 ${
+                usePreshowRainbowColors ? 'ros-rainbow-text' : ''
+              }`}
+              style={usePreshowRainbowColors ? undefined : { color: getCountdownColor() }}
+            >
               {formatTime(getRemainingTime())}
             </div>
           </div>
@@ -2947,10 +2983,12 @@ const PhotoViewPage: React.FC = () => {
         {activeItemId && timerProgress[activeItemId] && (
           <div className="w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
             <div 
-              className="h-full transition-all duration-1000 absolute top-0 right-0"
+              className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                usePreshowRainbowColors ? 'ros-rainbow-fill' : ''
+              }`}
               style={{ 
                 width: `${getRemainingPercentage()}%`,
-                background: getProgressBarColor()
+                ...(usePreshowRainbowColors ? {} : { background: getProgressBarColor() }),
               }}
             />
           </div>

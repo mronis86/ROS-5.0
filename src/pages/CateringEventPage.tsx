@@ -18,6 +18,7 @@ import {
   type CateringNoteCategory,
 } from '../lib/cateringNotes';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 
 type ScheduleItem = {
   id: number;
@@ -537,6 +538,11 @@ const CateringEventPage: React.FC = () => {
   );
   const timerLoaded = Boolean(timer && timer.is_active !== false && !timerRunning);
   const hasTimer = Boolean(activeId != null && (timerRunning || timerLoaded) && progress.total > 0);
+  const usePreshowRainbowColors = usePreshowRainbow(eventId, {
+    timer,
+    isRunning: timerRunning,
+    programType: current?.programType,
+  });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && progress.total > 0
       ? (remainingSeconds / progress.total) * 100
@@ -797,8 +803,14 @@ const CateringEventPage: React.FC = () => {
               ) : null}
             </div>
             <div
-              className="text-3xl sm:text-4xl font-mono bg-slate-900 px-5 py-2.5 rounded-lg border border-slate-600 tabular-nums shrink-0"
-              style={{ color: countdownColor(remainingSeconds, hasTimer) }}
+              className={`text-3xl sm:text-4xl font-mono bg-slate-900 px-5 py-2.5 rounded-lg border border-slate-600 tabular-nums shrink-0 ${
+                usePreshowRainbowColors ? 'ros-rainbow-text' : ''
+              }`}
+              style={
+                usePreshowRainbowColors
+                  ? undefined
+                  : { color: countdownColor(remainingSeconds, hasTimer) }
+              }
             >
               {formatTime(hasTimer ? remainingSeconds : 0)}
             </div>
@@ -807,10 +819,14 @@ const CateringEventPage: React.FC = () => {
           {hasTimer ? (
             <div className="mx-3 sm:mx-4 mb-3 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-1.5">
               <div
-                className="h-full transition-all duration-300 absolute top-0 right-0"
+                className={`h-full transition-all duration-300 absolute top-0 right-0 ${
+                  usePreshowRainbowColors ? 'ros-rainbow-fill' : ''
+                }`}
                 style={{
                   width: `${remainingPct}%`,
-                  background: progressBarColor(remainingSeconds),
+                  ...(usePreshowRainbowColors
+                    ? {}
+                    : { background: progressBarColor(remainingSeconds) }),
                 }}
               />
             </div>

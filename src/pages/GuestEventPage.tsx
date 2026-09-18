@@ -14,6 +14,7 @@ import GuestRunOfShowGrid from '../components/guest/GuestRunOfShowGrid';
 import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
+import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 
 const REST_FALLBACK_MS = 12000;
 const ZOOM_STORAGE_KEY = 'guest-event-zoom';
@@ -253,6 +254,10 @@ const GuestEventPage: React.FC = () => {
       ? 'text-yellow-400'
       : 'text-slate-400';
   const isLive = liveSynced && socketConnected;
+  const usePreshowRainbowColors = shouldUsePreshowRainbow(null, {
+    isRunning: timerRunning,
+    programType: activeItem?.programType,
+  });
 
   useEffect(() => {
     if (activeItemId == null || activeItemId === lastActiveItemIdRef.current) return;
@@ -305,7 +310,11 @@ const GuestEventPage: React.FC = () => {
                   {activeTimer ? (
                     <p
                       className={`text-2xl sm:text-3xl font-mono font-bold tabular-nums leading-none mt-0.5 ${
-                        remaining != null && remaining < 0 ? 'text-red-300' : 'text-white'
+                        usePreshowRainbowColors
+                          ? 'ros-rainbow-text'
+                          : remaining != null && remaining < 0
+                            ? 'text-red-300'
+                            : 'text-white'
                       }`}
                     >
                       {remaining != null

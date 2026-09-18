@@ -3,7 +3,11 @@ import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { startSecondTicker } from '../utils/secondTicker';
-import { countdownColorForRemaining, useCountdownColorMode } from '../lib/countdownColor';
+import {
+  countdownColorForRemaining,
+  useCountdownColorMode,
+} from '../lib/countdownColor';
+import { isPreshowTimerMessage } from '../lib/preshowCountdown';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -59,6 +63,13 @@ const Clock: React.FC<ClockProps> = ({
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   const countdownColorMode = useCountdownColorMode();
+  const stageMessageForColor =
+    [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) ?? null;
+  const timerRunningForRainbow = !!(
+    hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active
+  );
+  const usePreshowRainbow =
+    isPreshowTimerMessage(stageMessageForColor) && timerRunningForRainbow;
 
   // Clock component always runs in WebSocket-only mode
 
@@ -681,6 +692,12 @@ const Clock: React.FC<ClockProps> = ({
         return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
     }
+    if (usePreshowRainbow) {
+      return countdownColorForRemaining(remaining, {
+        mode: countdownColorMode,
+        rainbow: true,
+      });
+    }
     if (elapsed > progress.total) return countdownColorForRemaining(0, { mode: countdownColorMode });
     return countdownColorForRemaining(remaining, { mode: countdownColorMode });
   };
@@ -713,6 +730,13 @@ const Clock: React.FC<ClockProps> = ({
       if (!activeTimer.is_running || !activeTimer.is_active) {
         return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
+    }
+
+    if (usePreshowRainbow) {
+      return countdownColorForRemaining(remainingSeconds, {
+        mode: countdownColorMode,
+        rainbow: true,
+      });
     }
     
     return countdownColorForRemaining(remainingSeconds, { mode: countdownColorMode });
@@ -754,9 +778,11 @@ const Clock: React.FC<ClockProps> = ({
         ? 'LOADED · RESOLUME (armed) - '
         : '';
 
-  // Prefer any currently enabled message; ignore stale disabled hybrid/prop copies
+  // Prefer any currently enabled message; Pre Show uses OVER TIME-style label instead of overlay
   const activeStageMessage =
-    [hybridTimerData?.timerMessage, supabaseMessage].find((m) => m?.enabled) ?? null;
+    [hybridTimerData?.timerMessage, supabaseMessage].find(
+      (m) => m?.enabled && !isPreshowTimerMessage(m)
+    ) ?? null;
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
@@ -767,7 +793,10 @@ const Clock: React.FC<ClockProps> = ({
           {showTimeRemainingAndBar ? (
             <>
               <div className="text-slate-400 text-lg mb-1">TIME REMAINING</div>
-              <div className="text-white" style={{ color: getProgressBarColor() }}>
+              <div
+                className={`text-white ${usePreshowRainbow ? 'ros-rainbow-text' : ''}`}
+                style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
+              >
                 {formatTime(getRemainingTime())}
               </div>
             </>
@@ -1207,8 +1236,10 @@ const Clock: React.FC<ClockProps> = ({
           )}
           
           <div 
-            className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-            style={{ color: getProgressBarColor() }}
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+              usePreshowRainbow ? 'ros-rainbow-text' : ''
+            }`}
+            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
           >
             {formatTime(getRemainingTime())}
           </div>
@@ -1371,10 +1402,12 @@ const Clock: React.FC<ClockProps> = ({
                 <div className="w-full max-w-5xl mt-0">
                   <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
                     <div 
-                      className="h-full transition-all duration-1000 absolute top-0 right-0"
+                      className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                        usePreshowRainbow ? 'ros-rainbow-fill' : ''
+                      }`}
                       style={{ 
                         width: `${getRemainingPercentage()}%`,
-                        background: getProgressBarColor()
+                        ...(usePreshowRainbow ? {} : { background: getProgressBarColor() }),
                       }}
                     />
                   </div>
@@ -1384,7 +1417,7 @@ const Clock: React.FC<ClockProps> = ({
           ) : useCountUp ? (
             /* Count Up: elapsed time; OVER TIME + red when overtime; bar fills up */
             <>
-              {isOvertimeCountUp && (
+              {isOvertimeCountUp ? (
                 <div className="mb-[-50px] text-center">
                   <div className="font-bold text-red-500 text-5xl">
                     OVER TIME
@@ -1393,16 +1426,21 @@ const Clock: React.FC<ClockProps> = ({
                     +{formatTime(overtimeAmount)}
                   </div>
                 </div>
-              )}
+              ) : usePreshowRainbow ? (
+                <div className="mb-[-50px] text-center">
+                  <div className="ros-preshow-super text-5xl">PRE SHOW COUNTDOWN</div>
+                  <span className="ros-preshow-super-rule" aria-hidden />
+                </div>
+              ) : null}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${(() => {
+                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
                     const hours = Math.floor(Math.abs(elapsedForDisplay) / 3600);
                     return hours === 0 
                       ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
                       : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
                   })()}`}
-                  style={{ color: getCountUpProgressBarColor() }}
+                  style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
                 >
                   {formatTime(elapsedForDisplay)}
                 </div>
@@ -1410,10 +1448,12 @@ const Clock: React.FC<ClockProps> = ({
               <div className="w-full max-w-5xl mt-0">
                 <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
                   <div 
-                    className="h-full transition-all duration-1000 absolute top-0 left-0"
+                    className={`h-full transition-all duration-1000 absolute top-0 left-0 ${
+                      usePreshowRainbow ? 'ros-rainbow-fill' : ''
+                    }`}
                     style={{ 
                       width: `${getCountUpBarPercentage()}%`,
-                      background: getCountUpProgressBarColor()
+                      ...(usePreshowRainbow ? {} : { background: getCountUpProgressBarColor() }),
                     }}
                   />
                 </div>
@@ -1421,25 +1461,29 @@ const Clock: React.FC<ClockProps> = ({
             </>
           ) : (
             <>
-              {/* Overtime Indicator - -50px above timer */}
-              {getRemainingTime() < 0 && (
-                <div className="mb-[-50px]">
+              {getRemainingTime() < 0 ? (
+                <div className="mb-[-50px] text-center">
                   <div className="font-bold text-red-500 text-5xl">
                     OVER TIME
                   </div>
                 </div>
-              )}
+              ) : usePreshowRainbow ? (
+                <div className="mb-[-50px] text-center">
+                  <div className="ros-preshow-super text-5xl">PRE SHOW COUNTDOWN</div>
+                  <span className="ros-preshow-super-rule" aria-hidden />
+                </div>
+              ) : null}
               {/* Countdown Timer - Centered */}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${(() => {
+                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
                     const remaining = getRemainingTime();
                     const hours = Math.floor(Math.abs(remaining) / 3600);
                     return hours === 0 
                       ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
                       : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
                   })()}`}
-                  style={{ color: getProgressBarColor() }}
+                  style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
                 >
                   {formatTime(getRemainingTime())}
                 </div>
@@ -1448,10 +1492,12 @@ const Clock: React.FC<ClockProps> = ({
               <div className="w-full max-w-5xl mt-0">
                 <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
                   <div 
-                    className="h-full transition-all duration-1000 absolute top-0 right-0"
+                    className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                      usePreshowRainbow ? 'ros-rainbow-fill' : ''
+                    }`}
                     style={{ 
                       width: `${getRemainingPercentage()}%`,
-                      background: getProgressBarColor()
+                      ...(usePreshowRainbow ? {} : { background: getProgressBarColor() }),
                     }}
                   />
                 </div>
@@ -1502,28 +1548,42 @@ const Clock: React.FC<ClockProps> = ({
             </div>
           ) : useCountUp ? (
             <>
-              {isOvertimeCountUp && (
+              {isOvertimeCountUp ? (
                 <div className="mb-2">
                   <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
                 </div>
-              )}
+              ) : usePreshowRainbow ? (
+                <div className="mb-2 text-center">
+                  <div className="ros-preshow-super text-lg md:text-xl lg:text-2xl">PRE SHOW COUNTDOWN</div>
+                  <span className="ros-preshow-super-rule" aria-hidden />
+                </div>
+              ) : null}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getCountUpProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                  usePreshowRainbow ? 'ros-rainbow-text' : ''
+                }`}
+                style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
               >
                 {formatTime(elapsedForDisplay)}
               </div>
             </>
           ) : (
             <>
-              {getRemainingTime() < 0 && (
+              {getRemainingTime() < 0 ? (
                 <div className="mb-2">
                   <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
                 </div>
-              )}
+              ) : usePreshowRainbow ? (
+                <div className="mb-2 text-center">
+                  <div className="ros-preshow-super text-lg md:text-xl lg:text-2xl">PRE SHOW COUNTDOWN</div>
+                  <span className="ros-preshow-super-rule" aria-hidden />
+                </div>
+              ) : null}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                  usePreshowRainbow ? 'ros-rainbow-text' : ''
+                }`}
+                style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
               >
                 {formatTime(getRemainingTime())}
               </div>
@@ -1573,28 +1633,42 @@ const Clock: React.FC<ClockProps> = ({
             </div>
           ) : useCountUp ? (
             <>
-              {isOvertimeCountUp && (
+              {isOvertimeCountUp ? (
                 <div className="mb-2">
                   <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
                 </div>
-              )}
+              ) : usePreshowRainbow ? (
+                <div className="mb-2 text-center">
+                  <div className="ros-preshow-super text-lg md:text-xl lg:text-2xl">PRE SHOW COUNTDOWN</div>
+                  <span className="ros-preshow-super-rule" aria-hidden />
+                </div>
+              ) : null}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getCountUpProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                  usePreshowRainbow ? 'ros-rainbow-text' : ''
+                }`}
+                style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
               >
                 {formatTime(elapsedForDisplay)}
               </div>
             </>
           ) : (
             <>
-              {getRemainingTime() < 0 && (
+              {getRemainingTime() < 0 ? (
                 <div className="mb-2">
                   <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">OVER TIME</div>
                 </div>
-              )}
+              ) : usePreshowRainbow ? (
+                <div className="mb-2 text-center">
+                  <div className="ros-preshow-super text-lg md:text-xl lg:text-2xl">PRE SHOW COUNTDOWN</div>
+                  <span className="ros-preshow-super-rule" aria-hidden />
+                </div>
+              ) : null}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                  usePreshowRainbow ? 'ros-rainbow-text' : ''
+                }`}
+                style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
               >
                 {formatTime(getRemainingTime())}
               </div>

@@ -15,6 +15,7 @@ import {
   formatSpeakerLocation,
 } from '../showcase/photoShowcaseHelpers';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import {
   getMicAssignment,
   MIC_TYPE_OPTIONS,
@@ -464,6 +465,14 @@ const MicManagerPage: React.FC = () => {
 
   const remainingSeconds = timerProgress.total - timerProgress.elapsed;
   const hasTimer = Boolean(activeItemId && (timerRunning || timerLoaded) && timerProgress.total > 0);
+  const micActiveProgramType =
+    activeItemId != null
+      ? schedule.find((s) => Number(s.id) === Number(activeItemId))?.programType
+      : null;
+  const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
+    isRunning: timerRunning,
+    programType: micActiveProgramType,
+  });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && timerProgress.total > 0
       ? (remainingSeconds / timerProgress.total) * 100
@@ -690,8 +699,14 @@ const MicManagerPage: React.FC = () => {
                 <div className={`text-lg font-bold ${statusClass}`}>{statusLine}</div>
               </div>
               <div
-                className="text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600"
-                style={{ color: countdownColor(remainingSeconds, hasTimer) }}
+                className={`text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600 ${
+                  usePreshowRainbowColors ? 'ros-rainbow-text' : ''
+                }`}
+                style={
+                  usePreshowRainbowColors
+                    ? undefined
+                    : { color: countdownColor(remainingSeconds, hasTimer) }
+                }
               >
                 {formatTime(hasTimer ? remainingSeconds : 0)}
               </div>
@@ -701,10 +716,14 @@ const MicManagerPage: React.FC = () => {
           {hasTimer && (
             <div className="mt-3 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
               <div
-                className="h-full transition-all duration-300 absolute top-0 right-0"
+                className={`h-full transition-all duration-300 absolute top-0 right-0 ${
+                  usePreshowRainbowColors ? 'ros-rainbow-fill' : ''
+                }`}
                 style={{
                   width: `${remainingPct}%`,
-                  background: progressColor(remainingSeconds),
+                  ...(usePreshowRainbowColors
+                    ? {}
+                    : { background: progressColor(remainingSeconds) }),
                 }}
               />
             </div>

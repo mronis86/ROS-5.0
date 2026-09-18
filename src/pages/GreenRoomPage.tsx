@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
@@ -19,6 +19,8 @@ import {
 } from '../lib/scheduleStartTime';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { formatShowDelayBanner } from '../lib/showDelay';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -92,9 +94,23 @@ const GreenRoomPage: React.FC = () => {
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
+  const greenActiveProgramType =
+    activeItemId != null
+      ? schedule.find((s) => Number(s.id) === Number(activeItemId))?.programType
+      : null;
+  const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
+    isRunning: timerState === 'running',
+    programType: greenActiveProgramType,
+  });
+  const showPreshowCountdownLabel =
+    usePreshowRainbowColors ||
+    (greenActiveProgramType === 'PreShow/End' &&
+      (timerState === 'running' || timerState === 'loaded'));
   
   // Track initial load to prevent flashing during page refresh
   const isInitialLoadRef = useRef(true);
+  const eventTitleWrapRef = useRef<HTMLDivElement>(null);
+  const eventTitleRef = useRef<HTMLDivElement>(null);
   
   // Overtime data (same as RunOfShowPage)
   const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
@@ -108,6 +124,88 @@ const GreenRoomPage: React.FC = () => {
     if (!event?.id) return;
     DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
   }, [event?.id]);
+
+  // Fit event title: large by default; wrap to 2 lines before shrinking small
+  useLayoutEffect(() => {
+    const wrap = eventTitleWrapRef.current;
+    const el = eventTitleRef.current;
+    if (!wrap || !el) return;
+
+    const fit = () => {
+      const available = wrap.clientWidth;
+      if (available <= 0) return;
+
+      const maxPx = 80;
+      const minPx = 40;
+      const lineHeight = 1.15;
+      const twoLineMaxH = (size: number) => size * lineHeight * 2 + 4;
+
+      el.style.lineHeight = String(lineHeight);
+      el.style.width = '100%';
+      el.style.maxWidth = '100%';
+      el.style.overflow = 'visible';
+      el.style.textOverflow = 'clip';
+
+      // 1) Prefer a single large line when it fits
+      el.style.whiteSpace = 'nowrap';
+      el.style.overflowWrap = 'normal';
+      el.style.wordBreak = 'normal';
+      el.style.fontSize = `${maxPx}px`;
+      if (el.scrollWidth <= available) return;
+
+      // 2) Otherwise use up to 2 lines and take the largest size that fits
+      el.style.whiteSpace = 'normal';
+      el.style.overflowWrap = 'break-word';
+      el.style.wordBreak = 'normal';
+
+      let lo = minPx;
+      let hi = maxPx;
+      let best = minPx;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        el.style.fontSize = `${mid}px`;
+        if (el.scrollHeight <= twoLineMaxH(mid)) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+
+      // 3) Still overflowing at min: allow mid-word breaks, keep size as large as possible
+      el.style.fontSize = `${best}px`;
+      if (el.scrollHeight > twoLineMaxH(best)) {
+        el.style.overflowWrap = 'anywhere';
+        el.style.wordBreak = 'break-word';
+        lo = minPx;
+        hi = maxPx;
+        best = minPx;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          el.style.fontSize = `${mid}px`;
+          if (el.scrollHeight <= twoLineMaxH(mid)) {
+            best = mid;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        el.style.fontSize = `${best}px`;
+      }
+    };
+
+    fit();
+    // Timer box width changes (e.g. PRE SHOW COUNTDOWN) shrink the title slot — re-fit
+    const parent = wrap.parentElement;
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    ro?.observe(wrap);
+    if (parent) ro?.observe(parent);
+    window.addEventListener('resize', fit);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', fit);
+    };
+  }, [event?.name, showPreshowCountdownLabel, timerState]);
 
   // Event list for selector (like PhotoViewPage)
   const [events, setEvents] = useState<Event[]>([]);
@@ -1753,19 +1851,14 @@ const GreenRoomPage: React.FC = () => {
           </div>
         )}
 
-        <div className="p-6 flex items-center">
-          <div 
-            className="text-white font-bold flex-1 text-center"
-            style={{
-              fontSize: 'clamp(2rem, 6vw, 4rem)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              lineHeight: '1.1',
-              marginRight: '20px'
-            }}
-          >
-            {event?.name || 'Current Event'}
+        <div className="p-6 flex items-center gap-10 min-w-0">
+          <div ref={eventTitleWrapRef} className="flex-1 min-w-0 self-center text-center pr-4">
+            <div
+              ref={eventTitleRef}
+              className="text-white font-bold text-center mx-auto"
+            >
+              {event?.name || 'Current Event'}
+            </div>
           </div>
           
           <div className={`rounded-lg p-4 text-center flex-shrink-0 ${
@@ -1782,9 +1875,27 @@ const GreenRoomPage: React.FC = () => {
               : 'bg-red-600'
           }`}>
           <div className={`font-semibold mb-2 ${isRos ? 'text-slate-300 text-xl' : 'text-white text-xl'}`}>
-            {isOvertime() ? 'OVER TIME' : timerState === 'loaded' ? 'LOADED' : timerState === 'running' ? 'RUNNING' : 'Stage Timer'}
+            {isOvertime()
+              ? 'OVER TIME'
+              : showPreshowCountdownLabel
+                ? 'PRE SHOW COUNTDOWN'
+                : timerState === 'loaded'
+                  ? 'LOADED'
+                  : timerState === 'running'
+                    ? 'RUNNING'
+                    : 'Stage Timer'}
           </div>
-          <div className={`font-bold mb-2 tabular-nums text-5xl ${isOvertime() ? (isRos ? 'text-red-300' : 'text-red-200') : 'text-white'}`}>
+          <div
+            className={`font-bold mb-2 tabular-nums text-5xl ${
+              usePreshowRainbowColors
+                ? 'ros-rainbow-text'
+                : isOvertime()
+                  ? isRos
+                    ? 'text-red-300'
+                    : 'text-red-200'
+                  : 'text-white'
+            }`}
+          >
             {getRemainingTime()}
           </div>
           <div className={`${isRos ? 'text-slate-300 text-base' : 'text-white text-base'}`}>
@@ -1795,6 +1906,22 @@ const GreenRoomPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+        {showMode === 'in-show' && formatShowDelayBanner(showStartOvertime) ? (
+          <div
+            className={`mx-6 mb-2 rounded-lg px-4 py-2 text-center text-lg font-bold ${
+              showStartOvertime > 0
+                ? isRos
+                  ? 'bg-red-950 border border-red-500 text-red-200'
+                  : 'bg-red-700 text-white'
+                : isRos
+                  ? 'bg-emerald-950 border border-emerald-500 text-emerald-200'
+                  : 'bg-green-700 text-white'
+            }`}
+          >
+            {formatShowDelayBanner(showStartOvertime)}
+          </div>
+        ) : null}
 
         <div className="flex-1 overflow-y-auto p-6 min-h-0 [&::-webkit-scrollbar]:hidden"
           style={{

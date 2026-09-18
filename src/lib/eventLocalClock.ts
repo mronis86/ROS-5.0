@@ -92,7 +92,12 @@ export function hhmmToMinutes(hhmm: string): number | null {
 
 /** Minutes since midnight from schedule labels like "1:30 PM" or "13:30". */
 export function wallClockLabelToMinutes(label: string): number | null {
-  const raw = String(label || '').trim();
+  const raw = String(label || '')
+    .trim()
+    // Browsers often insert narrow no-break spaces before AM/PM
+    .replace(/[\u00a0\u202f\u2007\u2009]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!raw) return null;
   const ampm = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
   if (ampm) {
@@ -161,4 +166,31 @@ export function isCalloutDue(
   if (dueMs == null) return false;
   const delta = syncedNow.getTime() - dueMs;
   return delta >= 0 && delta <= Math.max(0, graceMinutes) * 60_000;
+}
+
+/**
+ * True when synced now is inside a short window starting at
+ * (wall-clock time − minutesBefore). Used for “5 minutes before start” prompts.
+ */
+export function isMinutesBeforeWallClock(
+  wallClockLabel: string,
+  syncedNow: Date,
+  timeZone: string | null | undefined,
+  minutesBefore: number,
+  windowSeconds = 90
+): boolean {
+  const dueMs = eventWallClockToUtcMs(wallClockLabel, timeZone, syncedNow);
+  if (dueMs == null) return false;
+  const targetMs = dueMs - Math.max(0, minutesBefore) * 60_000;
+  const delta = syncedNow.getTime() - targetMs;
+  return delta >= 0 && delta <= Math.max(0, windowSeconds) * 1000;
+}
+
+/** Absolute UTC ms for a venue wall-clock label, or null if unparseable. */
+export function wallClockStartUtcMs(
+  wallClockLabel: string,
+  syncedNow: Date,
+  timeZone?: string | null
+): number | null {
+  return eventWallClockToUtcMs(wallClockLabel, timeZone, syncedNow);
 }

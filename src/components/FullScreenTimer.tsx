@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { driftDetector } from '../services/driftDetector';
-import { countdownColorForRemaining, useCountdownColorMode } from '../lib/countdownColor';
+import {
+  countdownColorForRemaining,
+  useCountdownColorMode,
+} from '../lib/countdownColor';
+import { isPreshowTimerMessage } from '../lib/preshowCountdown';
 
 interface FullScreenTimerProps {
   isRunning?: boolean;
@@ -61,6 +65,23 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   const countdownColorMode = useCountdownColorMode();
+  const stageMessageForColor =
+    [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) ?? null;
+  const timerRunningForRainbow = !!(
+    hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active
+  );
+  const usePreshowRainbow =
+    isPreshowTimerMessage(stageMessageForColor) && timerRunningForRainbow;
+
+  const hasBlockingStageMessage = () => {
+    if (supabaseOnly) {
+      return [hybridTimerData?.timerMessage, supabaseMessage].some(
+        (m) => !!m?.enabled && !isPreshowTimerMessage(m)
+      );
+    }
+    if (messageEnabled && message) return true;
+    return !!(supabaseMessage?.enabled && !isPreshowTimerMessage(supabaseMessage));
+  };
 
   // Debug secondary timer prop (only when it changes)
   useEffect(() => {
@@ -514,6 +535,13 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
     }
+
+    if (usePreshowRainbow) {
+      return countdownColorForRemaining(remainingSeconds, {
+        mode: countdownColorMode,
+        rainbow: true,
+      });
+    }
     
     return countdownColorForRemaining(remainingSeconds, { mode: countdownColorMode });
   };
@@ -644,9 +672,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         </div>
       )}
 
-      {/* Message Display */}
+      {/* Message Display — skip Pre Show (uses OVER TIME-style label instead) */}
       {(() => {
-        const activeMsg = [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) || null;
+        const activeMsg = [hybridTimerData?.timerMessage, supabaseMessage].find(
+          (m: any) => m?.enabled && !isPreshowTimerMessage(m)
+        ) || null;
         return !!activeMsg;
       })() && (
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: 'translateY(-40px)' }}>
@@ -916,9 +946,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
-          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const hasMessage = hasBlockingStageMessage();
         
         return hasSecondaryTimer && hasMessage;
       })() && (
@@ -933,8 +961,10 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           )}
           
           <div 
-            className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-            style={{ color: getProgressBarColor() }}
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+              usePreshowRainbow ? 'ros-rainbow-text' : ''
+            }`}
+            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
           >
             {formatTime(getRemainingTime())}
           </div>
@@ -971,9 +1001,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
-          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const hasMessage = hasBlockingStageMessage();
         
         return hasSecondaryTimer && hasMessage;
       })() && (
@@ -1020,34 +1048,35 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
-          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const hasMessage = hasBlockingStageMessage();
         
         return !hasSecondaryTimer && !hasMessage;
       })() && (
         <div className="flex-1 flex flex-col items-center justify-center">
-          {/* Overtime Indicator - -50px above timer */}
-          {getRemainingTime() < 0 && (
-            <div className="mb-[-50px]">
+          {getRemainingTime() < 0 ? (
+            <div className="mb-[-50px] text-center">
               <div className="font-bold text-red-500 text-5xl">
                 OVER TIME
               </div>
             </div>
-          )}
+          ) : usePreshowRainbow ? (
+            <div className="mb-[-50px] text-center">
+              <div className="ros-preshow-super text-5xl">PRE SHOW COUNTDOWN</div>
+              <span className="ros-preshow-super-rule" aria-hidden />
+            </div>
+          ) : null}
           
           {/* Countdown Timer - Centered */}
           <div className="text-center">
             <div 
-              className={`font-mono font-bold ${(() => {
+              className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
                 const remaining = getRemainingTime();
                 const hours = Math.floor(Math.abs(remaining) / 3600);
-                // Increase size by 25% when no hours (MM:SS format)
                 return hours === 0 
-                  ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]' // 25% larger
-                  : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]'; // Original size
+                  ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                  : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
               })()}`}
-              style={{ color: getProgressBarColor() }}
+              style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
             >
               {formatTime(getRemainingTime())}
             </div>
@@ -1057,10 +1086,12 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           <div className="w-full max-w-5xl mt-0">
             <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-8">
               <div 
-                className="h-full transition-all duration-1000 absolute top-0 right-0"
+                className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                  usePreshowRainbow ? 'ros-rainbow-fill' : ''
+                }`}
                 style={{ 
                   width: `${getRemainingPercentage()}%`,
-                  background: getProgressBarColor()
+                  ...(usePreshowRainbow ? {} : { background: getProgressBarColor() }),
                 }}
               />
             </div>
@@ -1098,9 +1129,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
-          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const hasMessage = hasBlockingStageMessage();
         
         return hasMessage && !hasSecondaryTimer;
       })() && (
@@ -1153,9 +1182,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
-          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const hasMessage = hasBlockingStageMessage();
         
         return hasSecondaryTimer && !hasMessage;
       })() && (
@@ -1208,9 +1235,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
-          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const hasMessage = hasBlockingStageMessage();
         
         return hasMessage && !hasSecondaryTimer;
       })() && (
@@ -1257,9 +1282,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = supabaseOnly ? 
-          (hybridTimerData?.timerMessage && hybridTimerData.timerMessage.enabled) || (supabaseMessage && supabaseMessage.enabled) :
-          (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
+        const hasMessage = hasBlockingStageMessage();
         
         return hasSecondaryTimer && !hasMessage;
       })() && (

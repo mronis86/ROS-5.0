@@ -72,6 +72,22 @@ export function isEdgeBrowser(): boolean {
   return /\bEdg\//.test(ua) || /\bEdge\//.test(ua);
 }
 
+/**
+ * Chrome/Edge Web Speech API sends audio to Google’s cloud STT.
+ * `error: "network"` usually means that cloud path failed — not the local mic.
+ */
+export function speechRecognitionNetworkHelpMessage(): string {
+  const edge = isEdgeBrowser();
+  return (
+    'Voice speech-to-text needs internet to Google’s speech servers ' +
+    `(browser error: network). Mic meter can still work while this fails. ` +
+    `Check Wi‑Fi/VPN, corporate filter (e.g. Umbrella), or firewall blocking Google. ` +
+    (edge
+      ? 'If mic meter works but this keeps failing, try Chrome on the same PC.'
+      : 'If this keeps failing on a filtered network, voice follow may not be available there.')
+  );
+}
+
 export function computeMicLevelFromTimeDomain(data: Uint8Array): number {
   let sum = 0;
   let peak = 0;

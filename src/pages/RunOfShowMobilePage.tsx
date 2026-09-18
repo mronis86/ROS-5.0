@@ -11,6 +11,7 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 
 /** Mirrored from desktop ROS via guestRosHelpers — keep visuals consistent. */
 
@@ -853,6 +854,15 @@ const RunOfShowMobilePage: React.FC = () => {
   }, [hybridTimerData.activeTimer, items.length]);
 
   const effectivePrimaryLive = desktopPrimaryLive ?? primaryLive;
+  const mobileActiveProgramType =
+    effectivePrimaryLive?.itemId != null
+      ? items.find((i) => Number(i.id) === Number(effectivePrimaryLive.itemId))?.programType
+      : null;
+  const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
+    timer: hybridTimerData.activeTimer,
+    isRunning: effectivePrimaryLive?.kind === 'running',
+    programType: mobileActiveProgramType,
+  });
   const effectivePrimaryRemainingSec = useMemo(() => {
     const p = effectivePrimaryLive;
     if (!p) return null;
@@ -1537,9 +1547,11 @@ const RunOfShowMobilePage: React.FC = () => {
                   <div className="truncate text-sm font-semibold text-white">{effectivePrimaryLive.cueText}</div>
                   <div
                     className={`mt-1 font-mono text-3xl font-bold tabular-nums ${
-                      effectivePrimaryLive.kind === 'running' && effectivePrimaryRemainingSec != null
-                        ? timerColorClass(effectivePrimaryRemainingSec)
-                        : 'text-amber-300'
+                      usePreshowRainbowColors
+                        ? 'ros-rainbow-text'
+                        : effectivePrimaryLive.kind === 'running' && effectivePrimaryRemainingSec != null
+                          ? timerColorClass(effectivePrimaryRemainingSec)
+                          : 'text-amber-300'
                     }`}
                   >
                     {effectivePrimaryLive.kind === 'running' && effectivePrimaryRemainingSec != null

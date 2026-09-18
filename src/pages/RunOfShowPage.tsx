@@ -6,7 +6,18 @@ import { apiClient, getApiBaseUrl, EventCueFile, type SpeakerDirectoryRow } from
 import { changeLogService, LocalChange } from '../services/changeLogService';
 import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon-backup-service';
 import { apiJsonHeaders } from '../lib/sessionAuth';
-import { getCountdownPrimaryHex, useCountdownColorMode } from '../lib/countdownColor';
+import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
+import {
+  findTopPreshowCue,
+  isPreshowTimerMessage,
+  resolvePreshowStartHHMM,
+  PRESHOW_COUNTDOWN_MESSAGE,
+  PRESHOW_MESSAGE_TYPE,
+  PRESHOW_WARN_MINUTES_BEFORE,
+} from '../lib/preshowCountdown';
+import {
+  shouldFoldPreshowOvertimeIntoShowStart,
+} from '../lib/showDelay';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
@@ -30,6 +41,7 @@ import {
   isCalloutDue,
   normalizeCalloutTimeToHHMM,
   resolveShowTimezone,
+  wallClockStartUtcMs,
 } from '../lib/eventLocalClock';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
@@ -895,6 +907,21 @@ const RunOfShowPage: React.FC = () => {
     segmentName: string;
     vo: VoCue;
   } | null>(null);
+  /** Pre-show 5-minute warning (top PreShow/End cue only) */
+  const [dismissedPreshowWarnKeys, setDismissedPreshowWarnKeys] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [activePreshowWarn, setActivePreshowWarn] = useState<{
+    itemId: number;
+    segmentName: string;
+    startLabel: string;
+    startHHMM: string;
+  } | null>(null);
+  const [preshowWarnTick, setPreshowWarnTick] = useState(0);
+  const preshowAutoStartedKeyRef = useRef<string | null>(null);
+  const preshowAutoStartInFlightRef = useRef(false);
+  const loadCueRef = useRef<(itemId: number) => Promise<void>>(async () => {});
+  const toggleTimerRef = useRef<(itemId: number) => Promise<void>>(async () => {});
   /** In-progress notes HTML while the modal is open (survives tab hide / schedule sync). */
   const [tempNotesHtml, setTempNotesHtml] = useState('');
   const notesEditorRef = useRef<HTMLDivElement | null>(null);
@@ -1045,6 +1072,9 @@ const RunOfShowPage: React.FC = () => {
   
   // ClockPage-style hybrid timer data for real-time updates
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  const rosPreshowRainbow =
+    isPreshowTimerMessage(hybridTimerData?.timerMessage) &&
+    !!(hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
   useEffect(() => {
     activeTimersRef.current = activeTimers;
   }, [activeTimers]);
@@ -2149,6 +2179,158 @@ const RunOfShowPage: React.FC = () => {
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
   }, [schedule, dismissedVoAlerts, eventTimezone, clockOffset]);
+
+  // Top PreShow/End cue: 5-min warning popup + auto load/start at scheduled start.
+  // Popup: OPERATOR/EDITOR. Auto-start: OPERATOR only (needs same API as manual Load/Start).
+  useEffect(() => {
+    if (!event?.id || !user) return;
+    if (currentUserRole !== 'OPERATOR' && currentUserRole !== 'EDITOR') return;
+
+    const getPreshowStartInfo = (): {
+      cue: (typeof schedule)[number];
+      startHHMM: string;
+      startLabel: string;
+      key: string;
+    } | null => {
+      const cue = findTopPreshowCue(schedule, indentedCues);
+      if (!cue) return null;
+      const startHHMM = resolvePreshowStartHHMM({
+        cue,
+        lockedStartTimes,
+        dayStartTimes,
+        masterStartTime,
+      });
+      if (!startHHMM) return null;
+      const idx = schedule.findIndex((s) => s.id === cue.id);
+      const startLabel =
+        (idx >= 0 ? calculateStartTime(idx) : '') || startHHMM;
+      return {
+        cue,
+        startHHMM,
+        startLabel,
+        key: `${event.id}:${cue.id}:${startHHMM}`,
+      };
+    };
+
+    const tick = () => {
+      const top = schedule.find((s) => !isIndentedScheduleItem(s, indentedCues));
+      const info = getPreshowStartInfo();
+      if (!info) {
+        setActivePreshowWarn(null);
+        return;
+      }
+      const { cue, startHHMM, startLabel, key } = info;
+      const synced = getSyncedNow(clockOffset);
+      const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+      const startMs = wallClockStartUtcMs(startHHMM, synced, tz);
+      if (startMs == null) {
+        console.warn('⚠️ Pre-show: could not resolve start UTC', { startHHMM, tz });
+        setActivePreshowWarn(null);
+        return;
+      }
+      const nowMs = synced.getTime();
+      const warnMs = startMs - PRESHOW_WARN_MINUTES_BEFORE * 60_000;
+      const alreadyRunning =
+        !!(activeTimers[cue.id] ||
+          (hybridTimerData?.activeTimer &&
+            Number(hybridTimerData.activeTimer.item_id) === cue.id &&
+            hybridTimerData.activeTimer.is_running));
+
+      const minsToStart = Math.round((startMs - nowMs) / 60000);
+      if (minsToStart <= PRESHOW_WARN_MINUTES_BEFORE + 1 && minsToStart >= -2) {
+        console.log('🎬 Pre-show tick', {
+          role: currentUserRole,
+          topCueType: top?.programType,
+          startHHMM,
+          startLabel,
+          tz,
+          minsToStart,
+          inWarnWindow: nowMs >= warnMs && nowMs < startMs,
+          alreadyRunning,
+        });
+      }
+
+      // Warning: from T-5m until start (or dismiss / already running)
+      const inWarnWindow = nowMs >= warnMs && nowMs < startMs && !alreadyRunning;
+      if (inWarnWindow && !dismissedPreshowWarnKeys.has(key)) {
+        setActivePreshowWarn({
+          itemId: cue.id,
+          segmentName: cue.segmentName || 'Pre Show',
+          startLabel,
+          startHHMM,
+        });
+      } else if (!inWarnWindow) {
+        setActivePreshowWarn((prev) => (prev?.itemId === cue.id ? null : prev));
+      }
+
+      // Auto load+start: OPERATOR only, within 2 minutes after scheduled start
+      if (currentUserRole !== 'OPERATOR') return;
+
+      const graceMs = 2 * 60_000;
+      const dueToStart = nowMs >= startMs && nowMs <= startMs + graceMs;
+      if (
+        !dueToStart ||
+        alreadyRunning ||
+        preshowAutoStartedKeyRef.current === key ||
+        preshowAutoStartInFlightRef.current
+      ) {
+        return;
+      }
+      const otherRunning =
+        Object.keys(activeTimers).some((id) =>
+          Number(id) === cue.id ? false : !!activeTimers[Number(id)]
+        ) ||
+        (hybridTimerData?.activeTimer?.is_running &&
+          Number(hybridTimerData.activeTimer.item_id) !== cue.id);
+      if (otherRunning) return;
+
+      preshowAutoStartInFlightRef.current = true;
+      preshowAutoStartedKeyRef.current = key;
+      setActivePreshowWarn(null);
+      void (async () => {
+        try {
+          console.log('🎬 Pre-show auto load+start for cue', cue.id, 'at', startHHMM);
+          await loadCueRef.current(cue.id);
+          await toggleTimerRef.current(cue.id);
+        } catch (err) {
+          console.error('❌ Pre-show auto start failed:', err);
+          if (preshowAutoStartedKeyRef.current === key) {
+            preshowAutoStartedKeyRef.current = null;
+          }
+        } finally {
+          preshowAutoStartInFlightRef.current = false;
+        }
+      })();
+    };
+
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+    // calculateStartTime is stable enough via masterStartTime/dayStartTimes deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    schedule,
+    indentedCues,
+    lockedStartTimes,
+    masterStartTime,
+    dayStartTimes,
+    dismissedPreshowWarnKeys,
+    eventTimezone,
+    clockOffset,
+    currentUserRole,
+    event?.id,
+    user,
+    activeTimers,
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+  ]);
+
+  // Live tick while pre-show standing-by callout is visible (T− countdown)
+  useEffect(() => {
+    if (!activePreshowWarn) return;
+    const id = window.setInterval(() => setPreshowWarnTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [activePreshowWarn]);
 
   // Reset draft fields when opening the VO/BGM modal
   useEffect(() => {
@@ -5193,6 +5375,9 @@ const RunOfShowPage: React.FC = () => {
 
   // Get progress bar color based on remaining time
   const getProgressBarColor = () => {
+    if (rosPreshowRainbow) {
+      return RAINBOW_COUNTDOWN_GRADIENT;
+    }
     // Use hybrid timer data (ClockPage style) for real-time updates
     if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
@@ -5270,6 +5455,9 @@ const RunOfShowPage: React.FC = () => {
 
   // Get countdown color based on remaining time
   const getCountdownColor = () => {
+    if (rosPreshowRainbow) {
+      return RAINBOW_COUNTDOWN_GRADIENT;
+    }
     // Use hybrid timer data (ClockPage style) for real-time updates
     if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
@@ -5408,6 +5596,54 @@ const RunOfShowPage: React.FC = () => {
 
     console.log('✅ Timer duration adjusted to', newDurationSeconds, 's');
   };
+
+  const clearPreshowCountdownMessage = async () => {
+    if (!event?.id) return;
+    try {
+      const existing = await DatabaseService.getTimerMessagesForEvent(event.id);
+      for (const message of existing) {
+        if (!message.enabled || !message.id) continue;
+        if (!isPreshowTimerMessage(message) && message.message_type !== PRESHOW_MESSAGE_TYPE) {
+          continue;
+        }
+        await DatabaseService.disableTimerMessage(message.id);
+      }
+      setHybridTimerData((prev: any) =>
+        prev?.timerMessage && isPreshowTimerMessage(prev.timerMessage)
+          ? { ...prev, timerMessage: { ...prev.timerMessage, enabled: false } }
+          : prev
+      );
+    } catch (err) {
+      console.warn('⚠️ Failed to clear pre-show countdown message:', err);
+    }
+  };
+
+  const activatePreshowCountdownMessage = async () => {
+    if (!event?.id || !user) return;
+    try {
+      const existing = await DatabaseService.getTimerMessagesForEvent(event.id);
+      for (const message of existing.filter((m) => m.enabled && m.id)) {
+        await DatabaseService.disableTimerMessage(message.id!);
+      }
+      const saved = await DatabaseService.saveTimerMessage({
+        event_id: event.id,
+        message: PRESHOW_COUNTDOWN_MESSAGE,
+        enabled: true,
+        flashing: false,
+        sent_by: user.id,
+        sent_by_name: user.full_name || user.email || 'Unknown User',
+        sent_by_role: currentUserRole || 'VIEWER',
+        message_type: PRESHOW_MESSAGE_TYPE,
+        priority: 2,
+      });
+      if (saved) {
+        setHybridTimerData((prev: any) => ({ ...prev, timerMessage: saved }));
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to activate pre-show countdown message:', err);
+    }
+  };
+
   // Load a CUE (stop any active timer and select the CUE)
   const loadCue = async (itemId: number) => {
     console.log('🚀🚀🚀 loadCue function STARTED with itemId:', itemId);
@@ -5418,6 +5654,11 @@ const RunOfShowPage: React.FC = () => {
     if (!user || !event?.id) {
       console.log('❌ Missing user or event ID:', { user: !!user, eventId: event?.id });
       return;
+    }
+
+    const topPreshow = findTopPreshowCue(schedule, indentedCues);
+    if (!topPreshow || topPreshow.id !== itemId) {
+      void clearPreshowCountdownMessage();
     }
     
     // Capture running timer data BEFORE stopping (for overtime calculation after UI update)
@@ -9153,6 +9394,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
       const currentProgress = timerProgress[itemId];
+      let autoOvertimeMinutes: number | null = null;
       if (currentProgress && currentProgress.elapsed > 0) {
         const scheduledDuration = (currentProgress.total || 0) / 60; // Convert to minutes
         const actualDuration = (currentProgress.elapsed || 0) / 60; // Convert to minutes
@@ -9160,6 +9402,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Only calculate overtime if there's a meaningful difference (at least 1 minute)
         if (Math.abs(overtimeMinutes) >= 1 && showModeRef.current === 'in-show') {
+          autoOvertimeMinutes = overtimeMinutes;
           const overtimeType = overtimeMinutes > 0 ? 'over' : 'under';
           console.log(`⏰ Automatic overtime detected: ${Math.abs(overtimeMinutes)} minutes ${overtimeType} for cue ${itemId}`);
           
@@ -9302,6 +9545,62 @@ const RunOfShowPage: React.FC = () => {
         currentUserRole || 'VIEWER'
       );
       console.log('✅ Timer stopped in API');
+
+      const topPreshowOnStop = findTopPreshowCue(schedule, indentedCues);
+      if (topPreshowOnStop && topPreshowOnStop.id === itemId) {
+        void clearPreshowCountdownMessage();
+
+        // PreShow above ★ does not cascade via per-cue OT — fold overrun into show-start delay
+        if (
+          autoOvertimeMinutes != null &&
+          startCueId != null &&
+          event?.id &&
+          showModeRef.current === 'in-show' &&
+          shouldFoldPreshowOvertimeIntoShowStart({
+            schedule,
+            preshowItemId: itemId,
+            startCueId,
+          })
+        ) {
+          const next = showStartOvertime + autoOvertimeMinutes;
+          const startIndex = schedule.findIndex((s) => s.id === startCueId);
+          const scheduledTime = startIndex >= 0 ? calculateStartTime(startIndex) || '' : '';
+          const actualTime = new Date().toISOString();
+          setShowStartOvertime(next);
+          try {
+            await DatabaseService.saveShowStartOvertime(
+              event.id,
+              startCueId,
+              next,
+              scheduledTime,
+              actualTime
+            );
+            const socket = socketClient.getSocket();
+            if (socket) {
+              socket.emit('showStartOvertimeUpdate', {
+                event_id: event.id,
+                item_id: startCueId,
+                showStartOvertime: next,
+                scheduledTime,
+                actualTime,
+              });
+            }
+            logChange(
+              'SHOW_START_OFFSET_ADJUST',
+              `Pre Show overrun folded into show start: ${autoOvertimeMinutes > 0 ? '+' : ''}${autoOvertimeMinutes} → ${next > 0 ? '+' : ''}${next} min`,
+              {
+                fieldName: 'showStartOvertime',
+                oldValue: showStartOvertime,
+                newValue: next,
+                deltaMinutes: autoOvertimeMinutes,
+                source: 'preshow_overrun',
+              }
+            );
+          } catch (error) {
+            console.error('❌ Failed to fold Pre Show overrun into show start offset:', error);
+          }
+        }
+      }
       
       // Try to save last loaded CUE as stopped (will fail gracefully if migration not run)
       try {
@@ -9481,6 +9780,11 @@ const RunOfShowPage: React.FC = () => {
         } catch (error) {
           console.error('❌ Start timer error:', error);
         }
+
+        const topPreshowOnStart = findTopPreshowCue(schedule, indentedCues);
+        if (topPreshowOnStart && topPreshowOnStart.id === itemId) {
+          void activatePreshowCountdownMessage();
+        }
         
         // Try to save last loaded CUE as running (will fail gracefully if migration not run)
         try {
@@ -9522,6 +9826,8 @@ const RunOfShowPage: React.FC = () => {
       }
     }
   };
+  loadCueRef.current = loadCue;
+  toggleTimerRef.current = toggleTimer;
 
   // Reset timer - stop and clear currently running timer
   const resetTimer = async (itemId: number) => {
@@ -11023,6 +11329,92 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Pre-show standing-by — centered lightbox (T−5 until start) */}
+      {activePreshowWarn && (() => {
+        const synced = getSyncedNow(clockOffset);
+        const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+        const startMs = wallClockStartUtcMs(activePreshowWarn.startHHMM, synced, tz);
+        const remainMs = startMs != null ? Math.max(0, startMs - synced.getTime()) : 0;
+        void preshowWarnTick;
+        const totalSec = Math.ceil(remainMs / 1000);
+        const mm = Math.floor(totalSec / 60);
+        const ss = totalSec % 60;
+        const tMinus = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+        const dismiss = () => {
+          const cue = findTopPreshowCue(schedule, indentedCues);
+          const startHHMM = cue
+            ? resolvePreshowStartHHMM({
+                cue,
+                lockedStartTimes,
+                dayStartTimes,
+                masterStartTime,
+              })
+            : null;
+          const key = `${event?.id}:${activePreshowWarn.itemId}:${startHHMM || activePreshowWarn.startHHMM}`;
+          setDismissedPreshowWarnKeys((prev) => new Set(prev).add(key));
+          setActivePreshowWarn(null);
+        };
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-8">
+            <div
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]"
+              onClick={dismiss}
+              aria-hidden
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="preshow-standby-title"
+              className="ros-preshow-callout relative z-10 w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-2xl shadow-slate-900/25"
+            >
+              <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-500" />
+              <div className="px-8 py-10 text-center sm:px-12 sm:py-12">
+                <div className="mx-auto mb-5 flex items-center justify-center gap-3">
+                  <span className="ros-preshow-callout-tally h-3 w-3 rounded-full bg-violet-500" />
+                  <span
+                    id="preshow-standby-title"
+                    className="text-sm font-semibold tracking-[0.35em] text-slate-600 sm:text-base"
+                  >
+                    PRE-SHOW STANDING BY
+                  </span>
+                </div>
+                <p className="text-lg text-slate-800 sm:text-xl">
+                  {activePreshowWarn.segmentName}
+                </p>
+                <p className="mt-4 text-base text-slate-600 sm:text-lg">
+                  This timer will auto load and start at the set start time.
+                </p>
+                <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-10">
+                  <div className="rounded-xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Start time
+                    </div>
+                    <div className="mt-2 font-mono text-4xl font-semibold tabular-nums text-slate-900 sm:text-5xl">
+                      {activePreshowWarn.startLabel}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-6 py-5 shadow-sm">
+                    <div className="text-xs uppercase tracking-[0.2em] text-violet-600">
+                      Time remaining
+                    </div>
+                    <div className="mt-2 font-mono text-4xl font-bold tabular-nums tracking-tight text-violet-700 sm:text-5xl">
+                      T−{tMinus}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="mt-10 rounded-xl bg-slate-800 px-10 py-3.5 text-base font-semibold text-white hover:bg-slate-700 sm:text-lg"
+                  onClick={dismiss}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Page Visibility Indicator */}
       {!isPageVisible && (
@@ -12768,7 +13160,12 @@ const RunOfShowPage: React.FC = () => {
               
               {/* Timer Display with Color */}
               <div className="relative">
-                <div className="text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600" style={{ color: getCountdownColor() }}>
+                <div
+                  className={`text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600 ${
+                    rosPreshowRainbow ? 'ros-rainbow-text' : ''
+                  }`}
+                  style={rosPreshowRainbow ? undefined : { color: getCountdownColor() }}
+                >
                   {formatTime(getRemainingTime())}
                 </div>
                 {/* Drift Status Indicator - positioned in bottom-right corner */}
@@ -12780,10 +13177,12 @@ const RunOfShowPage: React.FC = () => {
           <div className="px-8 mb-2">
             <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative">
               <div 
-                className="h-full transition-all duration-1000 absolute top-0 right-0"
+                className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                  rosPreshowRainbow ? 'ros-rainbow-fill' : ''
+                }`}
                 style={{ 
                   width: `${getRemainingPercentage()}%`,
-                  background: getProgressBarColor()
+                  ...(rosPreshowRainbow ? {} : { background: getProgressBarColor() }),
                 }}
               />
             </div>

@@ -395,7 +395,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           style={{ width: columnWidths.programType }}
         >
           <select
-            value={item.programType}
+            value={item.programType || ''}
             onFocus={handleSelectFocus}
             onBlur={handleSelectBlur}
             onChange={(e) => {
@@ -432,14 +432,31 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             style={{ 
               backgroundColor: isRowDimmed
                 ? 'rgba(59, 20, 96, 0.65)'
-                : (programTypeColors[item.programType] || '#374151'),
+                : (!item.programType
+                    ? '#1e293b'
+                    : (programTypeColors[item.programType] || '#374151')),
               color: isRowDimmed
                 ? '#ada3bf'
-                : (item.programType === 'Sub Cue' || item.programType === 'KILLED' ? '#000000' : '#ffffff'),
+                : (!item.programType
+                    ? '#94a3b8'
+                    : (item.programType === 'Sub Cue' || item.programType === 'KILLED' ? '#000000' : '#ffffff')),
               textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
+              borderStyle: !item.programType && !isRowDimmed ? 'dashed' : undefined,
+              borderColor: !item.programType && !isRowDimmed ? '#64748b' : undefined,
             }}
-            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit program type' : 'Select program type'}
+            title={
+              isLockedByOther
+                ? lockLabel
+                : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                  ? 'Only EDITORs can edit program type'
+                  : !item.programType
+                    ? 'Select a content type for this cue'
+                    : 'Select program type'
+            }
           >
+            <option value="" style={{ backgroundColor: '#1e293b', color: '#94a3b8' }}>
+              Select content type…
+            </option>
             {programTypes.map(type => (
               <option key={type} value={type} style={{ 
                 backgroundColor: programTypeColors[type] || '#374151', 

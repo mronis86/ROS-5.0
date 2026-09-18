@@ -10,6 +10,7 @@ import {
   computeMicLevelFromTimeDomain,
   isEdgeBrowser,
   listAudioInputDevices,
+  speechRecognitionNetworkHelpMessage,
   unlockAndListMics,
   writeStoredMicId,
 } from '../lib/teleprompter-mic';
@@ -191,6 +192,8 @@ const TeleprompterPage: React.FC = () => {
   const voiceFollowWordRef = useRef<number | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const speechRecognitionRef = useRef<any>(null);
+  /** Consecutive Web Speech `network` errors — backoff / stop instead of tight restart loop. */
+  const voiceNetworkFailCountRef = useRef(0);
   const voiceMicStreamRef = useRef<MediaStream | null>(null);
   const voiceAudioCtxRef = useRef<AudioContext | null>(null);
   const voiceLevelRafRef = useRef<number | null>(null);
@@ -1124,6 +1127,7 @@ const TeleprompterPage: React.FC = () => {
     setVoiceInterimPreview('');
     setVoiceStatus('Claiming selected mic, then starting speech recognition…');
     lastVoiceInterimProcessedRef.current = '';
+    voiceNetworkFailCountRef.current = 0;
 
     if (previewScrollRef.current) {
       voiceDesiredScrollTopRef.current = previewScrollRef.current.scrollTop;
@@ -1300,6 +1304,8 @@ const TeleprompterPage: React.FC = () => {
         resultIndex: number;
         results: { length: number; [i: number]: { 0: { transcript: string }; isFinal: boolean } };
       }) => {
+        // Successful cloud STT — clear network backoff
+        voiceNetworkFailCountRef.current = 0;
         let interim = '';
         let finalText = '';
         let newFinalWordCount = 0;
@@ -1361,6 +1367,18 @@ const TeleprompterPage: React.FC = () => {
               : 'Audio capture failed — try Mic check, then Auto-scroll again.'
           );
           setVoiceListenEnabled(false);
+        } else if (e.error === 'network') {
+          voiceNetworkFailCountRef.current += 1;
+          const fails = voiceNetworkFailCountRef.current;
+          if (fails >= 4) {
+            setVoiceStatus(speechRecognitionNetworkHelpMessage());
+            setVoiceListenEnabled(false);
+          } else {
+            setVoiceStatus(
+              `Speech cloud unreachable (network) — retry ${fails}/3… ` +
+                'Mic meter can work while Google speech is blocked (VPN / Umbrella / firewall).'
+            );
+          }
         } else if (e.error !== 'aborted') {
           setVoiceStatus(`Voice: ${e.error}`);
         }
@@ -1368,7 +1386,15 @@ const TeleprompterPage: React.FC = () => {
 
       rec.onend = () => {
         if (voiceListenEnabledRef.current && !voiceMicCheckOnlyRef.current && speechRecognitionRef.current) {
-          const restartMs = isEdgeBrowser() ? 450 : 250;
+          // Network failures: back off; stop after repeated cloud STT failures
+          const networkFails = voiceNetworkFailCountRef.current;
+          if (networkFails >= 4) return;
+          const restartMs =
+            networkFails > 0
+              ? Math.min(8000, 1200 * networkFails)
+              : isEdgeBrowser()
+                ? 450
+                : 250;
           window.setTimeout(() => {
             try {
               if (voiceListenEnabledRef.current && !voiceMicCheckOnlyRef.current && speechRecognitionRef.current) {
@@ -1990,7 +2016,7 @@ const TeleprompterPage: React.FC = () => {
                     <p className="mt-1 text-[10px] leading-snug text-slate-500">
                       1) List mics → pick device → <span className="text-slate-300">Mic meter</span> (bars only).
                       2) Then <span className="text-slate-300">Auto-scroll</span> for speech matching.
-                      Chrome speech engine can&apos;t share the mic with the meter, so they stay separate.
+                      Mic meter is local; speech-to-text needs internet to Google&apos;s servers (corporate filters like Umbrella often block it).
                     </p>
                   </div>
                   

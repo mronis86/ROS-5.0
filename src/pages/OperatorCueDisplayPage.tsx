@@ -13,6 +13,7 @@ import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -756,6 +757,11 @@ const OperatorCueDisplayPage: React.FC = () => {
   const pct = progress.total > 0 ? Math.max(0, Math.min(100, (remaining / progress.total) * 100)) : 0;
   const running = !!(timer?.timer_state === 'running' || (timer?.is_running && timer?.is_active));
   const loaded = !!timer && !running;
+  const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
+    timer,
+    isRunning: running,
+    programType: current?.programType,
+  });
 
   const statusTextCls = running ? 'text-green-400' : loaded ? 'text-yellow-400' : 'text-slate-300';
   const statusLine = running
@@ -1163,8 +1169,10 @@ const OperatorCueDisplayPage: React.FC = () => {
           <div className="flex items-center gap-6 shrink-0">
             <div className={`text-xl font-bold ${statusTextCls}`}>{statusLine}</div>
             <div
-              className="text-4xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600"
-              style={{ color: countdownColor(remaining) }}
+              className={`text-4xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600 ${
+                usePreshowRainbowColors ? 'ros-rainbow-text' : ''
+              }`}
+              style={usePreshowRainbowColors ? undefined : { color: countdownColor(remaining) }}
             >
               {clock(remaining)}
             </div>
@@ -1174,8 +1182,13 @@ const OperatorCueDisplayPage: React.FC = () => {
         <div className="shrink-0 px-6 mb-2">
           <div className="w-full h-2.5 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative">
             <div
-              className="h-full absolute top-0 right-0 transition-all duration-1000"
-              style={{ width: `${pct}%`, background: progressColor(remaining) }}
+              className={`h-full absolute top-0 right-0 transition-all duration-1000 ${
+                usePreshowRainbowColors ? 'ros-rainbow-fill' : ''
+              }`}
+              style={{
+                width: `${pct}%`,
+                ...(usePreshowRainbowColors ? {} : { background: progressColor(remaining) }),
+              }}
             />
           </div>
         </div>
