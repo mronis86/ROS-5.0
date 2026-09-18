@@ -11358,7 +11358,7 @@ const RunOfShowPage: React.FC = () => {
         return (
           <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-8">
             <div
-              className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]"
+              className="absolute inset-0 bg-black/55 backdrop-blur-[1px]"
               onClick={dismiss}
               aria-hidden
             />
@@ -11366,46 +11366,46 @@ const RunOfShowPage: React.FC = () => {
               role="dialog"
               aria-modal="true"
               aria-labelledby="preshow-standby-title"
-              className="ros-preshow-callout relative z-10 w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-2xl shadow-slate-900/25"
+              className="ros-preshow-callout relative z-10 w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-600 bg-slate-800 shadow-2xl shadow-black/50"
             >
               <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-500" />
               <div className="px-8 py-10 text-center sm:px-12 sm:py-12">
                 <div className="mx-auto mb-5 flex items-center justify-center gap-3">
-                  <span className="ros-preshow-callout-tally h-3 w-3 rounded-full bg-violet-500" />
+                  <span className="ros-preshow-callout-tally h-3 w-3 rounded-full bg-violet-400" />
                   <span
                     id="preshow-standby-title"
-                    className="text-sm font-semibold tracking-[0.35em] text-slate-600 sm:text-base"
+                    className="text-sm font-semibold tracking-[0.35em] text-slate-300 sm:text-base"
                   >
                     PRE-SHOW STANDING BY
                   </span>
                 </div>
-                <p className="text-lg text-slate-800 sm:text-xl">
+                <p className="text-lg text-white sm:text-xl">
                   {activePreshowWarn.segmentName}
                 </p>
-                <p className="mt-4 text-base text-slate-600 sm:text-lg">
+                <p className="mt-4 text-base text-slate-300 sm:text-lg">
                   This timer will auto load and start at the set start time.
                 </p>
                 <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-10">
-                  <div className="rounded-xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  <div className="rounded-xl border border-slate-600 bg-slate-700/80 px-6 py-5 shadow-sm">
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
                       Start time
                     </div>
-                    <div className="mt-2 font-mono text-4xl font-semibold tabular-nums text-slate-900 sm:text-5xl">
+                    <div className="mt-2 font-mono text-4xl font-semibold tabular-nums text-white sm:text-5xl">
                       {activePreshowWarn.startLabel}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-6 py-5 shadow-sm">
-                    <div className="text-xs uppercase tracking-[0.2em] text-violet-600">
+                  <div className="rounded-xl border border-violet-500/40 bg-violet-950/50 px-6 py-5 shadow-sm">
+                    <div className="text-xs uppercase tracking-[0.2em] text-violet-300">
                       Time remaining
                     </div>
-                    <div className="mt-2 font-mono text-4xl font-bold tabular-nums tracking-tight text-violet-700 sm:text-5xl">
+                    <div className="mt-2 font-mono text-4xl font-bold tabular-nums tracking-tight text-violet-200 sm:text-5xl">
                       T−{tMinus}
                     </div>
                   </div>
                 </div>
                 <button
                   type="button"
-                  className="mt-10 rounded-xl bg-slate-800 px-10 py-3.5 text-base font-semibold text-white hover:bg-slate-700 sm:text-lg"
+                  className="mt-10 rounded-xl bg-slate-600 px-10 py-3.5 text-base font-semibold text-white hover:bg-slate-500 sm:text-lg"
                   onClick={dismiss}
                 >
                   Dismiss

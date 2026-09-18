@@ -24,7 +24,9 @@ import {
   formatShowDelayStatus,
   parseShowStartOvertimeMinutes,
   resolveGreenRoomDelayMinutes,
+  sumPreStartDelayBlockMinutes,
 } from '../lib/showDelay';
+import { fitEventTitleSize, measureTitleSlotWidth } from '../lib/fitEventTitle';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -116,7 +118,10 @@ const GreenRoomPage: React.FC = () => {
   const eventTitleWrapRef = useRef<HTMLDivElement>(null);
   const eventTitleRef = useRef<HTMLDivElement>(null);
   const titleFitWidthRef = useRef(0);
-  const [titleScale, setTitleScale] = useState(1);
+  const [titleFit, setTitleFit] = useState<{ fontPx: number; lines: 1 | 2 }>({
+    fontPx: 72,
+    lines: 1,
+  });
   
   // Overtime data (same as RunOfShowPage)
   const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
@@ -131,54 +136,60 @@ const GreenRoomPage: React.FC = () => {
     DatabaseService.getShowMode(event.id).then(mode => setShowMode(mode));
   }, [event?.id]);
 
-  // Fit event title on one line via scale (never clip / never orphan a second line)
+  // Event title: canvas + word-split sizing (1 line shrink, then 2 lines if needed)
   useLayoutEffect(() => {
     const wrap = eventTitleWrapRef.current;
     const el = eventTitleRef.current;
     if (!wrap || !el) return;
     titleFitWidthRef.current = 0;
 
+    const applyFit = (fontPx: number, lines: 1 | 2) => {
+      setTitleFit((prev) =>
+        prev.fontPx === fontPx && prev.lines === lines ? prev : { fontPx, lines }
+      );
+    };
+
     const fit = () => {
-      const available = Math.floor(wrap.clientWidth);
-      if (available < 48) return;
-      if (Math.abs(available - titleFitWidthRef.current) < 4 && titleFitWidthRef.current > 0) {
+      const available = measureTitleSlotWidth(wrap);
+      if (available < 40) return;
+      if (Math.abs(available - titleFitWidthRef.current) < 2 && titleFitWidthRef.current > 0) {
         return;
       }
       titleFitWidthRef.current = available;
 
-      el.style.transform = 'scale(1)';
-      el.style.fontSize = '72px';
-      el.style.whiteSpace = 'nowrap';
-      el.style.display = 'inline-block';
-      el.style.width = 'max-content';
-      el.style.maxWidth = 'none';
-      el.style.overflow = 'visible';
-      void el.offsetWidth;
-      const need = el.scrollWidth || 1;
-      const next = Math.min(1, available / need);
-      el.style.transform = `scale(${next})`;
-      el.style.transformOrigin = 'center center';
-      setTitleScale((prev) => (Math.abs(prev - next) < 0.01 ? prev : next));
+      const cs = getComputedStyle(el);
+      const next = fitEventTitleSize({
+        text: event?.name || 'Current Event',
+        availableWidthPx: Math.max(40, available - 8),
+        fontFamily: cs.fontFamily || 'system-ui, sans-serif',
+        fontWeight: cs.fontWeight || '700',
+        maxPx: 72,
+        singleLineFloorPx: 40,
+        minPx: 20,
+      });
+      applyFit(next.fontPx, next.lines);
     };
 
     fit();
     let debounceId = 0;
-    const ro =
-      typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(() => {
-            window.clearTimeout(debounceId);
-            debounceId = window.setTimeout(() => {
-              titleFitWidthRef.current = 0;
-              fit();
-            }, 80);
-          })
-        : null;
+    const scheduleFit = () => {
+      window.clearTimeout(debounceId);
+      debounceId = window.setTimeout(() => {
+        titleFitWidthRef.current = 0;
+        fit();
+      }, 50);
+    };
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleFit) : null;
     ro?.observe(wrap);
-    window.addEventListener('resize', fit);
+    const row = wrap.parentElement;
+    if (row) ro?.observe(row);
+    const timer = wrap.nextElementSibling;
+    if (timer) ro?.observe(timer);
+    window.addEventListener('resize', scheduleFit);
     return () => {
       ro?.disconnect();
       window.clearTimeout(debounceId);
-      window.removeEventListener('resize', fit);
+      window.removeEventListener('resize', scheduleFit);
     };
   }, [event?.name, showPreshowCountdownLabel, timerState, showStartOvertime]);
 
@@ -600,14 +611,25 @@ const GreenRoomPage: React.FC = () => {
               setIndentedCues({});
             }
             
-            const formattedSchedule = data.schedule_items.map((item: any) => ({
-              ...item,
-              isPublic: item.isPublic === true || item.isPublic === 'true',
-              // Convert duration_seconds to separate fields
-              durationHours: Math.floor((item.duration_seconds || 0) / 3600),
-              durationMinutes: Math.floor(((item.duration_seconds || 0) % 3600) / 60),
-              durationSeconds: (item.duration_seconds || 0) % 60
-            }));
+            const formattedSchedule = data.schedule_items.map((item: any) => {
+              const fromParts =
+                (Number(item.durationHours) || 0) * 3600 +
+                (Number(item.durationMinutes) || 0) * 60 +
+                (Number(item.durationSeconds) || 0);
+              const totalSec =
+                fromParts > 0
+                  ? fromParts
+                  : Number(item.duration_seconds) > 0
+                    ? Number(item.duration_seconds)
+                    : 0;
+              return {
+                ...item,
+                isPublic: item.isPublic === true || item.isPublic === 'true',
+                durationHours: Math.floor(totalSec / 3600),
+                durationMinutes: Math.floor((totalSec % 3600) / 60),
+                durationSeconds: totalSec % 60,
+              };
+            });
             
             const startCueItem = formattedSchedule.find((item: any) => item.isStartCue === true);
             if (startCueItem) {
@@ -1602,10 +1624,19 @@ const GreenRoomPage: React.FC = () => {
     activeItemId != null && timerProgress[activeItemId] && timerState === 'running'
       ? timerProgress[activeItemId].total - timerProgress[activeItemId].elapsed
       : null;
+  const scheduleDelayMinutes = sumPreStartDelayBlockMinutes({
+    schedule,
+    startCueId,
+    day: selectedDay,
+    indentedIds: indentedCues,
+  });
+  // Delay Blocks above ★ are schedule truth — always surface them.
+  // Live Root OT / cue overrun only count in in-show mode.
   const audienceDelayMinutes = resolveGreenRoomDelayMinutes({
-    showStartOvertime,
-    remainingSeconds: activeRemainingSeconds,
-    timerRunning: timerState === 'running',
+    showStartOvertime: showMode === 'rehearsal' ? 0 : showStartOvertime,
+    scheduleDelayMinutes,
+    remainingSeconds: showMode === 'rehearsal' ? null : activeRemainingSeconds,
+    timerRunning: showMode === 'rehearsal' ? false : timerState === 'running',
   });
   const delayStatusLabel = formatShowDelayStatus(audienceDelayMinutes);
   const hasShowDelay = delayStatusLabel != null;
@@ -1872,16 +1903,24 @@ const GreenRoomPage: React.FC = () => {
           </div>
         )}
 
-        <div className="p-6 flex items-center gap-10 min-w-0">
-          <div ref={eventTitleWrapRef} className="flex-1 min-w-0 self-center text-center pr-6 overflow-hidden">
+        <div className="p-6 flex items-center gap-12 min-w-0">
+          <div
+            ref={eventTitleWrapRef}
+            className="flex-1 min-w-0 max-w-full self-center text-center pr-8 py-1"
+          >
             <div
               ref={eventTitleRef}
-              className="text-white font-bold text-center leading-tight inline-block"
+              className="text-white font-bold text-center mx-auto max-w-full box-border"
               style={{
-                fontSize: 72,
-                whiteSpace: 'nowrap',
-                transform: `scale(${titleScale})`,
-                transformOrigin: 'center center',
+                fontSize: titleFit.fontPx,
+                lineHeight: 1.25,
+                whiteSpace: titleFit.lines === 1 ? 'nowrap' : 'normal',
+                width: '100%',
+                maxWidth: '100%',
+                overflowWrap: titleFit.lines === 2 ? 'break-word' : 'normal',
+                wordBreak: 'normal',
+                overflow: 'visible',
+                paddingBottom: '0.12em',
               }}
             >
               {event?.name || 'Current Event'}
@@ -1906,7 +1945,7 @@ const GreenRoomPage: React.FC = () => {
               : 'bg-red-600'
           }`}>
           <div
-            className={`font-semibold mb-2 text-xl ${
+            className={`font-semibold mb-1 text-xl ${
               hasShowDelay
                 ? audienceDelayMinutes > 0
                   ? 'text-amber-200'
@@ -1926,11 +1965,25 @@ const GreenRoomPage: React.FC = () => {
                     ? 'RUNNING'
                     : 'Stage Timer'}
           </div>
+          {showPreshowCountdownLabel && delayStatusLabel ? (
+            <div
+              className={`mb-2 text-sm font-bold uppercase tracking-wide ${
+                audienceDelayMinutes > 0 ? 'text-amber-300' : 'text-emerald-300'
+              }`}
+              title="Delay Block(s) above ★ START on the Run of Show"
+            >
+              {delayStatusLabel}
+            </div>
+          ) : null}
           <div
             className={`font-bold mb-2 tabular-nums text-5xl ${
               usePreshowRainbowColors
                 ? 'ros-rainbow-text'
-                : isOvertime()
+                : hasShowDelay && audienceDelayMinutes > 0
+                  ? isRos
+                    ? 'text-amber-200'
+                    : 'text-amber-100'
+                  : isOvertime()
                   ? isRos
                     ? 'text-red-300'
                     : 'text-red-200'
