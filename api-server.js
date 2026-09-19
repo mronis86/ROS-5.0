@@ -6706,7 +6706,8 @@ app.post('/api/sub-cue-timers', async (req, res) => {
       user_role,
       duration_seconds, 
       row_number, 
-      cue_display, 
+      cue_display,
+      segment_name,
       timer_id,
       is_active,
       is_running,
@@ -6714,40 +6715,84 @@ app.post('/api/sub-cue-timers', async (req, res) => {
     } = req.body;
     
     // Use UPSERT to ensure only one sub-cue timer per event (like active_timers)
-    const result = await pool.query(
-      `INSERT INTO sub_cue_timers 
-       (event_id, item_id, user_id, user_name, user_role, duration_seconds, row_number, cue_display, timer_id, 
-        is_active, is_running, started_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
-       ON CONFLICT (event_id) DO UPDATE SET
-         item_id = EXCLUDED.item_id,
-         user_id = EXCLUDED.user_id,
-         user_name = EXCLUDED.user_name,
-         user_role = EXCLUDED.user_role,
-         duration_seconds = EXCLUDED.duration_seconds,
-         row_number = EXCLUDED.row_number,
-         cue_display = EXCLUDED.cue_display,
-         timer_id = EXCLUDED.timer_id,
-         is_active = EXCLUDED.is_active,
-         is_running = EXCLUDED.is_running,
-         started_at = EXCLUDED.started_at,
-         updated_at = NOW()
-       RETURNING *`,
-      [
-        event_id, 
-        item_id, 
-        user_id,
-        user_name || 'Unknown User',
-        user_role || 'VIEWER',
-        duration_seconds, 
-        row_number, 
-        cue_display, 
-        timer_id,
-        is_active !== undefined ? is_active : true,
-        is_running !== undefined ? is_running : true,
-        started_at || new Date().toISOString()
-      ]
-    );
+    const valuesWithSegment = [
+      event_id,
+      item_id,
+      user_id,
+      user_name || 'Unknown User',
+      user_role || 'VIEWER',
+      duration_seconds,
+      row_number,
+      cue_display,
+      segment_name || null,
+      timer_id,
+      is_active !== undefined ? is_active : true,
+      is_running !== undefined ? is_running : true,
+      started_at || new Date().toISOString()
+    ];
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO sub_cue_timers 
+         (event_id, item_id, user_id, user_name, user_role, duration_seconds, row_number, cue_display, segment_name, timer_id, 
+          is_active, is_running, started_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+         ON CONFLICT (event_id) DO UPDATE SET
+           item_id = EXCLUDED.item_id,
+           user_id = EXCLUDED.user_id,
+           user_name = EXCLUDED.user_name,
+           user_role = EXCLUDED.user_role,
+           duration_seconds = EXCLUDED.duration_seconds,
+           row_number = EXCLUDED.row_number,
+           cue_display = EXCLUDED.cue_display,
+           segment_name = EXCLUDED.segment_name,
+           timer_id = EXCLUDED.timer_id,
+           is_active = EXCLUDED.is_active,
+           is_running = EXCLUDED.is_running,
+           started_at = EXCLUDED.started_at,
+           updated_at = NOW()
+         RETURNING *`,
+        valuesWithSegment
+      );
+    } catch (insertErr) {
+      // Fallback if segment_name column is not migrated yet — still start the timer
+      if (!String(insertErr?.message || '').includes('segment_name')) throw insertErr;
+      console.warn('⚠️ sub_cue_timers.segment_name missing; inserting without it');
+      result = await pool.query(
+        `INSERT INTO sub_cue_timers 
+         (event_id, item_id, user_id, user_name, user_role, duration_seconds, row_number, cue_display, timer_id, 
+          is_active, is_running, started_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+         ON CONFLICT (event_id) DO UPDATE SET
+           item_id = EXCLUDED.item_id,
+           user_id = EXCLUDED.user_id,
+           user_name = EXCLUDED.user_name,
+           user_role = EXCLUDED.user_role,
+           duration_seconds = EXCLUDED.duration_seconds,
+           row_number = EXCLUDED.row_number,
+           cue_display = EXCLUDED.cue_display,
+           timer_id = EXCLUDED.timer_id,
+           is_active = EXCLUDED.is_active,
+           is_running = EXCLUDED.is_running,
+           started_at = EXCLUDED.started_at,
+           updated_at = NOW()
+         RETURNING *`,
+        [
+          event_id,
+          item_id,
+          user_id,
+          user_name || 'Unknown User',
+          user_role || 'VIEWER',
+          duration_seconds,
+          row_number,
+          cue_display,
+          timer_id,
+          is_active !== undefined ? is_active : true,
+          is_running !== undefined ? is_running : true,
+          started_at || new Date().toISOString()
+        ]
+      );
+    }
     
     // Broadcast update via WebSocket (includes Resolume meta when sub-cue is Resolume-synced)
     broadcastSubCueTimerUpdated(event_id, result.rows[0]);
@@ -9715,6 +9760,14 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ timer_messages.flashing column ready');
     } catch (err) {
       console.warn('⚠️ timer_messages.flashing migration skipped:', err.message || err);
+    }
+    try {
+      await pool.query(
+        'ALTER TABLE sub_cue_timers ADD COLUMN IF NOT EXISTS segment_name TEXT'
+      );
+      console.log('✅ sub_cue_timers.segment_name column ready');
+    } catch (err) {
+      console.warn('⚠️ sub_cue_timers.segment_name migration skipped:', err.message || err);
     }
     try {
       await ensureEventCueFilesSchema(pool);

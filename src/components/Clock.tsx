@@ -8,6 +8,7 @@ import {
   useCountdownColorMode,
 } from '../lib/countdownColor';
 import { isPreshowTimerMessage } from '../lib/preshowCountdown';
+import { AltTimerBadge } from './AltTimerBadge';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -1056,146 +1057,98 @@ const Clock: React.FC<ClockProps> = ({
           return false;
         }
       })() && (
-        <div className={`absolute animate-in fade-in duration-500 ${(() => {
-          // When supabaseOnly is true, only check Supabase messages
-          if (supabaseOnly) {
-            return supabaseMessage && supabaseMessage.enabled;
-          }
-          // When supabaseOnly is false, check both local and Supabase messages
-          return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
-        })() ? 'bottom-20 right-1/3 transform translate-x-1/2 flex flex-col items-center' : 'inset-0 flex flex-col items-center justify-center'}`} style={{ marginTop: (() => {
-          // When supabaseOnly is true, only check Supabase messages
-          if (supabaseOnly) {
-            return supabaseMessage && supabaseMessage.enabled;
-          }
-          // When supabaseOnly is false, check both local and Supabase messages
-          return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
-        })() ? '0' : '-80px' }}>
-          {/* CUE and Segment Name - Separated from countdown */}
-          <div className={`absolute left-1/2 transform -translate-x-1/2 ${secondaryDisplayColor} font-bold animate-in slide-in-from-top duration-500 ${(() => {
-            // When supabaseOnly is true, only check Supabase messages
-            if (supabaseOnly) {
-              return supabaseMessage && supabaseMessage.enabled ? 'text-lg md:text-xl lg:text-2xl' : 'text-xl md:text-2xl lg:text-3xl';
-            }
-            // When supabaseOnly is false, check both local and Supabase messages
-            return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled) ? 'text-lg md:text-xl lg:text-2xl' : 'text-xl md:text-2xl lg:text-3xl';
-          })()} whitespace-nowrap ${(() => {
-            // When supabaseOnly is true, only check Supabase messages
-            if (supabaseOnly) {
-              return supabaseMessage && supabaseMessage.enabled;
-            }
-            // When supabaseOnly is false, check both local and Supabase messages
-            return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled);
-          })() ? 'bottom-20 left-1/2 transform -translate-x-1/2' : ''}`} style={{ lineHeight: '1.2', ...(() => {
-            // When supabaseOnly is true, only check Supabase messages
-            if (supabaseOnly) {
-              return supabaseMessage && supabaseMessage.enabled ? { bottom: 'calc(5rem - 25px)' } : { top: 'calc(50% - 150px)' };
-            }
-            // When supabaseOnly is false, check both local and Supabase messages
-            return (messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled) ? { bottom: 'calc(5rem - 25px)' } : { top: 'calc(50% - 150px)' };
-          })() }}>
-            {(() => {
-              const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
-              if (!currentSecondaryTimer) return '';
-              
-              // Handle different data structures
-              if (supabaseOnly) {
-                // Supabase data structure (could be secondary_timers or sub_cue_timers)
-                const cue = currentSecondaryTimer.cue_display || currentSecondaryTimer.cue || currentSecondaryTimer.cue_is || '';
-                const segmentName = currentSecondaryTimer.segment_name || currentSecondaryTimer.segmentName || '';
-                const formattedCue = cue.replace(/CUE(\d+)/, 'CUE $1');
-                const line = segmentName ? `${formattedCue} - ${segmentName}` : formattedCue;
-                return secondaryStatusPrefix
-                  ? `${secondaryStatusPrefix}${line}`
-                  : `${line}${secondaryResolumeLabel}`;
-              } else {
-                // Clock always runs in WebSocket-only mode
-                return 'No CUE';
-              }
-            })()}
-          </div>
-          {/* Large Time without Outline */}
-          <div
-            className={`${secondaryDisplayColor} font-mono font-bold animate-in zoom-in duration-500 ${(() => {
-              const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
-              if (!currentSecondaryTimer) return 'text-3xl md:text-4xl lg:text-5xl';
-              
-              // Use secondaryTimerUpdate to trigger re-calculation every second
-              const _ = secondaryTimerUpdate;
-              
-              let remaining = 0;
-              if (supabaseOnly) {
-                // Supabase data structure - calculate remaining time in real-time
-                if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                  const syncedNow = Date.now() + clockOffset;
-                  const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                  const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
-                  const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = Math.max(0, totalDuration - elapsed);
-                } else {
-                  remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                }
-              } else {
-                remaining = currentSecondaryTimer.remaining || 0;
-              }
-              
-              const hours = Math.floor(Math.abs(remaining) / 3600);
-              
-              if (supabaseOnly) {
-                const displayMessage = hybridTimerData?.timerMessage || supabaseMessage;
-                if (displayMessage && displayMessage.enabled) {
-                  return 'text-3xl md:text-4xl lg:text-5xl';
-                }
-              } else {
-              if ((messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled)) {
-                return 'text-3xl md:text-4xl lg:text-5xl';
-                }
-              }
-              return hours === 0 
-                ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
-                : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
-            })()}`}
-            style={{
-              lineHeight: '1'
-            }}
-          >
-            {(() => {
-              const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
-              if (!currentSecondaryTimer) return '00:00';
-              
-              // Use secondaryTimerUpdate to trigger re-calculation every second
-              const _ = secondaryTimerUpdate;
-              
-              let remaining = 0;
-              if (supabaseOnly) {
-                // Supabase data structure - calculate remaining time in real-time
-                if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                  const syncedNow = Date.now() + clockOffset;
-                  const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                  const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
-                  const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = Math.max(0, totalDuration - elapsed);
-                } else {
-                  remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                }
-              } else {
-                remaining = 0;
-              }
-              
-              const absRemaining = Math.abs(remaining);
-              const hours = Math.floor(absRemaining / 3600);
-              const minutes = Math.floor((absRemaining % 3600) / 60);
-              const seconds = absRemaining % 60;
-              const prefix = remaining < 0 ? '-' : '';
+        (() => {
+          const hasMessage = supabaseOnly
+            ? !!(supabaseMessage && supabaseMessage.enabled)
+            : !!(messageEnabled && message) || !!(supabaseMessage && supabaseMessage.enabled);
 
-              if (hours === 0) {
-                return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-              } else {
-                return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          const labelNode = (() => {
+            const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
+            if (!currentSecondaryTimer) return null;
+            if (!supabaseOnly) return <span>ALT</span>;
+            return (
+              <AltTimerBadge
+                timer={currentSecondaryTimer}
+                scheduleItems={scheduleItems}
+                statusPrefix={secondaryStatusPrefix}
+                resolumeSuffix={secondaryResolumeLabel}
+              />
+            );
+          })();
+
+          const remainingSeconds = (() => {
+            const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
+            if (!currentSecondaryTimer) return 0;
+            const _ = secondaryTimerUpdate;
+            if (supabaseOnly) {
+              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
+                const syncedNow = Date.now() + clockOffset;
+                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
+                const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
+                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
+                return Math.max(0, totalDuration - elapsed);
               }
-            })()}
-          </div>
-        </div>
+              return currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
+            }
+            return currentSecondaryTimer.remaining || 0;
+          })();
+
+          const formatSecondary = (remaining: number) => {
+            const absRemaining = Math.abs(remaining);
+            const hours = Math.floor(absRemaining / 3600);
+            const minutes = Math.floor((absRemaining % 3600) / 60);
+            const seconds = absRemaining % 60;
+            const prefix = remaining < 0 ? '-' : '';
+            if (hours === 0) {
+              return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+            return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          };
+
+          const hours = Math.floor(Math.abs(remainingSeconds) / 3600);
+          const largeTimeClass = hours === 0
+            ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+            : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+
+          // Large (no message): same flex shell + progress-bar spacer as main timer → same Y axis
+          if (!hasMessage) {
+            return (
+              <div className="flex-1 flex flex-col items-center justify-center animate-in fade-in duration-500">
+                <div
+                  className={`mb-[-50px] text-center ${secondaryDisplayColor} text-xl md:text-2xl lg:text-3xl font-bold whitespace-nowrap`}
+                  style={{ lineHeight: '1.2' }}
+                >
+                  {labelNode}
+                </div>
+                <div className="text-center">
+                  <div
+                    className={`${secondaryDisplayColor} font-mono font-bold ${largeTimeClass}`}
+                    style={{ lineHeight: '1' }}
+                  >
+                    {formatSecondary(remainingSeconds)}
+                  </div>
+                </div>
+                {/* Same height as main timer progress bar so digits share the same Y */}
+                <div className="w-full max-w-5xl mt-0 h-8" aria-hidden />
+              </div>
+            );
+          }
+
+          // With message: compact secondary in lower area
+          return (
+            <div className="absolute bottom-20 right-1/3 transform translate-x-1/2 flex flex-col items-center animate-in fade-in duration-500">
+              <div
+                className={`absolute left-1/2 -translate-x-1/2 ${secondaryDisplayColor} text-lg md:text-xl lg:text-2xl font-bold whitespace-nowrap`}
+                style={{ lineHeight: '1.2', bottom: 'calc(5rem - 25px)' }}
+              >
+                {labelNode}
+              </div>
+              <div className={`${secondaryDisplayColor} font-mono font-bold text-3xl md:text-4xl lg:text-5xl`} style={{ lineHeight: '1' }}>
+                {formatSecondary(remainingSeconds)}
+              </div>
+            </div>
+          );
+        })()
       )}
 
       {/* Main Timer Layout - When there's both a secondary timer AND a message (small layout) */}
@@ -1225,23 +1178,35 @@ const Clock: React.FC<ClockProps> = ({
         
         return hasSecondaryTimer && hasMessage;
       })() && (
-        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-10">
+        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-[18%] -translate-x-1/2 min-w-[11rem]">
           {/* Overtime Indicator - Above main timer when both message and secondary timer are active */}
           {getRemainingTime() < 0 && (
-            <div className="mb-2">
-              <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">
+            <div className="mb-1">
+              <div className="font-bold text-red-500 text-lg leading-none">
                 OVER TIME
               </div>
             </div>
           )}
           
           <div 
-            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none ${
               usePreshowRainbow ? 'ros-rainbow-text' : ''
             }`}
             style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
           >
             {formatTime(getRemainingTime())}
+          </div>
+          {/* Main progress bar under small main timer */}
+          <div className="w-40 mx-auto mt-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
+            <div
+              className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                usePreshowRainbow ? 'ros-rainbow-fill' : ''
+              }`}
+              style={{
+                width: `${Math.min(100, Math.max(0, getRemainingPercentage()))}%`,
+                ...(usePreshowRainbow ? {} : { background: getProgressBarColor() }),
+              }}
+            />
           </div>
         </div>
       )}
@@ -1273,19 +1238,18 @@ const Clock: React.FC<ClockProps> = ({
         
         return hasSecondaryTimer && hasMessage;
       })() && (
-        <div className={`text-center transition-all duration-500 ease-in-out absolute bottom-20 right-10 ${secondaryDisplayColor}`}>
-          {/* Sub-cue CUE and Segment Name */}
-          <div className="text-lg mb-2 font-bold">
-            {(() => {
-              const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
-              const cueDisplay = currentSecondaryTimer.cue_display || currentSecondaryTimer.cue || `CUE ${currentSecondaryTimer.item_id}`;
-              const segmentName = currentSecondaryTimer.segment_name || currentSecondaryTimer.segmentName || 'Segment';
-              return `${cueDisplay} - ${segmentName}${secondaryResolumeLabel}`;
-            })()}
+        <div className={`text-center transition-all duration-500 ease-in-out absolute bottom-20 right-[18%] translate-x-1/2 min-w-[11rem] ${secondaryDisplayColor}`}>
+          {/* Small secondary: ALT + CUE only — same scale as small main */}
+          <div className="mb-1 text-lg font-bold leading-none">
+            <AltTimerBadge
+              timer={hybridTimerData?.secondaryTimer}
+              scheduleItems={scheduleItems}
+              cueOnly
+            />
           </div>
           
           {/* Sub-cue Countdown Timer */}
-          <div className="font-mono text-3xl font-bold">
+          <div className="font-mono text-3xl md:text-4xl font-bold leading-none">
             {(() => {
               const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
               const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
@@ -1303,50 +1267,21 @@ const Clock: React.FC<ClockProps> = ({
               }
             })()}
           </div>
-        </div>
-      )}
-
-      {/* Progress Bar - When there's both a secondary timer AND a message (small layout) */}
-      {(() => {
-        let hasSecondaryTimer = false;
-        
-        if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
-        } else {
-          hasSecondaryTimer = !!secondaryTimer;
-        }
-        
-        const hasMessage = !!activeStageMessage;
-        
-        return hasSecondaryTimer && hasMessage;
-      })() && (
-        <div className="w-full transition-all duration-500 ease-in-out absolute bottom-8 left-1/2 transform -translate-x-1/2 max-w-2xl">
-          <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-2">
-            <div 
+          {/* Secondary progress bar under small alt timer */}
+          <div className="w-40 mx-auto mt-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
+            <div
               className="h-full transition-all duration-1000 absolute top-0 right-0"
               style={{
-                width: `${Math.min(100, Math.max(0, (getRemainingTime() / (totalDuration || 1)) * 100))}%`,
-                backgroundColor: getProgressBarColor()
+                width: `${(() => {
+                  const t = hybridTimerData?.secondaryTimer;
+                  if (!t) return 0;
+                  const _ = secondaryTimerUpdate;
+                  const total = t.duration_seconds || t.duration || 0;
+                  if (total <= 0) return 0;
+                  const elapsed = calculateElapsed(t.started_at || t.created_at);
+                  return Math.min(100, Math.max(0, ((total - elapsed) / total) * 100));
+                })()}%`,
+                backgroundColor: isResolumeSynced(secondarySubTimer) ? '#fde047' : '#fb923c',
               }}
             />
           </div>
@@ -1418,17 +1353,17 @@ const Clock: React.FC<ClockProps> = ({
             /* Count Up: elapsed time; OVER TIME + red when overtime; bar fills up */
             <>
               {isOvertimeCountUp ? (
-                <div className="mb-[-50px] text-center">
-                  <div className="font-bold text-red-500 text-5xl">
+                <div className="mb-[-50px] text-center relative z-10 translate-y-10">
+                  <div className="font-bold text-red-500 text-5xl leading-none">
                     OVER TIME
                   </div>
-                  <div className="font-mono text-red-400 text-2xl mt-1">
+                  <div className="font-mono text-red-400 text-2xl mt-1 leading-none">
                     +{formatTime(overtimeAmount)}
                   </div>
                 </div>
               ) : usePreshowRainbow ? (
-                <div className="mb-[-50px] text-center">
-                  <div className="ros-preshow-super text-5xl">PRE SHOW COUNTDOWN</div>
+                <div className="mb-[-50px] text-center relative z-10 translate-y-10">
+                  <div className="ros-preshow-super text-5xl leading-none">PRE SHOW COUNTDOWN</div>
                   <span className="ros-preshow-super-rule" aria-hidden />
                 </div>
               ) : null}
@@ -1462,14 +1397,14 @@ const Clock: React.FC<ClockProps> = ({
           ) : (
             <>
               {getRemainingTime() < 0 ? (
-                <div className="mb-[-50px] text-center">
-                  <div className="font-bold text-red-500 text-5xl">
+                <div className="mb-[-50px] text-center relative z-10 translate-y-10">
+                  <div className="font-bold text-red-500 text-5xl leading-none">
                     OVER TIME
                   </div>
                 </div>
               ) : usePreshowRainbow ? (
-                <div className="mb-[-50px] text-center">
-                  <div className="ros-preshow-super text-5xl">PRE SHOW COUNTDOWN</div>
+                <div className="mb-[-50px] text-center relative z-10 translate-y-10">
+                  <div className="ros-preshow-super text-5xl leading-none">PRE SHOW COUNTDOWN</div>
                   <span className="ros-preshow-super-rule" aria-hidden />
                 </div>
               ) : null}

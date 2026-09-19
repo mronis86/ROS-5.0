@@ -47,7 +47,7 @@ import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';
-import DisplayModal from '../components/DisplayModal';
+import DisplayModal, { type DisplayOpenMode } from '../components/DisplayModal';
 import PinNotesColumnModal from '../components/PinNotesColumnModal';
 import ComplaintLineModal from '../components/ComplaintLineModal';
 import ComplaintLineFab from '../components/ComplaintLineFab';
@@ -6090,10 +6090,11 @@ const RunOfShowPage: React.FC = () => {
         const rowNumber = schedule.findIndex(s => s.id === itemId) + 1; // 1-based index
         const cueDisplay = item ? formatCueDisplay(item.customFields.cue) : `CUE ${itemId}`;
         const timerId = item?.timerId || `SUB${itemId}`;
+        const segmentName = item?.segmentName || '';
         
-        console.log('🔄 Starting sub-cue timer in database:', { eventId: event.id, itemId, userId: user.id, durationSeconds: totalSeconds, rowNumber, cueDisplay, timerId });
+        console.log('🔄 Starting sub-cue timer in database:', { eventId: event.id, itemId, userId: user.id, durationSeconds: totalSeconds, rowNumber, cueDisplay, timerId, segmentName });
         try {
-          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
+          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER', segmentName);
           console.log('✅ Sub-cue timer synced to database:', result);
           if (result?.error) {
             console.error('❌ Sub-cue timer database error:', result.error);
@@ -6328,8 +6329,8 @@ const RunOfShowPage: React.FC = () => {
   };
 
 
-  // Open full-screen timer in new window
-  const openFullScreenTimer = (mode: 'external' | 'browser' = 'external') => {
+  // Open full-screen timer in new window, new tab, or this tab
+  const openFullScreenTimer = (mode: DisplayOpenMode = 'external') => {
     setShowMenuDropdown(false);
     
     // Close existing timer window if open
@@ -6369,8 +6370,13 @@ const RunOfShowPage: React.FC = () => {
       ? `/fullscreen-timer?eventId=${encodeURIComponent(event.id)}`
       : '/fullscreen-timer';
 
-    if (mode === 'browser') {
+    if (mode === 'same') {
       navigate(timerUrl, { state: timerData });
+      return;
+    }
+
+    if (mode === 'tab') {
+      window.open(timerUrl, '_blank', 'noopener,noreferrer');
       return;
     }
 
@@ -6393,8 +6399,8 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Open Clock in new window or same-browser tab
-  const openClock = (mode: 'external' | 'browser' = 'external') => {
+  // Open Clock in new window, new tab, or this tab
+  const openClock = (mode: DisplayOpenMode = 'external') => {
     setShowMenuDropdown(false);
     
     // Close existing clock window if open
@@ -6432,8 +6438,13 @@ const RunOfShowPage: React.FC = () => {
 
     const clockUrl = event?.id ? `/clock?eventId=${encodeURIComponent(event.id)}` : '/clock';
 
-    if (mode === 'browser') {
+    if (mode === 'same') {
       navigate(clockUrl, { state: timerData });
+      return;
+    }
+
+    if (mode === 'tab') {
+      window.open(clockUrl, '_blank', 'noopener,noreferrer');
       return;
     }
 
@@ -9950,13 +9961,13 @@ const RunOfShowPage: React.FC = () => {
       }));
       
       // Start local timer interval
+      let hasAutoStopped = false;
       const timer = setInterval(() => {
         setSubCueTimerProgress(prev => {
           const progress = prev[itemId];
           if (!progress) return prev;
           
           const elapsed = Math.floor((Date.now() - (progress.startedAt?.getTime() || Date.now())) / 1000);
-          const remaining = Math.max(0, progress.total - elapsed);
           
           return {
             ...prev,
@@ -9981,48 +9992,43 @@ const RunOfShowPage: React.FC = () => {
           const elapsed = Math.floor((Date.now() - startTime) / 1000);
           const remaining = Math.max(0, prev.duration - elapsed);
           
-          // Auto-stop when timer reaches 0, but hold for a beat
-          if (remaining === 0) {
-            console.log('⏰ Sub-cue timer reached 0 - holding for a beat');
-            // Capture current event ID to avoid stale closure
+          // Auto-stop when timer reaches 0 (once)
+          if (remaining === 0 && !hasAutoStopped) {
+            hasAutoStopped = true;
+            console.log('⏰ Sub-cue timer reached 0 - holding briefly then clearing');
             const currentEventId = event?.id;
-            console.log('⏰ Current event ID for database call:', currentEventId);
             
-            // Hold at 0 for 1 second before clearing local state
+            // Hold at 0 for 1 second, then clear local + DB
             setTimeout(() => {
-              console.log('⏰ Sub-cue timer auto-stopping after hold - clearing local state');
-              // Clear the interval
-              if (secondaryTimerInterval) {
-                clearInterval(secondaryTimerInterval);
-                setSecondaryTimerInterval(null);
-              }
-              // Clear sub-cue timer state
-              Object.keys(subCueTimers).forEach(timerId => {
-                if (subCueTimers[parseInt(timerId)]) {
-                  clearInterval(subCueTimers[parseInt(timerId)]);
-                }
+              console.log('⏰ Sub-cue timer auto-stopping after hold');
+              clearInterval(timer);
+              setSubCueTimers(prevTimers => {
+                const next = { ...prevTimers };
+                delete next[itemId];
+                return next;
               });
-              setSubCueTimers({});
               setSubCueTimerProgress({});
               setSecondaryTimer(null);
+              setHybridTimerData(prevHybrid => ({
+                ...prevHybrid,
+                secondaryTimer: null,
+              }));
               
-              // Wait 3 more seconds before clearing from Supabase database
+              // Clear from database so Clock / other clients drop it too
               setTimeout(async () => {
                 try {
                   if (currentEventId) {
-                    console.log('⏰ Clearing sub-cue timer from database after 3s delay with event ID:', currentEventId);
+                    console.log('⏰ Clearing sub-cue timer from database with event ID:', currentEventId);
                     const result = await DatabaseService.stopSubCueTimer(currentEventId);
                     console.log('⏰ Database stop result:', result);
-                    console.log('⏰ Sub-cue timer stopped in database (is_active = false)');
                   } else {
                     console.error('❌ No event ID available for database call');
                   }
                 } catch (error) {
                   console.error('❌ Error stopping sub-cue timer in database:', error);
-                  console.error('❌ Error details:', error);
                 }
-              }, 3000); // 3 second delay before database clear
-            }, 1000); // 1 second hold at 0
+              }, 500);
+            }, 1000);
           }
           
           return {
@@ -10052,11 +10058,12 @@ const RunOfShowPage: React.FC = () => {
         const rowNumber = schedule.findIndex(s => s.id === itemId) + 1; // 1-based index
         const cueDisplay = item ? formatCueDisplay(item.customFields.cue) : `CUE ${itemId}`;
         const timerId = item?.timerId || `SUB${itemId}`;
+        const segmentName = item?.segmentName || '';
         
         // Start sub-cue timer (SQL function will handle stopping existing ones)
         try {
           console.log('🔄 Starting sub-cue timer for item:', itemId, '(will auto-stop any existing timers)');
-          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
+          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER', segmentName);
           console.log('✅ Secondary timer started in Supabase for item:', itemId, 'Result:', result);
           if (result?.error) {
             console.error('❌ Secondary timer database error:', result.error);

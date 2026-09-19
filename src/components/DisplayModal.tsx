@@ -7,13 +7,21 @@ import { fetchPublicAppSettings } from '../lib/appSettings';
 
 const STORAGE_KEY = 'ros_display_open_external';
 
-export type DisplayOpenMode = 'external' | 'browser';
+/** external = chrome-less popup; tab = new browser tab; same = replace this tab */
+export type DisplayOpenMode = 'external' | 'tab' | 'same';
 
 interface DisplayModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectFullscreenTimer: (mode: DisplayOpenMode) => void;
   onSelectClock: (mode: DisplayOpenMode) => void;
+}
+
+function normalizeSavedMode(saved: string | null): DisplayOpenMode {
+  // Legacy "browser" meant same-tab navigate (mislabeled as new tab)
+  if (saved === 'same' || saved === 'browser') return 'same';
+  if (saved === 'tab') return 'tab';
+  return 'external';
 }
 
 const DisplayModal: React.FC<DisplayModalProps> = ({
@@ -28,10 +36,7 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved === 'browser' || saved === 'external') {
-        setOpenMode(saved);
-      }
+      setOpenMode(normalizeSavedMode(localStorage.getItem(STORAGE_KEY)));
     } catch {
       // ignore
     }
@@ -110,14 +115,29 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
               <input
                 type="radio"
                 name="display-open-mode"
-                checked={openMode === 'browser'}
-                onChange={() => setMode('browser')}
+                checked={openMode === 'tab'}
+                onChange={() => setMode('tab')}
                 className="mt-1"
               />
               <span>
-                <span className="text-white text-sm font-medium">This browser (new tab)</span>
+                <span className="text-white text-sm font-medium">New tab</span>
                 <span className="block text-slate-400 text-xs mt-0.5">
-                  Opens in the same browser — capture that tab/window in OBS/vMix instead of pasting a Browser Source URL
+                  Opens in a new browser tab — keep Run of Show open here
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="display-open-mode"
+                checked={openMode === 'same'}
+                onChange={() => setMode('same')}
+                className="mt-1"
+              />
+              <span>
+                <span className="text-white text-sm font-medium">This tab</span>
+                <span className="block text-slate-400 text-xs mt-0.5">
+                  Replaces this page — capture that tab in OBS/vMix instead of pasting a Browser Source URL
                 </span>
               </span>
             </label>
