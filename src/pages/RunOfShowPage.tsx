@@ -116,10 +116,13 @@ export type { AudioCalloutKind, VoCue };
 /** Keep a menu panel inside the viewport. */
 function clampMenuPanelToViewport(
   el: HTMLElement | null,
-  mode: 'dropdown' | 'flyout' = 'flyout'
+  mode: 'dropdown' | 'flyout' = 'flyout',
+  /** For flyouts: horizontal anchor (main menu panel). Falls back to parent. */
+  xAnchorEl?: HTMLElement | null
 ) {
   if (!el) return;
   const pad = 8;
+  const gap = 8; // clear space between main menu and side flyout (match Import/Export)
   const vh = window.innerHeight;
   const vw = window.innerWidth;
 
@@ -131,43 +134,55 @@ function clampMenuPanelToViewport(
     el.style.bottom = '';
     el.style.maxHeight = '';
     el.style.transform = '';
-    el.style.overflowY = 'auto';
+    // Keep overflow visible so side flyouts aren't clipped / mis-measured
+    el.style.overflowY = 'visible';
     const measured = el.getBoundingClientRect();
     el.style.maxHeight = `${Math.max(120, vh - pad - measured.top)}px`;
     return;
   }
 
-  // Flyouts: fixed to the viewport so parent overflow can't clip them.
+  // Flyouts: fixed to the viewport. Y = row; X = always just past the main panel.
   const trigger = el.parentElement;
   const triggerRect = trigger?.getBoundingClientRect();
   if (!triggerRect) return;
 
-  const width = Math.max(el.offsetWidth || 176, 176);
-  let left = triggerRect.right + 4;
+  const xAnchor = xAnchorEl ?? trigger;
+  const xRect = xAnchor.getBoundingClientRect();
+
+  // Ignore CSS left-full / ml-1 — those cause Operator Actions to sit on top of the panel.
+  el.classList.remove('left-full', 'ml-1');
+  const width = Math.max(el.getBoundingClientRect().width || el.offsetWidth || 208, 176);
+
+  let left = Math.round(xRect.right + gap);
   if (left + width > vw - pad) {
-    left = Math.max(pad, triggerRect.left - width - 4);
+    // Prefer staying to the right with a smaller gap over overlapping the panel
+    const fitRight = vw - pad - width;
+    if (fitRight >= xRect.right) {
+      left = Math.round(xRect.right + Math.min(gap, fitRight - xRect.right));
+    } else if (fitRight >= xRect.left + 40) {
+      left = Math.round(Math.max(xRect.right, fitRight));
+    } else {
+      left = Math.round(Math.max(pad, xRect.left - width - gap));
+    }
   }
 
-  el.style.position = 'fixed';
-  el.style.left = `${left}px`;
-  el.style.right = 'auto';
-  el.style.top = `${triggerRect.top}px`;
-  el.style.bottom = 'auto';
-  el.style.marginLeft = '0';
-  el.style.marginRight = '0';
-  el.style.transform = '';
-  el.style.zIndex = '70';
-  el.style.overflowY = 'auto';
+  let top = Math.round(triggerRect.top);
 
-  // First pass: prefer aligning to trigger top, then shift + cap height.
-  let top = triggerRect.top;
-  el.style.top = `${top}px`;
+  el.style.setProperty('position', 'fixed', 'important');
+  el.style.setProperty('left', `${left}px`, 'important');
+  el.style.setProperty('right', 'auto', 'important');
+  el.style.setProperty('top', `${top}px`, 'important');
+  el.style.setProperty('bottom', 'auto', 'important');
+  el.style.setProperty('margin', '0', 'important');
+  el.style.setProperty('transform', 'none', 'important');
+  el.style.setProperty('z-index', '70', 'important');
+  el.style.overflowY = 'auto';
   el.style.maxHeight = `${Math.max(120, vh - pad - top)}px`;
 
   const after = el.getBoundingClientRect();
   if (after.bottom > vh - pad) {
     top = Math.max(pad, vh - pad - after.height);
-    el.style.top = `${top}px`;
+    el.style.setProperty('top', `${top}px`, 'important');
     el.style.maxHeight = `${Math.max(120, vh - pad - top)}px`;
   }
 }
@@ -6452,10 +6467,17 @@ const RunOfShowPage: React.FC = () => {
     if (!showMenuDropdown) return;
 
     const clampAll = () => {
-      clampMenuPanelToViewport(menuMainPanelRef.current, 'dropdown');
-      if (showOperatorActionsSubmenu) clampMenuPanelToViewport(operatorActionsFlyoutRef.current, 'flyout');
-      if (showImportExportSubmenu) clampMenuPanelToViewport(importExportFlyoutRef.current, 'flyout');
-      if (showReportsSubmenu) clampMenuPanelToViewport(reportsFlyoutRef.current, 'flyout');
+      const panel = menuMainPanelRef.current;
+      clampMenuPanelToViewport(panel, 'dropdown');
+      if (showOperatorActionsSubmenu) {
+        clampMenuPanelToViewport(operatorActionsFlyoutRef.current, 'flyout', panel);
+      }
+      if (showImportExportSubmenu) {
+        clampMenuPanelToViewport(importExportFlyoutRef.current, 'flyout', panel);
+      }
+      if (showReportsSubmenu) {
+        clampMenuPanelToViewport(reportsFlyoutRef.current, 'flyout', panel);
+      }
     };
 
     clampAll();
@@ -12617,7 +12639,7 @@ const RunOfShowPage: React.FC = () => {
                         {showOperatorActionsSubmenu && (
                           <div
                             ref={operatorActionsFlyoutRef}
-                            className="absolute left-full top-0 ml-1 min-w-[12rem] w-52 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]"
+                            className="absolute top-0 z-[60] w-52 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
                           >
                             <button
                               onClick={() => {
@@ -12753,7 +12775,7 @@ const RunOfShowPage: React.FC = () => {
                         {showImportExportSubmenu && (
                           <div
                             ref={importExportFlyoutRef}
-                            className="absolute left-full top-0 ml-1 w-52 py-1.5 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]"
+                            className="absolute top-0 z-[60] w-52 py-1.5 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
                           >
                             {/* Import */}
                             <button
@@ -12927,7 +12949,7 @@ const RunOfShowPage: React.FC = () => {
                         {showReportsSubmenu && (
                           <div
                             ref={reportsFlyoutRef}
-                            className="absolute left-full top-0 ml-1 min-w-[12rem] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]"
+                            className="absolute top-0 z-[60] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
                           >
                             <button
                               onClick={() => {

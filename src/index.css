@@ -290,3 +290,28 @@ html.led-output-broadcast #root,
 .ros-preshow-callout-tally {
   animation: ros-preshow-tally-pulse 1.6s ease-in-out infinite;
 }
+
+/* Cue Cards — bullets/numbers match text size and sit beside the line (incl. when centered) */
+.cue-card-body ul,
+.cue-card-body ol {
+  list-style-position: inside;
+  margin: 0.35em 0;
+  padding-left: 0;
+  padding-inline-start: 0;
+}
+.cue-card-body ul {
+  list-style-type: disc;
+}
+.cue-card-body ol {
+  list-style-type: decimal;
+}
+.cue-card-body li {
+  margin: 0.2em 0;
+  padding-left: 0;
+  list-style-position: inside;
+}
+.cue-card-body li::marker {
+  font-size: 1em;
+  color: inherit;
+  font-weight: inherit;
+}

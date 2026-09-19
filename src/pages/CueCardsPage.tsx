@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getApiBaseUrl } from '../services/api-client';
 import { apiJsonHeaders } from '../lib/sessionAuth';
@@ -13,13 +13,20 @@ import {
   type CueCardRole,
   type CueCardSlide,
   CUE_CARD_COMMENT_TYPES,
+  CUE_CARD_DEFAULT_BG,
+  CUE_CARD_DEFAULT_TEXT,
+  bodyToDisplayHtml,
+  bodyToPlainPreview,
   commentsForSlide,
   createEmptySlide,
   findRangeForSlide,
+  looksLikeHtml,
   mapApiComment,
   mapApiDeck,
   newRangeId,
   normalizeCueLabel,
+  plainBodyToHtml,
+  sanitizeCueCardHtml,
 } from '../lib/cueCards';
 
 interface ScheduleCueOption {
@@ -28,50 +35,503 @@ interface ScheduleCueOption {
   segmentName: string;
 }
 
+const FONT_SIZES = [
+  { label: 'S', px: '22px', title: 'Small' },
+  { label: 'M', px: '32px', title: 'Medium' },
+  { label: 'L', px: '44px', title: 'Large' },
+  { label: 'XL', px: '60px', title: 'Extra large' },
+] as const;
+
+function AlignIcon({ mode }: { mode: 'left' | 'center' | 'right' }) {
+  const lines =
+    mode === 'left'
+      ? [
+          [2, 4, 14],
+          [2, 8, 10],
+          [2, 12, 14],
+          [2, 16, 8],
+        ]
+      : mode === 'center'
+        ? [
+            [3, 4, 12],
+            [5, 8, 8],
+            [3, 12, 12],
+            [6, 16, 6],
+          ]
+        : [
+            [2, 4, 14],
+            [6, 8, 10],
+            [2, 12, 14],
+            [8, 16, 8],
+          ];
+  return (
+    <svg width="14" height="14" viewBox="0 0 18 20" aria-hidden className="block">
+      {lines.map(([x, y, w], i) => (
+        <rect key={i} x={x} y={y} width={w} height="2" rx="0.5" fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
+/** Keep list markers sized with text and glued to the line (works with center/right). */
+function normalizeCueCardLists(root: HTMLElement) {
+  root.querySelectorAll('ul, ol').forEach((list) => {
+    const el = list as HTMLElement;
+    el.style.listStylePosition = 'inside';
+    el.style.paddingLeft = '0';
+    el.style.marginLeft = '0';
+  });
+  root.querySelectorAll('li').forEach((item) => {
+    const li = item as HTMLElement;
+    li.style.listStylePosition = 'inside';
+    // Marker inherits li font-size — pull size from nested span if present
+    const sized = li.querySelector('span[style*="font-size"]') as HTMLElement | null;
+    if (sized?.style.fontSize) {
+      li.style.fontSize = sized.style.fontSize;
+    }
+  });
+}
+
+function FormatToolbar({
+  editorRef,
+  onBodyChange,
+}: {
+  editorRef: React.RefObject<HTMLDivElement | null>;
+  onBodyChange?: (html: string) => void;
+}) {
+  const persist = () => {
+    const el = editorRef.current;
+    if (!el) return;
+    normalizeCueCardLists(el);
+    onBodyChange?.(sanitizeCueCardHtml(el.innerHTML));
+  };
+
+  const run = (command: string, value?: string) => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+    try {
+      document.execCommand(command, false, value);
+    } catch {
+      /* ignore unsupported commands */
+    }
+    persist();
+  };
+
+  /** Apply alignment to blocks AND list items so bullets stay with centered text. */
+  const applyAlign = (command: 'justifyLeft' | 'justifyCenter' | 'justifyRight') => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+    const align =
+      command === 'justifyCenter' ? 'center' : command === 'justifyRight' ? 'right' : 'left';
+    try {
+      document.execCommand(command);
+    } catch {
+      /* ignore */
+    }
+    // Ensure list containers inherit the same alignment (inside markers ride with the text)
+    const sel = window.getSelection();
+    const node =
+      sel?.anchorNode &&
+      (sel.anchorNode.nodeType === Node.ELEMENT_NODE
+        ? (sel.anchorNode as HTMLElement)
+        : sel.anchorNode.parentElement);
+    const list = node?.closest('ul, ol') as HTMLElement | null;
+    const li = node?.closest('li') as HTMLElement | null;
+    if (list) list.style.textAlign = align;
+    if (li) {
+      li.style.textAlign = align;
+      li.style.listStylePosition = 'inside';
+    }
+    // If whole editor selection covers multiple lists, align all touched lists
+    el.querySelectorAll('ul, ol').forEach((listEl) => {
+      if (sel && sel.rangeCount && sel.getRangeAt(0).intersectsNode(listEl)) {
+        (listEl as HTMLElement).style.textAlign = align;
+        listEl.querySelectorAll('li').forEach((item) => {
+          (item as HTMLElement).style.textAlign = align;
+          (item as HTMLElement).style.listStylePosition = 'inside';
+        });
+      }
+    });
+    persist();
+  };
+
+  const insertList = (ordered: boolean) => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+
+    // Capture current alignment before list insert so markers stay with the text
+    const sel = window.getSelection();
+    const block =
+      sel?.anchorNode &&
+      (sel.anchorNode.nodeType === Node.ELEMENT_NODE
+        ? (sel.anchorNode as HTMLElement)
+        : sel.anchorNode.parentElement);
+    const priorAlign =
+      (block?.closest('[style*="text-align"]') as HTMLElement | null)?.style.textAlign ||
+      (block ? window.getComputedStyle(block).textAlign : 'left') ||
+      'left';
+    const align =
+      priorAlign === 'center' || priorAlign === 'right' || priorAlign === 'left'
+        ? priorAlign
+        : 'left';
+
+    try {
+      document.execCommand(ordered ? 'insertOrderedList' : 'insertUnorderedList');
+    } catch {
+      /* ignore */
+    }
+
+    const after =
+      sel?.anchorNode &&
+      (sel.anchorNode.nodeType === Node.ELEMENT_NODE
+        ? (sel.anchorNode as HTMLElement)
+        : sel.anchorNode.parentElement);
+    const list = after?.closest('ul, ol') as HTMLElement | null;
+    if (list) {
+      list.style.textAlign = align;
+      list.style.listStylePosition = 'inside';
+      list.querySelectorAll('li').forEach((item) => {
+        (item as HTMLElement).style.textAlign = align;
+        (item as HTMLElement).style.listStylePosition = 'inside';
+      });
+    }
+    normalizeCueCardLists(el);
+    persist();
+  };
+
+  const applyFontSize = (px: string) => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+
+    const sel = window.getSelection();
+    const anchorLi =
+      sel?.anchorNode &&
+      (sel.anchorNode.nodeType === Node.ELEMENT_NODE
+        ? (sel.anchorNode as HTMLElement)
+        : sel.anchorNode.parentElement
+      )?.closest('li');
+
+    try {
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand('fontSize', false, '7');
+    } catch {
+      /* ignore */
+    }
+    el.querySelectorAll('font[size="7"]').forEach((font) => {
+      const span = document.createElement('span');
+      span.style.fontSize = px;
+      while (font.firstChild) span.appendChild(font.firstChild);
+      font.parentNode?.replaceChild(span, font);
+    });
+    el.querySelectorAll('span[style*="font-size"]').forEach((span) => {
+      const s = span as HTMLElement;
+      if (s.style.fontSize === 'xxx-large' || s.style.fontSize === '-webkit-xxx-large') {
+        s.style.fontSize = px;
+      }
+    });
+    // Match bullet/number size to the line text
+    if (anchorLi) {
+      (anchorLi as HTMLElement).style.fontSize = px;
+    } else {
+      el.querySelectorAll('li').forEach((li) => {
+        const sized = li.querySelector(`span[style*="font-size: ${px}"]`) as HTMLElement | null;
+        if (sized) (li as HTMLElement).style.fontSize = px;
+      });
+    }
+    persist();
+  };
+
+  const btn =
+    'rounded border border-slate-500 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700';
+  const iconBtn =
+    'inline-flex h-7 w-7 items-center justify-center rounded border border-slate-500 text-slate-200 hover:bg-slate-700';
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-slate-700 bg-slate-900 px-3 py-2">
+      <button type="button" onClick={() => run('bold')} className={`${btn} font-bold`} title="Bold">
+        B
+      </button>
+      <button type="button" onClick={() => run('italic')} className={`${btn} italic`} title="Italic">
+        I
+      </button>
+      <button type="button" onClick={() => run('underline')} className={`${btn} underline`} title="Underline">
+        U
+      </button>
+      <span className="mx-0.5 h-5 w-px bg-slate-700" aria-hidden />
+      {FONT_SIZES.map((s) => (
+        <button
+          key={s.px}
+          type="button"
+          onClick={() => applyFontSize(s.px)}
+          className={btn}
+          title={s.title}
+        >
+          {s.label}
+        </button>
+      ))}
+      <span className="mx-0.5 h-5 w-px bg-slate-700" aria-hidden />
+      <button type="button" onClick={() => applyAlign('justifyLeft')} className={iconBtn} title="Align left">
+        <AlignIcon mode="left" />
+      </button>
+      <button type="button" onClick={() => applyAlign('justifyCenter')} className={iconBtn} title="Align center">
+        <AlignIcon mode="center" />
+      </button>
+      <button type="button" onClick={() => applyAlign('justifyRight')} className={iconBtn} title="Align right">
+        <AlignIcon mode="right" />
+      </button>
+      <span className="mx-0.5 h-5 w-px bg-slate-700" aria-hidden />
+      <button type="button" onClick={() => insertList(false)} className={btn} title="Bullet list">
+        • List
+      </button>
+      <button type="button" onClick={() => insertList(true)} className={btn} title="Numbered list">
+        1. List
+      </button>
+      <span className="mx-0.5 h-5 w-px bg-slate-700" aria-hidden />
+      <button
+        type="button"
+        onClick={() => run('foreColor', '#ffffff')}
+        className="h-6 w-6 rounded border border-slate-400 bg-white"
+        title="White text"
+      />
+      <button
+        type="button"
+        onClick={() => run('foreColor', '#fbbf24')}
+        className="h-6 w-6 rounded border border-slate-400 bg-amber-400"
+        title="Amber text"
+      />
+      <button
+        type="button"
+        onClick={() => run('foreColor', '#60a5fa')}
+        className="h-6 w-6 rounded border border-slate-400 bg-blue-400"
+        title="Blue text"
+      />
+      <button
+        type="button"
+        onClick={() => run('foreColor', '#4ade80')}
+        className="h-6 w-6 rounded border border-slate-400 bg-green-400"
+        title="Green text"
+      />
+      <button
+        type="button"
+        onClick={() => run('foreColor', '#f472b6')}
+        className="h-6 w-6 rounded border border-slate-400 bg-pink-400"
+        title="Pink text"
+      />
+    </div>
+  );
+}
+
+/** 16:9 stage — click/type on the card when editable. */
 function SlideStage({
   slide,
+  comments = [],
+  showComments = true,
   showScrollerNote,
+  editable = false,
+  onBodyChange,
+  bodyEditorRef,
   className = '',
 }: {
   slide: CueCardSlide | null;
+  comments?: CueCardComment[];
+  showComments?: boolean;
   showScrollerNote?: boolean;
+  editable?: boolean;
+  onBodyChange?: (html: string) => void;
+  bodyEditorRef?: React.RefObject<HTMLDivElement | null>;
   className?: string;
 }) {
+  const localBodyRef = useRef<HTMLDivElement>(null);
+  const bodyRef = bodyEditorRef || localBodyRef;
+
+  useEffect(() => {
+    if (!editable || !slide) return;
+    const el = bodyRef.current;
+    if (!el) return;
+    const next = looksLikeHtml(slide.body)
+      ? sanitizeCueCardHtml(slide.body)
+      : plainBodyToHtml(slide.body);
+    if (el.innerHTML !== next) {
+      el.innerHTML = next || '';
+    }
+  }, [editable, slide?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!slide) {
     return (
       <div
-        className={`flex items-center justify-center bg-slate-950 text-slate-400 ${className}`}
+        className={`flex items-center justify-center bg-black text-slate-400 ${className}`}
       >
-        No slides yet
+        No slides yet — click + Add
       </div>
     );
   }
+
+  const textColor = slide.textColor || CUE_CARD_DEFAULT_TEXT;
+  const bodyHtml = bodyToDisplayHtml(slide.body);
+  const bodyClass =
+    'cue-card-body min-h-0 flex-1 overflow-y-auto px-8 py-6 text-[32px] leading-snug outline-none [&_p]:my-2';
+  const visibleComments = showComments ? comments : [];
+  const hasBottomChrome = visibleComments.length > 0 || (showScrollerNote && !!slide.scrollerNote);
+
   return (
     <div
-      className={`relative flex flex-col justify-center overflow-hidden px-8 py-10 text-center ${className}`}
+      className={`relative flex h-full w-full flex-col overflow-hidden ${className}`}
       style={{
-        backgroundColor: slide.bgColor || '#0f172a',
-        color: slide.textColor || '#f8fafc',
+        backgroundColor: CUE_CARD_DEFAULT_BG,
+        color: textColor,
       }}
     >
-      {slide.title ? (
-        <h1 className="mb-4 text-3xl font-bold leading-tight md:text-5xl lg:text-6xl">
-          {slide.title}
-        </h1>
-      ) : null}
-      {slide.body ? (
-        <div className="mx-auto max-w-5xl whitespace-pre-wrap text-left text-lg leading-relaxed md:text-2xl lg:text-3xl">
-          {slide.body}
+      {editable ? (
+        <div
+          ref={bodyRef}
+          contentEditable
+          suppressContentEditableWarning
+          data-placeholder="Click here and type…"
+          onInput={(e) => {
+            onBodyChange?.(
+              sanitizeCueCardHtml((e.currentTarget as HTMLDivElement).innerHTML)
+            );
+          }}
+          className={`${bodyClass} empty:before:pointer-events-none empty:before:text-white/30 empty:before:content-[attr(data-placeholder)] ${
+            hasBottomChrome ? 'pb-48' : ''
+          }`}
+        />
+      ) : bodyHtml ? (
+        <div
+          className={`${bodyClass} ${hasBottomChrome ? 'pb-48' : ''}`}
+          dangerouslySetInnerHTML={{ __html: bodyHtml }}
+        />
+      ) : (
+        <div className="flex flex-1 items-center justify-center text-slate-500">Empty slide</div>
+      )}
+
+      {/* Comment bars across the bottom as columns (Teleprompter-style, larger type) */}
+      {hasBottomChrome ? (
+        <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 px-5 pb-5 pt-2">
+          {visibleComments.length > 0 ? (
+            <div
+              className="pointer-events-auto grid gap-3"
+              style={{
+                gridTemplateColumns: `repeat(${Math.min(visibleComments.length, 4)}, minmax(0, 1fr))`,
+              }}
+            >
+              {visibleComments.map((c) => {
+                const meta = CUE_CARD_COMMENT_TYPES[c.type] || CUE_CARD_COMMENT_TYPES.GENERAL;
+                return (
+                  <div
+                    key={c.id}
+                    className={`${meta.bgColor} max-h-56 overflow-y-auto rounded-xl border-l-8 px-5 py-4 shadow-xl ${meta.borderColor}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="shrink-0 text-5xl leading-none" aria-hidden>
+                        {meta.icon}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className={`text-2xl font-bold ${meta.color}`}>{meta.label}</div>
+                        <div className="mt-2 whitespace-pre-wrap text-4xl font-semibold leading-tight text-white">
+                          {c.text}
+                        </div>
+                        {c.author ? (
+                          <div className="mt-2 text-lg text-white/70">{c.author}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+          {showScrollerNote && slide.scrollerNote ? (
+            <div
+              className={`pointer-events-auto rounded-lg border border-amber-500/40 bg-black/70 px-4 py-2 text-left text-2xl text-amber-100 ${
+                visibleComments.length > 0 ? 'mt-3' : ''
+              }`}
+            >
+              <span className="font-semibold text-amber-300">Scroller: </span>
+              {slide.scrollerNote}
+            </div>
+          ) : null}
         </div>
-      ) : !slide.title ? (
-        <p className="text-slate-400">Empty slide</p>
       ) : null}
-      {showScrollerNote && slide.scrollerNote ? (
-        <div className="absolute bottom-3 left-3 right-3 rounded-lg border border-amber-500/40 bg-black/55 px-3 py-2 text-left text-sm text-amber-100">
-          <span className="font-semibold text-amber-300">Scroller: </span>
-          {slide.scrollerNote}
+    </div>
+  );
+}
+
+const CUE_CARD_DESIGN_W = 1920;
+const CUE_CARD_DESIGN_H = 1080;
+
+/**
+ * Always 16:9. Renders children at a fixed design size and scales to fit so
+ * scroller edit and viewer preview stay 1:1 (fonts, layout, lists).
+ */
+function SixteenByNineFrame({
+  children,
+  className = '',
+  padded = true,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  padded?: boolean;
+}) {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w <= 0 || h <= 0) return;
+      setScale(Math.min(w / CUE_CARD_DESIGN_W, h / CUE_CARD_DESIGN_H));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const scaledW = CUE_CARD_DESIGN_W * scale;
+  const scaledH = CUE_CARD_DESIGN_H * scale;
+  const useZoom =
+    typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('zoom', '1');
+
+  return (
+    <div
+      ref={outerRef}
+      className={`grid min-h-0 flex-1 place-items-center overflow-hidden bg-zinc-950 ${
+        padded ? 'p-3' : 'p-0'
+      } ${className}`}
+    >
+      <div
+        className={`relative overflow-hidden bg-black ${
+          padded ? 'rounded-lg border border-slate-600 shadow-2xl' : ''
+        }`}
+        style={{ width: scaledW, height: scaledH }}
+      >
+        <div
+          className="absolute left-0 top-0 origin-top-left"
+          style={
+            useZoom
+              ? {
+                  width: CUE_CARD_DESIGN_W,
+                  height: CUE_CARD_DESIGN_H,
+                  zoom: scale,
+                }
+              : {
+                  width: CUE_CARD_DESIGN_W,
+                  height: CUE_CARD_DESIGN_H,
+                  transform: `scale(${scale})`,
+                  transformOrigin: 'top left',
+                }
+          }
+        >
+          {children}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
@@ -88,10 +548,14 @@ const CueCardsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
   const [scheduleCues, setScheduleCues] = useState<ScheduleCueOption[]>([]);
   const [panel, setPanel] = useState<'edit' | 'cues' | 'comments'>('edit');
   const [commentDraft, setCommentDraft] = useState('');
   const [commentType, setCommentType] = useState<CueCardCommentType>('GENERAL');
+  const [viewerCommentTypes, setViewerCommentTypes] = useState<Set<CueCardCommentType>>(
+    () => new Set(Object.keys(CUE_CARD_COMMENT_TYPES) as CueCardCommentType[])
+  );
   const [rangeDraft, setRangeDraft] = useState({
     cueLabel: '',
     scheduleItemId: '' as string,
@@ -102,6 +566,7 @@ const CueCardsPage: React.FC = () => {
   const roleRef = useRef(role);
   const slideIndexRef = useRef(slideIndex);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stageBodyEditorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     roleRef.current = role;
@@ -110,10 +575,61 @@ const CueCardsPage: React.FC = () => {
     slideIndexRef.current = slideIndex;
   }, [slideIndex]);
 
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs);
+      if (document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
+      }
+    };
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen?.();
+      } else {
+        await document.exitFullscreen?.();
+      }
+    } catch {
+      /* user gesture / browser denied */
+    }
+  }, []);
+
+  const goToScroller = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen?.().catch(() => {});
+    }
+    setRole('SCROLLER');
+  }, []);
+
   const slides = deck?.slides || [];
   const currentSlide = slides[slideIndex] || null;
   const activeRange = findRangeForSlide(deck?.cueRanges || [], slideIndex);
   const slideComments = commentsForSlide(deck?.comments || [], currentSlide?.id);
+  const viewerVisibleComments = useMemo(
+    () => slideComments.filter((c) => viewerCommentTypes.has(c.type)),
+    [slideComments, viewerCommentTypes]
+  );
+
+  const toggleViewerCommentType = useCallback((t: CueCardCommentType) => {
+    setViewerCommentTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
+  }, []);
+
+  const setAllViewerCommentTypes = useCallback((on: boolean) => {
+    setViewerCommentTypes(
+      on
+        ? new Set(Object.keys(CUE_CARD_COMMENT_TYPES) as CueCardCommentType[])
+        : new Set()
+    );
+  }, []);
 
   const authorName = useMemo(
     () => user?.full_name || user?.email || 'Operator',
@@ -179,12 +695,20 @@ const CueCardsPage: React.FC = () => {
       if (!eventId) return;
       setSaving(true);
       try {
+        const savedSlides = next.slides.map((s) => ({
+          ...s,
+          bgColor: CUE_CARD_DEFAULT_BG,
+          textColor: s.textColor || CUE_CARD_DEFAULT_TEXT,
+          body: sanitizeCueCardHtml(
+            looksLikeHtml(s.body) ? s.body : plainBodyToHtml(s.body)
+          ),
+        }));
         const res = await fetch(`${getApiBaseUrl()}/api/cue-cards/${encodeURIComponent(eventId)}`, {
           method: 'PUT',
           headers: apiJsonHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             title: next.title,
-            slides: next.slides,
+            slides: savedSlides,
             cueRanges: next.cueRanges,
             updatedBy: authorName,
           }),
@@ -193,7 +717,7 @@ const CueCardsPage: React.FC = () => {
         if (broadcast) {
           socketClient.emitCueCardsDeck({
             title: next.title,
-            slides: next.slides,
+            slides: savedSlides,
             cueRanges: next.cueRanges,
           });
         }
@@ -299,28 +823,59 @@ const CueCardsPage: React.FC = () => {
     };
   }, [eventId]);
 
-  // Keyboard for scroller
+  // Keyboard — scroller + viewer
   useEffect(() => {
-    if (role !== 'SCROLLER') return;
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+      if (el?.isContentEditable) return;
+
+      if (e.key === 'Escape') {
+        if (document.fullscreenElement) {
+          e.preventDefault();
+          void document.exitFullscreen?.();
+          return;
+        }
+        if (role === 'VIEWER') {
+          e.preventDefault();
+          goToScroller();
+        }
+        return;
+      }
+
+      if (e.key === 'f' || e.key === 'F') {
+        if (role !== 'VIEWER') return;
+        e.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
+
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || (role === 'VIEWER' && e.key === ' ')) {
         e.preventDefault();
         goToSlide(slideIndexRef.current + 1);
       } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
         e.preventDefault();
         goToSlide(slideIndexRef.current - 1);
+      } else if (role === 'SCROLLER' && e.key === ' ') {
+        e.preventDefault();
+        goToSlide(slideIndexRef.current + 1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [role, goToSlide]);
+  }, [role, goToSlide, toggleFullscreen, goToScroller]);
 
   const updateCurrentSlide = (patch: Partial<CueCardSlide>) => {
     if (!deck || !currentSlide) return;
     const nextSlides = deck.slides.map((s, i) =>
-      i === slideIndex ? { ...s, ...patch } : s
+      i === slideIndex
+        ? {
+            ...s,
+            ...patch,
+            bgColor: CUE_CARD_DEFAULT_BG,
+          }
+        : s
     );
     schedulePersist({ ...deck, slides: nextSlides });
   };
@@ -494,24 +1049,154 @@ const CueCardsPage: React.FC = () => {
     );
   }
 
-  // VIEWER: full-bleed only
+  // VIEWER: same 16:9 design canvas as scroller (1:1), with clear exit chrome
   if (role === 'VIEWER') {
     return (
       <div className="relative flex h-screen flex-col bg-black">
-        <div className="absolute right-3 top-3 z-20 flex gap-2 opacity-0 transition-opacity hover:opacity-100 focus-within:opacity-100">
-          <button
-            type="button"
-            className="rounded bg-slate-800/90 px-3 py-1.5 text-xs font-semibold text-white"
-            onClick={() => setRole('SCROLLER')}
-          >
-            Switch to Scroller
-          </button>
-        </div>
-        <SlideStage slide={currentSlide} className="h-full w-full" />
-        <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/40 px-2 py-1 text-xs text-white/70">
-          {slides.length ? `${slideIndex + 1} / ${slides.length}` : '0'}
-          {activeRange ? ` · ${activeRange.cueLabel}` : ''}
-        </div>
+        {!isFullscreen ? (
+          <header className="z-20 flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-700 bg-slate-900/95 px-3 py-2">
+            <button
+              type="button"
+              className="rounded bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-500"
+              onClick={goToScroller}
+            >
+              ← Back to Scroller
+            </button>
+            <div className="flex items-center gap-1 rounded-lg bg-slate-800 p-1">
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700"
+                onClick={goToScroller}
+              >
+                Scroller
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-bold text-white"
+              >
+                Viewer
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded bg-slate-700 px-3 py-1.5 text-sm font-semibold hover:bg-slate-600 disabled:opacity-40"
+                onClick={() => goToSlide(slideIndex - 1)}
+                disabled={slideIndex <= 0}
+              >
+                ←
+              </button>
+              <span className="min-w-[4.5rem] text-center text-sm font-mono text-slate-200">
+                {slides.length ? `${slideIndex + 1}/${slides.length}` : '0/0'}
+              </span>
+              <button
+                type="button"
+                className="rounded bg-slate-700 px-3 py-1.5 text-sm font-semibold hover:bg-slate-600 disabled:opacity-40"
+                onClick={() => goToSlide(slideIndex + 1)}
+                disabled={slideIndex >= slides.length - 1}
+              >
+                →
+              </button>
+              {activeRange ? (
+                <span className="rounded bg-yellow-700/80 px-2 py-1 text-xs font-bold text-yellow-50">
+                  {activeRange.cueLabel}
+                </span>
+              ) : null}
+            </div>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/80 px-2 py-1">
+                <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Comments
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAllViewerCommentTypes(true)}
+                  className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-300 hover:bg-slate-700"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllViewerCommentTypes(false)}
+                  className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-300 hover:bg-slate-700"
+                >
+                  None
+                </button>
+                {(Object.keys(CUE_CARD_COMMENT_TYPES) as CueCardCommentType[]).map((t) => {
+                  const meta = CUE_CARD_COMMENT_TYPES[t];
+                  const on = viewerCommentTypes.has(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => toggleViewerCommentType(t)}
+                      title={`${on ? 'Hide' : 'Show'} ${meta.label}`}
+                      className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+                        on
+                          ? `${meta.bgColor} text-white`
+                          : 'bg-slate-800 text-slate-500 line-through'
+                      }`}
+                    >
+                      {meta.icon} {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => void toggleFullscreen()}
+                className="rounded border border-slate-500 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+                title="Fullscreen (F)"
+              >
+                Fullscreen
+              </button>
+              <span className="hidden text-[11px] text-slate-500 sm:inline">Esc = Scroller</span>
+              <Link
+                to={`/run-of-show?eventId=${encodeURIComponent(eventId)}`}
+                className="rounded border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+              >
+                Exit to Run of Show
+              </Link>
+            </div>
+          </header>
+        ) : (
+          <div className="absolute inset-x-0 top-0 z-20 flex h-auto flex-wrap items-start justify-end gap-2 p-3 opacity-0 transition-opacity hover:opacity-100 focus-within:opacity-100">
+            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-600 bg-slate-900/95 px-2 py-1">
+              {(Object.keys(CUE_CARD_COMMENT_TYPES) as CueCardCommentType[]).map((t) => {
+                const meta = CUE_CARD_COMMENT_TYPES[t];
+                const on = viewerCommentTypes.has(t);
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => toggleViewerCommentType(t)}
+                    title={`${on ? 'Hide' : 'Show'} ${meta.label}`}
+                    className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+                      on ? `${meta.bgColor} text-white` : 'bg-slate-800 text-slate-500'
+                    }`}
+                  >
+                    {meta.icon}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="rounded bg-slate-800/90 px-3 py-1.5 text-xs font-semibold text-white"
+              onClick={() => void toggleFullscreen()}
+            >
+              Exit fullscreen (Esc)
+            </button>
+          </div>
+        )}
+        <SixteenByNineFrame padded={!isFullscreen} className="bg-black">
+          <SlideStage
+            key={currentSlide?.id || 'empty'}
+            slide={currentSlide}
+            comments={viewerVisibleComments}
+            className="h-full w-full"
+          />
+        </SixteenByNineFrame>
       </div>
     );
   }
@@ -567,6 +1252,12 @@ const CueCardsPage: React.FC = () => {
             </span>
           ) : null}
         </div>
+        <Link
+          to={`/run-of-show?eventId=${encodeURIComponent(eventId)}`}
+          className="rounded border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+        >
+          Exit to Run of Show
+        </Link>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -604,8 +1295,13 @@ const CueCardsPage: React.FC = () => {
                     {hasComments ? <span title="Has comments">💬</span> : null}
                   </div>
                   <div className="truncate font-semibold text-slate-100">
-                    {s.title || 'Untitled'}
+                    {s.title?.trim() || `Slide ${i + 1}`}
                   </div>
+                  {bodyToPlainPreview(s.body) ? (
+                    <div className="mt-0.5 truncate text-[10px] text-slate-400">
+                      {bodyToPlainPreview(s.body)}
+                    </div>
+                  ) : null}
                   {range ? (
                     <div className="mt-0.5 truncate text-[10px] text-yellow-300">
                       {range.cueLabel}
@@ -622,13 +1318,24 @@ const CueCardsPage: React.FC = () => {
           </div>
         </aside>
 
-        {/* Center stage */}
-        <main className="flex min-w-0 flex-1 flex-col">
-          <SlideStage
-            slide={currentSlide}
-            showScrollerNote
-            className="min-h-0 flex-1 border-b border-slate-800"
+        {/* Center stage — type on the 16:9 card */}
+        <main className="flex min-w-0 flex-1 flex-col border-b border-slate-800 bg-black">
+          <FormatToolbar
+            editorRef={stageBodyEditorRef}
+            onBodyChange={(body) => updateCurrentSlide({ body })}
           />
+          <SixteenByNineFrame>
+            <SlideStage
+              key={currentSlide?.id || 'empty'}
+              slide={currentSlide}
+              comments={slideComments}
+              editable
+              bodyEditorRef={stageBodyEditorRef}
+              onBodyChange={(body) => updateCurrentSlide({ body })}
+              showScrollerNote
+              className="h-full w-full"
+            />
+          </SixteenByNineFrame>
         </main>
 
         {/* Right tools */}
@@ -663,21 +1370,19 @@ const CueCardsPage: React.FC = () => {
             {panel === 'edit' && currentSlide ? (
               <div className="space-y-3">
                 <label className="block text-xs text-slate-400">
-                  Title
+                  Slide label
+                  <span className="ml-1 font-normal text-slate-500">(list only — not on card)</span>
                   <input
                     className="mt-1 w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-white"
                     value={currentSlide.title}
                     onChange={(e) => updateCurrentSlide({ title: e.target.value })}
+                    placeholder={`Slide ${slideIndex + 1}`}
                   />
                 </label>
-                <label className="block text-xs text-slate-400">
-                  Body
-                  <textarea
-                    className="mt-1 min-h-[10rem] w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-white"
-                    value={currentSlide.body}
-                    onChange={(e) => updateCurrentSlide({ body: e.target.value })}
-                  />
-                </label>
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  Type on the card. Select text, then use the toolbar for size, alignment,
+                  bold/italic, lists, and color.
+                </p>
                 <label className="block text-xs text-slate-400">
                   Scroller-only note
                   <textarea
@@ -689,26 +1394,6 @@ const CueCardsPage: React.FC = () => {
                     placeholder="Not shown on Viewer"
                   />
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block text-xs text-slate-400">
-                    Background
-                    <input
-                      type="color"
-                      className="mt-1 h-9 w-full cursor-pointer rounded border border-slate-600 bg-slate-800"
-                      value={currentSlide.bgColor || '#0f172a'}
-                      onChange={(e) => updateCurrentSlide({ bgColor: e.target.value })}
-                    />
-                  </label>
-                  <label className="block text-xs text-slate-400">
-                    Text
-                    <input
-                      type="color"
-                      className="mt-1 h-9 w-full cursor-pointer rounded border border-slate-600 bg-slate-800"
-                      value={currentSlide.textColor || '#f8fafc'}
-                      onChange={(e) => updateCurrentSlide({ textColor: e.target.value })}
-                    />
-                  </label>
-                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -862,8 +1547,8 @@ const CueCardsPage: React.FC = () => {
                 ) : (
                   <>
                     <p className="text-xs text-slate-400">
-                      Same comment types as Scripts Follow / Teleprompter — attached to
-                      this slide.
+                      Comments appear on the card (like Teleprompter) for scroller and
+                      viewer. Same types as Scripts Follow.
                     </p>
                     <div className="flex flex-wrap gap-1">
                       {(Object.keys(CUE_CARD_COMMENT_TYPES) as CueCardCommentType[]).map(
