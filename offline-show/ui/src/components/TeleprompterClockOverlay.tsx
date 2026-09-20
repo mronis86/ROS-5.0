@@ -46,7 +46,8 @@ const DESIGN_H = 1080;
 
 /**
  * 16:9 teleprompter for Clock / Fullscreen Timer.
- * Same 1920×1080 design canvas, font scale, padding, and SVG guide as Viewer.
+ * Same 1920×1080 design canvas as Viewer; scaled via a sized wrapper so it stays centered
+ * (transform-only scale leaves a 1920×1080 layout box that browsers clip off-center).
  */
 export const TeleprompterClockOverlay: React.FC<{
   feed: TeleprompterClockFeed;
@@ -91,152 +92,170 @@ export const TeleprompterClockOverlay: React.FC<{
     return comments.filter((c) => c.lineNumber === lineIndex - 1);
   };
 
+  const stageW = DESIGN_W * scale;
+  const stageH = DESIGN_H * scale;
+
   return (
     <div
       ref={outerRef}
-      className={`relative grid h-full w-full place-items-center overflow-hidden bg-black ${className}`}
+      className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${className}`}
     >
+      {/* Layout-sized stage so centering is true; design canvas scales from top-left inside */}
       <div
-        className="relative shrink-0 overflow-hidden"
+        className="relative overflow-hidden"
         style={{
-          width: DESIGN_W,
-          height: DESIGN_H,
+          width: stageW,
+          height: stageH,
           backgroundColor: settings.backgroundColor || '#000',
-          transform: `scale(${scale})`,
-          transformOrigin: 'center center',
         }}
       >
-        {/* Scrollable content — same coordinate space as Teleprompter Viewer */}
         <div
-          ref={scrollRef}
-          className="h-full w-full overflow-auto"
+          className="absolute left-0 top-0 overflow-hidden"
           style={{
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none',
-            transform: mirrored ? 'scaleX(-1)' : undefined,
+            width: DESIGN_W,
+            height: DESIGN_H,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            backgroundColor: settings.backgroundColor || '#000',
           }}
         >
+          {/* Scrollable content — same coordinate space as Teleprompter Viewer */}
           <div
+            ref={scrollRef}
+            className="teleprompter-clock-scroll h-full w-full overflow-y-auto overflow-x-hidden"
             style={{
-              minHeight: '100%',
-              paddingTop: 540,
-              paddingBottom: 540,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none',
+              transform: mirrored ? 'scaleX(-1)' : undefined,
             }}
           >
             <div
               style={{
-                fontSize: `${fontSize * 1.35}px`,
-                lineHeight,
-                textAlign: settings.textAlign || 'center',
-                color: settings.textColor || '#FFFFFF',
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 500,
-                width: '95%',
-                margin: '0 auto',
+                minHeight: '100%',
+                paddingTop: 540,
+                paddingBottom: 540,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'flex-start',
               }}
             >
-              {lines.map((line, index) => {
-                const lineComments = commentsForPrevLine(index);
-                return (
-                  <div key={index} className="mb-2" data-line-number={index}>
-                    {lineComments.length > 0 ? (
-                      <div className="mb-2 space-y-2">
-                        {lineComments.map((c) => {
-                          const meta = COMMENT_META[c.type] || COMMENT_META.GENERAL;
-                          return (
-                            <div
-                              key={c.id}
-                              className={`${meta.bgColor} rounded-lg border-l-4 px-4 py-3`}
-                              style={{
-                                fontSize: `${fontSize * 0.6}px`,
-                                transform: mirrored ? 'scaleX(-1)' : undefined,
-                              }}
-                            >
-                              <div className="flex items-start gap-2">
-                                <span className="text-3xl">{meta.icon}</span>
-                                <div className="min-w-0 flex-1">
-                                  <div className={`text-base font-bold ${meta.color}`}>
-                                    {meta.label}
+              <div
+                style={{
+                  fontSize: `${fontSize * 1.35}px`,
+                  lineHeight,
+                  textAlign: settings.textAlign || 'center',
+                  color: settings.textColor || '#FFFFFF',
+                  fontFamily: 'Arial, sans-serif',
+                  fontWeight: 500,
+                  width: '95%',
+                  margin: '0 auto',
+                  boxSizing: 'border-box',
+                }}
+              >
+                {lines.map((line, index) => {
+                  const lineComments = commentsForPrevLine(index);
+                  return (
+                    <div key={index} className="mb-2" data-line-number={index}>
+                      {lineComments.length > 0 ? (
+                        <div className="mb-2 space-y-2">
+                          {lineComments.map((c) => {
+                            const meta = COMMENT_META[c.type] || COMMENT_META.GENERAL;
+                            return (
+                              <div
+                                key={c.id}
+                                className={`${meta.bgColor} rounded-lg border-l-4 px-4 py-3`}
+                                style={{
+                                  fontSize: `${fontSize * 0.6}px`,
+                                  transform: mirrored ? 'scaleX(-1)' : undefined,
+                                }}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <span className="text-3xl">{meta.icon}</span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className={`text-base font-bold ${meta.color}`}>
+                                      {meta.label}
+                                    </div>
+                                    <div className="mt-1 text-white">{c.text}</div>
                                   </div>
-                                  <div className="mt-1 text-white">{c.text}</div>
                                 </div>
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                    <div>{line || '\u00A0'}</div>
-                  </div>
-                );
-              })}
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      <div>{line || '\u00A0'}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
+
+          {/* Reading guide — same SVG as Viewer (fixed to 1920×1080 frame) */}
+          {guideMode !== 'off' ? (
+            <div
+              className="pointer-events-none absolute left-0 right-0 z-50"
+              style={{
+                top: `${guidePct}%`,
+                transform: 'translateY(-50%)',
+                width: '100%',
+                height: 60,
+              }}
+            >
+              {guideMode === 'arrows-with-lines' ? (
+                <svg width="100%" height="60" style={{ position: 'absolute', top: 0, left: 0 }}>
+                  <line
+                    x1="0"
+                    y1="0"
+                    x2="100%"
+                    y2="0"
+                    stroke={guideColor}
+                    strokeWidth="3"
+                    opacity="0.7"
+                  />
+                  <line
+                    x1="0"
+                    y1="60"
+                    x2="100%"
+                    y2="60"
+                    stroke={guideColor}
+                    strokeWidth="3"
+                    opacity="0.7"
+                  />
+                </svg>
+              ) : null}
+
+              <div className="absolute left-0 top-1/2 -translate-y-1/2">
+                <svg width="60" height="60" viewBox="0 0 60 60">
+                  <polygon
+                    points="15,10 45,30 15,50"
+                    fill={guideColor}
+                    stroke={guideColor}
+                    strokeWidth="4"
+                    opacity="0.75"
+                  />
+                </svg>
+              </div>
+
+              <div className="absolute right-0 top-1/2 -translate-y-1/2">
+                <svg width="60" height="60" viewBox="0 0 60 60">
+                  <polygon
+                    points="45,10 15,30 45,50"
+                    fill={guideColor}
+                    stroke={guideColor}
+                    strokeWidth="4"
+                    opacity="0.75"
+                  />
+                </svg>
+              </div>
+            </div>
+          ) : null}
         </div>
-
-        {/* Reading guide — same SVG arrows/lines as Viewer (fixed to 1920×1080 frame) */}
-        {guideMode !== 'off' ? (
-          <div
-            className="pointer-events-none absolute left-0 right-0 z-50"
-            style={{
-              top: `${guidePct}%`,
-              transform: 'translateY(-50%)',
-              width: '100%',
-              height: 60,
-            }}
-          >
-            {guideMode === 'arrows-with-lines' ? (
-              <svg width="100%" height="60" style={{ position: 'absolute', top: 0, left: 0 }}>
-                <line
-                  x1="0"
-                  y1="0"
-                  x2="100%"
-                  y2="0"
-                  stroke={guideColor}
-                  strokeWidth="3"
-                  opacity="0.7"
-                />
-                <line
-                  x1="0"
-                  y1="60"
-                  x2="100%"
-                  y2="60"
-                  stroke={guideColor}
-                  strokeWidth="3"
-                  opacity="0.7"
-                />
-              </svg>
-            ) : null}
-
-            <div className="absolute left-0 top-1/2 -translate-y-1/2">
-              <svg width="60" height="60" viewBox="0 0 60 60">
-                <polygon
-                  points="15,10 45,30 15,50"
-                  fill={guideColor}
-                  stroke={guideColor}
-                  strokeWidth="4"
-                  opacity="0.75"
-                />
-              </svg>
-            </div>
-
-            <div className="absolute right-0 top-1/2 -translate-y-1/2">
-              <svg width="60" height="60" viewBox="0 0 60 60">
-                <polygon
-                  points="45,10 15,30 45,50"
-                  fill={guideColor}
-                  stroke={guideColor}
-                  strokeWidth="4"
-                  opacity="0.75"
-                />
-              </svg>
-            </div>
-          </div>
-        ) : null}
       </div>
+
+      <style>{`
+        .teleprompter-clock-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
+      `}</style>
     </div>
   );
 };
