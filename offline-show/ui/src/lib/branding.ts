@@ -58,3 +58,71 @@ export function setLogoVariantId(id: LogoVariantId): void {
   }
   window.dispatchEvent(new CustomEvent(LOGO_VARIANT_CHANGE_EVENT, { detail: { id } }));
 }
+
+export type CountdownColorModeId = 'standard' | 'white' | 'bolderGreen';
+
+export const COUNTDOWN_COLOR_MODES: {
+  id: CountdownColorModeId;
+  label: string;
+  description: string;
+  previewHex: string;
+}[] = [
+  {
+    id: 'standard',
+    label: 'Standard',
+    description: 'Current emerald green when plenty of time remains',
+    previewHex: '#10b981',
+  },
+  {
+    id: 'white',
+    label: 'White',
+    description: 'High-contrast white primary countdown (warnings stay amber/red)',
+    previewHex: '#ffffff',
+  },
+  {
+    id: 'bolderGreen',
+    label: 'Bolder Green',
+    description: 'Neon lime-green — clearly brighter than Standard on dark stage screens',
+    previewHex: '#39FF14',
+  },
+];
+
+export const COUNTDOWN_COLOR_MODE_STORAGE_KEY = 'ros.countdownColorMode';
+export const COUNTDOWN_COLOR_CHANGE_EVENT = 'ros:countdown-color-change';
+
+let cachedCountdownColorModeId: CountdownColorModeId | null = null;
+
+function readCountdownColorModeFromStorage(): CountdownColorModeId | null {
+  try {
+    const raw = localStorage.getItem(COUNTDOWN_COLOR_MODE_STORAGE_KEY);
+    if (raw === 'standard' || raw === 'white' || raw === 'bolderGreen') return raw;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function parseCountdownColorModeId(value: unknown): CountdownColorModeId | null {
+  return value === 'standard' || value === 'white' || value === 'bolderGreen' ? value : null;
+}
+
+export function getCountdownColorModeId(): CountdownColorModeId {
+  if (cachedCountdownColorModeId) return cachedCountdownColorModeId;
+  return readCountdownColorModeFromStorage() ?? 'standard';
+}
+
+export function getCountdownPrimaryHex(mode: CountdownColorModeId = getCountdownColorModeId()): string {
+  const found = COUNTDOWN_COLOR_MODES.find((m) => m.id === mode);
+  return found?.previewHex ?? '#10b981';
+}
+
+export function applyCountdownColorModeId(id: CountdownColorModeId): void {
+  cachedCountdownColorModeId = id;
+  try {
+    localStorage.setItem(COUNTDOWN_COLOR_MODE_STORAGE_KEY, id);
+  } catch {
+    // ignore
+  }
+  window.dispatchEvent(new CustomEvent(COUNTDOWN_COLOR_CHANGE_EVENT, { detail: { countdownColorModeId: id } }));
+  window.dispatchEvent(new CustomEvent(LOGO_VARIANT_CHANGE_EVENT, { detail: { countdownColorModeId: id } }));
+}

@@ -9,6 +9,8 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
+import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
+import type { TeleprompterClockFeed } from '../components/TeleprompterClockOverlay';
 
 const FullScreenTimerPage: React.FC = () => {
   const location = useLocation();
@@ -25,6 +27,13 @@ const FullScreenTimerPage: React.FC = () => {
   const [message, setMessage] = useState('');
   const [messageEnabled, setMessageEnabled] = useState(false);
   const [supabaseMessage, setSupabaseMessage] = useState(null);
+  const [cueClockFeed, setCueClockFeed] = useState<{
+    enabled: boolean;
+    slide: CueCardSlide | null;
+    comments: CueCardComment[];
+  } | null>(null);
+  const [teleprompterClockFeed, setTeleprompterClockFeed] =
+    useState<TeleprompterClockFeed | null>(null);
   const [itemId, setItemId] = useState(timerData.itemId || null);
   const [eventId, setEventId] = useState(eventIdFromUrl || timerData.eventId || null);
   const [mainTimer, setMainTimer] = useState(timerData.mainTimer || null);
@@ -246,6 +255,58 @@ const FullScreenTimerPage: React.FC = () => {
       socketClient.connect(eventId, callbacks);
     }
 
+    const onCueCardsClockSync = (data: any) => {
+      if (!data || String(data.eventId) !== String(eventId)) return;
+      if (!data.enabled || !data.slide) {
+        setCueClockFeed(null);
+        return;
+      }
+      setTeleprompterClockFeed(null);
+      setCueClockFeed({
+        enabled: true,
+        slide: data.slide,
+        comments: Array.isArray(data.comments) ? data.comments : [],
+      });
+    };
+
+    const onTeleprompterClockSync = (data: any) => {
+      if (!data || String(data.eventId) !== String(eventId)) return;
+      if (!data.enabled) {
+        setTeleprompterClockFeed(null);
+        return;
+      }
+      setCueClockFeed(null);
+      setTeleprompterClockFeed((prev) => {
+        const nextSettings = data.settings || prev?.settings || {
+          fontSize: 48,
+          lineHeight: 1.4,
+          textAlign: 'center' as const,
+          textColor: '#FFFFFF',
+          backgroundColor: '#000000',
+        };
+        return {
+          enabled: true,
+          scriptText:
+            typeof data.scriptText === 'string' ? data.scriptText : prev?.scriptText || '',
+          scrollPosition:
+            typeof data.scrollPosition === 'number'
+              ? data.scrollPosition
+              : prev?.scrollPosition || 0,
+          settings: nextSettings,
+          guideLinePosition:
+            typeof data.guideLinePosition === 'number'
+              ? data.guideLinePosition
+              : prev?.guideLinePosition ?? 50,
+          comments: Array.isArray(data.comments) ? data.comments : prev?.comments || [],
+          scriptName:
+            typeof data.scriptName === 'string' ? data.scriptName : prev?.scriptName,
+        };
+      });
+    };
+
+    socketClient.getSocket()?.on('cueCardsClockSync', onCueCardsClockSync);
+    socketClient.getSocket()?.on('teleprompterClockSync', onTeleprompterClockSync);
+
     if (!hasShownModalOnce && connectionEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
@@ -255,10 +316,14 @@ const FullScreenTimerPage: React.FC = () => {
       if (!connectionEnabledRef.current) return;
       if (document.hidden) {
         console.log('👁️ FullScreenTimer: Tab hidden - disconnecting WebSocket to save costs');
+        socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
+        socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
         socketClient.disconnect(eventId);
       } else if (!socketClient.isConnected()) {
         console.log('👁️ FullScreenTimer: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(eventId, callbacks);
+        socketClient.getSocket()?.on('cueCardsClockSync', onCueCardsClockSync);
+        socketClient.getSocket()?.on('teleprompterClockSync', onTeleprompterClockSync);
         loadMessage();
       }
     };
@@ -267,6 +332,8 @@ const FullScreenTimerPage: React.FC = () => {
 
     return () => {
       console.log('📨 Cleaning up FullScreenTimer WebSocket connection');
+      socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
+      socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
       socketClient.disconnect(eventId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
@@ -372,6 +439,8 @@ const FullScreenTimerPage: React.FC = () => {
         secondaryTimer={secondaryTimer}
         hybridTimerData={hybridTimerData}
         clockOffset={clockOffset}
+        cueClockFeed={cueClockFeed}
+        teleprompterClockFeed={teleprompterClockFeed}
       />
       
       {/* Disconnect Timer Modal */}

@@ -498,6 +498,56 @@ class SocketClient {
     }
   }
 
+  /**
+   * Cue Cards → Clock / Fullscreen Timer overlay.
+   * Scroller pushes current slide (or clears) for that event's displays.
+   */
+  emitCueCardsClock(payload: {
+    enabled: boolean;
+    slideIndex?: number;
+    slide?: any | null;
+    comments?: any[];
+  }) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('cueCardsClockUpdate', {
+        eventId: this.eventId,
+        enabled: !!payload.enabled,
+        slideIndex: payload.slideIndex ?? null,
+        slide: payload.enabled ? payload.slide || null : null,
+        comments: payload.enabled ? payload.comments || [] : [],
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  /**
+   * Teleprompter → Clock / Fullscreen Timer overlay.
+   * Scroller pushes script viewport (or clears). Partial updates may omit scriptText.
+   */
+  emitTeleprompterClock(payload: {
+    enabled: boolean;
+    scriptText?: string;
+    scrollPosition?: number;
+    settings?: any;
+    guideLinePosition?: number;
+    comments?: any[];
+    scriptName?: string;
+  }) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('teleprompterClockUpdate', {
+        eventId: this.eventId,
+        enabled: !!payload.enabled,
+        scriptText: payload.scriptText,
+        scrollPosition: payload.scrollPosition ?? 0,
+        settings: payload.settings,
+        guideLinePosition: payload.guideLinePosition,
+        comments: payload.comments,
+        scriptName: payload.scriptName,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
   // Get the raw socket instance for custom event listeners
   getSocket() {
     return this.socket;

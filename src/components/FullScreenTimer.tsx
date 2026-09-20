@@ -8,6 +8,11 @@ import {
 } from '../lib/countdownColor';
 import { isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { AltTimerBadge } from './AltTimerBadge';
+import CueCardClockOverlay from './CueCardClockOverlay';
+import TeleprompterClockOverlay, {
+  type TeleprompterClockFeed,
+} from './TeleprompterClockOverlay';
+import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 
 interface FullScreenTimerProps {
   isRunning?: boolean;
@@ -32,6 +37,12 @@ interface FullScreenTimerProps {
   } | null;
   hybridTimerData?: any; // Add hybridTimerData prop for direct RunOfShowPage communication
   clockOffset?: number; // Add clockOffset for synced timer
+  cueClockFeed?: {
+    enabled: boolean;
+    slide: CueCardSlide | null;
+    comments: CueCardComment[];
+  } | null;
+  teleprompterClockFeed?: TeleprompterClockFeed | null;
 }
 
 const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
@@ -47,7 +58,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   mainTimer = null,
   secondaryTimer = null,
   hybridTimerData = null,
-  clockOffset = 0
+  clockOffset = 0,
+  cueClockFeed = null,
+  teleprompterClockFeed = null,
 }) => {
   const [timerProgress, setTimerProgress] = useState<{ elapsed: number; total: number }>({
     elapsed: elapsedTime,
@@ -75,6 +88,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     isPreshowTimerMessage(stageMessageForColor) && timerRunningForRainbow;
 
   const hasBlockingStageMessage = () => {
+    const cueActive = !!(cueClockFeed?.enabled && cueClockFeed.slide);
+    const teleActive = !!(
+      teleprompterClockFeed?.enabled && teleprompterClockFeed.scriptText
+    );
+    if (cueActive || teleActive) return true;
     if (supabaseOnly) {
       return [hybridTimerData?.timerMessage, supabaseMessage].some(
         (m) => !!m?.enabled && !isPreshowTimerMessage(m)
@@ -83,6 +101,17 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     if (messageEnabled && message) return true;
     return !!(supabaseMessage?.enabled && !isPreshowTimerMessage(supabaseMessage));
   };
+
+  const cueClockActive = !!(cueClockFeed?.enabled && cueClockFeed.slide);
+  const teleprompterClockActive = !!(
+    teleprompterClockFeed?.enabled && teleprompterClockFeed.scriptText
+  );
+  const stageFeedActive = cueClockActive || teleprompterClockActive;
+  const activeFsMessage = [hybridTimerData?.timerMessage, supabaseMessage].find(
+    (m: any) => m?.enabled && !isPreshowTimerMessage(m)
+  ) || null;
+  const crowdedTimerBottom = stageFeedActive ? 'bottom-12' : 'bottom-20';
+  const crowdedBarBottom = stageFeedActive ? 'bottom-5' : 'bottom-8';
 
   // Debug secondary timer prop (only when it changes)
   useEffect(() => {
@@ -550,15 +579,17 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
 
-      {/* Current Time - Top Left */}
+      {/* Current Time / Cue — hidden while stage feed fills the stage */}
+      {!stageFeedActive && (
       <div className="absolute top-10 left-10 text-3xl font-mono text-white">
         <div className="text-slate-400 text-lg mb-1">CURRENT TIME</div>
         <div className="text-white">
           {formatTimeOfDay(currentTime)}
         </div>
       </div>
+      )}
 
-      {/* Current Running CUE - Top Right */}
+      {!stageFeedActive && (
       <div className="fixed top-10 right-10 text-3xl font-mono text-white z-50 w-80 text-right">
         <div className="text-slate-400 text-lg mb-1">CURRENT CUE</div>
         <div className="text-white flex items-center justify-end gap-3 whitespace-nowrap">
@@ -628,6 +659,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           )}
         </div>
       </div>
+      )}
 
       {/* Timer Status Indicator - Bottom Left */}
       {!isFullScreen && hybridTimerData?.activeTimer && (
@@ -673,12 +705,51 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         </div>
       )}
 
+      {/* Cue Cards / Teleprompter clock feed */}
+      {stageFeedActive ? (
+        <div
+          className="absolute inset-x-0 z-20 grid place-items-start justify-items-center px-2"
+          style={{
+            top: '0.75rem',
+            bottom: activeFsMessage ? '26%' : '16%',
+            containerType: 'size',
+          }}
+        >
+          <div
+            className="relative overflow-hidden border-2 border-white/80 bg-black shadow-2xl"
+            style={{
+              aspectRatio: '16 / 9',
+              width: 'min(100cqw, calc(100cqh * 16 / 9))',
+              height: 'min(100cqh, calc(100cqw * 9 / 16))',
+            }}
+          >
+            {cueClockActive && cueClockFeed?.slide ? (
+              <CueCardClockOverlay
+                slide={cueClockFeed.slide}
+                comments={cueClockFeed.comments || []}
+                className="h-full w-full"
+              />
+            ) : null}
+            {teleprompterClockActive && teleprompterClockFeed ? (
+              <TeleprompterClockOverlay
+                feed={teleprompterClockFeed}
+                className="h-full w-full"
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {stageFeedActive && activeFsMessage ? (
+        <div className="absolute bottom-[16%] left-1/2 z-30 w-[min(90vw,56rem)] -translate-x-1/2 rounded-lg border-2 border-white/80 bg-black/70 px-6 py-3 text-center text-2xl font-bold text-white md:text-3xl">
+          {activeFsMessage.message}
+        </div>
+      ) : null}
+
       {/* Message Display — skip Pre Show (uses OVER TIME-style label instead) */}
       {(() => {
-        const activeMsg = [hybridTimerData?.timerMessage, supabaseMessage].find(
-          (m: any) => m?.enabled && !isPreshowTimerMessage(m)
-        ) || null;
-        return !!activeMsg;
+        const activeMsg = activeFsMessage;
+        return !!activeMsg && !stageFeedActive;
       })() && (
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: 'translateY(-40px)' }}>
           <div 
@@ -961,7 +1032,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         
         return hasSecondaryTimer && hasMessage;
       })() && (
-        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-[18%] -translate-x-1/2 min-w-[11rem]">
+        <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-[18%] -translate-x-1/2 min-w-[11rem]`}>
           {/* Overtime Indicator - Above main timer when both message and secondary timer are active */}
           {getRemainingTime() < 0 && (
             <div className="mb-1">
@@ -1108,7 +1179,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         
         return hasMessage && !hasSecondaryTimer;
       })() && (
-        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
+        <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-1/2 transform -translate-x-1/2`}>
           {/* Overtime Indicator - Above main timer when message is active */}
           {getRemainingTime() < 0 && (
             <div className="mb-2">
@@ -1214,7 +1285,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         
         return hasMessage && !hasSecondaryTimer;
       })() && (
-        <div className="w-full transition-all duration-500 ease-in-out absolute bottom-8 left-1/2 transform -translate-x-1/2 max-w-2xl">
+        <div className={`w-full transition-all duration-500 ease-in-out absolute ${crowdedBarBottom} left-1/2 transform -translate-x-1/2 max-w-2xl`}>
           <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-2">
             <div 
               className="h-full transition-all duration-1000 absolute top-0 right-0"

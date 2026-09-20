@@ -8614,6 +8614,46 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Cue Cards → Clock / Fullscreen Timer overlay (scroller push)
+  socket.on('cueCardsClockUpdate', (data) => {
+    const { eventId, enabled, slideIndex, slide, comments } = data || {};
+    if (!eventId) return;
+    io.to(`event:${eventId}`).emit('cueCardsClockSync', {
+      eventId,
+      enabled: !!enabled,
+      slideIndex: slideIndex ?? null,
+      slide: enabled ? slide || null : null,
+      comments: enabled ? comments || [] : [],
+      timestamp: Date.now(),
+    });
+  });
+
+  // Teleprompter → Clock / Fullscreen Timer overlay (scroller push)
+  socket.on('teleprompterClockUpdate', (data) => {
+    const {
+      eventId,
+      enabled,
+      scriptText,
+      scrollPosition,
+      settings,
+      guideLinePosition,
+      comments,
+      scriptName,
+    } = data || {};
+    if (!eventId) return;
+    io.to(`event:${eventId}`).emit('teleprompterClockSync', {
+      eventId,
+      enabled: !!enabled,
+      scriptText,
+      scrollPosition: scrollPosition ?? 0,
+      settings: settings || null,
+      guideLinePosition: guideLinePosition ?? null,
+      comments: comments || null,
+      scriptName: scriptName || null,
+      timestamp: Date.now(),
+    });
+  });
+
   // Cue Cards: scroller slide index → viewers
   socket.on('cueCardsSlideUpdate', (data) => {
     const { eventId, slideIndex, slideId } = data || {};

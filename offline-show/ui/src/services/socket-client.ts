@@ -389,6 +389,48 @@ class SocketClient {
     }
   }
 
+  emitCueCardsClock(payload: {
+    enabled: boolean;
+    slideIndex?: number;
+    slide?: any | null;
+    comments?: any[];
+  }) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('cueCardsClockUpdate', {
+        eventId: this.eventId,
+        enabled: !!payload.enabled,
+        slideIndex: payload.slideIndex ?? null,
+        slide: payload.enabled ? payload.slide || null : null,
+        comments: payload.enabled ? payload.comments || [] : [],
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  emitTeleprompterClock(payload: {
+    enabled: boolean;
+    scriptText?: string;
+    scrollPosition?: number;
+    settings?: any;
+    guideLinePosition?: number;
+    comments?: any[];
+    scriptName?: string;
+  }) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('teleprompterClockUpdate', {
+        eventId: this.eventId,
+        enabled: !!payload.enabled,
+        scriptText: payload.scriptText,
+        scrollPosition: payload.scrollPosition ?? 0,
+        settings: payload.settings,
+        guideLinePosition: payload.guideLinePosition,
+        comments: payload.comments,
+        scriptName: payload.scriptName,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
   getSocket() {
     return this.socket;
   }

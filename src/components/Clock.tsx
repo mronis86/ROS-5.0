@@ -9,6 +9,11 @@ import {
 } from '../lib/countdownColor';
 import { isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { AltTimerBadge } from './AltTimerBadge';
+import CueCardClockOverlay from './CueCardClockOverlay';
+import TeleprompterClockOverlay, {
+  type TeleprompterClockFeed,
+} from './TeleprompterClockOverlay';
+import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -57,6 +62,13 @@ const Clock: React.FC<ClockProps> = ({
   const [messageLoading, setMessageLoading] = useState(false);
   const [supabaseOnly, setSupabaseOnly] = useState(true);
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  const [cueClockFeed, setCueClockFeed] = useState<{
+    enabled: boolean;
+    slide: CueCardSlide | null;
+    comments: CueCardComment[];
+  } | null>(null);
+  const [teleprompterClockFeed, setTeleprompterClockFeed] =
+    useState<TeleprompterClockFeed | null>(null);
   const [secondaryTimerUpdate, setSecondaryTimerUpdate] = useState(0);
   const [secondaryTimerStartTime, setSecondaryTimerStartTime] = useState<Date | null>(null);
   const [lastActiveTimerId, setLastActiveTimerId] = useState<string | null>(null);
@@ -582,6 +594,63 @@ const Clock: React.FC<ClockProps> = ({
 
     socketClient.connect(eventId, callbacks, 'clock');
 
+    const onCueCardsClockSync = (data: any) => {
+      if (!data || String(data.eventId) !== String(eventId)) return;
+      if (!data.enabled || !data.slide) {
+        setCueClockFeed(null);
+        return;
+      }
+      setTeleprompterClockFeed(null);
+      setCueClockFeed({
+        enabled: true,
+        slide: data.slide,
+        comments: Array.isArray(data.comments) ? data.comments : [],
+      });
+    };
+
+    const onTeleprompterClockSync = (data: any) => {
+      if (!data || String(data.eventId) !== String(eventId)) return;
+      if (!data.enabled) {
+        setTeleprompterClockFeed(null);
+        return;
+      }
+      setCueClockFeed(null);
+      setTeleprompterClockFeed((prev) => {
+        const nextSettings = data.settings || prev?.settings || {
+          fontSize: 48,
+          lineHeight: 1.4,
+          textAlign: 'center' as const,
+          textColor: '#FFFFFF',
+          backgroundColor: '#000000',
+        };
+        return {
+          enabled: true,
+          scriptText:
+            typeof data.scriptText === 'string' ? data.scriptText : prev?.scriptText || '',
+          scrollPosition:
+            typeof data.scrollPosition === 'number'
+              ? data.scrollPosition
+              : prev?.scrollPosition || 0,
+          settings: nextSettings,
+          guideLinePosition:
+            typeof data.guideLinePosition === 'number'
+              ? data.guideLinePosition
+              : prev?.guideLinePosition ?? 50,
+          comments: Array.isArray(data.comments)
+            ? data.comments
+            : prev?.comments || [],
+          scriptName:
+            typeof data.scriptName === 'string'
+              ? data.scriptName
+              : prev?.scriptName,
+        };
+      });
+    };
+
+    const sock = socketClient.getSocket();
+    sock?.on('cueCardsClockSync', onCueCardsClockSync);
+    sock?.on('teleprompterClockSync', onTeleprompterClockSync);
+
     // Re-register callbacks + refresh when the page becomes visible again.
     // Never disconnect here — display clocks must keep receiving messages while open
     // (including when another window has focus, or this window was briefly occluded).
@@ -591,12 +660,16 @@ const Clock: React.FC<ClockProps> = ({
       socketClient.connect(eventId, callbacks, 'clock');
       setCurrentTime(new Date());
       void loadActiveTimer();
+      socketClient.getSocket()?.on('cueCardsClockSync', onCueCardsClockSync);
+      socketClient.getSocket()?.on('teleprompterClockSync', onTeleprompterClockSync);
     };
     document.addEventListener('visibilitychange', refreshClockOnReturn);
 
     return () => {
       console.log('🔄 Clock: Cleaning up WebSocket connection');
       document.removeEventListener('visibilitychange', refreshClockOnReturn);
+      socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
+      socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
       socketClient.disconnect(eventId);
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component
@@ -784,12 +857,21 @@ const Clock: React.FC<ClockProps> = ({
     [hybridTimerData?.timerMessage, supabaseMessage].find(
       (m) => m?.enabled && !isPreshowTimerMessage(m)
     ) ?? null;
+  const cueClockActive = !!(cueClockFeed?.enabled && cueClockFeed.slide);
+  const teleprompterClockActive = !!(
+    teleprompterClockFeed?.enabled && teleprompterClockFeed.scriptText
+  );
+  const stageFeedActive = cueClockActive || teleprompterClockActive;
+  /** Push main timers to the bottom when a stage message OR cue/teleprompter feed is up */
+  const layoutCrowded = !!activeStageMessage || stageFeedActive;
+  const crowdedTimerBottom = stageFeedActive ? 'bottom-12' : 'bottom-20';
+  const crowdedBarBottom = stageFeedActive ? 'bottom-5' : 'bottom-8';
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
 
-      {/* Top Left: Time Of Day = countdown (swap); Count Up = time elapsed; Countdown = current time; TOD Only = hidden (minimal) */}
-      {!useTodOnly && (
+      {/* Top Left: hide when cue/teleprompter feed is filling the stage */}
+      {!useTodOnly && !stageFeedActive && (
         <div className="absolute top-10 left-10 text-3xl font-mono text-white">
           {showTimeRemainingAndBar ? (
             <>
@@ -819,7 +901,8 @@ const Clock: React.FC<ClockProps> = ({
         </div>
       )}
 
-      {/* Current Running CUE - Top Right */}
+      {/* Current Running CUE - Top Right (hidden while stage feed is on clock) */}
+      {!stageFeedActive && (
       <div className="fixed top-10 right-10 text-3xl font-mono text-white z-50 w-80 text-right">
         <div className="text-slate-400 text-lg mb-1">CURRENT CUE</div>
         <div className="text-white flex items-center justify-end gap-3 whitespace-nowrap">
@@ -895,6 +978,7 @@ const Clock: React.FC<ClockProps> = ({
           )}
         </div>
       </div>
+      )}
 
       {/* Timer Status Indicator - Bottom Left */}
       {!isFullScreen && supabaseOnly && hybridTimerData?.activeTimer && (
@@ -937,8 +1021,49 @@ const Clock: React.FC<ClockProps> = ({
       )}
 
 
+      {/* Cue Cards / Teleprompter clock feed — max 16:9; timers stay along bottom */}
+      {stageFeedActive ? (
+        <div
+          className="absolute inset-x-0 z-20 grid place-items-start justify-items-center px-2"
+          style={{
+            top: '0.75rem',
+            bottom: activeStageMessage ? '26%' : '16%',
+            containerType: 'size',
+          }}
+        >
+          <div
+            className="relative overflow-hidden border-2 border-white/80 bg-black shadow-2xl"
+            style={{
+              aspectRatio: '16 / 9',
+              width: 'min(100cqw, calc(100cqh * 16 / 9))',
+              height: 'min(100cqh, calc(100cqw * 9 / 16))',
+            }}
+          >
+            {cueClockActive && cueClockFeed?.slide ? (
+              <CueCardClockOverlay
+                slide={cueClockFeed.slide}
+                comments={cueClockFeed.comments}
+                className="h-full w-full"
+              />
+            ) : null}
+            {teleprompterClockActive && teleprompterClockFeed ? (
+              <TeleprompterClockOverlay
+                feed={teleprompterClockFeed}
+                className="h-full w-full"
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {stageFeedActive && activeStageMessage ? (
+        <div className="absolute bottom-[16%] left-1/2 z-30 w-[min(90vw,56rem)] -translate-x-1/2 rounded-lg border-2 border-white/80 bg-black/70 px-6 py-3 text-center text-2xl font-bold text-white md:text-3xl">
+          {activeStageMessage.message}
+        </div>
+      ) : null}
+
       {/* Message Display */}
-      {activeStageMessage && (
+      {activeStageMessage && !stageFeedActive && (
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: 'translateY(-40px)' }}>
           <div 
             className={`font-bold text-white bg-black bg-opacity-50 rounded-lg border-4 border-white text-center flex items-center justify-center ${
@@ -1023,7 +1148,7 @@ const Clock: React.FC<ClockProps> = ({
           if (!currentSecondaryTimer) return false;
           
           // Check if there's a message active - if so, don't show this timer (use the new layout instead)
-          const hasMessage = !!activeStageMessage;
+          const hasMessage = layoutCrowded;
           if (hasMessage) return false;
           
           console.log('🔍 Clock: Secondary timer data:', {
@@ -1174,11 +1299,11 @@ const Clock: React.FC<ClockProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = !!activeStageMessage;
+        const hasMessage = layoutCrowded;
         
         return hasSecondaryTimer && hasMessage;
       })() && (
-        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-[18%] -translate-x-1/2 min-w-[11rem]">
+        <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-[18%] -translate-x-1/2 min-w-[11rem]`}>
           {/* Overtime Indicator - Above main timer when both message and secondary timer are active */}
           {getRemainingTime() < 0 && (
             <div className="mb-1">
@@ -1234,11 +1359,11 @@ const Clock: React.FC<ClockProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = !!activeStageMessage;
+        const hasMessage = layoutCrowded;
         
         return hasSecondaryTimer && hasMessage;
       })() && (
-        <div className={`text-center transition-all duration-500 ease-in-out absolute bottom-20 right-[18%] translate-x-1/2 min-w-[11rem] ${secondaryDisplayColor}`}>
+        <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} right-[18%] translate-x-1/2 min-w-[11rem] ${secondaryDisplayColor}`}>
           {/* Small secondary: ALT + CUE only — same scale as small main */}
           <div className="mb-1 text-lg font-bold leading-none">
             <AltTimerBadge
@@ -1318,7 +1443,7 @@ const Clock: React.FC<ClockProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = !!activeStageMessage;
+        const hasMessage = layoutCrowded;
         
         return !hasSecondaryTimer && !hasMessage;
       })() && (
@@ -1472,11 +1597,11 @@ const Clock: React.FC<ClockProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = !!activeStageMessage;
+        const hasMessage = layoutCrowded;
         
         return hasMessage && !hasSecondaryTimer;
       })() && (
-        <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
+        <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-1/2 transform -translate-x-1/2`}>
           {useTimeOfDay ? (
             <div className="font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white">
               {formatTimeOfDay(currentTime)}
@@ -1557,7 +1682,7 @@ const Clock: React.FC<ClockProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = !!activeStageMessage;
+        const hasMessage = layoutCrowded;
         
         return hasSecondaryTimer && !hasMessage;
       })() && (
@@ -1642,11 +1767,11 @@ const Clock: React.FC<ClockProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = !!activeStageMessage;
+        const hasMessage = layoutCrowded;
         
         return hasMessage && !hasSecondaryTimer;
       })() && (
-        <div className="w-full transition-all duration-500 ease-in-out absolute bottom-8 left-1/2 transform -translate-x-1/2 max-w-2xl">
+        <div className={`w-full transition-all duration-500 ease-in-out absolute ${crowdedBarBottom} left-1/2 transform -translate-x-1/2 max-w-2xl`}>
           <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-2">
             <div 
               className="h-full transition-all duration-1000 absolute top-0 right-0"
@@ -1689,7 +1814,7 @@ const Clock: React.FC<ClockProps> = ({
           hasSecondaryTimer = !!secondaryTimer;
         }
         
-        const hasMessage = !!activeStageMessage;
+        const hasMessage = layoutCrowded;
         
         return hasSecondaryTimer && !hasMessage;
       })() && (

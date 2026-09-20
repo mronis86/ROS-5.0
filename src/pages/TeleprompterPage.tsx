@@ -111,8 +111,12 @@ const TeleprompterPage: React.FC = () => {
   const [disconnectTimerState, setDisconnectTimerState] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState<boolean>(false);
   const [reconnectKey, setReconnectKey] = useState(0);
+  /** Scroller has pushed teleprompter viewport to Clock / Fullscreen Timer */
+  const [clockFeedActive, setClockFeedActive] = useState(false);
   /** False after auto-disconnect until user reconnects — blocks socket reconnect. */
   const connectionEnabledRef = useRef(true);
+  const clockFeedActiveRef = useRef(false);
+  const userRoleRef = useRef<UserRole>('VIEWER');
 
   /** Mic + Web Speech: align transcript to script and scroll */
   const [voiceListenEnabled, setVoiceListenEnabled] = useState(false);
@@ -197,6 +201,14 @@ const TeleprompterPage: React.FC = () => {
   const voiceMicStreamRef = useRef<MediaStream | null>(null);
   const voiceAudioCtxRef = useRef<AudioContext | null>(null);
   const voiceLevelRafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    clockFeedActiveRef.current = clockFeedActive;
+  }, [clockFeedActive]);
+
+  useEffect(() => {
+    userRoleRef.current = userRole;
+  }, [userRole]);
 
   // Handle disconnect timer confirmation
   const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
@@ -373,6 +385,11 @@ const TeleprompterPage: React.FC = () => {
     const handleVisibilityChange = () => {
       if (!connectionEnabledRef.current) return;
       if (document.hidden) {
+        // Keep socket while feeding Clock / Fullscreen Timer from this scroller
+        if (clockFeedActiveRef.current || userRoleRef.current === 'SCROLLER') {
+          console.log('👁️ Teleprompter: Tab hidden - keeping WebSocket (scroller / clock feed)');
+          return;
+        }
         console.log('👁️ Teleprompter: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(eventId);
       } else if (!socketClient.isConnected()) {
@@ -592,6 +609,7 @@ const TeleprompterPage: React.FC = () => {
               currentLine,
               settings.fontSize
             );
+            pushClockFeedIfLive(true);
             lastScrollBroadcastRef.current = now;
           }
         }
@@ -612,6 +630,59 @@ const TeleprompterPage: React.FC = () => {
   }, [isAutoPlaying, isPaused, isManualMode, userRole, voiceListenEnabled, settings.scrollSpeed, settings.fontSize, settings.lineHeight, eventId]);
 
   // Manual scroll handling - simplified without auto-scroll
+
+  const getTeleprompterScrollTop = () =>
+    previewScrollRef.current?.scrollTop ?? scriptRef.current?.scrollTop ?? 0;
+
+  const buildTeleprompterClockPayload = (overrides?: { scrollOnly?: boolean }) => {
+    const scrollPosition = getTeleprompterScrollTop();
+    if (overrides?.scrollOnly) {
+      return {
+        enabled: true as const,
+        scrollPosition,
+      };
+    }
+    return {
+      enabled: true as const,
+      scriptText,
+      scrollPosition,
+      settings: {
+        fontSize: settings.fontSize,
+        lineHeight: settings.lineHeight,
+        textAlign: settings.textAlign,
+        textColor: settings.textColor,
+        backgroundColor: settings.backgroundColor,
+        isMirroredHorizontal: settings.isMirroredHorizontal,
+        showComments: settings.showComments,
+        readingGuideMode: settings.readingGuideMode,
+        readingGuideColor: settings.readingGuideColor,
+      },
+      guideLinePosition,
+      comments: comments.map((c) => ({
+        id: c.id,
+        lineNumber: c.lineNumber,
+        text: c.text,
+        type: c.type,
+      })),
+      scriptName: currentScriptName || undefined,
+    };
+  };
+
+  const pushClockFeedIfLive = (scrollOnly = false) => {
+    if (!clockFeedActiveRef.current || !eventId) return;
+    socketClient.emitTeleprompterClock(buildTeleprompterClockPayload({ scrollOnly }));
+  };
+
+  const sendTeleprompterToClock = () => {
+    if (!eventId || !scriptText) return;
+    socketClient.emitTeleprompterClock(buildTeleprompterClockPayload());
+    setClockFeedActive(true);
+  };
+
+  const clearTeleprompterFromClock = () => {
+    socketClient.emitTeleprompterClock({ enabled: false });
+    setClockFeedActive(false);
+  };
   
   // Broadcast settings changes
   const updateSettings = (newSettings: Partial<TeleprompterSettings>) => {
@@ -625,6 +696,32 @@ const TeleprompterPage: React.FC = () => {
         socket.emit('teleprompterSettingsUpdate', {
           eventId,
           settings: updatedSettings
+        });
+      }
+      if (clockFeedActiveRef.current) {
+        socketClient.emitTeleprompterClock({
+          enabled: true,
+          scriptText,
+          scrollPosition: getTeleprompterScrollTop(),
+          settings: {
+            fontSize: updatedSettings.fontSize,
+            lineHeight: updatedSettings.lineHeight,
+            textAlign: updatedSettings.textAlign,
+            textColor: updatedSettings.textColor,
+            backgroundColor: updatedSettings.backgroundColor,
+            isMirroredHorizontal: updatedSettings.isMirroredHorizontal,
+            showComments: updatedSettings.showComments,
+            readingGuideMode: updatedSettings.readingGuideMode,
+            readingGuideColor: updatedSettings.readingGuideColor,
+          },
+          guideLinePosition,
+          comments: comments.map((c) => ({
+            id: c.id,
+            lineNumber: c.lineNumber,
+            text: c.text,
+            type: c.type,
+          })),
+          scriptName: currentScriptName || undefined,
         });
       }
     }
@@ -641,6 +738,13 @@ const TeleprompterPage: React.FC = () => {
         socket.emit('teleprompterGuideLineUpdate', {
           eventId,
           guideLinePosition: position
+        });
+      }
+      if (clockFeedActiveRef.current) {
+        socketClient.emitTeleprompterClock({
+          enabled: true,
+          scrollPosition: getTeleprompterScrollTop(),
+          guideLinePosition: position,
         });
       }
     }
@@ -682,6 +786,7 @@ const TeleprompterPage: React.FC = () => {
           currentLine,
           settings.fontSize
         );
+        pushClockFeedIfLive(true);
         lastScrollBroadcastRef.current = now;
       }
     }
@@ -827,6 +932,7 @@ const TeleprompterPage: React.FC = () => {
             if (now - lastScrollBroadcastRef.current >= 100) {
               const currentLine = Math.floor(el.scrollTop / Math.max(1, lineHeightPx));
               socketClient.emitScriptScroll(el.scrollTop, currentLine, settings.fontSize);
+              pushClockFeedIfLive(true);
               lastScrollBroadcastRef.current = now;
             }
           }
@@ -1705,6 +1811,34 @@ const TeleprompterPage: React.FC = () => {
                 {isFullscreen ? '⛶ Exit Fullscreen' : '⛶ Fullscreen'}
               </button>
             )}
+
+            {userRole === 'SCROLLER' && (
+              <>
+                <button
+                  type="button"
+                  onClick={sendTeleprompterToClock}
+                  disabled={!scriptText}
+                  className={`px-3 py-2 rounded text-xs font-semibold disabled:opacity-40 ${
+                    clockFeedActive
+                      ? 'border border-emerald-400 bg-emerald-700 text-white hover:bg-emerald-600'
+                      : 'border border-emerald-600 bg-slate-800 text-emerald-200 hover:bg-slate-700'
+                  }`}
+                  title="Show teleprompter on Clock / Fullscreen Timer (timers stay visible)"
+                >
+                  {clockFeedActive ? 'On Clock · Update' : 'Send to Clock'}
+                </button>
+                {clockFeedActive ? (
+                  <button
+                    type="button"
+                    onClick={clearTeleprompterFromClock}
+                    className="px-3 py-2 rounded border border-red-700/70 bg-red-950/50 text-xs font-semibold text-red-200 hover:bg-red-900/50"
+                    title="Clear teleprompter from Clock displays"
+                  >
+                    Clear Clock
+                  </button>
+                ) : null}
+              </>
+            )}
             
             {/* Connection Status */}
             <div className={`flex items-center gap-2 px-3 py-2 rounded ${
@@ -2329,6 +2463,7 @@ const TeleprompterPage: React.FC = () => {
                         currentLine,
                         settings.fontSize
                       );
+                      pushClockFeedIfLive(true);
                       
                       lastScrollBroadcastRef.current = now;
                     }

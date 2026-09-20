@@ -329,7 +329,6 @@ function SlideStage({
   slide,
   comments = [],
   showComments = true,
-  showScrollerNote,
   editable = false,
   onBodyChange,
   bodyEditorRef,
@@ -338,7 +337,6 @@ function SlideStage({
   slide: CueCardSlide | null;
   comments?: CueCardComment[];
   showComments?: boolean;
-  showScrollerNote?: boolean;
   editable?: boolean;
   onBodyChange?: (html: string) => void;
   bodyEditorRef?: React.RefObject<HTMLDivElement | null>;
@@ -374,7 +372,7 @@ function SlideStage({
   const bodyClass =
     'cue-card-body min-h-0 flex-1 overflow-y-auto px-8 py-6 text-[32px] leading-snug outline-none [&_p]:my-2';
   const visibleComments = showComments ? comments : [];
-  const hasBottomChrome = visibleComments.length > 0 || (showScrollerNote && !!slide.scrollerNote);
+  const hasBottomChrome = visibleComments.length > 0;
 
   return (
     <div
@@ -411,49 +409,37 @@ function SlideStage({
       {/* Comment bars across the bottom as columns (Teleprompter-style, larger type) */}
       {hasBottomChrome ? (
         <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 px-5 pb-5 pt-2">
-          {visibleComments.length > 0 ? (
-            <div
-              className="pointer-events-auto grid gap-3"
-              style={{
-                gridTemplateColumns: `repeat(${Math.min(visibleComments.length, 4)}, minmax(0, 1fr))`,
-              }}
-            >
-              {visibleComments.map((c) => {
-                const meta = CUE_CARD_COMMENT_TYPES[c.type] || CUE_CARD_COMMENT_TYPES.GENERAL;
-                return (
-                  <div
-                    key={c.id}
-                    className={`${meta.bgColor} max-h-56 overflow-y-auto rounded-xl border-l-8 px-5 py-4 shadow-xl ${meta.borderColor}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="shrink-0 text-5xl leading-none" aria-hidden>
-                        {meta.icon}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className={`text-2xl font-bold ${meta.color}`}>{meta.label}</div>
-                        <div className="mt-2 whitespace-pre-wrap text-4xl font-semibold leading-tight text-white">
-                          {c.text}
-                        </div>
-                        {c.author ? (
-                          <div className="mt-2 text-lg text-white/70">{c.author}</div>
-                        ) : null}
+          <div
+            className="pointer-events-auto grid gap-3"
+            style={{
+              gridTemplateColumns: `repeat(${Math.min(visibleComments.length, 4)}, minmax(0, 1fr))`,
+            }}
+          >
+            {visibleComments.map((c) => {
+              const meta = CUE_CARD_COMMENT_TYPES[c.type] || CUE_CARD_COMMENT_TYPES.GENERAL;
+              return (
+                <div
+                  key={c.id}
+                  className={`${meta.bgColor} max-h-56 overflow-y-auto rounded-xl border-l-8 px-5 py-4 shadow-xl ${meta.borderColor}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="shrink-0 text-5xl leading-none" aria-hidden>
+                      {meta.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-2xl font-bold ${meta.color}`}>{meta.label}</div>
+                      <div className="mt-2 whitespace-pre-wrap text-4xl font-semibold leading-tight text-white">
+                        {c.text}
                       </div>
+                      {c.author ? (
+                        <div className="mt-2 text-lg text-white/70">{c.author}</div>
+                      ) : null}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          ) : null}
-          {showScrollerNote && slide.scrollerNote ? (
-            <div
-              className={`pointer-events-auto rounded-lg border border-amber-500/40 bg-black/70 px-4 py-2 text-left text-2xl text-amber-100 ${
-                visibleComments.length > 0 ? 'mt-3' : ''
-              }`}
-            >
-              <span className="font-semibold text-amber-300">Scroller: </span>
-              {slide.scrollerNote}
-            </div>
-          ) : null}
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>
@@ -556,6 +542,8 @@ const CueCardsPage: React.FC = () => {
   const [viewerCommentTypes, setViewerCommentTypes] = useState<Set<CueCardCommentType>>(
     () => new Set(Object.keys(CUE_CARD_COMMENT_TYPES) as CueCardCommentType[])
   );
+  /** Scroller has pushed the current slide to Clock / Fullscreen Timer */
+  const [clockFeedActive, setClockFeedActive] = useState(false);
   const [rangeDraft, setRangeDraft] = useState({
     cueLabel: '',
     scheduleItemId: '' as string,
@@ -565,6 +553,7 @@ const CueCardsPage: React.FC = () => {
 
   const roleRef = useRef(role);
   const slideIndexRef = useRef(slideIndex);
+  const clockFeedActiveRef = useRef(clockFeedActive);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stageBodyEditorRef = useRef<HTMLDivElement>(null);
 
@@ -574,6 +563,9 @@ const CueCardsPage: React.FC = () => {
   useEffect(() => {
     slideIndexRef.current = slideIndex;
   }, [slideIndex]);
+  useEffect(() => {
+    clockFeedActiveRef.current = clockFeedActive;
+  }, [clockFeedActive]);
 
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
@@ -749,10 +741,37 @@ const CueCardsPage: React.FC = () => {
       if (broadcast && roleRef.current === 'SCROLLER') {
         const slide = deck.slides[clamped];
         socketClient.emitCueCardsSlide(clamped, slide?.id);
+        // Keep Clock / Fullscreen Timer in sync while feed is live
+        if (clockFeedActiveRef.current && slide) {
+          const comments = commentsForSlide(deck.comments || [], slide.id);
+          socketClient.emitCueCardsClock({
+            enabled: true,
+            slideIndex: clamped,
+            slide,
+            comments,
+          });
+        }
       }
     },
     [deck]
   );
+
+  const sendCurrentSlideToClock = useCallback(() => {
+    if (!deck || !currentSlide) return;
+    const comments = commentsForSlide(deck.comments || [], currentSlide.id);
+    socketClient.emitCueCardsClock({
+      enabled: true,
+      slideIndex,
+      slide: currentSlide,
+      comments,
+    });
+    setClockFeedActive(true);
+  }, [deck, currentSlide, slideIndex]);
+
+  const clearSlideFromClock = useCallback(() => {
+    socketClient.emitCueCardsClock({ enabled: false });
+    setClockFeedActive(false);
+  }, []);
 
   // Socket connect + sync
   useEffect(() => {
@@ -1252,6 +1271,29 @@ const CueCardsPage: React.FC = () => {
             </span>
           ) : null}
         </div>
+        <button
+          type="button"
+          onClick={sendCurrentSlideToClock}
+          disabled={!currentSlide}
+          className={`rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${
+            clockFeedActive
+              ? 'border border-emerald-400 bg-emerald-700 text-white hover:bg-emerald-600'
+              : 'border border-emerald-600 bg-slate-800 text-emerald-200 hover:bg-slate-700'
+          }`}
+          title="Show this slide on Clock / Fullscreen Timer (timers stay visible)"
+        >
+          {clockFeedActive ? 'On Clock · Update' : 'Send to Clock'}
+        </button>
+        {clockFeedActive ? (
+          <button
+            type="button"
+            onClick={clearSlideFromClock}
+            className="rounded border border-red-700/70 bg-red-950/50 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-900/50"
+            title="Clear cue card from Clock displays"
+          >
+            Clear Clock
+          </button>
+        ) : null}
         <Link
           to={`/run-of-show?eventId=${encodeURIComponent(eventId)}`}
           className="rounded border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
@@ -1332,7 +1374,6 @@ const CueCardsPage: React.FC = () => {
               editable
               bodyEditorRef={stageBodyEditorRef}
               onBodyChange={(body) => updateCurrentSlide({ body })}
-              showScrollerNote
               className="h-full w-full"
             />
           </SixteenByNineFrame>
@@ -1385,13 +1426,14 @@ const CueCardsPage: React.FC = () => {
                 </p>
                 <label className="block text-xs text-slate-400">
                   Scroller-only note
+                  <span className="ml-1 font-normal text-slate-500">(panel only — not on card)</span>
                   <textarea
                     className="mt-1 min-h-[4rem] w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-amber-100"
                     value={currentSlide.scrollerNote || ''}
                     onChange={(e) =>
                       updateCurrentSlide({ scrollerNote: e.target.value })
                     }
-                    placeholder="Not shown on Viewer"
+                    placeholder="Operator note — never shown on the cue slide"
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-2">
