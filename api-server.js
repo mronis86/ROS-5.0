@@ -6949,19 +6949,43 @@ app.get('/api/timer-messages/:eventId', async (req, res) => {
 // Create a new timer message
 app.post('/api/timer-messages', async (req, res) => {
   try {
-    const { event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role } = req.body;
+    const {
+      event_id,
+      message,
+      enabled,
+      flashing,
+      sent_by,
+      sent_by_name,
+      sent_by_role,
+      message_type,
+      priority,
+    } = req.body;
     
     if (!event_id || !message) {
       return res.status(400).json({ error: 'event_id and message are required' });
     }
 
-    // Ensure column exists (safe if already migrated)
+    // Ensure columns exist (safe if already migrated)
     try {
       await pool.query(
         'ALTER TABLE timer_messages ADD COLUMN IF NOT EXISTS flashing BOOLEAN NOT NULL DEFAULT false'
       );
     } catch (migErr) {
       console.warn('⚠️ timer_messages.flashing ensure skipped:', migErr.message || migErr);
+    }
+    try {
+      await pool.query(
+        'ALTER TABLE timer_messages ADD COLUMN IF NOT EXISTS message_type TEXT'
+      );
+    } catch (migErr) {
+      console.warn('⚠️ timer_messages.message_type ensure skipped:', migErr.message || migErr);
+    }
+    try {
+      await pool.query(
+        'ALTER TABLE timer_messages ADD COLUMN IF NOT EXISTS priority INTEGER'
+      );
+    } catch (migErr) {
+      console.warn('⚠️ timer_messages.priority ensure skipped:', migErr.message || migErr);
     }
     
     // First, disable any existing active messages for this event
@@ -6972,26 +6996,42 @@ app.post('/api/timer-messages', async (req, res) => {
     
     const isEnabled = enabled !== undefined ? enabled : true;
     const isFlashing = flashing === true;
+    const msgType = message_type || null;
+    const msgPriority = priority != null ? Number(priority) : null;
     let result;
     try {
       result = await pool.query(
         `INSERT INTO timer_messages 
-         (event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+         (event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, message_type, priority, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
          RETURNING *`,
-        [event_id, message, isEnabled, isFlashing, sent_by, sent_by_name, sent_by_role]
+        [event_id, message, isEnabled, isFlashing, sent_by, sent_by_name, sent_by_role, msgType, msgPriority]
       );
     } catch (insertErr) {
-      // Older DBs without flashing — insert without the column, then attach flag for clients
-      console.warn('⚠️ timer message insert with flashing failed, retrying without column:', insertErr.message || insertErr);
-      result = await pool.query(
-        `INSERT INTO timer_messages 
-         (event_id, message, enabled, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-         RETURNING *`,
-        [event_id, message, isEnabled, sent_by, sent_by_name, sent_by_role]
-      );
-      if (result.rows[0]) result.rows[0].flashing = isFlashing;
+      // Older DBs without flashing/message_type — insert without those columns
+      console.warn('⚠️ timer message insert with extras failed, retrying minimal columns:', insertErr.message || insertErr);
+      try {
+        result = await pool.query(
+          `INSERT INTO timer_messages 
+           (event_id, message, enabled, flashing, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+           RETURNING *`,
+          [event_id, message, isEnabled, isFlashing, sent_by, sent_by_name, sent_by_role]
+        );
+      } catch (insertErr2) {
+        result = await pool.query(
+          `INSERT INTO timer_messages 
+           (event_id, message, enabled, sent_by, sent_by_name, sent_by_role, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+           RETURNING *`,
+          [event_id, message, isEnabled, sent_by, sent_by_name, sent_by_role]
+        );
+      }
+      if (result.rows[0]) {
+        result.rows[0].flashing = isFlashing;
+        if (msgType) result.rows[0].message_type = msgType;
+        if (msgPriority != null) result.rows[0].priority = msgPriority;
+      }
     }
     
     // Broadcast update via WebSocket

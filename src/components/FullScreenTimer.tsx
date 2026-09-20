@@ -7,6 +7,7 @@ import {
   useCountdownColorMode,
 } from '../lib/countdownColor';
 import { isPreshowTimerMessage } from '../lib/preshowCountdown';
+import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import TeleprompterClockOverlay, {
@@ -84,8 +85,15 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const timerRunningForRainbow = !!(
     hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active
   );
-  const usePreshowRainbow =
-    isPreshowTimerMessage(stageMessageForColor) && timerRunningForRainbow;
+  const activeCueProgramType =
+    hybridTimerData?.cueData?.programType ||
+    hybridTimerData?.activeTimer?.program_type ||
+    hybridTimerData?.activeTimer?.programType ||
+    null;
+  const usePreshowRainbow = shouldUsePreshowRainbow(stageMessageForColor, {
+    isRunning: timerRunningForRainbow,
+    programType: activeCueProgramType,
+  });
 
   const hasBlockingStageMessage = () => {
     const cueActive = !!(cueClockFeed?.enabled && cueClockFeed.slide);

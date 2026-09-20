@@ -15,6 +15,7 @@ import {
   PRESHOW_MESSAGE_TYPE,
   PRESHOW_WARN_MINUTES_BEFORE,
 } from '../lib/preshowCountdown';
+import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import {
   shouldFoldPreshowOvertimeIntoShowStart,
 } from '../lib/showDelay';
@@ -1087,9 +1088,18 @@ const RunOfShowPage: React.FC = () => {
   
   // ClockPage-style hybrid timer data for real-time updates
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
-  const rosPreshowRainbow =
-    isPreshowTimerMessage(hybridTimerData?.timerMessage) &&
-    !!(hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
+  const activeCueForPreshow =
+    schedule.find(
+      (s) =>
+        s.id ===
+        Number(
+          hybridTimerData?.activeTimer?.item_id ?? activeItemId ?? NaN
+        )
+    ) || null;
+  const rosPreshowRainbow = shouldUsePreshowRainbow(hybridTimerData?.timerMessage, {
+    timer: hybridTimerData?.activeTimer,
+    programType: activeCueForPreshow?.programType,
+  });
   useEffect(() => {
     activeTimersRef.current = activeTimers;
   }, [activeTimers]);
@@ -7863,6 +7873,16 @@ const RunOfShowPage: React.FC = () => {
       onForceDisconnect: () => {
         setShowDisconnectedByAdminModal(true);
       },
+      onTimerMessageUpdated: (data: any) => {
+        if (!data || String(data.event_id) !== String(event?.id)) return;
+        // enabled:false must clear — otherwise a stale hybrid message keeps rainbow on
+        const next = data.enabled ? data : null;
+        setHybridTimerData((prev: any) => ({
+          ...prev,
+          timerMessage: next,
+        }));
+        console.log('✅ RunOfShow: Timer message updated via WebSocket:', next);
+      },
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');
         
@@ -7917,6 +7937,18 @@ const RunOfShowPage: React.FC = () => {
             setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
           } catch (e) {
             console.warn('Initial sync: could not refetch show mode', e);
+          }
+
+          // Pre Show rainbow + stage message — other tabs need this (not only the starter)
+          try {
+            const timerMessage = await DatabaseService.getTimerMessage(event.id);
+            setHybridTimerData((prev: any) => ({
+              ...prev,
+              timerMessage: timerMessage || null,
+            }));
+            console.log('✅ Initial sync: Timer message loaded:', timerMessage);
+          } catch (e) {
+            console.warn('Initial sync: could not load timer message', e);
           }
         }
         
