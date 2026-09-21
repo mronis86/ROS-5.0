@@ -154,7 +154,7 @@ deploy_folder=netlify-$DateStr-V2
 [System.IO.File]::WriteAllText((Join-Path $UploadDir 'build-info.txt'), $BuildInfo, $utf8NoBom)
 Write-Host "Wrote build-info.txt (forces fresh deploy)"
 
-# Zip downloads must be served directly before SPA fallback
+# Zip downloads stay on Netlify; app traffic redirects to Cloudflare Pages
 $RedirectsContent = @"
 /companion-module-runofshow.zip                 /companion-module-runofshow.zip                 200
 /companion-module-runofshow-full.zip            /companion-module-runofshow-full.zip            200
@@ -168,13 +168,13 @@ $RedirectsContent = @"
 /ros-vmix-datasource-bridge.zip                 /ros-vmix-datasource-bridge.zip                 200
 /ros-hyperdeck-ingest.zip                       /ros-hyperdeck-ingest.zip                       200
 
-/*    /index.html   200
+/*    https://ros1615.pages.dev/:splat    301!
 "@
 [System.IO.File]::WriteAllText((Join-Path $UploadDir '_redirects'), $RedirectsContent, $utf8NoBom)
 
 $TomlContent = @"
 # Netlify config for UPLOAD DEPLOY (netlify-$DateStr-V2)
-# Upload this folder to Netlify - dated deploy forces fresh content
+# App → Cloudflare Pages; zip downloads stay on Netlify
 
 [build]
   publish = "."
@@ -247,8 +247,9 @@ $TomlContent = @"
 
 [[redirects]]
   from = "/*"
-  to = "/index.html"
-  status = 200
+  to = "https://ros1615.pages.dev/:splat"
+  status = 301
+  force = true
 
 [[headers]]
   for = "/*"

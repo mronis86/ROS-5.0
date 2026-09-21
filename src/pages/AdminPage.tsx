@@ -11,6 +11,7 @@ import {
   getGreenRoomLayoutId,
   getCountdownColorModeId,
   getHideFullscreenTimerOption,
+  getAutoShotTypeFromSpeakers,
   LOGO_VARIANTS,
   GREEN_ROOM_LAYOUTS,
   COUNTDOWN_COLOR_MODES,
@@ -18,6 +19,7 @@ import {
   applyGreenRoomLayoutId,
   applyCountdownColorModeId,
   applyHideFullscreenTimerOption,
+  applyAutoShotTypeFromSpeakers,
   type LogoVariantId,
   type GreenRoomLayoutId,
   type CountdownColorModeId,
@@ -28,6 +30,7 @@ import {
   saveAdminGreenRoomLayout,
   saveAdminCountdownColorMode,
   saveAdminHideFullscreenTimerOption,
+  saveAdminAutoShotTypeFromSpeakers,
   syncAdminAppSettingsTable,
 } from '../lib/appSettings';
 import AppLogo from '../components/AppLogo';
@@ -512,6 +515,9 @@ export default function AdminPage() {
   const [hideFullscreenTimerOption, setHideFullscreenTimerOptionState] = useState(
     () => getHideFullscreenTimerOption()
   );
+  const [autoShotTypeFromSpeakers, setAutoShotTypeFromSpeakersState] = useState(
+    () => getAutoShotTypeFromSpeakers()
+  );
   const [logoSettingsLoading, setLogoSettingsLoading] = useState(false);
   const [logoSettingsSaving, setLogoSettingsSaving] = useState(false);
   const [logoSettingsError, setLogoSettingsError] = useState<string | null>(null);
@@ -763,6 +769,7 @@ export default function AdminPage() {
     greenRoomLayoutId: GreenRoomLayoutId;
     countdownColorModeId: CountdownColorModeId;
     hideFullscreenTimerOption: boolean;
+    autoShotTypeFromSpeakers: boolean;
     updatedAt: string | null;
     needsMigration?: boolean;
   }) => {
@@ -770,10 +777,12 @@ export default function AdminPage() {
     applyGreenRoomLayoutId(settings.greenRoomLayoutId);
     applyCountdownColorModeId(settings.countdownColorModeId);
     applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
+    applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
     setLogoVariantIdState(settings.logoVariantId);
     setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
     setCountdownColorModeIdState(settings.countdownColorModeId);
     setHideFullscreenTimerOptionState(settings.hideFullscreenTimerOption);
+    setAutoShotTypeFromSpeakersState(settings.autoShotTypeFromSpeakers);
     setLogoSettingsUpdatedAt(settings.updatedAt);
     if (settings.needsMigration != null) {
       setLogoSettingsNeedsMigration(settings.needsMigration === true);
@@ -849,6 +858,21 @@ export default function AdminPage() {
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save display option');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handleAutoShotTypeFromSpeakersChange = async (enabled: boolean) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminAutoShotTypeFromSpeakers(enabled);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save auto shot type setting');
     } finally {
       setLogoSettingsSaving(false);
     }
@@ -4251,6 +4275,36 @@ export default function AdminPage() {
                 <span className="block mt-1 text-sm text-slate-400">
                   Only show Clock in the display picker. Useful when teams should use Clock instead of the older
                   fullscreen timer.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-slate-700">
+            <h3 className="text-base font-semibold text-white">Run of Show</h3>
+            <p className="text-slate-400 text-sm mt-1 mb-4">
+              Optional automation while testing shot type workflows. Leave off to keep fully manual selection.
+            </p>
+            <label
+              className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+                autoShotTypeFromSpeakers
+                  ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                  : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+              } ${logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration ? 'opacity-60' : ''}`}
+            >
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={autoShotTypeFromSpeakers}
+                disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                onChange={(e) => void handleAutoShotTypeFromSpeakersChange(e.target.checked)}
+              />
+              <span>
+                <span className="block font-semibold text-white">Auto-set shot type from speakers</span>
+                <span className="block mt-1 text-sm text-slate-400">
+                  When saving speakers on a cue: one Podium speaker → Podium; otherwise N-Shot from named speaker
+                  count (1–7). Manual shot type edits lock that cue (amber border); clear the shot type to unlock
+                  auto again.
                 </span>
               </span>
             </label>

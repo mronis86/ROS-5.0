@@ -60,6 +60,102 @@ function escapeRegExp(text: string): string {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Editor-only blank line below chips (stripped on save if still empty). */
+export const NOTES_EDITOR_TYPING_SPACER =
+  `<p data-ros-notes-continue="1" style="margin:0.35em 0;min-height:1.15em;font-weight:400;font-size:1em;font-style:normal;text-decoration:none;color:inherit;">` +
+  `<span style="font-weight:400;font-size:1em;font-style:normal;text-decoration:none;">` +
+  `<br></span></p>`;
+
+const CONTINUE_P_RE =
+  /<p[^>]*data-ros-notes-continue\s*=\s*["']?1["']?[^>]*>[\s\S]*?<\/p>/gi;
+
+/** True if HTML is only chip lists (VO/Settle/Stage) and empty continue spacers. */
+export function notesHtmlIsChipsOnly(html: string): boolean {
+  const stripped = String(html || '')
+    .replace(CONTINUE_P_RE, '')
+    .replace(/<br\s*\/?>/gi, '')
+    .replace(/&nbsp;/gi, '')
+    .replace(/\s+/g, '')
+    .trim();
+  if (!stripped) return true;
+  // Remove chip <ul>…</ul> blocks; anything left means freeform text exists
+  const withoutChips = stripped
+    .replace(/<ul\b[\s\S]*?<\/ul>/gi, '')
+    .replace(/<\/?(div|span|li|p|b|i|u|strong|em)[^>]*>/gi, '')
+    .trim();
+  return withoutChips.length === 0;
+}
+
+/** Remove empty editor typing spacers from HTML (for save / storage). Keeps spacers with real text. */
+export function stripNotesEditorTypingSpacers(html: string): string {
+  return String(html || '')
+    .replace(
+      /<p[^>]*data-ros-notes-continue\s*=\s*["']?1["']?[^>]*>[\s\S]*?<\/p>/gi,
+      (block) => {
+        const text = block
+          .replace(/<br\s*\/?>/gi, '')
+          .replace(/&nbsp;/gi, '')
+          .replace(/<[^>]+>/g, '')
+          .trim();
+        return text ? block : '';
+      }
+    )
+    .replace(/(?:<br\s*\/?>\s*)+$/i, '')
+    .trim();
+}
+
+/**
+ * While Notes modal is open: if content ends with chip blocks (or is chips-only),
+ * append one empty paragraph so typing is normal — not list/bold from the chip.
+ * Does not permanently store space when notes are chips-only (stripped on save).
+ */
+export function ensureNotesEditorTypingSpace(editor: HTMLElement | null | undefined): void {
+  if (!editor) return;
+  const html = editor.innerHTML || '';
+  // Already has a continue spacer at the end
+  if (/data-ros-notes-continue\s*=\s*["']?1["']?[^>]*>[\s\S]*<\/p>\s*$/i.test(html.trim())) {
+    placeCaretInNotesFreeform(editor);
+    return;
+  }
+  // Only add when there is at least one chip-style list in the notes
+  const hasChip =
+    /data-settle-cue\s*=\s*["']?1["']?/i.test(html) ||
+    /data-stage-direction\s*=\s*["']?1["']?/i.test(html) ||
+    /<ul\b[^>]*>[\s\S]*?<span[^>]*font-weight:\s*700/i.test(html);
+  if (!hasChip) return;
+
+  editor.insertAdjacentHTML('beforeend', NOTES_EDITOR_TYPING_SPACER);
+  placeCaretInNotesFreeform(editor);
+}
+
+/** Place caret in the last freeform spacer paragraph (ready for normal typing). */
+export function placeCaretInNotesFreeform(editor: HTMLElement | null | undefined): void {
+  if (!editor) return;
+  try {
+    editor.focus();
+    const nodes = editor.querySelectorAll('[data-ros-notes-continue="1"]');
+    const target = (nodes.length ? nodes[nodes.length - 1] : editor) as HTMLElement;
+    const inner = (target.querySelector('span') as HTMLElement | null) || target;
+    const range = document.createRange();
+    const sel = window.getSelection();
+    range.selectNodeContents(inner);
+    range.collapse(false);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    try {
+      // Drop bold/italic/underline left over from chip selection
+      document.execCommand('removeFormat', false, undefined);
+      if (document.queryCommandState('bold')) document.execCommand('bold', false, undefined);
+      if (document.queryCommandState('italic')) document.execCommand('italic', false, undefined);
+      if (document.queryCommandState('underline')) document.execCommand('underline', false, undefined);
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 /** VO/BGM note block — bold, highlighted, bulleted. */
 export function buildCalloutNotesHtml(chipText: string, kind?: AudioCalloutKind): string {
   const isBgm = kind === 'bgm';
@@ -112,6 +208,7 @@ export function syncCalloutsIntoNotes(
     seenText.add(text);
     result = removeCalloutFromNotes(result, text);
   }
+  result = stripNotesEditorTypingSpacers(result);
   const sorted = [...next].sort((a, b) => a.time.localeCompare(b.time));
   const block = sorted.map((vo) => buildCalloutNotesHtml(formatCalloutChipText(vo), vo.kind)).join('');
   if (!block) return result;
@@ -171,7 +268,7 @@ export function buildSettleCueNotesHtml(cueRaw: string): string {
 /** Prepend SettleCue note if not already present for this cue. */
 export function prependSettleCueNote(notes: string, cueRaw: string): string {
   const chipText = formatSettleCueNoteText(cueRaw);
-  const existing = notes || '';
+  const existing = stripNotesEditorTypingSpacers(notes || '');
   if (
     existing.includes(chipText) ||
     existing.includes(escapeNotesHtml(chipText))
@@ -179,6 +276,50 @@ export function prependSettleCueNote(notes: string, cueRaw: string): string {
     return existing;
   }
   const block = buildSettleCueNotesHtml(cueRaw);
+  if (!existing.trim()) return block;
+  return `${block}${existing}`;
+}
+
+/** Preset Stage Direction lines (also allow custom free text). */
+export const STAGE_DIRECTION_PRESETS = [
+  'Panel from SR',
+  'Keynote/Presenter from SL',
+] as const;
+
+export function formatStageDirectionNoteText(directionRaw: string): string {
+  const text = String(directionRaw || '').trim();
+  if (!text) return 'Stage Direction';
+  // Strip legacy "Stage Direction — …" prefix if present
+  return text.replace(/^stage\s*direction\s*[—:\-]\s*/i, '').trim() || text;
+}
+
+/** Stage Direction note block — violet chip, distinct from Settle / VO / BGM. */
+export function buildStageDirectionNotesHtml(directionRaw: string): string {
+  const chipText = formatStageDirectionNoteText(directionRaw);
+  const bg = 'rgba(124, 58, 237, 0.45)';
+  const border = '#c4b5fd';
+  const color = '#f5f3ff';
+  return (
+    `<ul style="margin:0.4em 0;padding-left:1.4em;list-style-type:disc;font-size:1em;" data-stage-direction="1">` +
+    `<li style="margin:0.25em 0;">` +
+    `<span style="font-weight:700;line-height:1.4;background:${bg};color:${color};` +
+    `border:1px solid ${border};border-radius:5px;padding:0.2em 0.5em;display:inline-block;">` +
+    `${escapeNotesHtml(chipText)}` +
+    `</span></li></ul>`
+  );
+}
+
+/** Prepend Stage Direction note if that exact line is not already present. */
+export function prependStageDirectionNote(notes: string, directionRaw: string): string {
+  const chipText = formatStageDirectionNoteText(directionRaw);
+  const existing = stripNotesEditorTypingSpacers(notes || '');
+  if (
+    existing.includes(chipText) ||
+    existing.includes(escapeNotesHtml(chipText))
+  ) {
+    return existing;
+  }
+  const block = buildStageDirectionNotesHtml(directionRaw);
   if (!existing.trim()) return block;
   return `${block}${existing}`;
 }

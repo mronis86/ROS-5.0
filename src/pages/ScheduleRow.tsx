@@ -1,6 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CUE_RECORDING_MARK_WARNING, itemMarkedByComms, resolveRecordingSource } from '../lib/cueRecording';
-import { formatSettleCueNoteText, prependSettleCueNote } from '../lib/audioCallouts';
+import {
+  formatSettleCueNoteText,
+  prependSettleCueNote,
+  formatStageDirectionNoteText,
+  prependStageDirectionNote,
+} from '../lib/audioCallouts';
+import { shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import StageDirectionModal from '../components/StageDirectionModal';
 
 export interface ScheduleRowProps {
   item: any;
@@ -26,6 +33,8 @@ export interface ScheduleRowProps {
   logChangeDebounced: Function;
   logChange?: Function;
   saveToAPI?: Function;
+  /** When row notes change via chip buttons while Notes modal may be open. */
+  onNotesChipUpdated?: (itemId: number, notesHtml: string) => void;
   /** Immediate Neon persist for REC checkbox (avoids debounced full-schedule race on navigate away). */
   persistCueRecording?: (itemId: number, needsRecording: boolean, source: 'comms' | 'ros') => void | Promise<void>;
   calculateStartTimeWithOvertime?: (index: number) => string | number;
@@ -98,6 +107,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   logChangeDebounced,
   logChange,
   saveToAPI,
+  onNotesChipUpdated,
   persistCueRecording,
   calculateStartTimeWithOvertime,
   calculateStartTime,
@@ -141,6 +151,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   const isLockedByOther = Boolean(rowLock && currentUserId && rowLock.userId !== currentUserId);
   const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
   const [lockBadgePos, setLockBadgePos] = React.useState({ scrollLeft: 0, viewWidth: 0 });
+  const [showStageDirectionModal, setShowStageDirectionModal] = useState(false);
 
   // Keep the lock name badge centered in the visible horizontal viewport when columns are scrolled
   React.useEffect(() => {
@@ -740,9 +751,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 return;
               }
               const oldValue = item.shotType;
+              const patch = shotTypeManualEditPatch(e.target.value);
               setSchedule((prev: any[]) => prev.map(scheduleItem => 
                 scheduleItem.id === item.id 
-                  ? { ...scheduleItem, shotType: e.target.value }
+                  ? { ...scheduleItem, ...patch }
                   : scheduleItem
               ));
               logChangeDebounced(
@@ -756,15 +768,29 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   fieldName: 'shotType',
                   oldValue: oldValue,
                   newValue: e.target.value,
-                  details: { fieldType: 'select', optionChange: true }
+                  details: {
+                    fieldType: 'select',
+                    optionChange: true,
+                    shotTypeManualOverride: patch.shotTypeManualOverride,
+                  }
                 }
               );
               handleModalClosed();
             }}
             disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-            className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}`}
+            className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}${
+              item.shotTypeManualOverride ? ' border-amber-500/70' : ''
+            }`}
             style={{ zIndex: 10, position: 'relative' }}
-            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit shot type' : 'Select shot type'}
+            title={
+              isLockedByOther
+                ? lockLabel
+                : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                  ? 'Only EDITORs can edit shot type'
+                  : item.shotTypeManualOverride
+                    ? 'Manual override — speakers won’t change this. Clear shot type to unlock auto.'
+                    : 'Select shot type'
+            }
           >
             <option value="">Select Shot Type</option>
             {shotTypes?.map?.((type: string) => (
@@ -924,6 +950,22 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can add Stage Direction notes. Please change your role to EDITOR.');
+                    return;
+                  }
+                  handleModalEditing?.();
+                  setShowStageDirectionModal(true);
+                }}
+                className="inline-flex items-center rounded border border-dashed border-violet-500/70 px-2 py-0.5 text-xs font-semibold text-violet-200 hover:border-violet-400 hover:text-violet-100 transition-colors"
+                title="Add Stage Direction into Notes"
+              >
+                + Stage Direction
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (currentUserRole === 'OPERATOR') {
                     alert('Only EDITORs can add SettleCue notes. Please change your role to EDITOR.');
                     return;
                   }
@@ -938,16 +980,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     return;
                   }
                   handleUserEditing?.();
+                  const nextNotes = prependSettleCueNote(item.notes || '', cue);
                   setSchedule((prev: any[]) =>
                     prev.map((scheduleItem) =>
                       scheduleItem.id === item.id
-                        ? {
-                            ...scheduleItem,
-                            notes: prependSettleCueNote(scheduleItem.notes || '', cue),
-                          }
+                        ? { ...scheduleItem, notes: nextNotes }
                         : scheduleItem
                     )
                   );
+                  onNotesChipUpdated?.(item.id, nextNotes);
                   if (logChange) {
                     logChange(
                       'NOTES_UPDATE',
@@ -982,6 +1023,57 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               </button>
             </div>
           )}
+          <StageDirectionModal
+            open={showStageDirectionModal}
+            segmentName={item.segmentName}
+            onClose={() => {
+              setShowStageDirectionModal(false);
+              handleModalClosed?.();
+            }}
+            onAdd={(directionText) => {
+              const noteText = formatStageDirectionNoteText(directionText);
+              const prevNotes = String(item.notes || '');
+              if (prevNotes.includes(noteText)) {
+                return;
+              }
+              handleUserEditing?.();
+              const nextNotes = prependStageDirectionNote(item.notes || '', directionText);
+              setSchedule((prev: any[]) =>
+                prev.map((scheduleItem) =>
+                  scheduleItem.id === item.id
+                    ? { ...scheduleItem, notes: nextNotes }
+                    : scheduleItem
+                )
+              );
+              onNotesChipUpdated?.(item.id, nextNotes);
+              if (logChange) {
+                logChange(
+                  'NOTES_UPDATE',
+                  `Added Stage Direction "${noteText}" on "${item.segmentName}"`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'notes',
+                    details: { stageDirection: noteText },
+                  }
+                );
+              } else {
+                logChangeDebounced(
+                  'NOTES_UPDATE',
+                  `Added Stage Direction "${noteText}" on "${item.segmentName}"`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'notes',
+                    details: { stageDirection: noteText },
+                  }
+                );
+              }
+              if (saveToAPI) saveToAPI();
+            }}
+          />
           <div
             onClick={() => {
               if (isLockedByOther) {
@@ -1381,6 +1473,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.logChangeDebounced !== nextProps.logChangeDebounced) return false;
   if (prevProps.logChange !== nextProps.logChange) return false;
   if (prevProps.saveToAPI !== nextProps.saveToAPI) return false;
+  if (prevProps.onNotesChipUpdated !== nextProps.onNotesChipUpdated) return false;
   if (prevProps.persistCueRecording !== nextProps.persistCueRecording) return false;
   if (prevProps.setEditingNotesItem !== nextProps.setEditingNotesItem) return false;
   if (prevProps.setShowNotesModal !== nextProps.setShowNotesModal) return false;

@@ -186,6 +186,41 @@ export function applyHideFullscreenTimerOption(hide: boolean): void {
   );
 }
 
+export const AUTO_SHOT_TYPE_FROM_SPEAKERS_STORAGE_KEY = 'ros.autoShotTypeFromSpeakers';
+export const AUTO_SHOT_TYPE_FROM_SPEAKERS_CHANGE_EVENT = 'ros:auto-shot-type-from-speakers-change';
+
+let cachedAutoShotTypeFromSpeakers: boolean | null = null;
+
+function readAutoShotTypeFromSpeakersFromStorage(): boolean | null {
+  try {
+    const raw = localStorage.getItem(AUTO_SHOT_TYPE_FROM_SPEAKERS_STORAGE_KEY);
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function getAutoShotTypeFromSpeakers(): boolean {
+  if (cachedAutoShotTypeFromSpeakers != null) return cachedAutoShotTypeFromSpeakers;
+  return readAutoShotTypeFromSpeakersFromStorage() ?? false;
+}
+
+export function applyAutoShotTypeFromSpeakers(enabled: boolean): void {
+  cachedAutoShotTypeFromSpeakers = !!enabled;
+  try {
+    localStorage.setItem(AUTO_SHOT_TYPE_FROM_SPEAKERS_STORAGE_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+  window.dispatchEvent(
+    new CustomEvent(AUTO_SHOT_TYPE_FROM_SPEAKERS_CHANGE_EVENT, {
+      detail: { autoShotTypeFromSpeakers: !!enabled },
+    })
+  );
+}
+
 let cachedLogoVariantId: LogoVariantId | null = null;
 
 function readLogoVariantFromStorage(): LogoVariantId | null {

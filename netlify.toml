@@ -1,6 +1,6 @@
 # Netlify configuration - repository root (for Git-triggered deploys)
 # For UPLOAD deploy: upload netlify-YYYY-MM-DD-V2 folder; that has its own netlify.toml
-# Config bump: 2026-02-20 — change this date to force Netlify to run a fresh build (avoids skip).
+# Config bump: 2026-09-21 — app traffic redirects to Cloudflare Pages; zip downloads stay here.
 
 [build]
   ignore = "exit 1"
@@ -13,7 +13,7 @@
   NPM_FLAGS = "--prefer-offline=false"
   CI = "true"
 
-# Serve zip downloads directly (must come before SPA catch-all)
+# Serve zip downloads on Netlify (Cloudflare large zips 302 here — must not redirect these)
 [[redirects]]
   from = "/companion-module-runofshow.zip"
   to = "/companion-module-runofshow.zip"
@@ -29,6 +29,12 @@
 [[redirects]]
   from = "/companion-module-runofshow-resolume-full.zip"
   to = "/companion-module-runofshow-resolume-full.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/companion-module-runofshow-mitti-full.zip"
+  to = "/companion-module-runofshow-mitti-full.zip"
   status = 200
   force = true
 
@@ -74,24 +80,12 @@
   status = 200
   force = true
 
-# SPA fallback - all other routes to index.html
-# Do not serve source maps if they ever appear in a build artifact (must be before /* catch-all)
-[[redirects]]
-  from = "/assets/*.map"
-  to = "/404.html"
-  status = 404
-  force = true
-
-[[redirects]]
-  from = "/*.map"
-  to = "/404.html"
-  status = 404
-  force = true
-
+# App + all other routes → Cloudflare Pages (preserve path)
 [[redirects]]
   from = "/*"
-  to = "/index.html"
-  status = 200
+  to = "https://ros1615.pages.dev/:splat"
+  status = 301
+  force = true
 
 [[headers]]
   for = "/*"

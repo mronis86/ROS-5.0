@@ -1,10 +1,15 @@
-# Netlify redirects - serve zip files directly (order matters)
-/companion-module-runofshow.zip  /companion-module-runofshow.zip  200
-/ros-osc-python-app.zip         /ros-osc-python-app.zip         200
-/ROS-OSC-Control-portable.zip   /ROS-OSC-Control-portable.zip   200
-/electron-osc-app.zip           /electron-osc-app.zip           200
-/ros-led-spout.zip              /ros-led-spout.zip              200
-/ros-vmix-datasource-bridge.zip /ros-vmix-datasource-bridge.zip 200
+# Zip downloads stay on Netlify (Cloudflare large zips 302 here — order matters)
+/companion-module-runofshow.zip                 /companion-module-runofshow.zip                 200
+/companion-module-runofshow-full.zip            /companion-module-runofshow-full.zip            200
+/companion-module-runofshow-resolume-full.zip   /companion-module-runofshow-resolume-full.zip   200
+/companion-module-runofshow-mitti-full.zip      /companion-module-runofshow-mitti-full.zip      200
+/ros-osc-python-app.zip                         /ros-osc-python-app.zip                         200
+/ROS-OSC-Control-portable.zip                   /ROS-OSC-Control-portable.zip                   200
+/electron-osc-app.zip                           /electron-osc-app.zip                           200
+/offline-show.zip                               /offline-show.zip                               200
+/ros-led-spout.zip                              /ros-led-spout.zip                              200
+/ros-vmix-datasource-bridge.zip                 /ros-vmix-datasource-bridge.zip                 200
+/ros-hyperdeck-ingest.zip                       /ros-hyperdeck-ingest.zip                       200
 
-# SPA: all other routes to index.html
-/*    /index.html   200
+# App traffic → Cloudflare Pages
+/*    https://ros1615.pages.dev/:splat    301!

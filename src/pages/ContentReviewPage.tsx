@@ -35,14 +35,21 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { getAutoShotTypeFromSpeakers } from '../lib/branding';
+import StageDirectionModal from '../components/StageDirectionModal';
 import {
   type AudioCalloutKind,
   type VoCue,
   formatCalloutChipText,
   formatSettleCueNoteText,
+  formatStageDirectionNoteText,
   normalizeVoCues,
   prependSettleCueNote,
+  prependStageDirectionNote,
   syncCalloutsIntoNotes,
+  ensureNotesEditorTypingSpace,
+  stripNotesEditorTypingSpacers,
 } from '../lib/audioCallouts';
 import { calculateScheduleStartTime } from '../lib/scheduleStartTime';
 
@@ -229,6 +236,8 @@ interface ScheduleItem {
   day: number;
   programType: string;
   shotType: string;
+  /** When true, auto shot-from-speakers skips this cue until shot type is cleared. */
+  shotTypeManualOverride?: boolean;
   segmentName: string;
   /** Optional off-main-room label from ROS (not a breakout). */
   otherRoom?: string | null;
@@ -294,6 +303,7 @@ function normalizeScheduleItem(raw: any): ScheduleItem {
     day: Number(raw.day ?? 1),
     programType: String(raw.programType ?? raw.program_type ?? ''),
     shotType: String(raw.shotType ?? raw.shot_type ?? ''),
+    shotTypeManualOverride: raw.shotTypeManualOverride === true || raw.shot_type_manual_override === true,
     segmentName: String(raw.segmentName ?? raw.segment_name ?? ''),
     otherRoom,
     durationHours,
@@ -793,6 +803,7 @@ const ContentReviewPage: React.FC = () => {
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [notesSaveMessage, setNotesSaveMessage] = useState<string | null>(null);
   const [showVoModal, setShowVoModal] = useState(false);
+  const [showStageDirectionModal, setShowStageDirectionModal] = useState(false);
   const [tempVoCues, setTempVoCues] = useState<VoCue[]>([]);
   const [voDraftKind, setVoDraftKind] = useState<AudioCalloutKind>('vo');
   const [voDraftTime, setVoDraftTime] = useState('16:45');
@@ -1042,6 +1053,7 @@ const ContentReviewPage: React.FC = () => {
       day: patched.day,
       programType: patched.programType,
       shotType: patched.shotType,
+      shotTypeManualOverride: !!patched.shotTypeManualOverride,
       segmentName: patched.segmentName,
       otherRoom: patched.otherRoom ?? null,
       notes: patched.notes,
@@ -2813,6 +2825,7 @@ const ContentReviewPage: React.FC = () => {
 
       if (notesEditorRef.current) {
         notesEditorRef.current.innerHTML = notesForEditor(notes);
+        ensureNotesEditorTypingSpace(notesEditorRef.current);
       }
       lastHydratedCueIdRef.current = item?.id ?? null;
     },
@@ -2836,6 +2849,7 @@ const ContentReviewPage: React.FC = () => {
       setNotesDraft(displayItem.notes ?? '');
       if (editModeEnabled && notesEditorRef.current) {
         notesEditorRef.current.innerHTML = notesForEditor(displayItem.notes ?? '');
+        ensureNotesEditorTypingSpace(notesEditorRef.current);
       }
     }
     if (!segmentDirtyRef.current) setSegmentDraft(displayItem.segmentName ?? '');
@@ -2879,13 +2893,19 @@ const ContentReviewPage: React.FC = () => {
 
   const saveDisplayItemNotes = useCallback(async () => {
     if (!displayItem || !eventId || isSavingNotes) return;
-    const nextNotes = notesDraft;
+    const live = notesEditorRef.current?.innerHTML ?? notesDraft;
+    const nextNotes = stripNotesEditorTypingSpacers(live);
     setIsSavingNotes(true);
     setNotesSaveMessage(null);
     const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, notes: nextNotes }));
     if (result.ok) {
+      setNotesDraft(nextNotes);
       setNotesDirty(false);
       setNotesSaveMessage('Saved');
+      if (notesEditorRef.current) {
+        notesEditorRef.current.innerHTML = notesForEditor(nextNotes);
+        ensureNotesEditorTypingSpace(notesEditorRef.current);
+      }
     } else {
       setNotesSaveMessage(result.error || 'Save failed');
     }
@@ -2909,10 +2929,10 @@ const ContentReviewPage: React.FC = () => {
 
   const saveDisplayItemShot = useCallback(async () => {
     if (!displayItem || !eventId || isSavingShot) return;
-    const nextShot = shotDraft;
+    const patch = shotTypeManualEditPatch(shotDraft);
     setIsSavingShot(true);
     setShotSaveMessage(null);
-    const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, shotType: nextShot }));
+    const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, ...patch }));
     if (result.ok) {
       setShotDirty(false);
       setShotSaveMessage('Saved');
@@ -3052,15 +3072,25 @@ const ContentReviewPage: React.FC = () => {
   const saveDisplayItemSpeakers = useCallback(async () => {
     if (!displayItem || !eventId || isSavingSpeakers) return;
     const nextSpeakersText = stringifySpeakersDraft(speakerDraft);
+    const autoShotPatch = getAutoShotTypeFromSpeakers()
+      ? shotTypePatchFromSpeakers(speakerDraft, {
+          manualOverride: !!displayItem.shotTypeManualOverride,
+        })
+      : {};
     setIsSavingSpeakers(true);
     setSpeakersSaveMessage(null);
     const result = await saveCuePatch(displayItem.id, (it) => ({
       ...it,
       speakersText: nextSpeakersText,
+      ...autoShotPatch,
     }));
     if (result.ok) {
       setSpeakersDirty(false);
       setSpeakersSaveMessage('Saved');
+      if ('shotType' in autoShotPatch && autoShotPatch.shotType) {
+        setShotDraft(autoShotPatch.shotType);
+        setShotDirty(false);
+      }
     } else {
       setSpeakersSaveMessage(result.error || 'Save failed');
     }
@@ -3104,6 +3134,7 @@ const ContentReviewPage: React.FC = () => {
       setNotesDirty(false);
       if (notesEditorRef.current) {
         notesEditorRef.current.innerHTML = notesForEditor(nextNotes);
+        ensureNotesEditorTypingSpace(notesEditorRef.current);
       }
       setShowVoModal(false);
       setVoSaveMessage(null);
@@ -3134,6 +3165,7 @@ const ContentReviewPage: React.FC = () => {
       setNotesDirty(false);
       if (notesEditorRef.current) {
         notesEditorRef.current.innerHTML = notesForEditor(nextNotes);
+        ensureNotesEditorTypingSpace(notesEditorRef.current);
       }
       touchCueEditActivity(displayItem.id);
     } else {
@@ -3149,6 +3181,42 @@ const ContentReviewPage: React.FC = () => {
     saveCuePatch,
     touchCueEditActivity,
   ]);
+
+  const addStageDirectionNote = useCallback(
+    async (directionText: string) => {
+      if (!displayItem || !eventId || isDisplayCueLockedByOther || !editModeEnabled) return;
+      const noteText = formatStageDirectionNoteText(directionText);
+      const baseNotes = notesDirty ? notesDraft : displayItem.notes || '';
+      if (baseNotes.includes(noteText)) return;
+
+      const nextNotes = prependStageDirectionNote(baseNotes, directionText);
+      const result = await saveCuePatch(displayItem.id, (it) => ({
+        ...it,
+        notes: prependStageDirectionNote(it.notes || '', directionText),
+      }));
+      if (result.ok) {
+        setNotesDraft(nextNotes);
+        setNotesDirty(false);
+        if (notesEditorRef.current) {
+          notesEditorRef.current.innerHTML = notesForEditor(nextNotes);
+          ensureNotesEditorTypingSpace(notesEditorRef.current);
+        }
+        touchCueEditActivity(displayItem.id);
+      } else {
+        alert(result.error || 'Could not add Stage Direction note.');
+      }
+    },
+    [
+      displayItem,
+      eventId,
+      isDisplayCueLockedByOther,
+      editModeEnabled,
+      notesDirty,
+      notesDraft,
+      saveCuePatch,
+      touchCueEditActivity,
+    ]
+  );
 
   const applyNotesFormatting = useCallback((action: string, value?: string) => {
     const editor = notesEditorRef.current;
@@ -4710,6 +4778,14 @@ const ContentReviewPage: React.FC = () => {
                           </button>
                           <button
                             type="button"
+                            onClick={() => setShowStageDirectionModal(true)}
+                            className="inline-flex items-center rounded border border-dashed border-violet-400/80 px-2 py-0.5 text-[11px] font-semibold text-violet-200 hover:border-violet-300 hover:text-violet-100 transition-colors"
+                            title="Add Stage Direction into Notes"
+                          >
+                            + Stage Direction
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => void addSettleCueNote()}
                             className="inline-flex items-center rounded border border-dashed border-blue-400/80 px-2 py-0.5 text-[11px] font-semibold text-blue-200 hover:border-blue-300 hover:text-blue-100 transition-colors"
                             title="Add Cue N.1 Settle Motion & Presenters into Notes"
@@ -5853,6 +5929,14 @@ const ContentReviewPage: React.FC = () => {
           </div>
         </div>
       ) : null}
+      <StageDirectionModal
+        open={showStageDirectionModal}
+        segmentName={displayItem?.segmentName}
+        onClose={() => setShowStageDirectionModal(false)}
+        onAdd={(directionText) => {
+          void addStageDirectionNote(directionText);
+        }}
+      />
     </div>
   );
 };

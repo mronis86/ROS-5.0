@@ -12,6 +12,8 @@ import {
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 
 /** Mirrored from desktop ROS via guestRosHelpers — keep visuals consistent. */
 
@@ -35,6 +37,8 @@ type ScheduleItem = {
   segmentName: string;
   programType: string;
   shotType: string;
+  /** When true, auto shot-from-speakers skips this cue until shot type is cleared. */
+  shotTypeManualOverride?: boolean;
   durationHours: number;
   durationMinutes: number;
   durationSeconds: number;
@@ -157,6 +161,7 @@ function normalizeScheduleItemMobile(raw: any): ScheduleItem {
     day: Number(raw.day ?? 1),
     programType: String(raw.programType ?? raw.program_type ?? ''),
     shotType: String(raw.shotType ?? raw.shot_type ?? ''),
+    shotTypeManualOverride: raw.shotTypeManualOverride === true || raw.shot_type_manual_override === true,
     segmentName: String(raw.segmentName ?? raw.segment_name ?? ''),
     durationHours,
     durationMinutes,
@@ -771,18 +776,35 @@ const RunOfShowMobilePage: React.FC = () => {
     if (isViewer || !selectedItem || !event?.id || !rosData) return;
     setIsSaving(true);
     setSaveMessage('');
+    const nextSpeakersText = stringifySpeakersDraft(speakerDraft);
+    const shotEdited =
+      shotDraft.trim() !== String(selectedItem.shotType || '').trim();
+    let nextShotType = shotDraft.trim();
+    let nextOverride = !!selectedItem.shotTypeManualOverride;
+    if (shotEdited) {
+      const manualShotPatch = shotTypeManualEditPatch(shotDraft);
+      nextShotType = manualShotPatch.shotType;
+      nextOverride = manualShotPatch.shotTypeManualOverride;
+    }
+    if (getAutoShotTypeFromSpeakers() && !nextOverride) {
+      const autoShotPatch = shotTypePatchFromSpeakers(speakerDraft);
+      if ('shotType' in autoShotPatch && autoShotPatch.shotType) {
+        nextShotType = autoShotPatch.shotType;
+      }
+    }
     const updatedItem: ScheduleItem = {
       ...selectedItem,
       segmentName: segmentDraft.trim(),
       programType: programDraft.trim(),
-      shotType: shotDraft.trim(),
+      shotType: nextShotType,
+      shotTypeManualOverride: nextOverride,
       day: clampInt(dayDraft, 1, 99),
       durationHours: clampInt(hoursDraft, 0, 23),
       durationMinutes: clampInt(minutesDraft, 0, 59),
       durationSeconds: clampInt(secondsDraft, 0, 59),
       notes: notesDraft,
       assets: stringifyAssetRows(assetRows),
-      speakersText: stringifySpeakersDraft(speakerDraft),
+      speakersText: nextSpeakersText,
       hasPPT: hasPptDraft,
       hasQA: hasQaDraft,
       needsRecording: needsRecordingDraft,
@@ -805,6 +827,7 @@ const RunOfShowMobilePage: React.FC = () => {
       };
       const result = await DatabaseService.saveRunOfShowData(payload);
       if (result) setRosData(result);
+      setShotDraft(nextShotType);
       setSaveMessage('Saved');
     } catch (err) {
       console.error('Failed to save mobile ROS item', err);

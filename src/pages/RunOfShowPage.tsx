@@ -16,6 +16,8 @@ import {
   PRESHOW_WARN_MINUTES_BEFORE,
 } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
+import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
   shouldFoldPreshowOvertimeIntoShowStart,
 } from '../lib/showDelay';
@@ -33,6 +35,8 @@ import {
   formatCalloutChipText,
   normalizeVoCues,
   syncCalloutsIntoNotes,
+  ensureNotesEditorTypingSpace,
+  stripNotesEditorTypingSpacers,
 } from '../lib/audioCallouts';
 import {
   getEventLocalHHMM,
@@ -193,6 +197,8 @@ interface ScheduleItem {
   day: number;
   programType: string;
   shotType: string;
+  /** When true, auto shot-from-speakers skips this cue until shot type is cleared. */
+  shotTypeManualOverride?: boolean;
   segmentName: string;
   durationHours: number;
   durationMinutes: number;
@@ -4275,6 +4281,7 @@ const RunOfShowPage: React.FC = () => {
     day: 1,
     programType: 'PreShow/End',
     shotType: '',
+    shotTypeManualOverride: false,
     segmentName: '',
     durationHours: 0,
     durationMinutes: 0,
@@ -4731,7 +4738,9 @@ const RunOfShowPage: React.FC = () => {
     const editor = notesEditorRef.current || document.getElementById('notes-editor');
     const live = editor?.innerHTML ?? '';
     const liveEmpty = !live.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
-    const content = liveEmpty && tempNotesHtml ? tempNotesHtml : live || tempNotesHtml;
+    let content = liveEmpty && tempNotesHtml ? tempNotesHtml : live || tempNotesHtml;
+    // Editor may have temporary empty typing spacers under chips — don't persist those
+    content = stripNotesEditorTypingSpacers(content);
 
     if (editingNotesItem === -1) {
       // Save to modal form
@@ -4774,16 +4783,38 @@ const RunOfShowPage: React.FC = () => {
     if (editingSpeakersItem !== null) {
       const speakersForSave = tempSpeakersText.map(({ speakerDbId: _dbId, ...rest }) => rest);
       const speakersJson = JSON.stringify(speakersForSave);
+      const existingItem =
+        editingSpeakersItem === -1
+          ? null
+          : schedule.find((row) => row.id === editingSpeakersItem);
+      const autoShotPatch =
+        getAutoShotTypeFromSpeakers()
+          ? shotTypePatchFromSpeakers(speakersForSave, {
+              manualOverride:
+                editingSpeakersItem === -1
+                  ? !!modalForm.shotTypeManualOverride
+                  : !!existingItem?.shotTypeManualOverride,
+            })
+          : {};
 
       if (editingSpeakersItem === -1) {
-        setModalForm((prev) => ({ ...prev, speakersText: speakersJson }));
+        setModalForm((prev) => ({
+          ...prev,
+          speakersText: speakersJson,
+          ...autoShotPatch,
+        }));
       } else {
-        const oldValue = schedule.find((item) => item.id === editingSpeakersItem)?.speakersText || '';
-        const item = schedule.find((item) => item.id === editingSpeakersItem);
+        const oldValue = existingItem?.speakersText || '';
+        const item = existingItem;
+        const oldShotType = item?.shotType || '';
         setSchedule((prev) =>
           prev.map((scheduleItem) =>
             scheduleItem.id === editingSpeakersItem
-              ? { ...scheduleItem, speakersText: speakersJson }
+              ? {
+                  ...scheduleItem,
+                  speakersText: speakersJson,
+                  ...autoShotPatch,
+                }
               : scheduleItem
           )
         );
@@ -4802,6 +4833,24 @@ const RunOfShowPage: React.FC = () => {
               characterChange: speakersJson.length - oldValue.length,
             },
           });
+          if (
+            'shotType' in autoShotPatch &&
+            autoShotPatch.shotType &&
+            autoShotPatch.shotType !== oldShotType
+          ) {
+            logChange('FIELD_UPDATE', `Auto shot type → ${autoShotPatch.shotType} for "${item.segmentName}"`, {
+              changeType: 'FIELD_CHANGE',
+              itemId: item.id,
+              itemName: item.segmentName,
+              fieldName: 'shotType',
+              oldValue: oldShotType,
+              newValue: autoShotPatch.shotType,
+              details: {
+                fieldType: 'shotType',
+                autoFromSpeakers: true,
+              },
+            });
+          }
         }
       }
 
@@ -6541,6 +6590,25 @@ const RunOfShowPage: React.FC = () => {
       .replace(/\n/g, '<br>');
   };
 
+  /** After VO / Settle / Stage Direction chips: refresh open Notes modal + caret below chips. */
+  const applyNotesChipToOpenEditor = useCallback(
+    (itemId: number, notesHtml: string) => {
+      if (!showNotesModal || editingNotesItem !== itemId) return;
+      const html = notesForEditor(stripNotesEditorTypingSpacers(notesHtml));
+      setTempNotesHtml(html);
+      window.requestAnimationFrame(() => {
+        const editor =
+          (notesEditorRef.current as HTMLElement | null) ||
+          (document.getElementById('notes-editor') as HTMLElement | null);
+        if (!editor) return;
+        editor.innerHTML = html;
+        ensureNotesEditorTypingSpace(editor);
+        setTempNotesHtml(editor.innerHTML);
+      });
+    },
+    [showNotesModal, editingNotesItem]
+  );
+
   // Load notes into temp state + editor once when the modal opens (not on schedule sync).
   useEffect(() => {
     if (!showNotesModal || editingNotesItem === null) {
@@ -6559,7 +6627,11 @@ const RunOfShowPage: React.FC = () => {
     // Wait for the contentEditable node to mount, then seed it once.
     const frame = window.requestAnimationFrame(() => {
       const editor = notesEditorRef.current || document.getElementById('notes-editor');
-      if (editor) editor.innerHTML = initial;
+      if (editor) {
+        editor.innerHTML = initial;
+        ensureNotesEditorTypingSpace(editor as HTMLElement);
+        setTempNotesHtml(editor.innerHTML);
+      }
     });
     return () => window.cancelAnimationFrame(frame);
     // Intentionally omit schedule / modalForm.notes so sync cannot wipe in-progress typing.
@@ -13122,6 +13194,7 @@ const RunOfShowPage: React.FC = () => {
               <div className="text-center">
                 {hybridTimerData?.activeTimer ? (
                   <div className="flex flex-col items-center gap-0.5">
+                  <div className="flex flex-col items-center gap-0.5">
                   <div className={`text-lg font-bold ${
                     hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
                       ? isResolumeSyncPulseActive
@@ -13161,6 +13234,22 @@ const RunOfShowPage: React.FC = () => {
                         return `CUE ${itemId}`;
                       }
                     })()}
+                  </div>
+                  {rosPreshowRainbow ? (
+                    <span
+                      className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                      title="Pre Show Countdown is active on displays"
+                    >
+                      <span className="ros-rainbow-text">Pre Show Countdown</span>
+                    </span>
+                  ) : activeCueForPreshow?.programType === 'PreShow/End' ? (
+                    <span
+                      className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                      title="This cue is Pre Show / End"
+                    >
+                      <span className="ros-rainbow-text">Pre Show</span>
+                    </span>
+                  ) : null}
                   </div>
                   {isResolumeArmed(hybridTimerData.activeTimer) && (
                     <div className="text-xs text-purple-300/90">Waiting for Resolume playback…</div>
@@ -13215,17 +13304,37 @@ const RunOfShowPage: React.FC = () => {
                     )}
                   </div>
                 ) : Object.keys(activeTimers).length > 0 ? (
-                  <div className="text-lg text-green-400 font-bold">
-                    RUNNING - {formatCueDisplay(schedule.find(item => activeTimers[item.id])?.customFields.cue)}
-                    {secondaryTimer && (
-                      <div className="text-lg text-orange-400 mt-0.5 font-bold">
-                        {formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
-                      </div>
-                    )}
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="text-lg text-green-400 font-bold">
+                      RUNNING - {formatCueDisplay(schedule.find(item => activeTimers[item.id])?.customFields.cue)}
+                      {secondaryTimer && (
+                        <div className="text-lg text-orange-400 mt-0.5 font-bold">
+                          {formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
+                        </div>
+                      )}
+                    </div>
+                    {rosPreshowRainbow ? (
+                      <span
+                        className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                        title="Pre Show Countdown is active on displays"
+                      >
+                        <span className="ros-rainbow-text">Pre Show Countdown</span>
+                      </span>
+                    ) : null}
                   </div>
                 ) : activeItemId && timerProgress[activeItemId] ? (
-                  <div className="text-lg text-yellow-400 font-bold">
-                    LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields.cue)}
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="text-lg text-yellow-400 font-bold">
+                      LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields.cue)}
+                    </div>
+                    {schedule.find((item) => item.id === activeItemId)?.programType === 'PreShow/End' ? (
+                      <span
+                        className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                        title="This cue is Pre Show / End"
+                      >
+                        <span className="ros-rainbow-text">Pre Show</span>
+                      </span>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="text-lg text-slate-300 font-bold">
@@ -14979,6 +15088,7 @@ const RunOfShowPage: React.FC = () => {
                         logChangeDebounced={logChangeDebounced}
                         logChange={logChange}
                         saveToAPI={saveToAPI}
+                        onNotesChipUpdated={applyNotesChipToOpenEditor}
                         persistCueRecording={persistCueRecording}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
@@ -15374,11 +15484,18 @@ const RunOfShowPage: React.FC = () => {
                       handleModalEditing();
                     }}
                     onChange={(e) => {
-                      setModalForm(prev => ({ ...prev, shotType: e.target.value }));
+                      setModalForm((prev) => ({ ...prev, ...shotTypeManualEditPatch(e.target.value) }));
                       // Resume syncing when dropdown selection is made
                       handleModalClosed();
                     }}
-                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500 text-sm"
+                    className={`w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500 text-sm${
+                      modalForm.shotTypeManualOverride ? ' border-amber-500/70' : ''
+                    }`}
+                    title={
+                      modalForm.shotTypeManualOverride
+                        ? 'Manual override — speakers won’t change this. Clear shot type to unlock auto.'
+                        : undefined
+                    }
                   >
                     <option value="">Select Shot Type</option>
                     {shotTypes.map(type => (
@@ -15838,11 +15955,13 @@ const RunOfShowPage: React.FC = () => {
                        };
                      })
                      .sort((a, b) => a.time.localeCompare(b.time));
+                   let syncedNotes = '';
                    setSchedule((prev) =>
                      prev.map((row) => {
                        if (row.id !== itemId) return row;
                        const previous = Array.isArray(row.voCues) ? row.voCues : [];
                        const notes = syncCalloutsIntoNotes(row.notes || '', previous, next);
+                       syncedNotes = notes;
                        return {
                          ...row,
                          voCues: next.length ? next : undefined,
@@ -15850,6 +15969,7 @@ const RunOfShowPage: React.FC = () => {
                        };
                      })
                    );
+                   if (itemId != null) applyNotesChipToOpenEditor(itemId, syncedNotes);
                    logChange(
                      'VO_CUES_UPDATE',
                      `Updated VO/BGM callouts on cue ${itemId}`,

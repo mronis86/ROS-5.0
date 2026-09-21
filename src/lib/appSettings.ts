@@ -4,10 +4,12 @@ import {
   applyCountdownColorModeId,
   applyGreenRoomLayoutId,
   applyHideFullscreenTimerOption,
+  applyAutoShotTypeFromSpeakers,
   applyLogoVariantId,
   getCountdownColorModeId,
   getGreenRoomLayoutId,
   getHideFullscreenTimerOption,
+  getAutoShotTypeFromSpeakers,
   getLogoVariantId,
   parseCountdownColorModeId,
   parseGreenRoomLayoutId,
@@ -21,6 +23,7 @@ export type AppSettingsResponse = {
   greenRoomLayoutId: GreenRoomLayoutId;
   countdownColorModeId: CountdownColorModeId;
   hideFullscreenTimerOption: boolean;
+  autoShotTypeFromSpeakers: boolean;
   updatedAt: string | null;
   needsMigration?: boolean;
 };
@@ -34,6 +37,7 @@ function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }):
     greenRoomLayoutId,
     countdownColorModeId,
     hideFullscreenTimerOption: data.hideFullscreenTimerOption === true,
+    autoShotTypeFromSpeakers: data.autoShotTypeFromSpeakers === true,
     updatedAt: data.updatedAt ?? null,
     needsMigration: data.needsMigration === true,
   };
@@ -44,6 +48,7 @@ function applySettings(settings: AppSettingsResponse): AppSettingsResponse {
   applyGreenRoomLayoutId(settings.greenRoomLayoutId);
   applyCountdownColorModeId(settings.countdownColorModeId);
   applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
+  applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
   return settings;
 }
 
@@ -136,6 +141,23 @@ export async function saveAdminHideFullscreenTimerOption(
   return applySettings(parseSettings(data));
 }
 
+export async function saveAdminAutoShotTypeFromSpeakers(
+  autoShotTypeFromSpeakers: boolean
+): Promise<AppSettingsResponse> {
+  const res = await adminFetch('/api/admin/app-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ autoShotTypeFromSpeakers }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to save auto shot type setting (${res.status})`);
+  }
+  return applySettings(parseSettings(data));
+}
+
 export async function syncAdminAppSettingsTable(): Promise<AppSettingsResponse> {
   const res = await adminFetch('/api/admin/app-settings/sync-table', { method: 'POST' });
   const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
@@ -161,6 +183,7 @@ export async function hydrateLogoVariantFromServer(): Promise<LogoVariantId> {
         applyGreenRoomLayoutId(getGreenRoomLayoutId());
         applyCountdownColorModeId(getCountdownColorModeId());
         applyHideFullscreenTimerOption(getHideFullscreenTimerOption());
+        applyAutoShotTypeFromSpeakers(getAutoShotTypeFromSpeakers());
         return getLogoVariantId();
       }
     })();

@@ -14,6 +14,7 @@ import {
   unlockAndListMics,
   writeStoredMicId,
 } from '../lib/teleprompter-mic';
+import TeleprompterSttDiagnosticsModal from '../components/TeleprompterSttDiagnosticsModal';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { getApiBaseUrl } from '../services/api-client';
@@ -145,6 +146,7 @@ const TeleprompterPage: React.FC = () => {
   });
   const [voiceMicLevel, setVoiceMicLevel] = useState(0);
   const [voiceHeardAnything, setVoiceHeardAnything] = useState(false);
+  const [showSttDiagnostics, setShowSttDiagnostics] = useState(false);
   
   // Teleprompter settings
   const [settings, setSettings] = useState<TeleprompterSettings>({
@@ -2077,6 +2079,24 @@ const TeleprompterPage: React.FC = () => {
                         {voiceListenEnabled && !voiceMicCheckOnly ? 'Stop listen' : 'Auto-scroll'}
                       </button>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVoiceListenEnabled(false);
+                        setVoiceMicCheckOnly(false);
+                        clearVoiceHighlight();
+                        setShowSttDiagnostics(true);
+                      }}
+                      disabled={userRole !== 'SCROLLER'}
+                      className={`mt-1.5 w-full rounded border border-dashed px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                        userRole !== 'SCROLLER'
+                          ? 'cursor-not-allowed border-slate-600 text-slate-500'
+                          : 'border-cyan-500/50 text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40'
+                      }`}
+                      title="Run mic + Google speech-to-text probe; copy log for IT / Umbrella"
+                    >
+                      STT diagnostics (for IT)
+                    </button>
                     <div className="mt-2">
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
@@ -2909,6 +2929,12 @@ const TeleprompterPage: React.FC = () => {
       
       {/* Disconnect Notification */}
       {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
+
+      <TeleprompterSttDiagnosticsModal
+        open={showSttDiagnostics}
+        deviceId={selectedMicId}
+        onClose={() => setShowSttDiagnostics(false)}
+      />
       
       </div>
       </div>
