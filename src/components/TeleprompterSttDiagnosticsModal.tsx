@@ -79,6 +79,7 @@ export default function TeleprompterSttDiagnosticsModal({ open, onClose, deviceI
           },
         ],
         summary: 'Diagnostics failed to complete.',
+        verdict: 'fail_mic',
         likelyUmbrellaBlock: false,
         micOk: false,
         sttHeardSpeech: false,
@@ -147,26 +148,35 @@ export default function TeleprompterSttDiagnosticsModal({ open, onClose, deviceI
           {result ? (
             <div
               className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
-                result.likelyUmbrellaBlock
-                  ? 'border-rose-500/50 bg-rose-950/40 text-rose-100'
-                  : result.sttHeardSpeech
-                    ? 'border-emerald-500/50 bg-emerald-950/40 text-emerald-100'
-                    : 'border-amber-500/50 bg-amber-950/40 text-amber-100'
+                result.verdict === 'pass'
+                  ? 'border-emerald-500/50 bg-emerald-950/40 text-emerald-100'
+                  : result.verdict === 'fail_filter' || result.likelyUmbrellaBlock
+                    ? 'border-rose-500/50 bg-rose-950/40 text-rose-100'
+                    : result.verdict === 'inconclusive'
+                      ? 'border-amber-500/50 bg-amber-950/40 text-amber-100'
+                      : 'border-rose-500/50 bg-rose-950/40 text-rose-100'
               }`}
             >
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-wide opacity-80">
+                Verdict: {result.verdict}
+              </div>
               {result.summary}
             </div>
           ) : (
             <p className="text-slate-400">
-              Click <span className="font-semibold text-white">Run test</span>, allow the mic if asked, then speak
-              clearly for ~12 seconds.
+              Click <span className="font-semibold text-white">Run test</span>, allow the mic if asked, then{' '}
+              <span className="font-semibold text-white">keep speaking for the full ~18 seconds</span> (mic meter
+              + speech probe). Do not stop early.
             </p>
           )}
 
+          {running && !result ? (
+            <p className="animate-pulse rounded-lg border border-cyan-500/40 bg-cyan-950/30 px-3 py-2 text-sm text-cyan-100">
+              Running… speak continuously until this finishes (~20s total).
+            </p>
+          ) : null}
+
           <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-700 bg-black/40 p-3 font-mono text-[11px] leading-relaxed">
-            {running && !result ? (
-              <p className="animate-pulse text-cyan-300">Running… speak now if the mic meter / STT steps ask you to.</p>
-            ) : null}
             {(result?.lines || []).map((line, i) => (
               <div key={`${line.t}-${i}`} className={levelClass(line.level)}>
                 <span className="text-slate-500">{line.t.slice(11, 19)}</span> {line.message}
