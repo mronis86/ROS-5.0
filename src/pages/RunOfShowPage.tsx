@@ -1157,7 +1157,6 @@ const RunOfShowPage: React.FC = () => {
     checked: number;
     complete: boolean;
   } | null>(null);
-  const [showDayInShowBannerDismissed, setShowDayInShowBannerDismissed] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [messageFlashing, setMessageFlashing] = useState(false);
