@@ -9,8 +9,11 @@ import { apiJsonHeaders } from '../lib/sessionAuth';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
 import {
   findTopPreshowCue,
+  isPreshowArmedForKey,
   isPreshowTimerMessage,
+  parsePreshowShowDay,
   resolvePreshowStartHHMM,
+  type PreshowShowDayArmed,
   PRESHOW_COUNTDOWN_MESSAGE,
   PRESHOW_MESSAGE_TYPE,
   PRESHOW_WARN_MINUTES_BEFORE,
@@ -940,10 +943,18 @@ const RunOfShowPage: React.FC = () => {
     startHHMM: string;
   } | null>(null);
   const [preshowWarnTick, setPreshowWarnTick] = useState(0);
+  /** Global show-day arm — when set, any client may auto load+start Pre-Show. */
+  const [preshowShowDayArmed, setPreshowShowDayArmed] = useState<PreshowShowDayArmed | null>(null);
+  const [preshowConfirmBusy, setPreshowConfirmBusy] = useState(false);
+  const [showDayInShowBannerDismissed, setShowDayInShowBannerDismissed] = useState(false);
   const preshowAutoStartedKeyRef = useRef<string | null>(null);
   const preshowAutoStartInFlightRef = useRef(false);
   const loadCueRef = useRef<(itemId: number) => Promise<void>>(async () => {});
   const toggleTimerRef = useRef<(itemId: number) => Promise<void>>(async () => {});
+  const preshowShowDayArmedRef = useRef<PreshowShowDayArmed | null>(null);
+  useEffect(() => {
+    preshowShowDayArmedRef.current = preshowShowDayArmed;
+  }, [preshowShowDayArmed]);
   /** In-progress notes HTML while the modal is open (survives tab hide / schedule sync). */
   const [tempNotesHtml, setTempNotesHtml] = useState('');
   const notesEditorRef = useRef<HTMLDivElement | null>(null);
@@ -1052,6 +1063,7 @@ const RunOfShowPage: React.FC = () => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
       setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
+      setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
       if (s.lockedStartTimes && typeof s.lockedStartTimes === 'object') {
         const mapped: Record<number, string> = {};
         for (const [k, v] of Object.entries(s.lockedStartTimes)) {
@@ -1145,7 +1157,7 @@ const RunOfShowPage: React.FC = () => {
     checked: number;
     complete: boolean;
   } | null>(null);
-  const [preflightBannerDismissed, setPreflightBannerDismissed] = useState(false);
+  const [showDayInShowBannerDismissed, setShowDayInShowBannerDismissed] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [messageFlashing, setMessageFlashing] = useState(false);
@@ -2212,10 +2224,10 @@ const RunOfShowPage: React.FC = () => {
   }, [schedule, dismissedVoAlerts, eventTimezone, clockOffset]);
 
   // Top PreShow/End cue: 5-min warning popup + auto load/start at scheduled start.
-  // Popup: OPERATOR/EDITOR. Auto-start: OPERATOR only (needs same API as manual Load/Start).
+  // Popup: all roles (so anyone can confirm show day). Auto-start: Operator always,
+  // or any role once show day is armed globally for this cue/start.
   useEffect(() => {
     if (!event?.id || !user) return;
-    if (currentUserRole !== 'OPERATOR' && currentUserRole !== 'EDITOR') return;
 
     const getPreshowStartInfo = (): {
       cue: (typeof schedule)[number];
@@ -2266,6 +2278,7 @@ const RunOfShowPage: React.FC = () => {
           (hybridTimerData?.activeTimer &&
             Number(hybridTimerData.activeTimer.item_id) === cue.id &&
             hybridTimerData.activeTimer.is_running));
+      const showDayArmed = isPreshowArmedForKey(preshowShowDayArmedRef.current, key);
 
       const minsToStart = Math.round((startMs - nowMs) / 60000);
       if (minsToStart <= PRESHOW_WARN_MINUTES_BEFORE + 1 && minsToStart >= -2) {
@@ -2278,10 +2291,11 @@ const RunOfShowPage: React.FC = () => {
           minsToStart,
           inWarnWindow: nowMs >= warnMs && nowMs < startMs,
           alreadyRunning,
+          showDayArmed,
         });
       }
 
-      // Warning: from T-5m until start (or dismiss / already running)
+      // Warning: from T-5m until start (or dismiss / already running) — all roles
       const inWarnWindow = nowMs >= warnMs && nowMs < startMs && !alreadyRunning;
       if (inWarnWindow && !dismissedPreshowWarnKeys.has(key)) {
         setActivePreshowWarn({
@@ -2294,8 +2308,9 @@ const RunOfShowPage: React.FC = () => {
         setActivePreshowWarn((prev) => (prev?.itemId === cue.id ? null : prev));
       }
 
-      // Auto load+start: OPERATOR only, within 2 minutes after scheduled start
-      if (currentUserRole !== 'OPERATOR') return;
+      // Auto load+start: Operator always, or any role once show day is armed for this key
+      const canAutoStart = currentUserRole === 'OPERATOR' || showDayArmed;
+      if (!canAutoStart) return;
 
       const graceMs = 2 * 60_000;
       const dueToStart = nowMs >= startMs && nowMs <= startMs + graceMs;
@@ -2320,7 +2335,10 @@ const RunOfShowPage: React.FC = () => {
       setActivePreshowWarn(null);
       void (async () => {
         try {
-          console.log('🎬 Pre-show auto load+start for cue', cue.id, 'at', startHHMM);
+          console.log('🎬 Pre-show auto load+start for cue', cue.id, 'at', startHHMM, {
+            role: currentUserRole,
+            showDayArmed,
+          });
           await loadCueRef.current(cue.id);
           await toggleTimerRef.current(cue.id);
         } catch (err) {
@@ -2354,6 +2372,7 @@ const RunOfShowPage: React.FC = () => {
     activeTimers,
     hybridTimerData?.activeTimer?.item_id,
     hybridTimerData?.activeTimer?.is_running,
+    preshowShowDayArmed,
   ]);
 
   // Live tick while pre-show standing-by callout is visible (T− countdown)
@@ -8007,6 +8026,7 @@ const RunOfShowPage: React.FC = () => {
             setShowMode(s.showMode);
             setTrackWasDurations(s.trackWasDurations);
             setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
+            setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
           } catch (e) {
             console.warn('Initial sync: could not refetch show mode', e);
           }
@@ -8071,6 +8091,7 @@ const RunOfShowPage: React.FC = () => {
         trackWasDurations?: boolean;
         rehearsalBaseline?: any;
         lockedStartTimes?: Record<string, string> | null;
+        preshowShowDay?: unknown;
       }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
@@ -8089,6 +8110,9 @@ const RunOfShowPage: React.FC = () => {
             } else {
               setLockedStartTimes({});
             }
+          }
+          if (data.preshowShowDay !== undefined) {
+            setPreshowShowDayArmed(parsePreshowShowDay(data.preshowShowDay));
           }
         }
       },
@@ -11380,38 +11404,50 @@ const RunOfShowPage: React.FC = () => {
       showMode === 'rehearsal' &&
       (() => {
         const todayDay = getEventDayNumberForDate(event.date, event.numberOfDays);
-        return (
-          todayDay != null &&
-          selectedDay === todayDay &&
-          preflightProgress &&
-          !preflightProgress.complete &&
-          !preflightBannerDismissed
-        );
+        return todayDay != null && !showDayInShowBannerDismissed;
       })() ? (
-        <div className="sticky top-0 z-[45] border-b border-amber-700/50 bg-slate-900 px-4 py-2.5 text-sm">
+        <div className="sticky top-0 z-[45] border-b border-amber-700/50 bg-amber-950/90 px-4 py-2.5 text-sm">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="font-medium text-amber-200">
-                Pre-Flight incomplete
-                {(event.numberOfDays || 1) > 1 ? ` · Day ${selectedDay}` : ''} —{' '}
-                {preflightProgress!.checked}/{preflightProgress!.total} done
+              <p className="font-medium text-amber-100">
+                Show day — still in Rehearsal
+                {(event.numberOfDays || 1) > 1
+                  ? ` · Day ${getEventDayNumberForDate(event.date, event.numberOfDays)}`
+                  : ''}
               </p>
-              <p className="text-xs text-slate-400">
-                Show day · still in Rehearsal. Finish the checklist before going In-Show.
+              <p className="text-xs text-amber-200/80">
+                Switch to In-Show so overtime and locked start times track for the live show.
+                {currentUserRole !== 'OPERATOR'
+                  ? ' Change your role to Operator (or ask the Operator) to toggle.'
+                  : ''}
+                {preflightProgress && !preflightProgress.complete
+                  ? ` Pre-Flight ${preflightProgress.checked}/${preflightProgress.total} done.`
+                  : ''}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {preflightProgress && !preflightProgress.complete ? (
+                <button
+                  type="button"
+                  onClick={() => setShowPreFlightChecklistModal(true)}
+                  className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600"
+                >
+                  Open checklist
+                </button>
+              ) : null}
+              {currentUserRole === 'OPERATOR' ? (
+                <button
+                  type="button"
+                  onClick={() => setShowInShowConfirmModal(true)}
+                  className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-500"
+                >
+                  Switch to In-Show
+                </button>
+              ) : null}
               <button
                 type="button"
-                onClick={() => setShowPreFlightChecklistModal(true)}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
-              >
-                Open checklist
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreflightBannerDismissed(true)}
-                className="rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                onClick={() => setShowDayInShowBannerDismissed(true)}
+                className="rounded-lg px-2 py-1.5 text-xs text-amber-200/70 hover:bg-amber-900 hover:text-amber-100"
               >
                 Dismiss
               </button>
@@ -11474,6 +11510,8 @@ const RunOfShowPage: React.FC = () => {
         const mm = Math.floor(totalSec / 60);
         const ss = totalSec % 60;
         const tMinus = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+        const armKey = `${event?.id}:${activePreshowWarn.itemId}:${activePreshowWarn.startHHMM}`;
+        const isArmed = isPreshowArmedForKey(preshowShowDayArmed, armKey);
         const dismiss = () => {
           const cue = findTopPreshowCue(schedule, indentedCues);
           const startHHMM = cue
@@ -11487,6 +11525,41 @@ const RunOfShowPage: React.FC = () => {
           const key = `${event?.id}:${activePreshowWarn.itemId}:${startHHMM || activePreshowWarn.startHHMM}`;
           setDismissedPreshowWarnKeys((prev) => new Set(prev).add(key));
           setActivePreshowWarn(null);
+        };
+        const confirmShowDay = () => {
+          if (!event?.id || isArmed || preshowConfirmBusy) return;
+          const todayDay = getEventDayNumberForDate(event.date, event.numberOfDays) || 1;
+          const payload = {
+            confirmed: true as const,
+            day: todayDay,
+            key: armKey,
+            cueId: activePreshowWarn.itemId,
+            startHHMM: activePreshowWarn.startHHMM,
+            confirmedAt: new Date().toISOString(),
+            confirmedBy: user?.id != null ? String(user.id) : null,
+            confirmedByName: user?.full_name || user?.email || null,
+          };
+          setPreshowConfirmBusy(true);
+          void (async () => {
+            try {
+              const ok = await DatabaseService.saveShowModeWithBaseline(event.id, {
+                preshowShowDay: payload,
+              });
+              if (ok) {
+                setPreshowShowDayArmed(payload);
+                // Prime: load cue so everyone sees LOADED (start still fires at scheduled time)
+                try {
+                  await loadCueRef.current(activePreshowWarn.itemId);
+                } catch (err) {
+                  console.warn('⚠️ Pre-show arm loadCue failed:', err);
+                }
+              }
+            } catch (err) {
+              console.error('❌ Confirm show day failed:', err);
+            } finally {
+              setPreshowConfirmBusy(false);
+            }
+          })();
         };
         return (
           <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-8">
@@ -11516,7 +11589,9 @@ const RunOfShowPage: React.FC = () => {
                   {activePreshowWarn.segmentName}
                 </p>
                 <p className="mt-4 text-base text-slate-300 sm:text-lg">
-                  This timer will auto load and start at the set start time.
+                  {isArmed
+                    ? 'Show day confirmed — Pre-Show is armed for everyone and will auto load & start at the set time.'
+                    : 'Confirm show day to arm Pre-Show for everyone in this event (works for Viewer, Editor, and Operator).'}
                 </p>
                 <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-10">
                   <div className="rounded-xl border border-slate-600 bg-slate-700/80 px-6 py-5 shadow-sm">
@@ -11536,13 +11611,42 @@ const RunOfShowPage: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="mt-10 rounded-xl bg-slate-600 px-10 py-3.5 text-base font-semibold text-white hover:bg-slate-500 sm:text-lg"
-                  onClick={dismiss}
-                >
-                  Dismiss
-                </button>
+                <div className="mt-8 flex flex-col items-center gap-3">
+                  {isArmed ? (
+                    <div className="rounded-xl border border-emerald-500/50 bg-emerald-950/60 px-6 py-3 text-sm font-semibold text-emerald-200">
+                      ✓ Show day confirmed
+                      {preshowShowDayArmed?.confirmedByName
+                        ? ` · ${preshowShowDayArmed.confirmedByName}`
+                        : ''}
+                      — locked for this event
+                    </div>
+                  ) : (
+                    <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-violet-500/40 bg-violet-950/40 px-5 py-3 text-left text-sm text-violet-100 hover:bg-violet-950/70">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5 rounded border-violet-400"
+                        checked={false}
+                        disabled={preshowConfirmBusy}
+                        onChange={(e) => {
+                          if (e.target.checked) confirmShowDay();
+                        }}
+                      />
+                      <span>
+                        <span className="font-semibold text-white">Confirm it is show day</span>
+                        <span className="mt-0.5 block text-xs text-violet-200/80">
+                          Arms Pre-Show globally so it auto-starts even if you&apos;re Viewer or Editor
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    className="rounded-xl bg-slate-600 px-10 py-3.5 text-base font-semibold text-white hover:bg-slate-500 sm:text-lg"
+                    onClick={dismiss}
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
             </div>
           </div>

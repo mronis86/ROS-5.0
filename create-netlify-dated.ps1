@@ -313,9 +313,8 @@ IMPORTANT — avoid blank page / MIME type errors:
 If the browser says CSS or JS has MIME type text/html, Netlify is serving index.html
 instead of your built assets. That means the deploy is incomplete.
 
-Upload ONE of these (entire contents, not just index.html):
-  1) This folder: netlify-$DateStr-V2
-  2) Zip at repo root: netlify-$DateStr-V2-deploy.zip
+Upload this folder's contents to Netlify (entire contents, not just index.html):
+  netlify-$DateStr-V2
 
 After deploy, confirm these URLs return real files (not HTML):
   /assets/$sampleAsset
@@ -325,13 +324,6 @@ Do not mix files from different build dates (hashed asset names must match index
 "@
 [System.IO.File]::WriteAllText((Join-Path $UploadDir 'DEPLOY.txt'), $DeployReadme, $utf8NoBom)
 
-$DeployZip = Join-Path $ProjectRoot "netlify-$DateStr-V2-deploy.zip"
-if (Test-Path $DeployZip) { Remove-Item $DeployZip -Force }
-Write-Host "========== Creating deploy zip: $DeployZip =========="
-Compress-Archive -Path (Join-Path $UploadDir '*') -DestinationPath $DeployZip -Force
-Write-Host "Created deploy zip for single-file Netlify upload"
-
 Write-Host "========== Done =========="
 Write-Host "Upload folder: $UploadDir"
-Write-Host "Or upload zip: $DeployZip"
 Write-Host "Contains: site + OSC zips + build-info.txt + _redirects + netlify.toml + DEPLOY.txt"

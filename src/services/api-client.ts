@@ -304,6 +304,7 @@ class ApiClient {
     trackWasDurations: boolean;
     rehearsalBaseline: any | null;
     lockedStartTimes: Record<string, string> | null;
+    preshowShowDay: any | null;
     displaySyncEnabled: boolean;
   }> {
     const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
@@ -316,6 +317,10 @@ class ApiClient {
       lockedStartTimes:
         result?.lockedStartTimes && typeof result.lockedStartTimes === 'object'
           ? result.lockedStartTimes
+          : null,
+      preshowShowDay:
+        result?.preshowShowDay && typeof result.preshowShowDay === 'object'
+          ? result.preshowShowDay
           : null,
       displaySyncEnabled: result?.displaySyncEnabled !== false,
     };
@@ -363,6 +368,8 @@ class ApiClient {
       clearRehearsalBaseline?: boolean;
       lockedStartTimes?: Record<string, string> | null;
       clearLockedStartTimes?: boolean;
+      preshowShowDay?: Record<string, unknown> | null;
+      clearPreshowShowDay?: boolean;
     }
   ) {
     const result = await this.request(`/api/show-mode/${eventId}`, {

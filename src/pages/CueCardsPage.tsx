@@ -35,12 +35,42 @@ interface ScheduleCueOption {
   segmentName: string;
 }
 
-const FONT_SIZES = [
-  { label: 'S', px: '22px', title: 'Small' },
-  { label: 'M', px: '32px', title: 'Medium' },
-  { label: 'L', px: '44px', title: 'Large' },
-  { label: 'XL', px: '60px', title: 'Extra large' },
+/** Font size options (px on the 1920×1080 stage). */
+const FONT_SIZE_OPTIONS = [
+  18, 20, 22, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96, 108, 120, 144, 168, 192, 220, 260,
 ] as const;
+const DEFAULT_FONT_SIZE_PX = 32;
+
+function readSelectionFontSizePx(editor: HTMLElement | null): number | null {
+  if (!editor) return null;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const node =
+    sel.anchorNode?.nodeType === Node.ELEMENT_NODE
+      ? (sel.anchorNode as HTMLElement)
+      : sel.anchorNode?.parentElement;
+  if (!node || !editor.contains(node)) return null;
+  const raw = window.getComputedStyle(node).fontSize;
+  const n = Math.round(parseFloat(raw));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function saveEditorSelection(editor: HTMLElement | null): Range | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !editor) return null;
+  const range = sel.getRangeAt(0);
+  if (!editor.contains(range.commonAncestorContainer)) return null;
+  return range.cloneRange();
+}
+
+function restoreEditorSelection(editor: HTMLElement | null, range: Range | null) {
+  if (!editor || !range) return;
+  editor.focus();
+  const sel = window.getSelection();
+  if (!sel) return;
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
 
 function AlignIcon({ mode }: { mode: 'left' | 'center' | 'right' }) {
   const lines =
@@ -99,6 +129,24 @@ function FormatToolbar({
   editorRef: React.RefObject<HTMLDivElement | null>;
   onBodyChange?: (html: string) => void;
 }) {
+  const [currentSizePx, setCurrentSizePx] = useState<number | null>(DEFAULT_FONT_SIZE_PX);
+  const savedSelectionRef = useRef<Range | null>(null);
+
+  useEffect(() => {
+    const sync = () => setCurrentSizePx(readSelectionFontSizePx(editorRef.current));
+    document.addEventListener('selectionchange', sync);
+    const el = editorRef.current;
+    el?.addEventListener('keyup', sync);
+    el?.addEventListener('mouseup', sync);
+    el?.addEventListener('focus', sync);
+    return () => {
+      document.removeEventListener('selectionchange', sync);
+      el?.removeEventListener('keyup', sync);
+      el?.removeEventListener('mouseup', sync);
+      el?.removeEventListener('focus', sync);
+    };
+  }, [editorRef]);
+
   const persist = () => {
     const el = editorRef.current;
     if (!el) return;
@@ -205,6 +253,7 @@ function FormatToolbar({
   const applyFontSize = (px: string) => {
     const el = editorRef.current;
     if (!el) return;
+    restoreEditorSelection(el, savedSelectionRef.current);
     el.focus();
 
     const sel = window.getSelection();
@@ -242,7 +291,13 @@ function FormatToolbar({
         if (sized) (li as HTMLElement).style.fontSize = px;
       });
     }
+    setCurrentSizePx(Math.round(parseFloat(px)));
+    savedSelectionRef.current = saveEditorSelection(el);
     persist();
+  };
+
+  const rememberSelection = () => {
+    savedSelectionRef.current = saveEditorSelection(editorRef.current);
   };
 
   const btn =
@@ -261,17 +316,39 @@ function FormatToolbar({
         U
       </button>
       <span className="mx-0.5 h-5 w-px bg-slate-700" aria-hidden />
-      {FONT_SIZES.map((s) => (
-        <button
-          key={s.px}
-          type="button"
-          onClick={() => applyFontSize(s.px)}
-          className={btn}
-          title={s.title}
-        >
-          {s.label}
-        </button>
-      ))}
+      <span className="mr-0.5 text-[10px] uppercase tracking-wide text-slate-500" title="Size of text at cursor">
+        Size
+      </span>
+      <select
+        value={
+          currentSizePx != null && (FONT_SIZE_OPTIONS as readonly number[]).includes(currentSizePx)
+            ? currentSizePx
+            : ''
+        }
+        onMouseDown={rememberSelection}
+        onFocus={rememberSelection}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (!Number.isFinite(n) || n <= 0) return;
+          applyFontSize(`${n}px`);
+        }}
+        className="h-7 min-w-[4.75rem] rounded border border-slate-500 bg-slate-800 px-1.5 text-xs tabular-nums text-slate-100 outline-none hover:bg-slate-700 focus:border-slate-400"
+        title="Font size"
+      >
+        {currentSizePx != null && !(FONT_SIZE_OPTIONS as readonly number[]).includes(currentSizePx) ? (
+          <option value="">{currentSizePx}px</option>
+        ) : null}
+        {currentSizePx == null ? (
+          <option value="" disabled>
+            —
+          </option>
+        ) : null}
+        {FONT_SIZE_OPTIONS.map((n) => (
+          <option key={n} value={n}>
+            {n}px
+          </option>
+        ))}
+      </select>
       <span className="mx-0.5 h-5 w-px bg-slate-700" aria-hidden />
       <button type="button" onClick={() => applyAlign('justifyLeft')} className={iconBtn} title="Align left">
         <AlignIcon mode="left" />

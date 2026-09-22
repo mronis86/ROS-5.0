@@ -56,3 +56,40 @@ export function isPreshowTimerMessage(msg: {
   if (msg.message_type === PRESHOW_MESSAGE_TYPE) return true;
   return String(msg.message || '').trim() === PRESHOW_COUNTDOWN_MESSAGE;
 }
+
+/** Event-scoped "confirm show day" arm for global Pre-Show auto-start. */
+export type PreshowShowDayArmed = {
+  confirmed: true;
+  day: number;
+  key: string;
+  cueId: number | null;
+  startHHMM: string;
+  confirmedAt: string;
+  confirmedBy?: string | null;
+  confirmedByName?: string | null;
+};
+
+export function parsePreshowShowDay(raw: unknown): PreshowShowDayArmed | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (o.confirmed !== true) return null;
+  const key = String(o.key || '').trim();
+  if (!key) return null;
+  return {
+    confirmed: true,
+    day: Number(o.day) || 1,
+    key,
+    cueId: o.cueId != null && Number.isFinite(Number(o.cueId)) ? Number(o.cueId) : null,
+    startHHMM: String(o.startHHMM || ''),
+    confirmedAt: String(o.confirmedAt || ''),
+    confirmedBy: o.confirmedBy != null ? String(o.confirmedBy) : null,
+    confirmedByName: o.confirmedByName != null ? String(o.confirmedByName) : null,
+  };
+}
+
+export function isPreshowArmedForKey(
+  armed: PreshowShowDayArmed | null | undefined,
+  key: string
+): boolean {
+  return !!(armed?.confirmed && armed.key === key);
+}

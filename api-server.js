@@ -3769,6 +3769,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
         trackWasDurations: false,
         rehearsalBaseline: null,
         lockedStartTimes: null,
+        preshowShowDay: null,
         displaySyncEnabled: await loadDisplaySyncEnabled(pool, eventId),
       });
     }
@@ -3785,8 +3786,19 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       settings.locked_start_times && typeof settings.locked_start_times === 'object'
         ? settings.locked_start_times
         : null;
+    const preshowShowDay =
+      settings.preshow_show_day && typeof settings.preshow_show_day === 'object'
+        ? settings.preshow_show_day
+        : null;
     const displaySyncEnabled = await loadDisplaySyncEnabled(pool, eventId);
-    res.json({ showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, displaySyncEnabled });
+    res.json({
+      showMode,
+      trackWasDurations,
+      rehearsalBaseline,
+      lockedStartTimes,
+      preshowShowDay,
+      displaySyncEnabled,
+    });
   } catch (error) {
     console.error('Error fetching show mode:', error);
     res.status(500).json({ error: 'Failed to fetch show mode' });
@@ -3803,6 +3815,8 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       clearRehearsalBaseline,
       lockedStartTimes,
       clearLockedStartTimes,
+      preshowShowDay,
+      clearPreshowShowDay,
     } = req.body;
     const updates = {};
     if (showMode === 'rehearsal' || showMode === 'in-show') {
@@ -3821,9 +3835,57 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     } else if (lockedStartTimes && typeof lockedStartTimes === 'object') {
       updates.locked_start_times = lockedStartTimes;
     }
+    if (clearPreshowShowDay === true) {
+      updates.preshow_show_day = null;
+    } else if (preshowShowDay && typeof preshowShowDay === 'object') {
+      // First confirm wins — do not overwrite an existing arm for this key
+      const existingRow = await pool.query(
+        'SELECT settings FROM run_of_show_data WHERE event_id = $1',
+        [eventId]
+      );
+      const existingSettings = existingRow.rows[0]?.settings || {};
+      const already = existingSettings.preshow_show_day;
+      if (
+        already &&
+        typeof already === 'object' &&
+        already.confirmed === true &&
+        already.key &&
+        already.key === String(preshowShowDay.key || '')
+      ) {
+        // Already armed for this key — return current settings without rewrite
+        return res.json({
+          showMode:
+            existingSettings.show_mode === 'in-show' || existingSettings.show_mode === 'rehearsal'
+              ? existingSettings.show_mode
+              : 'rehearsal',
+          trackWasDurations: existingSettings.track_was_durations === true,
+          rehearsalBaseline:
+            existingSettings.rehearsal_baseline && typeof existingSettings.rehearsal_baseline === 'object'
+              ? existingSettings.rehearsal_baseline
+              : null,
+          lockedStartTimes:
+            existingSettings.locked_start_times && typeof existingSettings.locked_start_times === 'object'
+              ? existingSettings.locked_start_times
+              : null,
+          preshowShowDay: already,
+        });
+      }
+      updates.preshow_show_day = {
+        confirmed: true,
+        day: Number(preshowShowDay.day) || 1,
+        key: String(preshowShowDay.key || ''),
+        cueId: Number(preshowShowDay.cueId) || null,
+        startHHMM: String(preshowShowDay.startHHMM || ''),
+        confirmedAt: String(preshowShowDay.confirmedAt || new Date().toISOString()),
+        confirmedBy: preshowShowDay.confirmedBy != null ? String(preshowShowDay.confirmedBy) : null,
+        confirmedByName:
+          preshowShowDay.confirmedByName != null ? String(preshowShowDay.confirmedByName) : null,
+      };
+    }
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({
-        error: 'Provide showMode, trackWasDurations, rehearsalBaseline, and/or lockedStartTimes',
+        error:
+          'Provide showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, and/or preshowShowDay',
       });
     }
     const result = await pool.query(
@@ -3849,6 +3911,10 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       settings.locked_start_times && typeof settings.locked_start_times === 'object'
         ? settings.locked_start_times
         : null;
+    const currentPreshowShowDay =
+      settings.preshow_show_day && typeof settings.preshow_show_day === 'object'
+        ? settings.preshow_show_day
+        : null;
     // CRITICAL: Only include showMode in broadcast when we actually updated it.
     // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
     const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
@@ -3859,12 +3925,16 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (lockedStartTimes || clearLockedStartTimes === true) {
       payload.lockedStartTimes = currentLockedStartTimes;
     }
+    if (preshowShowDay || clearPreshowShowDay === true) {
+      payload.preshowShowDay = currentPreshowShowDay;
+    }
     broadcastUpdate(eventId, 'showModeUpdate', payload);
     res.json({
       showMode: currentShowMode,
       trackWasDurations: currentTrackWasDurations,
       rehearsalBaseline: currentBaseline,
       lockedStartTimes: currentLockedStartTimes,
+      preshowShowDay: currentPreshowShowDay,
     });
   } catch (error) {
     console.error('Error updating show mode:', error);

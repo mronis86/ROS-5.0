@@ -462,6 +462,7 @@ export class DatabaseService {
     trackWasDurations: boolean;
     rehearsalBaseline: any | null;
     lockedStartTimes: Record<string, string> | null;
+    preshowShowDay: any | null;
     displaySyncEnabled: boolean;
   }> {
     try {
@@ -471,6 +472,7 @@ export class DatabaseService {
         trackWasDurations: result?.trackWasDurations === true,
         rehearsalBaseline: result?.rehearsalBaseline ?? null,
         lockedStartTimes: result?.lockedStartTimes ?? null,
+        preshowShowDay: result?.preshowShowDay ?? null,
         displaySyncEnabled: result?.displaySyncEnabled !== false,
       };
     } catch (error) {
@@ -480,6 +482,7 @@ export class DatabaseService {
         trackWasDurations: false,
         rehearsalBaseline: null,
         lockedStartTimes: null,
+        preshowShowDay: null,
         displaySyncEnabled: true,
       };
     }
@@ -523,6 +526,8 @@ export class DatabaseService {
       clearRehearsalBaseline?: boolean;
       lockedStartTimes?: Record<string, string> | null;
       clearLockedStartTimes?: boolean;
+      preshowShowDay?: Record<string, unknown> | null;
+      clearPreshowShowDay?: boolean;
     }
   ): Promise<boolean> {
     try {
