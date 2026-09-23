@@ -36,13 +36,23 @@ export function useEventDisplaySyncGate(eventId: string | undefined, options: Op
     setDisplaySyncPaused(false);
     setDisplaySyncChecked(false);
 
-    void DatabaseService.getDisplaySyncEnabled(eventId).then((enabled) => {
-      if (cancelled) return;
-      applyDisplaySyncEnabled(enabled, { disconnect: false });
-    });
+    const load = async () => {
+      try {
+        const enabled = await DatabaseService.getDisplaySyncEnabled(eventId);
+        if (!cancelled) applyDisplaySyncEnabled(enabled, { disconnect: !enabled });
+      } catch {
+        /* keep previous */
+      }
+    };
+    void load();
+    // Keep polling publicly so pause still reaches tabs that lost auth
+    const id = window.setInterval(() => {
+      void load();
+    }, 20000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(id);
     };
   }, [eventId, applyDisplaySyncEnabled]);
 

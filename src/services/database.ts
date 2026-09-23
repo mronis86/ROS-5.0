@@ -1,5 +1,5 @@
 import { apiClient, getApiBaseUrl } from './api-client';
-import { apiJsonHeaders } from '../lib/sessionAuth';
+import { apiJsonHeaders, clearApiAccessTokenOnAuthFailure, getApiAccessToken } from '../lib/sessionAuth';
 import type { DashboardSummaryResponse } from '../types/dashboard';
 
 // Always use Railway (single source of truth from api-client)
@@ -53,6 +53,14 @@ export interface TimerMessage {
 
 export class DatabaseService {
   private static apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    if (!getApiAccessToken()) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: 'Unauthorized', stopPolling: true }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    }
     const extra =
       init.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
         ? (init.headers as Record<string, string>)
@@ -60,6 +68,11 @@ export class DatabaseService {
     return fetch(url, {
       ...init,
       headers: { ...apiJsonHeaders(), ...extra },
+    }).then(async (res) => {
+      if (res.status === 401 || res.status === 429) {
+        clearApiAccessTokenOnAuthFailure(`${res.status} ${url}`);
+      }
+      return res;
     });
   }
 

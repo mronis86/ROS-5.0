@@ -430,6 +430,9 @@ export default function AdminPage() {
   const [runningTimersLoading, setRunningTimersLoading] = useState(false);
   const [runningTimersError, setRunningTimersError] = useState<string | null>(null);
   const [stoppingEventId, setStoppingEventId] = useState<string | null>(null);
+  const [killDisplayEventId, setKillDisplayEventId] = useState('');
+  const [killDisplayBusy, setKillDisplayBusy] = useState(false);
+  const [killDisplayMessage, setKillDisplayMessage] = useState<string | null>(null);
   const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null; needsMigration?: boolean; hasServiceAccount?: boolean }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
   const [backupConfigLoading, setBackupConfigLoading] = useState(false);
@@ -2140,6 +2143,37 @@ export default function AdminPage() {
     }
   }, [fetchRunningTimers]);
 
+  const pauseDisplaySyncForEvent = useCallback(async (resume = false) => {
+    const id = killDisplayEventId.trim();
+    if (!/^[0-9a-f-]{36}$/i.test(id)) {
+      setKillDisplayMessage('Paste the event UUID from the alert path (…/active-timers/<eventId>).');
+      return;
+    }
+    setKillDisplayBusy(true);
+    setKillDisplayMessage(null);
+    try {
+      const res = await adminFetch(`/api/calendar-events/${encodeURIComponent(id)}/display-sync`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displaySyncEnabled: resume }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; displaySyncEnabled?: boolean };
+      if (!res.ok) {
+        setKillDisplayMessage(data.error || `Failed (${res.status})`);
+        return;
+      }
+      setKillDisplayMessage(
+        resume
+          ? `Display sync RE-ENABLED for ${id}. Follower pages can connect again after refresh.`
+          : `Display sync PAUSED for ${id}. Green Room / Photo / Ops / Clock should stop polling within ~20s (or immediately if still on socket).`
+      );
+    } catch (e) {
+      setKillDisplayMessage(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setKillDisplayBusy(false);
+    }
+  }, [killDisplayEventId]);
+
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -3186,6 +3220,43 @@ export default function AdminPage() {
               ))}
             </ul>
           )}
+
+          <div className="mt-8 pt-6 border-t border-slate-700/80">
+            <h3 className="text-base font-semibold text-white mb-1">Kill display API traffic</h3>
+            <p className="text-slate-500 text-sm mb-3">
+              For ops emails about stale Edge/OBS tabs hitting <span className="font-mono text-slate-400">/api/active-timers/&lt;eventId&gt;</span>:
+              paste that event UUID and pause Display sync. Follower pages stop polling; you can also turn Displays off from the Event List.
+              Server also auto-quarantines repeated unauthorized SPA hits (429) after ~25 tries.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+              <input
+                type="text"
+                value={killDisplayEventId}
+                onChange={(e) => setKillDisplayEventId(e.target.value)}
+                placeholder="f95d350f-93fd-41ab-9d8f-7fb4ec09b155"
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-sm text-white font-mono placeholder:text-slate-600"
+              />
+              <button
+                type="button"
+                disabled={killDisplayBusy}
+                onClick={() => void pauseDisplaySyncForEvent(false)}
+                className="shrink-0 px-3 py-2 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+              >
+                {killDisplayBusy ? 'Working…' : 'Pause Displays'}
+              </button>
+              <button
+                type="button"
+                disabled={killDisplayBusy}
+                onClick={() => void pauseDisplaySyncForEvent(true)}
+                className="shrink-0 px-3 py-2 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg"
+              >
+                Resume
+              </button>
+            </div>
+            {killDisplayMessage && (
+              <p className="mt-2 text-sm text-amber-100/90">{killDisplayMessage}</p>
+            )}
+          </div>
         </section>
 
         <section id="presence" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">

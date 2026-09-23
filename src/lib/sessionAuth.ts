@@ -1,18 +1,35 @@
 const API_TOKEN_KEY = 'ros_api_token';
 
-/** After a 401, pause authenticated fetches so expired display tabs don't spam ops alerts. */
-let authBackoffUntil = 0;
+/**
+ * After a 401/429 stopPolling response, clear the stored session so display/OBS
+ * tabs stop hammering Railway (apiAuthFetch no-ops without a token).
+ */
+let authDead = false;
 
 export function getApiAccessToken(): string | null {
+  if (authDead) return null;
   return localStorage.getItem(API_TOKEN_KEY);
 }
 
 export function setApiAccessToken(token: string | null): void {
   if (token) {
     localStorage.setItem(API_TOKEN_KEY, token);
-    authBackoffUntil = 0;
+    authDead = false;
   } else {
     localStorage.removeItem(API_TOKEN_KEY);
+  }
+}
+
+/** Mark session unusable — clears token and blocks further authenticated fetches. */
+export function clearApiAccessTokenOnAuthFailure(reason?: string): void {
+  authDead = true;
+  try {
+    localStorage.removeItem(API_TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (reason) {
+    console.warn('[sessionAuth] Cleared API token after auth failure:', reason);
   }
 }
 
@@ -27,15 +44,21 @@ export function apiJsonHeaders(extra?: Record<string, string>): Record<string, s
   return { 'Content-Type': 'application/json', ...authHeaders(), ...extra };
 }
 
+function shouldStopPolling(res: Response, body?: { stopPolling?: boolean } | null): boolean {
+  if (body?.stopPolling === true) return true;
+  if (res.status === 401) return true;
+  if (res.status === 429 && res.headers.get('Retry-After')) return true;
+  return false;
+}
+
 /**
  * Authenticated JSON fetch for protected Railway routes.
  * Skips the network call when there is no session token so we do not generate
  * 401 spam (and ops "unauthorized API" emails) from display tabs without login.
- * Also backs off briefly after a 401 (expired session still present in storage).
+ * On 401 / stopPolling, clears the token so polling stops until the user signs in again.
  */
 export async function apiAuthFetch(url: string, init: RequestInit = {}): Promise<Response | null> {
   if (!getApiAccessToken()) return null;
-  if (Date.now() < authBackoffUntil) return null;
   const headers = new Headers(init.headers || {});
   const auth = authHeaders();
   Object.entries(auth).forEach(([k, v]) => headers.set(k, v));
@@ -43,8 +66,16 @@ export async function apiAuthFetch(url: string, init: RequestInit = {}): Promise
     headers.set('Content-Type', 'application/json');
   }
   const res = await fetch(url, { ...init, headers });
-  if (res.status === 401) {
-    authBackoffUntil = Date.now() + 2 * 60 * 1000;
+  if (res.status === 401 || res.status === 429) {
+    let body: { stopPolling?: boolean } | null = null;
+    try {
+      body = await res.clone().json();
+    } catch {
+      /* ignore */
+    }
+    if (shouldStopPolling(res, body)) {
+      clearApiAccessTokenOnAuthFailure(`${res.status} ${url}`);
+    }
   }
   return res;
 }

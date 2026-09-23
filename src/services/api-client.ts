@@ -1,6 +1,6 @@
 // API Client for communicating with our Express API server
 // Always use Railway (local API option disabled).
-import { authHeaders } from '../lib/sessionAuth';
+import { authHeaders, clearApiAccessTokenOnAuthFailure } from '../lib/sessionAuth';
 
 const RAILWAY_API_URL = 'https://ros-50-production.up.railway.app';
 
@@ -127,9 +127,9 @@ class ApiClient {
       const response = await fetch(url, defaultOptions);
       
       if (!response.ok) {
-        if (response.status === 401) {
-          // 2 minutes — stops OBS/display 20s polls from emailing ops every few minutes
-          this.authBackoffUntil = Date.now() + 2 * 60 * 1000;
+        if (response.status === 401 || response.status === 429) {
+          clearApiAccessTokenOnAuthFailure(`${response.status} ${endpoint}`);
+          this.authBackoffUntil = Date.now() + 60 * 60 * 1000;
         }
         let body: any = null;
         try {
@@ -327,13 +327,17 @@ class ApiClient {
   }
 
   async getDisplaySyncEnabled(eventId: string): Promise<boolean> {
-    const result = await this.request<{ displaySyncEnabled?: boolean }>(
-      `/api/display-sync/${eventId}`,
-      {},
-      `displaySync_${eventId}`,
-      30 * 1000
-    );
-    return result?.displaySyncEnabled !== false;
+    // Public endpoint — must work even when the session token is expired/cleared
+    // so display pages can learn sync was paused and stop polling.
+    try {
+      const apiBaseUrl = getApiBaseUrl();
+      const response = await fetch(`${apiBaseUrl}/api/display-sync/${encodeURIComponent(eventId)}`);
+      if (!response.ok) return true;
+      const result = (await response.json()) as { displaySyncEnabled?: boolean };
+      return result?.displaySyncEnabled !== false;
+    } catch {
+      return true;
+    }
   }
 
   async patchDisplaySyncEnabled(calendarEventId: string, displaySyncEnabled: boolean) {
@@ -883,8 +887,9 @@ class ApiClient {
       body,
     });
     if (!response.ok) {
-      if (response.status === 401) {
-        this.authBackoffUntil = Date.now() + 2 * 60 * 1000;
+      if (response.status === 401 || response.status === 429) {
+        clearApiAccessTokenOnAuthFailure(`${response.status} upload`);
+        this.authBackoffUntil = Date.now() + 60 * 60 * 1000;
       }
       let payload: any = null;
       try {
