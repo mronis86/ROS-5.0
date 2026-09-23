@@ -11491,15 +11491,15 @@ const RunOfShowPage: React.FC = () => {
             role="dialog"
             aria-modal="true"
             aria-labelledby="inshow-nudge-title"
-            className="ros-inshow-nudge-banner ros-preshow-callout relative z-10 w-full max-w-xl overflow-hidden rounded-2xl border border-slate-600 bg-slate-800 shadow-2xl shadow-black/50"
+            className="ros-inshow-nudge-banner relative z-10 w-full max-w-xl overflow-hidden rounded-2xl border-2 border-violet-500/60 bg-slate-800 shadow-2xl shadow-black/50"
           >
-            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-500" />
+            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-orange-400 to-emerald-500" />
             <div className="px-8 py-10 text-center sm:px-10 sm:py-12">
               <div className="mx-auto mb-5 flex items-center justify-center gap-3">
-                <span className="ros-preshow-callout-tally h-3.5 w-3.5 rounded-full bg-violet-400" />
+                <span className="ros-preshow-callout-tally h-3.5 w-3.5 rounded-full bg-orange-400" />
                 <span
                   id="inshow-nudge-title"
-                  className="text-xs font-semibold tracking-[0.35em] text-slate-300 sm:text-sm"
+                  className="ros-inshow-nudge-title text-xs font-semibold tracking-[0.35em] text-orange-300 sm:text-sm"
                 >
                   PRE SHOW RUNNING
                 </span>
@@ -11507,11 +11507,11 @@ const RunOfShowPage: React.FC = () => {
               <p className="ros-preshow-brand-text text-3xl font-bold leading-tight sm:text-4xl">
                 Switch to In-Show
               </p>
-              <p className="mt-3 text-base text-slate-300">
+              <p className="mt-3 text-base text-orange-100/90">
                 Still in Rehearsal
                 {currentUserRole !== 'OPERATOR' ? ' — Operator needed to toggle' : ''}
               </p>
-              <p className="mx-auto mt-4 max-w-md text-sm leading-snug text-slate-400">
+              <p className="mx-auto mt-4 max-w-md text-sm leading-snug text-slate-300">
                 Only In-Show adjusts schedule timing from timers that run over or have time remaining.
               </p>
               <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -11522,7 +11522,7 @@ const RunOfShowPage: React.FC = () => {
                       setInShowNudgeDismissed(true);
                       setShowInShowConfirmModal(true);
                     }}
-                    className="rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-emerald-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-indigo-900/40 hover:from-violet-500 hover:via-indigo-500 hover:to-emerald-500 sm:text-xl"
+                    className="rounded-xl bg-gradient-to-r from-violet-600 via-orange-500 to-emerald-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-orange-900/40 hover:from-violet-500 hover:via-orange-400 hover:to-emerald-500 sm:text-xl"
                   >
                     Switch to In-Show
                   </button>
