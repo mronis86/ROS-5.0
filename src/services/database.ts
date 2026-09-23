@@ -825,13 +825,10 @@ export class DatabaseService {
   static async saveUserSession(eventId: string, userId: string, username: string, role: string): Promise<boolean> {
     try {
       console.log('🔄 Saving authenticated user session via API:', { eventId, userId, username, role });
-      
-      // API-based implementation - placeholder
-      console.log('🔄 Saving user session via API:', { eventId, userId, username, role });
-      return this.saveUserSessionToLocalStorage(eventId, username, role);
+      return this.saveUserSessionToLocalStorage(eventId, userId, username, role);
     } catch (error) {
       console.error('Error saving user session:', error);
-      return this.saveUserSessionToLocalStorage(eventId, username, role);
+      return this.saveUserSessionToLocalStorage(eventId, userId, username, role);
     }
   }
 
@@ -839,13 +836,10 @@ export class DatabaseService {
   static async getCurrentUserSession(userId: string, eventId?: string): Promise<any | null> {
     try {
       console.log('🔄 Getting current user session via API:', { userId, eventId });
-      
-      // API-based implementation - placeholder
-      console.log('🔄 Getting current user session via API:', { userId, eventId });
-      return this.getCurrentUserSessionFromLocalStorage();
+      return this.getCurrentUserSessionFromLocalStorage(userId, eventId);
     } catch (error) {
       console.error('Error getting current user session:', error);
-      return this.getCurrentUserSessionFromLocalStorage();
+      return this.getCurrentUserSessionFromLocalStorage(userId, eventId);
     }
   }
 
@@ -875,23 +869,31 @@ export class DatabaseService {
 
   // Note: Active users tracking removed - focusing on simple user session tracking
 
-  // LocalStorage fallback for user session
-  private static saveUserSessionToLocalStorage(eventId: string, username: string, role: string): boolean {
+  // LocalStorage fallback for user session (scoped per user + event)
+  private static saveUserSessionToLocalStorage(
+    eventId: string,
+    userId: string,
+    username: string,
+    role: string
+  ): boolean {
     try {
       const userData = {
         event_id: eventId,
+        user_id: userId,
         username: username,
         role: role,
         session_started_at: new Date().toISOString(),
         last_activity_at: new Date().toISOString(),
-        is_active: true
+        is_active: true,
       };
 
-      // Save current session
+      localStorage.setItem(`current_user_session_${userId}_${eventId}`, JSON.stringify(userData));
+      // Legacy username-keyed key (keep in sync for older readers)
       localStorage.setItem(`current_user_session_${username}`, JSON.stringify(userData));
-      
-      // Also save role info separately for easy access
+      localStorage.setItem(`user_role_${eventId}_${userId}`, role);
       localStorage.setItem(`user_role_${eventId}_${username}`, role);
+      // Single source of truth for ROS UI on refresh
+      localStorage.setItem(`userRole_${eventId}`, role);
 
       console.log('✅ User session saved to localStorage');
       return true;
@@ -901,29 +903,40 @@ export class DatabaseService {
     }
   }
 
-  // LocalStorage fallback for getting current user session
-  private static getCurrentUserSessionFromLocalStorage(): any | null {
+  // LocalStorage fallback for getting current user session for this user+event
+  private static getCurrentUserSessionFromLocalStorage(
+    userId?: string,
+    eventId?: string
+  ): any | null {
     try {
-      // Find the most recent active session
-      const keys = Object.keys(localStorage);
-      let latestSession = null;
-      let latestTime = 0;
-
-      for (const key of keys) {
-        if (key.startsWith('current_user_session_')) {
-          const sessionData = JSON.parse(localStorage.getItem(key) || '{}');
-          if (sessionData.is_active && sessionData.last_activity_at) {
-            const sessionTime = new Date(sessionData.last_activity_at).getTime();
-            if (sessionTime > latestTime) {
-              latestTime = sessionTime;
-              latestSession = sessionData;
-            }
+      if (userId && eventId) {
+        const scoped = localStorage.getItem(`current_user_session_${userId}_${eventId}`);
+        if (scoped) {
+          const sessionData = JSON.parse(scoped);
+          if (sessionData?.is_active && sessionData?.role) {
+            console.log('🔍 Retrieved scoped user session from localStorage:', sessionData);
+            return sessionData;
           }
         }
+        // Prefer event-scoped role even if full session blob is missing
+        const roleOnly =
+          localStorage.getItem(`user_role_${eventId}_${userId}`) ||
+          localStorage.getItem(`userRole_${eventId}`);
+        if (roleOnly && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(roleOnly)) {
+          return {
+            event_id: eventId,
+            user_id: userId,
+            role: roleOnly,
+            is_active: true,
+            last_activity_at: new Date().toISOString(),
+          };
+        }
+        console.log('🔍 No scoped session for user+event', { userId, eventId });
+        return null;
       }
 
-      console.log('🔍 Retrieved user session from localStorage:', latestSession);
-      return latestSession;
+      // No ids — do not guess a global "latest" session (that caused Operator sticky bugs)
+      return null;
     } catch (error) {
       console.error('Error getting current user session from localStorage:', error);
       return null;

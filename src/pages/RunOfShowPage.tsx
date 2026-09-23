@@ -2651,81 +2651,41 @@ const RunOfShowPage: React.FC = () => {
       };
 
       // Set role immediately from navigation state when launching from EventListPage (role modal).
-      // Ensures presence sends correct role on socket connect before async API resolves.
+      // Persist so refresh keeps this choice (do not let a stale Operator session overwrite later).
       if (userRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(userRole)) {
-        applyResolvedRole(userRole, 'navigation state (immediate)', false);
+        applyResolvedRole(userRole, 'navigation state (immediate)', true);
       }
 
-      // First priority: check API for the most recent role (this will have the latest changes)
-      const loadRoleFromAPI = async () => {
-        try {
-          console.log('🔍 Loading role from API for user:', user.id, 'event:', event.id);
-          const userSession = await DatabaseService.getCurrentUserSession(user.id, event.id);
-          console.log('📋 User session from API:', userSession);
-          
-          if (userSession && userSession.event_id === event.id && userSession.role) {
-            applyResolvedRole(userSession.role, 'API/localStorage', true);
-            return true;
-          } else {
-            console.log('❌ No valid role found in localStorage:', { 
-              hasSession: !!userSession, 
-              eventIdMatch: userSession?.event_id === event.id, 
-              hasRole: !!userSession?.role,
-              userSessionEventId: userSession?.event_id,
-              currentEventId: event.id,
-              userRole: userSession?.role
-            });
-          }
-        } catch (error) {
-          console.log('⚠️ Failed to load role from API:', error);
-        }
-        return false;
-      };
-      
-      // First priority: check API for the most recent role (for persistence)
-      loadRoleFromAPI().then(apiSuccess => {
-        if (apiSuccess) {
-          // Found role in API, use it
-          console.log('✅ Using role from API');
+      // Prefer event-scoped saved role, then session, then navigation — never steal Operator from another event.
+      const loadRole = async () => {
+        const savedRole = localStorage.getItem(`userRole_${event.id}`);
+        if (savedRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(savedRole)) {
+          applyResolvedRole(savedRole, 'userRole_ localStorage', true);
           return;
         }
-        
-        // Second priority: role from navigation state (from Graphics page or other navigation)
+
+        try {
+          console.log('🔍 Loading role from session for user:', user.id, 'event:', event.id);
+          const userSession = await DatabaseService.getCurrentUserSession(user.id, event.id);
+          console.log('📋 User session:', userSession);
+          if (userSession && userSession.event_id === event.id && userSession.role) {
+            applyResolvedRole(userSession.role, 'session localStorage', true);
+            return;
+          }
+        } catch (error) {
+          console.log('⚠️ Failed to load role from session:', error);
+        }
+
         if (userRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(userRole)) {
           applyResolvedRole(userRole, 'navigation state', true);
           return;
         }
-        
-        // Third priority: check localStorage as final fallback
-        const savedRole = localStorage.getItem(`userRole_${event.id}`);
-        console.log('🔍 Checking localStorage for role:', { eventId: event.id, savedRole });
-        if (savedRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(savedRole)) {
-          applyResolvedRole(savedRole, 'localStorage fallback', true);
-          return;
-        }
-        
-        // Fourth priority: check for any role in localStorage (any event)
-        const allKeys = Object.keys(localStorage);
-        const roleKeys = allKeys.filter(key => key.startsWith('userRole_'));
-        console.log('🔍 Checking all localStorage role keys:', roleKeys);
-        console.log('🔍 Current event ID:', event.id);
-        console.log('🔍 All localStorage keys:', allKeys);
-        
-        if (roleKeys.length > 0) {
-          const latestRoleKey = roleKeys[roleKeys.length - 1];
-          const latestRole = localStorage.getItem(latestRoleKey);
-          console.log('🔍 Found latest role in localStorage:', { key: latestRoleKey, role: latestRole });
-          
-          if (latestRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(latestRole)) {
-            applyResolvedRole(latestRole, 'latest localStorage', true);
-            return;
-          }
-        }
-        
-        // No role found anywhere, show role selection modal instead of redirecting
+
         console.log('❌ No role found, showing role selection modal');
         setShowRoleChangeModal(true);
-      });
+      };
+
+      void loadRole();
     } else if (!user && event?.id) {
       // If no user is authenticated, default to VIEWER role
       console.log('❌ No user authenticated, defaulting to VIEWER role');
@@ -3057,12 +3017,13 @@ const RunOfShowPage: React.FC = () => {
     };
   }, []);
 
-  // Save current role to API whenever it changes (but not for initial VIEWER state)
+  // Save current role to API whenever it changes (including VIEWER so refresh keeps it)
   useEffect(() => {
-    if (event?.id && user?.id && currentUserRole && currentUserRole !== 'VIEWER') {
+    if (event?.id && user?.id && currentUserRole) {
       console.log('💾 Saving current role to API:', currentUserRole);
       try {
         const username = user.full_name || user.email || 'Unknown';
+        localStorage.setItem(`userRole_${event.id}`, currentUserRole);
         DatabaseService.saveUserSession(event.id, user.id, username, currentUserRole);
         console.log('✅ Role saved to API:', currentUserRole);
       } catch (error) {
@@ -3071,13 +3032,14 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [event?.id, user?.id, currentUserRole]);
 
-  // Also save role when component unmounts (navigating away) as backup (but not for VIEWER)
+  // Also save role when component unmounts (navigating away) as backup
   useEffect(() => {
     return () => {
-      if (event?.id && user?.id && currentUserRole && currentUserRole !== 'VIEWER') {
+      if (event?.id && user?.id && currentUserRole) {
         console.log('💾 Saving current role to API before navigating away:', currentUserRole);
         try {
           const username = user.full_name || user.email || 'Unknown';
+          localStorage.setItem(`userRole_${event.id}`, currentUserRole);
           DatabaseService.saveUserSession(event.id, user.id, username, currentUserRole);
           console.log('✅ Role saved to API on navigation away:', currentUserRole);
         } catch (error) {
@@ -11522,7 +11484,7 @@ const RunOfShowPage: React.FC = () => {
                       setInShowNudgeDismissed(true);
                       setShowInShowConfirmModal(true);
                     }}
-                    className="rounded-xl bg-gradient-to-r from-violet-600 via-orange-500 to-emerald-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-orange-900/40 hover:from-violet-500 hover:via-orange-400 hover:to-emerald-500 sm:text-xl"
+                    className="rounded-xl bg-blue-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-blue-900/40 hover:bg-blue-500 sm:text-xl"
                   >
                     Switch to In-Show
                   </button>

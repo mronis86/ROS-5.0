@@ -748,6 +748,7 @@ const EventListPage: React.FC = () => {
       try {
         const username = user.user_metadata?.full_name || user.email || 'Unknown';
         await DatabaseService.saveUserSession(selectedEvent.id, user.id, username, role);
+        localStorage.setItem(`userRole_${selectedEvent.id}`, role);
         console.log('✅ Role saved to Supabase from EventListPage:', role);
       } catch (error) {
         console.error('❌ Failed to save role to Supabase from EventListPage:', error);
