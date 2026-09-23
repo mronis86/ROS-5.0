@@ -12166,28 +12166,45 @@ const RunOfShowPage: React.FC = () => {
         </div>
       )}
 
-      {/* One-time reminder when page first opens: close / hide tab / sign out when not actively working */}
+      {/* Presence reminder: lightbox over everything; card stays at bottom */}
       {showInactivityReminder && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-lg p-8 max-w-2xl w-full mx-4 border-2 border-blue-500 shadow-xl">
-            <div className="text-blue-400 text-2xl font-bold mb-3 text-center">
-              When you&apos;re not actively working on this event
-            </div>
-            <p className="text-slate-300 text-base mb-4 text-center">
-              Please do one of the following so others see accurate presence:
-            </p>
-            <ul className="text-slate-200 text-base mb-6 list-disc list-inside space-y-2 pl-2">
-              <li><strong>Close</strong> this browser tab</li>
-              <li><strong>Switch</strong> to another browser tab or window</li>
-              <li><strong>Sign out</strong> from the app</li>
-            </ul>
-            <div className="text-center">
+        <div
+          className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/70 px-3 pb-4 pt-8 sm:px-6 sm:pb-5"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="inactivity-reminder-title"
+        >
+          <div className="w-full max-w-6xl rounded-2xl border-2 border-blue-500 bg-slate-800 p-5 shadow-2xl shadow-black/50 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 max-w-3xl">
+                <h2 id="inactivity-reminder-title" className="text-xl font-bold text-blue-300 sm:text-2xl">
+                  When you&apos;re not actively working on this event
+                </h2>
+                <p className="mt-2 text-base text-slate-300">
+                  Please do one of the following so others see accurate presence:
+                </p>
+              </div>
               <button
+                type="button"
                 onClick={() => setShowInactivityReminder(false)}
-                className="px-6 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors"
+                className="shrink-0 rounded-lg bg-blue-600 px-6 py-2.5 text-base font-semibold text-white hover:bg-blue-500"
               >
                 Dismiss
               </button>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-600 bg-slate-900/70 px-5 py-5">
+                <div className="text-xl font-bold text-white sm:text-2xl">Close</div>
+                <div className="mt-2 text-base text-slate-300 sm:text-lg">this browser tab</div>
+              </div>
+              <div className="rounded-xl border border-slate-600 bg-slate-900/70 px-5 py-5">
+                <div className="text-xl font-bold text-white sm:text-2xl">Switch</div>
+                <div className="mt-2 text-base text-slate-300 sm:text-lg">to another tab or window</div>
+              </div>
+              <div className="rounded-xl border border-slate-600 bg-slate-900/70 px-5 py-5">
+                <div className="text-xl font-bold text-white sm:text-2xl">Sign out</div>
+                <div className="mt-2 text-base text-slate-300 sm:text-lg">from the app</div>
+              </div>
             </div>
           </div>
         </div>
