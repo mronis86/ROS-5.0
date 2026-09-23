@@ -11495,25 +11495,23 @@ const RunOfShowPage: React.FC = () => {
           >
             <div className="h-1.5 w-full bg-gradient-to-r from-amber-400 via-orange-500 to-amber-400" />
             <div className="px-8 py-10 text-center sm:px-10 sm:py-12">
-              <div className="mx-auto mb-4 flex items-center justify-center gap-3">
-                <span className="ros-preshow-callout-tally h-3 w-3 rounded-full bg-amber-400" />
+              <div className="mx-auto mb-5 flex items-center justify-center gap-3">
+                <span className="ros-preshow-callout-tally h-3.5 w-3.5 rounded-full bg-amber-400" />
                 <span
                   id="inshow-nudge-title"
-                  className="text-sm font-semibold tracking-[0.28em] text-amber-200 sm:text-base"
+                  className="text-xs font-semibold tracking-[0.35em] text-amber-300 sm:text-sm"
                 >
-                  STILL IN REHEARSAL
+                  PRE SHOW RUNNING
                 </span>
               </div>
-              <p className="text-xl font-semibold text-white sm:text-2xl">
-                Pre Show is running
+              <p className="text-3xl font-bold leading-tight text-white sm:text-4xl">
+                Switch to In-Show
               </p>
-              <p className="mt-3 text-base text-amber-100/90 sm:text-lg">
-                Switch to In-Show so overtime and locked start times track for the live show.
-                {currentUserRole !== 'OPERATOR'
-                  ? ' Change your role to Operator (or ask the Operator) to toggle.'
-                  : ''}
+              <p className="mt-3 text-base text-amber-100/85">
+                Still in Rehearsal
+                {currentUserRole !== 'OPERATOR' ? ' — Operator needed to toggle' : ''}
               </p>
-              <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
                 {currentUserRole === 'OPERATOR' ? (
                   <button
                     type="button"
@@ -11521,7 +11519,7 @@ const RunOfShowPage: React.FC = () => {
                       setInShowNudgeDismissed(true);
                       setShowInShowConfirmModal(true);
                     }}
-                    className="rounded-xl bg-green-600 px-8 py-3.5 text-base font-semibold text-white hover:bg-green-500 sm:text-lg"
+                    className="rounded-xl bg-green-500 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-green-900/40 hover:bg-green-400 sm:text-xl"
                   >
                     Switch to In-Show
                   </button>
@@ -11529,7 +11527,7 @@ const RunOfShowPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setInShowNudgeDismissed(true)}
-                  className="rounded-xl bg-slate-700 px-8 py-3.5 text-base font-semibold text-white hover:bg-slate-600 sm:text-lg"
+                  className="rounded-xl bg-slate-700/90 px-8 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-600"
                 >
                   Dismiss
                 </button>
