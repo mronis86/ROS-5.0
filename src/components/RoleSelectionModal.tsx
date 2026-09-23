@@ -83,7 +83,6 @@ const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
       );
 
       if (success) {
-        localStorage.setItem(`userRole_${eventId}`, selectedRole);
         onRoleSelected(selectedRole);
         onClose();
       } else {

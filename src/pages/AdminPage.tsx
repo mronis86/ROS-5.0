@@ -274,6 +274,7 @@ const ADMIN_NAV: { id: string; label: string }[] = [
   { id: 'preflight', label: 'Pre-Flight' },
   { id: 'backup', label: 'Backup' },
   { id: 'branding', label: 'Branding' },
+  { id: 'dev-notes', label: 'Dev notes' },
 ];
 
 type PlatformCheckLevel = 'ok' | 'warning' | 'critical' | 'unknown';
@@ -4349,6 +4350,89 @@ export default function AdminPage() {
                 );
               })}
             </div>
+          </div>
+        </section>
+
+        <section id="dev-notes" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-amber-500/20 text-amber-400">
+              <BookOpen className="w-4 h-4" strokeWidth={2} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-white">Dev notes / A/B later</h2>
+              <p className="text-slate-400 text-sm">
+                Parked ideas so we do not lose them. Not live behavior — production uses the long-stable role loader.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 space-y-3 text-sm text-slate-200">
+            <div>
+              <h3 className="text-base font-semibold text-amber-100">
+                Session role persistence (parked 2026-09-22 — pre-show rollback)
+              </h3>
+              <p className="mt-1 text-slate-300 leading-relaxed">
+                Tonight we over-scoped a fix for Admin/Crew refreshing back to Operator into a full role-loader
+                rewrite. That broke Viewer → Editor selection for Event users. For the show we restored the{' '}
+                <strong className="text-white">pre-rewrite</strong> Run of Show role logic (
+                <code className="text-amber-200/90 text-xs">aed5331~1</code>
+                ). Keep In-Show / Pre-Show work; do not re-enable this role path until after a calm A/B.
+              </p>
+            </div>
+
+            <div>
+              <p className="font-medium text-white">What production uses now (stable / old)</p>
+              <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-300">
+                <li>Launch nav role applied immediately, then session/API, then <code className="text-xs">{'userRole_${eventId}'}</code>, then “latest” key, else modal</li>
+                <li>Save-on-change skips Viewer; modal writes localStorage + session on Continue</li>
+                <li>Operator still blocked for non–Event Manager/Admin via <code className="text-xs">canSelectOperatorRole</code></li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="font-medium text-white">Parked A/B design (do not ship mid-show week)</p>
+              <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-300">
+                <li>
+                  <strong className="text-white">Single write path</strong> — e.g. <code className="text-xs">commitSessionRole(role, source)</code>:
+                  set React state, write localStorage (+ optional per-user <code className="text-xs">{'user_role_${eventId}_${userId}'}</code>),
+                  save session blob. No <code className="text-xs">navigate()</code> / <code className="text-xs">history.replaceState</code> on role change
+                  (that re-triggered hydrate and snapped Editor → Viewer).
+                </li>
+                <li>
+                  <strong className="text-white">Hydrate once per event</strong> — prefer stored role over stale launch
+                  history (fixes Operator sticky on refresh). After hydrate, only an explicit user pick changes role.
+                </li>
+                <li>
+                  <strong className="text-white">Persist Viewer too</strong> — old loader skipped saving Viewer; A/B should
+                  persist all three roles so refresh keeps Viewer.
+                </li>
+                <li>
+                  <strong className="text-white">Modal</strong> — seed radio only when the modal opens; apply role
+                  immediately on Continue (do not wait on async save); never fight the user’s radio click.
+                </li>
+                <li>
+                  <strong className="text-white">Do not</strong> steal “latest <code className="text-xs">userRole_*</code> from any event”
+                  — that cross-event bleed was part of Operator sticky bugs.
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="font-medium text-white">Suggested A/B test plan (later)</p>
+              <ol className="mt-1 list-decimal pl-5 space-y-1 text-slate-300">
+                <li>Branch off current master; re-apply parked design only on role files (ROS page, RoleSelectionModal, Event List launch, Board, mobile).</li>
+                <li>Matrix: Event user + Admin/Crew × Viewer/Editor/Operator × Change Role + hard refresh + leave/re-enter event.</li>
+                <li>Confirm Operator still blocked for non–EM/Admin; confirm no Editor → Viewer snap on select.</li>
+                <li>Ship behind a quiet week, not a show day.</li>
+              </ol>
+            </div>
+
+            <p className="text-xs text-slate-500 border-t border-amber-500/20 pt-3">
+              Related commits to avoid re-merging blindly:{' '}
+              <code className="text-slate-400">aed5331</code> (role rewrite start),{' '}
+              <code className="text-slate-400">05e7bc1</code> (history sync / further rewrite). Restore baseline was{' '}
+              <code className="text-slate-400">aed5331~1</code>.
+            </p>
           </div>
         </section>
 
