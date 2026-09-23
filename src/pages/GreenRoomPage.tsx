@@ -20,6 +20,7 @@ import {
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
 import {
   formatShowDelayStatus,
   parseShowStartOvertimeMinutes,
@@ -100,18 +101,23 @@ const GreenRoomPage: React.FC = () => {
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
+  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const greenActiveProgramType =
     activeItemId != null
       ? schedule.find((s) => Number(s.id) === Number(activeItemId))?.programType
       : null;
+  const topPreshowItemId = findTopPreshowCue(schedule, indentedCues)?.id ?? null;
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     isRunning: timerState === 'running',
     programType: greenActiveProgramType,
     itemId: activeItemId,
+    topPreshowItemId,
   });
   const showPreshowCountdownLabel =
     usePreshowRainbowColors ||
-    (greenActiveProgramType === 'PreShow/End' &&
+    (topPreshowItemId != null &&
+      activeItemId != null &&
+      Number(activeItemId) === Number(topPreshowItemId) &&
       (timerState === 'running' || timerState === 'loaded'));
   
   // Track initial load to prevent flashing during page refresh
@@ -128,7 +134,6 @@ const GreenRoomPage: React.FC = () => {
   const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
-  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [syncCountdown, setSyncCountdown] = useState<number>(20);
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
 

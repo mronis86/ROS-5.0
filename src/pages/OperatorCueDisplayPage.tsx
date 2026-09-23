@@ -14,6 +14,7 @@ import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { countdownColorForRemaining } from '../lib/countdownColor';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -762,6 +763,7 @@ const OperatorCueDisplayPage: React.FC = () => {
     isRunning: running,
     programType: current?.programType,
     itemId: activeId ?? current?.id ?? null,
+    topPreshowItemId: findTopPreshowCue(schedule)?.id ?? null,
   });
 
   const statusTextCls = running ? 'text-green-400' : loaded ? 'text-yellow-400' : 'text-slate-300';

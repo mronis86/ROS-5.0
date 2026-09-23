@@ -19,6 +19,7 @@ import {
 } from '../lib/cateringNotes';
 import { countdownColorForRemaining } from '../lib/countdownColor';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
 
 type ScheduleItem = {
   id: number;
@@ -543,6 +544,7 @@ const CateringEventPage: React.FC = () => {
     isRunning: timerRunning,
     programType: current?.programType,
     itemId: activeId ?? current?.id ?? null,
+    topPreshowItemId: findTopPreshowCue(schedule, indented)?.id ?? null,
   });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && progress.total > 0

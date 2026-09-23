@@ -16,6 +16,7 @@ import {
 } from '../showcase/photoShowcaseHelpers';
 import { countdownColorForRemaining } from '../lib/countdownColor';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
 import {
   getMicAssignment,
   MIC_TYPE_OPTIONS,
@@ -473,6 +474,7 @@ const MicManagerPage: React.FC = () => {
     isRunning: timerRunning,
     programType: micActiveProgramType,
     itemId: activeItemId,
+    topPreshowItemId: findTopPreshowCue(schedule)?.id ?? null,
   });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && timerProgress.total > 0

@@ -6,7 +6,7 @@ import {
   countdownColorForRemaining,
   useCountdownColorMode,
 } from '../lib/countdownColor';
-import { isPreshowTimerMessage } from '../lib/preshowCountdown';
+import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
@@ -90,6 +90,27 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     hybridTimerData?.activeTimer?.program_type ||
     hybridTimerData?.activeTimer?.programType ||
     null;
+  const [topPreshowItemId, setTopPreshowItemId] = useState<number | null>(null);
+  useEffect(() => {
+    if (!eventId) {
+      setTopPreshowItemId(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await DatabaseService.getRunOfShowData(eventId);
+        const items = Array.isArray(data?.schedule_items) ? data.schedule_items : [];
+        const top = findTopPreshowCue(items);
+        if (!cancelled) setTopPreshowItemId(top?.id ?? null);
+      } catch {
+        if (!cancelled) setTopPreshowItemId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId]);
   const usePreshowRainbow = shouldUsePreshowRainbow(stageMessageForColor, {
     isRunning: timerRunningForRainbow,
     programType: activeCueProgramType,
@@ -98,6 +119,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       hybridTimerData?.activeTimer?.itemId ??
       itemId ??
       null,
+    topPreshowItemId,
   });
 
   const hasBlockingStageMessage = () => {

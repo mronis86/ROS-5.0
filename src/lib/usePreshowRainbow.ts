@@ -31,7 +31,8 @@ export function isActiveTimerRunning(timer: ActiveTimerLike): boolean {
 
 /**
  * True when Pre Show Countdown branding should apply (Clock / Photo / Op Large / etc.).
- * Only while a timer is running on the top PreShow/End cue (or PreShow/End when top id unknown).
+ * Only while a timer is running on the *first* (top) PreShow/End cue — never the
+ * end-of-show PreShow/End stack, which shares the same program type.
  * A sticky event timer message alone must NOT brand later cues after START.
  */
 export function shouldUsePreshowRainbow(
@@ -42,7 +43,7 @@ export function shouldUsePreshowRainbow(
     programType?: string | null;
     /** Active cue id (preferred over timer.item_id when both exist). */
     itemId?: number | string | null;
-    /** First schedule PreShow/End cue id — when set, only that cue gets branding. */
+    /** First schedule PreShow/End cue id — required to brand; end-of-show PreShow is excluded. */
     topPreshowItemId?: number | string | null;
   }
 ): boolean {
@@ -54,19 +55,19 @@ export function shouldUsePreshowRainbow(
   const itemId =
     opts?.itemId ?? opts?.timer?.item_id ?? opts?.timer?.itemId ?? null;
 
-  // Prefer explicit top-PreShow match when the schedule is known
-  if (opts?.topPreshowItemId != null && itemId != null) {
+  // Only the first PreShow/End cue gets branding (end-of-show is also PreShow/End).
+  if (opts?.topPreshowItemId != null) {
+    if (itemId == null) return false;
     return String(itemId) === String(opts.topPreshowItemId);
   }
 
   const programType = opts?.programType;
   if (programType != null && String(programType).trim() !== '') {
-    // Sticky "Pre Show Countdown" message must not brand Panel / START / etc.
-    if (programType !== 'PreShow/End') return false;
-    return true;
+    // Without topPreshowItemId we cannot tell first vs end-of-show PreShow/End — do not brand.
+    return false;
   }
 
-  // Legacy fallback when cue type is unknown (message still set from top PreShow start)
+  // Legacy fallback when schedule/cue type unknown (message still set from top PreShow start)
   return isPreshowTimerMessage(msg);
 }
 

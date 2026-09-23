@@ -62,6 +62,7 @@
     "zip:master-backup": "node scripts/zip-master-backup.js --branch master",
     "prerender:led-cues": "node scripts/run-bake-led-prerenders.js",
     "build": "vite build && node scripts/verify-dist-privacy.js",
+    "version:bump": "node scripts/bump-ros-version.mjs",
     "preview": "vite preview",
     "test": "react-scripts test",
     "eject": "react-scripts eject",

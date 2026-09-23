@@ -22,6 +22,7 @@ import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { speakersForSlots } from '../lib/micManager';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
 
 interface ScheduleItem {
@@ -358,6 +359,7 @@ const PhotoViewPage: React.FC = () => {
   // Hybrid timer data (same pattern as RunOfShowPage)
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null, secondaryTimer: null });
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
+  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const photoActiveItemId =
     hybridTimerData?.activeTimer?.item_id != null
       ? Number(hybridTimerData.activeTimer.item_id)
@@ -370,12 +372,12 @@ const PhotoViewPage: React.FC = () => {
     timer: hybridTimerData?.activeTimer,
     programType: photoActiveProgramType,
     itemId: photoActiveItemId,
+    topPreshowItemId: findTopPreshowCue(schedule, indentedCues)?.id ?? null,
   });
   
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [activeTimers, setActiveTimers] = useState<{[key: number]: boolean}>({});
-  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [showNotes, setShowNotes] = useState<boolean>(true);
   /** Dedicated 16:9 control-room display layout (not a zoomed table). */
   const [broadcastMode, setBroadcastMode] = useState<boolean>(() => {
@@ -2371,7 +2373,7 @@ const PhotoViewPage: React.FC = () => {
           >
             {/* Top bar + progress (stacked so the bar never cuts through labels) */}
             <div className="absolute inset-x-0 top-0 z-10 px-[2%] pt-[1%] bg-gradient-to-b from-black/80 to-transparent">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center justify-between gap-4">
               <div className="min-w-0 flex-1 pr-2">
                 <h1 className="text-[clamp(0.75rem,1.5vw,1.1rem)] font-bold leading-tight truncate text-slate-200">
                   {event?.name || 'Current Event'}
@@ -2404,71 +2406,66 @@ const PhotoViewPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="shrink-0 flex flex-col items-end">
-                <div className="flex items-center gap-3 sm:gap-4">
-                  <div className="text-right">
-                    {hybridTimerData?.activeTimer ? (
-                      <div className="flex flex-col items-end gap-0.5">
-                        <div
-                          className={`text-[clamp(0.85rem,1.5vw,1.2rem)] font-bold leading-none ${
-                            hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                              ? isResolumeSyncPulseActive
-                                ? 'text-yellow-300'
-                                : isResolumeSynced(hybridTimerData.activeTimer)
-                                  ? 'text-purple-400'
-                                  : 'text-green-400'
-                              : isResolumeArmed(hybridTimerData.activeTimer)
-                                ? 'text-purple-300'
-                                : 'text-yellow-400'
-                          }`}
-                        >
-                          {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                            ? isResolumeSynced(hybridTimerData.activeTimer)
-                              ? 'RUNNING · RESOLUME'
-                              : 'RUNNING'
+              <div className="shrink-0 flex items-center gap-3 sm:gap-4">
+                <div className="text-right">
+                  {hybridTimerData?.activeTimer ? (
+                    <div className="flex flex-col items-end gap-0.5">
+                      <div
+                        className={`text-[clamp(0.7rem,1.2vw,0.95rem)] font-bold leading-none ${
+                          hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                            ? isResolumeSyncPulseActive
+                              ? 'text-yellow-300'
+                              : isResolumeSynced(hybridTimerData.activeTimer)
+                                ? 'text-purple-400'
+                                : 'text-green-400'
                             : isResolumeArmed(hybridTimerData.activeTimer)
-                              ? 'LOADED · RESOLUME (armed)'
-                              : 'LOADED'}
+                              ? 'text-purple-300'
+                              : 'text-yellow-400'
+                        }`}
+                      >
+                        {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                          ? isResolumeSynced(hybridTimerData.activeTimer)
+                            ? 'RUNNING · RESOLUME'
+                            : 'RUNNING'
+                          : isResolumeArmed(hybridTimerData.activeTimer)
+                            ? 'LOADED · RESOLUME (armed)'
+                            : 'LOADED'}
+                      </div>
+                      {isResolumeArmed(hybridTimerData.activeTimer) && (
+                        <div className="text-[clamp(0.45rem,0.7vw,0.65rem)] text-purple-300/90">
+                          Waiting for Resolume playback…
                         </div>
-                        {isResolumeArmed(hybridTimerData.activeTimer) && (
-                          <div className="text-[clamp(0.5rem,0.8vw,0.7rem)] text-purple-300/90">
-                            Waiting for Resolume playback…
+                      )}
+                      {isResolumeSynced(hybridTimerData.activeTimer) &&
+                        hybridTimerData.activeTimer.is_running &&
+                        hybridTimerData.activeTimer.is_active && (
+                          <div className="text-[clamp(0.45rem,0.7vw,0.65rem)] text-purple-300/90">
+                            Countdown synced to Resolume clip
                           </div>
                         )}
-                        {isResolumeSynced(hybridTimerData.activeTimer) &&
-                          hybridTimerData.activeTimer.is_running &&
-                          hybridTimerData.activeTimer.is_active && (
-                            <div className="text-[clamp(0.5rem,0.8vw,0.7rem)] text-purple-300/90">
-                              Countdown synced to Resolume clip
-                            </div>
-                          )}
-                      </div>
-                    ) : (
-                      <div className={`text-[clamp(0.85rem,1.5vw,1.2rem)] font-bold leading-none ${statusColor}`}>
-                        {statusText}
-                      </div>
-                    )}
-                  </div>
-                  <div
-                    className={`font-mono font-bold tabular-nums leading-none tracking-tight bg-slate-800 px-[0.6em] py-[0.3em] rounded-lg border border-slate-600 ${
-                      usePreshowRainbowColors ? 'ros-rainbow-text' : ''
-                    }`}
-                    style={{
-                      fontSize: 'clamp(1.2rem, 2.8vw, 2.2rem)',
-                      ...(usePreshowRainbowColors ? {} : { color: getCountdownColor() }),
-                    }}
-                  >
-                    {formatTime(getRemainingTime())}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className={`text-[clamp(0.7rem,1.2vw,0.95rem)] font-bold leading-none ${statusColor}`}>
+                      {statusText}
+                    </div>
+                  )}
                 </div>
-                <div className="mt-1 text-slate-400 text-[clamp(0.75rem,1.25vw,1.05rem)]">
-                  {currentTime.toLocaleTimeString()}
+                <div
+                  className={`font-mono font-bold tabular-nums leading-none tracking-tight bg-slate-800 px-[0.45em] py-[0.22em] rounded-lg border border-slate-600 ${
+                    usePreshowRainbowColors ? 'ros-rainbow-text' : ''
+                  }`}
+                  style={{
+                    fontSize: 'clamp(1.75rem, 4.2vw, 3.5rem)',
+                    ...(usePreshowRainbowColors ? {} : { color: getCountdownColor() }),
+                  }}
+                >
+                  {formatTime(getRemainingTime())}
                 </div>
               </div>
               </div>
 
-              {/* Progress — below header content so it never intersects labels */}
-              <div className="relative mt-3 mb-2 h-2.5 w-full bg-slate-800/90 overflow-hidden rounded-full">
+              {/* Progress — fixed under the title row so a large counter doesn't push it down */}
+              <div className="relative mt-1.5 mb-2 h-2.5 w-full bg-slate-800/90 overflow-hidden rounded-full">
                 <div
                   className={`absolute top-0 right-0 h-full transition-all duration-1000 rounded-full ${
                     usePreshowRainbowColors ? 'ros-rainbow-fill' : ''

@@ -4,6 +4,7 @@ import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Ch
 import { getApiBaseUrl } from '../services/api-client';
 import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
 import { isSentryWebConfigured } from '../lib/sentry';
+import { ROS_APP_VERSION } from '../lib/rosVersion';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
 import {
   getLogoVariant,
@@ -2406,7 +2407,12 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 scroll-smooth">
       <header className="sticky top-0 z-40 bg-slate-800/95 backdrop-blur border-b border-slate-700 px-4 sm:px-6 py-2.5 flex items-center gap-3">
-        <h1 className="text-lg font-bold text-white shrink-0">Admin</h1>
+        <div className="shrink-0 flex items-baseline gap-2">
+          <h1 className="text-lg font-bold text-white">Admin</h1>
+          <span className="text-slate-500 text-xs font-mono tabular-nums" title="ROS app version">
+            {ROS_APP_VERSION}
+          </span>
+        </div>
         <nav
           className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           aria-label="Jump to section"
@@ -2710,6 +2716,9 @@ export default function AdminPage() {
               <p className="text-slate-500 text-sm mt-1">
                 Simple health check for the software versions that run your site and API — and when they need upgrading.
                 Admins are emailed when something is Review or Urgent (at most about once a week while it stays open — these are planning reminders, not emergencies).
+              </p>
+              <p className="text-slate-400 text-xs mt-2 font-mono tabular-nums">
+                ROS app {ROS_APP_VERSION}
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -4367,6 +4376,20 @@ export default function AdminPage() {
           </div>
 
           <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 space-y-3 text-sm text-slate-200">
+            <div>
+              <h3 className="text-base font-semibold text-amber-100">
+                App versioning (from 2026-09-23)
+              </h3>
+              <p className="mt-1 text-slate-300 leading-relaxed">
+                Production label is calendar-based:{' '}
+                <code className="text-amber-200/90 text-xs">V{'{YY}'}.{'{M}'}.{'{D}'}.{'{Letter}'}{'{Cycle}'}</code>
+                {' '}(e.g. <span className="font-mono text-white">{ROS_APP_VERSION}</span>). A1 = first push that day,
+                Z1 = 26th, A2 = 27th. Before each production push run{' '}
+                <code className="text-amber-200/90 text-xs">npm run version:bump</code> and commit{' '}
+                <code className="text-amber-200/90 text-xs">src/ros-version.json</code>.
+              </p>
+            </div>
+
             <div>
               <h3 className="text-base font-semibold text-amber-100">
                 Session role persistence (parked 2026-09-22 — pre-show rollback)

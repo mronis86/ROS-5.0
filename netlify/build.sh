@@ -16,6 +16,10 @@ BUILD_INFO_DIR="public"
 mkdir -p "$BUILD_INFO_DIR"
 echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BUILD_INFO_DIR/build-info.txt"
 echo "commit=${COMMIT_REF:-unknown}" >> "$BUILD_INFO_DIR/build-info.txt"
+if [ -f src/ros-version.json ]; then
+  ROS_VER=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('src/ros-version.json','utf8')).version||'')}catch(e){console.log('')}")
+  echo "ros_version=${ROS_VER}" >> "$BUILD_INFO_DIR/build-info.txt"
+fi
 echo "Wrote $BUILD_INFO_DIR/build-info.txt"
 
 # Clear local caches so we get a full rebuild (optional but helps avoid stale artifacts)

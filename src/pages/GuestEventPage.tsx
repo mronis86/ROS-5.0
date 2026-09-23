@@ -15,6 +15,7 @@ import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
 
 const REST_FALLBACK_MS = 12000;
 const ZOOM_STORAGE_KEY = 'guest-event-zoom';
@@ -257,6 +258,8 @@ const GuestEventPage: React.FC = () => {
   const usePreshowRainbowColors = shouldUsePreshowRainbow(null, {
     isRunning: timerRunning,
     programType: activeItem?.programType,
+    itemId: activeItemId,
+    topPreshowItemId: findTopPreshowCue(allItems)?.id ?? null,
   });
 
   useEffect(() => {

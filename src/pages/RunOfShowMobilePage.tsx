@@ -12,6 +12,7 @@ import {
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 
@@ -886,6 +887,7 @@ const RunOfShowMobilePage: React.FC = () => {
     isRunning: effectivePrimaryLive?.kind === 'running',
     programType: mobileActiveProgramType,
     itemId: effectivePrimaryLive?.itemId ?? null,
+    topPreshowItemId: findTopPreshowCue(items)?.id ?? null,
   });
   const effectivePrimaryRemainingSec = useMemo(() => {
     const p = effectivePrimaryLive;
