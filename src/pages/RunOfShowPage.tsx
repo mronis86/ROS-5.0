@@ -18,7 +18,7 @@ import {
   PRESHOW_MESSAGE_TYPE,
   PRESHOW_WARN_MINUTES_BEFORE,
 } from '../lib/preshowCountdown';
-import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
+import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
@@ -1123,16 +1123,9 @@ const RunOfShowPage: React.FC = () => {
     programType: activeCueForPreshow?.programType,
   });
 
-  // Admin/Crew: ~1 min after PreShow is running while still Rehearsal → flashing In-Show nudge
+  // Admin/Crew: ~1 min after PreShow is running while still Rehearsal → In-Show overlay
   useEffect(() => {
-    const timer = hybridTimerData?.activeTimer;
-    const running =
-      !!timer &&
-      rosPreshowRainbow &&
-      (timer.is_running === true ||
-        timer.isRunning === true ||
-        timer.timer_state === 'running');
-    if (!running || showMode !== 'rehearsal') {
+    if (showMode !== 'rehearsal') {
       setInShowNudgeEligible(false);
       if (showMode === 'in-show') {
         setInShowNudgeDismissed(false);
@@ -1141,13 +1134,36 @@ const RunOfShowPage: React.FC = () => {
       }
       return;
     }
-    const itemId = Number(timer.item_id ?? timer.itemId ?? activeCueForPreshow?.id ?? NaN);
+
+    const timer = hybridTimerData?.activeTimer;
+    const itemId = Number(
+      timer?.item_id ?? timer?.itemId ?? activeItemId ?? activeCueForPreshow?.id ?? NaN
+    );
+    const cue =
+      (Number.isFinite(itemId) ? schedule.find((s) => s.id === itemId) : null) ||
+      activeCueForPreshow;
+    const isPreshowCue =
+      cue?.programType === 'PreShow/End' ||
+      isPreshowTimerMessage(hybridTimerData?.timerMessage) ||
+      rosPreshowRainbow;
+    const hybridRunning =
+      isActiveTimerRunning(timer) ||
+      timer?.timer_state === 'running' ||
+      timer?.is_running === true;
+    const localRunning = Number.isFinite(itemId) && !!activeTimers[itemId];
+    const running = !!(isPreshowCue && (hybridRunning || localRunning));
+
+    if (!running) {
+      setInShowNudgeEligible(false);
+      return;
+    }
+
     const startedRaw =
-      timer.started_at ||
-      timer.timer_started_at ||
-      timer.startedAt ||
+      timer?.started_at ||
+      timer?.timer_started_at ||
+      timer?.startedAt ||
       null;
-    const runKey = `${Number.isFinite(itemId) ? itemId : 'x'}:${startedRaw || 'running'}`;
+    const runKey = `${Number.isFinite(itemId) ? itemId : 'x'}:${String(startedRaw || 'running')}`;
     if (inShowNudgeRunKeyRef.current !== runKey) {
       inShowNudgeRunKeyRef.current = runKey;
       inShowNudgeFirstSeenMsRef.current = Date.now();
@@ -1170,14 +1186,18 @@ const RunOfShowPage: React.FC = () => {
     const id = window.setInterval(check, 1000);
     return () => window.clearInterval(id);
   }, [
-    hybridTimerData?.activeTimer,
     hybridTimerData?.activeTimer?.item_id,
     hybridTimerData?.activeTimer?.is_running,
     hybridTimerData?.activeTimer?.timer_state,
     hybridTimerData?.activeTimer?.started_at,
+    hybridTimerData?.timerMessage,
     rosPreshowRainbow,
     showMode,
     activeCueForPreshow?.id,
+    activeCueForPreshow?.programType,
+    activeItemId,
+    activeTimers,
+    schedule,
   ]);
 
   useEffect(() => {
@@ -11461,36 +11481,59 @@ const RunOfShowPage: React.FC = () => {
       showMode === 'rehearsal' &&
       inShowNudgeEligible &&
       !inShowNudgeDismissed ? (
-        <div className="ros-inshow-nudge-banner sticky top-0 z-[45] border-b px-4 py-2.5 text-sm">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-medium text-amber-100">
-                Pre Show is running — still in Rehearsal
+        <div className="fixed inset-0 z-[72] flex items-center justify-center p-4 sm:p-8">
+          <div
+            className="absolute inset-0 bg-black/55 backdrop-blur-[1px]"
+            onClick={() => setInShowNudgeDismissed(true)}
+            aria-hidden
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="inshow-nudge-title"
+            className="ros-inshow-nudge-banner relative z-10 w-full max-w-xl overflow-hidden rounded-2xl border-2 border-amber-500/70 bg-amber-950 shadow-2xl shadow-black/50"
+          >
+            <div className="h-1.5 w-full bg-gradient-to-r from-amber-400 via-orange-500 to-amber-400" />
+            <div className="px-8 py-10 text-center sm:px-10 sm:py-12">
+              <div className="mx-auto mb-4 flex items-center justify-center gap-3">
+                <span className="ros-preshow-callout-tally h-3 w-3 rounded-full bg-amber-400" />
+                <span
+                  id="inshow-nudge-title"
+                  className="text-sm font-semibold tracking-[0.28em] text-amber-200 sm:text-base"
+                >
+                  STILL IN REHEARSAL
+                </span>
+              </div>
+              <p className="text-xl font-semibold text-white sm:text-2xl">
+                Pre Show is running
               </p>
-              <p className="text-xs text-amber-200/90">
+              <p className="mt-3 text-base text-amber-100/90 sm:text-lg">
                 Switch to In-Show so overtime and locked start times track for the live show.
                 {currentUserRole !== 'OPERATOR'
                   ? ' Change your role to Operator (or ask the Operator) to toggle.'
                   : ''}
               </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {currentUserRole === 'OPERATOR' ? (
+              <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                {currentUserRole === 'OPERATOR' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInShowNudgeDismissed(true);
+                      setShowInShowConfirmModal(true);
+                    }}
+                    className="rounded-xl bg-green-600 px-8 py-3.5 text-base font-semibold text-white hover:bg-green-500 sm:text-lg"
+                  >
+                    Switch to In-Show
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() => setShowInShowConfirmModal(true)}
-                  className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-500"
+                  onClick={() => setInShowNudgeDismissed(true)}
+                  className="rounded-xl bg-slate-700 px-8 py-3.5 text-base font-semibold text-white hover:bg-slate-600 sm:text-lg"
                 >
-                  Switch to In-Show
+                  Dismiss
                 </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setInShowNudgeDismissed(true)}
-                className="rounded-lg px-2 py-1.5 text-xs text-amber-200/70 hover:bg-amber-900 hover:text-amber-100"
-              >
-                Dismiss
-              </button>
+              </div>
             </div>
           </div>
         </div>
