@@ -2734,6 +2734,8 @@ const PhotoViewPage: React.FC = () => {
           </div>
         </div>
 
+        {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
+
         {showDisconnectModal && (
           <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />
         )}
