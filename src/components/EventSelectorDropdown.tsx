@@ -1,15 +1,23 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
+import {
+  compareEventsByDateForFilter,
+  isEventPast,
+  isEventUpcoming,
+} from '../lib/eventActiveWindow';
 import { Event } from '../types/Event';
 
 export type EventFilter = 'all' | 'upcoming' | 'past';
 
 function filterEvents(events: Event[], filter: EventFilter): Event[] {
-  if (filter === 'all') return events;
-  if (filter === 'upcoming') {
-    return events.filter((e) => isEventUpcoming(e.date || '', e.numberOfDays));
+  let list: Event[];
+  if (filter === 'all') {
+    list = events;
+  } else if (filter === 'upcoming') {
+    list = events.filter((e) => isEventUpcoming(e.date || '', e.numberOfDays));
+  } else {
+    list = events.filter((e) => isEventPast(e.date || '', e.numberOfDays));
   }
-  return events.filter((e) => isEventPast(e.date || '', e.numberOfDays));
+  return [...list].sort((a, b) => compareEventsByDateForFilter(a, b, filter));
 }
 
 interface EventSelectorDropdownProps {

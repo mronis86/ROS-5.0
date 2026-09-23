@@ -47,3 +47,25 @@ export function isEventPast(
   if (!start) return false;
   return getEventLastDay(start, numberOfDays) < today;
 }
+
+/** Sort key for YYYY-MM-DD (local). Missing/invalid dates sort last. */
+export function eventDateSortKey(dateStr: string | null | undefined): number {
+  const d = parseEventDateLocal(String(dateStr || ''));
+  return d ? d.getTime() : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Upcoming: soonest first. Past: most recent first. All: chronological ascending.
+ */
+export function compareEventsByDateForFilter(
+  a: { date?: string | null },
+  b: { date?: string | null },
+  filter: 'all' | 'upcoming' | 'past'
+): number {
+  const ka = eventDateSortKey(a.date);
+  const kb = eventDateSortKey(b.date);
+  if (ka !== kb) {
+    return filter === 'past' ? kb - ka : ka - kb;
+  }
+  return 0;
+}

@@ -1429,7 +1429,7 @@ const RunOfShowPage: React.FC = () => {
   const [timeDifference, setTimeDifference] = useState(0);
   const [scheduledTime, setScheduledTime] = useState<string>(''); // Store the scheduled start time
   const [toastCountdown, setToastCountdown] = useState(20); // Countdown timer for toast
-  const toastShownForTimerRef = useRef<number | null>(null); // Track which timer has already shown its toast
+  const toastShownForTimerRef = useRef<string | null>(null); // itemId|startedAt — survives re-runs; resets on reload
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Track the auto-close timeout
   const toastCountdownIntervalRef = useRef<NodeJS.Timeout | null>(null); // Track the countdown interval
   
@@ -3871,7 +3871,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Note: User activity tracking simplified - using user session tracking instead
   
-  // Show toast when a timer starts and auto-close after 20 seconds
+  // Show Ontime/Late/Early toast when a timer starts (compare started_at vs scheduled — not wall-clock now)
   useEffect(() => {
     console.log('🍞 Toast useEffect triggered:', {
       activeTimersCount: Object.keys(activeTimers).length,
@@ -3905,13 +3905,46 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
     
-    const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
+    const activeTimerId = parseInt(Object.keys(activeTimers)[0], 10);
+    if (!Number.isFinite(activeTimerId)) return;
     console.log('🍞 Toast: Active timer ID:', activeTimerId);
-    
-    // Only show toast if this is a NEW timer (not one we've already shown for)
-    if (toastShownForTimerRef.current === activeTimerId) {
-      console.log('🍞 Toast: Already shown for timer', activeTimerId, '- skipping (countdown should be running)');
-      return; // Don't clear the interval - let it continue counting down
+
+    const hybrid = hybridTimerData?.activeTimer;
+    const progressStarted = timerProgress[activeTimerId]?.startedAt ?? null;
+    let startedAtDate: Date | null = null;
+    if (
+      hybrid &&
+      Number(hybrid.item_id) === activeTimerId &&
+      hybrid.started_at &&
+      !String(hybrid.started_at).startsWith('2099')
+    ) {
+      const d = new Date(hybrid.started_at);
+      if (Number.isFinite(d.getTime())) startedAtDate = d;
+    }
+    if (!startedAtDate && progressStarted) {
+      const d = progressStarted instanceof Date ? progressStarted : new Date(progressStarted);
+      if (Number.isFinite(d.getTime()) && !String(d.toISOString?.() || '').startsWith('2099')) {
+        startedAtDate = d;
+      }
+    }
+
+    const toastKey = startedAtDate
+      ? `${activeTimerId}|${startedAtDate.toISOString()}`
+      : String(activeTimerId);
+
+    if (toastShownForTimerRef.current === toastKey) {
+      console.log('🍞 Toast: Already shown for', toastKey, '- skipping (countdown should be running)');
+      return;
+    }
+
+    const syncedNow = getSyncedNow(clockOffset);
+    if (startedAtDate) {
+      const ageSec = (syncedNow.getTime() - startedAtDate.getTime()) / 1000;
+      if (ageSec > 90) {
+        console.log('🍞 Toast: Timer already running', Math.round(ageSec), 's — skip re-toast on refresh');
+        toastShownForTimerRef.current = toastKey;
+        return;
+      }
     }
     
     // Clear any existing timeout and countdown interval only when showing a NEW toast
@@ -3929,13 +3962,12 @@ const RunOfShowPage: React.FC = () => {
     
     if (activeItem) {
       try {
-        const synced = getSyncedNow(clockOffset);
-        const nowMinutes = hhmmToMinutes(getEventLocalHHMM(synced, eventTimezone));
+        const compareAt = startedAtDate || syncedNow;
+        const compareMinutes = hhmmToMinutes(getEventLocalHHMM(compareAt, eventTimezone));
         const itemIndex = schedule.findIndex(item => item.id === activeItem.id);
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
-        if (itemStartTimeStr && nowMinutes != null) {
-          // Store the scheduled time for display
+        if (itemStartTimeStr && compareMinutes != null) {
           setScheduledTime(itemStartTimeStr);
 
           const scheduledMinutes = wallClockLabelToMinutes(itemStartTimeStr);
@@ -3944,36 +3976,32 @@ const RunOfShowPage: React.FC = () => {
             return;
           }
 
-          let differenceMinutes = nowMinutes - scheduledMinutes;
+          let differenceMinutes = compareMinutes - scheduledMinutes;
           if (differenceMinutes > 12 * 60) differenceMinutes -= 24 * 60;
           if (differenceMinutes < -12 * 60) differenceMinutes += 24 * 60;
 
           setTimeDifference(Math.abs(differenceMinutes));
           
-          // Mark this timer as having shown its toast
-          toastShownForTimerRef.current = activeTimerId;
+          toastShownForTimerRef.current = toastKey;
           
-          // Show toast when timer starts
           if (differenceMinutes < -1) {
-            console.log('🍞 Toast: Setting status to EARLY, difference:', differenceMinutes);
+            console.log('🍞 Toast: Setting status to EARLY, difference:', differenceMinutes, startedAtDate ? '(from started_at)' : '(fallback now)');
             setTimeStatus('early');
             setShowTimeToast(true);
           } else if (differenceMinutes > 1) {
-            console.log('🍞 Toast: Setting status to LATE, difference:', differenceMinutes);
+            console.log('🍞 Toast: Setting status to LATE, difference:', differenceMinutes, startedAtDate ? '(from started_at)' : '(fallback now)');
             setTimeStatus('late');
             setShowTimeToast(true);
           } else {
-            console.log('🍞 Toast: Setting status to ON-TIME, difference:', differenceMinutes);
+            console.log('🍞 Toast: Setting status to ON-TIME, difference:', differenceMinutes, startedAtDate ? '(from started_at)' : '(fallback now)');
             setTimeStatus('on-time');
-            setShowTimeToast(true); // Show even if on-time when timer starts
+            setShowTimeToast(true);
           }
           
           console.log('🍞 Toast: Should be visible now - showTimeToast set to true');
           
-          // Reset countdown to 20 seconds
           setToastCountdown(20);
           
-          // Start countdown interval (updates every second)
           toastCountdownIntervalRef.current = setInterval(() => {
             setToastCountdown(prev => {
               if (prev <= 1) {
@@ -3987,11 +4015,10 @@ const RunOfShowPage: React.FC = () => {
             });
           }, 1000);
           
-          // Auto-close toast after 20 seconds
           toastTimeoutRef.current = setTimeout(() => {
             console.log('🍞 Toast: Auto-closing after 20 seconds');
             setShowTimeToast(false);
-            setToastCountdown(20); // Reset countdown
+            setToastCountdown(20);
             if (toastCountdownIntervalRef.current) {
               clearInterval(toastCountdownIntervalRef.current);
               toastCountdownIntervalRef.current = null;
@@ -4004,10 +4031,16 @@ const RunOfShowPage: React.FC = () => {
         setShowTimeToast(false);
       }
     }
-    
-    // No cleanup needed here - we'll clear intervals/timeouts explicitly when needed
-    // This prevents the cleanup from running and clearing the countdown when the effect re-runs
-  }, [activeTimers, schedule, timeToastEnabled]); // Removed showTimeToast from dependencies to prevent re-triggering
+  }, [
+    activeTimers,
+    schedule,
+    timeToastEnabled,
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.started_at,
+    timerProgress,
+    clockOffset,
+    eventTimezone,
+  ]);
   
   // Auto-scroll to active row function
   const scrollToActiveRow = () => {
