@@ -4381,10 +4381,14 @@ export default function AdminPage() {
             </div>
 
             <div>
-              <p className="font-medium text-white">What production uses now (stable / old)</p>
+              <p className="font-medium text-white">What production uses now</p>
               <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-300">
-                <li>Launch nav role applied immediately, then session/API, then <code className="text-xs">{'userRole_${eventId}'}</code>, then “latest” key, else modal</li>
-                <li>Save-on-change skips Viewer; modal writes localStorage + session on Continue</li>
+                <li>
+                  Stable pre-rewrite loader, plus a small 2026-09-22 fix so{' '}
+                  <strong className="text-white">Viewer / Editor / Operator all persist</strong> on
+                  refresh (saved role preferred over stale launch history; save no longer skips Viewer;
+                  unmount cleanup uses a ref so Editor→Viewer cannot re-save Editor).
+                </li>
                 <li>Operator still blocked for non–Event Manager/Admin via <code className="text-xs">canSelectOperatorRole</code></li>
               </ul>
             </div>
