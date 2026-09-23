@@ -24,6 +24,14 @@ interface ScheduleItem {
   isIndented?: boolean;
 }
 
+/** Print/report participant labels: Podium→P, Seat→S, Virtual→V, Moderator→M (slot e.g. M4). */
+function speakerLocationPrefix(location: string | null | undefined): string {
+  if (location === 'Seat') return 'S';
+  if (location === 'Virtual') return 'V';
+  if (location === 'Moderator') return 'M';
+  return 'P';
+}
+
 const ReportsPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -1372,7 +1380,7 @@ const ReportsPage: React.FC = () => {
             const slot = speaker.slot || 1;
             const location = speaker.location || 'Podium';
             const photoLink = speaker.photoLink || speaker.photoUrl || '';
-            const locationPrefix = location === 'Podium' ? 'P' : location === 'Seat' ? 'S' : 'V';
+            const locationPrefix = speakerLocationPrefix(location);
             
             // Truncate title and org to keep layout consistent, but allow full names
             const truncatedTitle = truncateText(title, 15);
@@ -1971,7 +1979,7 @@ const ReportsPage: React.FC = () => {
             const org = s.org || '';
             const location = s.location || 'Podium';
             const slot = s.slot || 1;
-            const locationPrefix = location === 'Podium' ? 'P' : location === 'Seat' ? 'S' : 'V';
+            const locationPrefix = speakerLocationPrefix(location);
             
             // Build speaker info with bold names and smaller subtext (like condensed report)
             let speakerInfo = `<strong>${locationPrefix}${slot} - ${fullName}</strong>`;
@@ -1999,7 +2007,7 @@ const ReportsPage: React.FC = () => {
             const slot = speaker.slot || 1;
             const location = speaker.location || 'Podium';
             const photoLink = speaker.photoLink || speaker.photoUrl || '';
-            const locationPrefix = location === 'Podium' ? 'P' : location === 'Seat' ? 'S' : 'V';
+            const locationPrefix = speakerLocationPrefix(location);
             
             // Truncate title and org to keep layout consistent, but allow full names
             const truncatedTitle = truncateText(title, 15);
@@ -2259,7 +2267,7 @@ const ReportsPage: React.FC = () => {
               const org = s.org || '';
               const location = s.location || 'Podium';
               const slot = s.slot || 1;
-              const locationPrefix = location === 'Podium' ? 'P' : location === 'Seat' ? 'S' : 'V';
+              const locationPrefix = speakerLocationPrefix(location);
               
               // Build speaker info with bold names and smaller subtext
               let speakerInfo = `<strong>${locationPrefix}${slot} - ${fullName}</strong>`;

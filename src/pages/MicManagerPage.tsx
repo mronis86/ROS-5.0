@@ -472,6 +472,7 @@ const MicManagerPage: React.FC = () => {
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     isRunning: timerRunning,
     programType: micActiveProgramType,
+    itemId: activeItemId,
   });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && timerProgress.total > 0

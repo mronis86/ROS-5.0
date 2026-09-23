@@ -1137,6 +1137,8 @@ const RunOfShowPage: React.FC = () => {
   const rosPreshowRainbow = shouldUsePreshowRainbow(hybridTimerData?.timerMessage, {
     timer: hybridTimerData?.activeTimer,
     programType: activeCueForPreshow?.programType,
+    itemId: activeCueForPreshow?.id ?? hybridTimerData?.activeTimer?.item_id,
+    topPreshowItemId: findTopPreshowCue(schedule, indentedCues)?.id ?? null,
   });
 
   // Admin/Crew: ~1 min after PreShow is running while still Rehearsal → In-Show overlay
@@ -10049,6 +10051,9 @@ const RunOfShowPage: React.FC = () => {
         const topPreshowOnStart = findTopPreshowCue(schedule, indentedCues);
         if (topPreshowOnStart && topPreshowOnStart.id === itemId) {
           void activatePreshowCountdownMessage();
+        } else {
+          // Leaving PreShow (or never on it) — do not leave sticky PRE SHOW COUNTDOWN on later cues
+          void clearPreshowCountdownMessage();
         }
         
         // Try to save last loaded CUE as running (will fail gracefully if migration not run)

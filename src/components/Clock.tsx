@@ -7,7 +7,7 @@ import {
   countdownColorForRemaining,
   useCountdownColorMode,
 } from '../lib/countdownColor';
-import { isPreshowTimerMessage } from '../lib/preshowCountdown';
+import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
@@ -87,12 +87,19 @@ const Clock: React.FC<ClockProps> = ({
     const cue = scheduleItems.find((s: any) => Number(s?.id) === itemId);
     return cue?.programType || null;
   })();
+  const activeTimerItemId =
+    hybridTimerData?.activeTimer?.item_id ?? hybridTimerData?.activeTimer?.itemId ?? null;
+  const topPreshowItemId = Array.isArray(scheduleItems)
+    ? findTopPreshowCue(scheduleItems)?.id ?? null
+    : null;
   const timerRunningForRainbow = !!(
     hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active
   );
   const usePreshowRainbow = shouldUsePreshowRainbow(stageMessageForColor, {
     isRunning: timerRunningForRainbow,
     programType: activeCueProgramType,
+    itemId: activeTimerItemId,
+    topPreshowItemId,
   });
 
   // Clock component always runs in WebSocket-only mode

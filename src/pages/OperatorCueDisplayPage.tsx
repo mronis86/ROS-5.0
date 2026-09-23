@@ -761,6 +761,7 @@ const OperatorCueDisplayPage: React.FC = () => {
     timer,
     isRunning: running,
     programType: current?.programType,
+    itemId: activeId ?? current?.id ?? null,
   });
 
   const statusTextCls = running ? 'text-green-400' : loaded ? 'text-yellow-400' : 'text-slate-300';

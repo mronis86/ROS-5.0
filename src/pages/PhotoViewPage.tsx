@@ -369,6 +369,7 @@ const PhotoViewPage: React.FC = () => {
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     timer: hybridTimerData?.activeTimer,
     programType: photoActiveProgramType,
+    itemId: photoActiveItemId,
   });
   
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});

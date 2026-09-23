@@ -885,6 +885,7 @@ const RunOfShowMobilePage: React.FC = () => {
     timer: hybridTimerData.activeTimer,
     isRunning: effectivePrimaryLive?.kind === 'running',
     programType: mobileActiveProgramType,
+    itemId: effectivePrimaryLive?.itemId ?? null,
   });
   const effectivePrimaryRemainingSec = useMemo(() => {
     const p = effectivePrimaryLive;

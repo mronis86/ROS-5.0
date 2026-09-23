@@ -542,6 +542,7 @@ const CateringEventPage: React.FC = () => {
     timer,
     isRunning: timerRunning,
     programType: current?.programType,
+    itemId: activeId ?? current?.id ?? null,
   });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && progress.total > 0

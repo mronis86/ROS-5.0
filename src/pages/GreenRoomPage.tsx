@@ -107,6 +107,7 @@ const GreenRoomPage: React.FC = () => {
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     isRunning: timerState === 'running',
     programType: greenActiveProgramType,
+    itemId: activeItemId,
   });
   const showPreshowCountdownLabel =
     usePreshowRainbowColors ||

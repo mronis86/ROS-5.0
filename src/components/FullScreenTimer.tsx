@@ -93,6 +93,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const usePreshowRainbow = shouldUsePreshowRainbow(stageMessageForColor, {
     isRunning: timerRunningForRainbow,
     programType: activeCueProgramType,
+    itemId:
+      hybridTimerData?.activeTimer?.item_id ??
+      hybridTimerData?.activeTimer?.itemId ??
+      itemId ??
+      null,
   });
 
   const hasBlockingStageMessage = () => {
