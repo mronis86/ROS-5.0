@@ -2689,7 +2689,7 @@ const RunOfShowPage: React.FC = () => {
     let cancelled = false;
     const calendarDay = getEventDayNumberForDate(event.date, event.numberOfDays);
     if (calendarDay != null && showMode === 'rehearsal') {
-      setPreflightBannerDismissed(false);
+      setShowDayInShowBannerDismissed(false);
     }
     const dayForProgress = selectedDay || 1;
     void (async () => {
