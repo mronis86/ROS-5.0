@@ -294,16 +294,18 @@ html.led-output-broadcast #root,
 @keyframes ros-inshow-nudge-pulse {
   0%,
   100% {
-    background-color: rgba(69, 26, 3, 0.92);
-    border-color: rgba(180, 83, 9, 0.55);
+    border-color: rgba(139, 92, 246, 0.45);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
   }
   50% {
-    background-color: rgba(120, 53, 15, 0.98);
-    border-color: rgba(251, 191, 36, 0.9);
+    border-color: rgba(52, 211, 153, 0.7);
+    box-shadow:
+      0 25px 50px -12px rgba(0, 0, 0, 0.55),
+      0 0 36px rgba(99, 102, 241, 0.35);
   }
 }
 .ros-inshow-nudge-banner {
-  animation: ros-inshow-nudge-pulse 1.8s ease-in-out infinite;
+  animation: ros-inshow-nudge-pulse 2s ease-in-out infinite;
 }
 
 /* Cue Cards — bullets/numbers match text size and sit beside the line (incl. when centered) */
