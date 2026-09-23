@@ -946,7 +946,11 @@ const RunOfShowPage: React.FC = () => {
   /** Global show-day arm — when set, any client may auto load+start Pre-Show. */
   const [preshowShowDayArmed, setPreshowShowDayArmed] = useState<PreshowShowDayArmed | null>(null);
   const [preshowConfirmBusy, setPreshowConfirmBusy] = useState(false);
-  const [showDayInShowBannerDismissed, setShowDayInShowBannerDismissed] = useState(false);
+  /** Local-only dismiss for Admin/Crew In-Show nudge (cleared when a new PreShow run starts). */
+  const [inShowNudgeDismissed, setInShowNudgeDismissed] = useState(false);
+  const [inShowNudgeEligible, setInShowNudgeEligible] = useState(false);
+  const inShowNudgeRunKeyRef = useRef<string | null>(null);
+  const inShowNudgeFirstSeenMsRef = useRef<number | null>(null);
   const preshowAutoStartedKeyRef = useRef<string | null>(null);
   const preshowAutoStartInFlightRef = useRef(false);
   const loadCueRef = useRef<(itemId: number) => Promise<void>>(async () => {});
@@ -1118,6 +1122,64 @@ const RunOfShowPage: React.FC = () => {
     timer: hybridTimerData?.activeTimer,
     programType: activeCueForPreshow?.programType,
   });
+
+  // Admin/Crew: ~1 min after PreShow is running while still Rehearsal → flashing In-Show nudge
+  useEffect(() => {
+    const timer = hybridTimerData?.activeTimer;
+    const running =
+      !!timer &&
+      rosPreshowRainbow &&
+      (timer.is_running === true ||
+        timer.isRunning === true ||
+        timer.timer_state === 'running');
+    if (!running || showMode !== 'rehearsal') {
+      setInShowNudgeEligible(false);
+      if (showMode === 'in-show') {
+        setInShowNudgeDismissed(false);
+        inShowNudgeRunKeyRef.current = null;
+        inShowNudgeFirstSeenMsRef.current = null;
+      }
+      return;
+    }
+    const itemId = Number(timer.item_id ?? timer.itemId ?? activeCueForPreshow?.id ?? NaN);
+    const startedRaw =
+      timer.started_at ||
+      timer.timer_started_at ||
+      timer.startedAt ||
+      null;
+    const runKey = `${Number.isFinite(itemId) ? itemId : 'x'}:${startedRaw || 'running'}`;
+    if (inShowNudgeRunKeyRef.current !== runKey) {
+      inShowNudgeRunKeyRef.current = runKey;
+      inShowNudgeFirstSeenMsRef.current = Date.now();
+      setInShowNudgeDismissed(false);
+      setInShowNudgeEligible(false);
+    }
+    const parsedStart = startedRaw ? Date.parse(String(startedRaw)) : NaN;
+    const startedMs = Number.isFinite(parsedStart)
+      ? parsedStart
+      : inShowNudgeFirstSeenMsRef.current ?? Date.now();
+    const delayMs = 60_000;
+    const check = () => {
+      if (showModeRef.current !== 'rehearsal') {
+        setInShowNudgeEligible(false);
+        return;
+      }
+      setInShowNudgeEligible(Date.now() - startedMs >= delayMs);
+    };
+    check();
+    const id = window.setInterval(check, 1000);
+    return () => window.clearInterval(id);
+  }, [
+    hybridTimerData?.activeTimer,
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    hybridTimerData?.activeTimer?.timer_state,
+    hybridTimerData?.activeTimer?.started_at,
+    rosPreshowRainbow,
+    showMode,
+    activeCueForPreshow?.id,
+  ]);
+
   useEffect(() => {
     activeTimersRef.current = activeTimers;
   }, [activeTimers]);
@@ -2687,10 +2749,6 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
     let cancelled = false;
-    const calendarDay = getEventDayNumberForDate(event.date, event.numberOfDays);
-    if (calendarDay != null && showMode === 'rehearsal') {
-      setShowDayInShowBannerDismissed(false);
-    }
     const dayForProgress = selectedDay || 1;
     void (async () => {
       try {
@@ -11401,39 +11459,22 @@ const RunOfShowPage: React.FC = () => {
       {canAccessPreFlightChecklist(user) &&
       event?.id &&
       showMode === 'rehearsal' &&
-      (() => {
-        const todayDay = getEventDayNumberForDate(event.date, event.numberOfDays);
-        return todayDay != null && !showDayInShowBannerDismissed;
-      })() ? (
-        <div className="sticky top-0 z-[45] border-b border-amber-700/50 bg-amber-950/90 px-4 py-2.5 text-sm">
+      inShowNudgeEligible &&
+      !inShowNudgeDismissed ? (
+        <div className="ros-inshow-nudge-banner sticky top-0 z-[45] border-b px-4 py-2.5 text-sm">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="font-medium text-amber-100">
-                Show day — still in Rehearsal
-                {(event.numberOfDays || 1) > 1
-                  ? ` · Day ${getEventDayNumberForDate(event.date, event.numberOfDays)}`
-                  : ''}
+                Pre Show is running — still in Rehearsal
               </p>
-              <p className="text-xs text-amber-200/80">
+              <p className="text-xs text-amber-200/90">
                 Switch to In-Show so overtime and locked start times track for the live show.
                 {currentUserRole !== 'OPERATOR'
                   ? ' Change your role to Operator (or ask the Operator) to toggle.'
                   : ''}
-                {preflightProgress && !preflightProgress.complete
-                  ? ` Pre-Flight ${preflightProgress.checked}/${preflightProgress.total} done.`
-                  : ''}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {preflightProgress && !preflightProgress.complete ? (
-                <button
-                  type="button"
-                  onClick={() => setShowPreFlightChecklistModal(true)}
-                  className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600"
-                >
-                  Open checklist
-                </button>
-              ) : null}
               {currentUserRole === 'OPERATOR' ? (
                 <button
                   type="button"
@@ -11445,7 +11486,7 @@ const RunOfShowPage: React.FC = () => {
               ) : null}
               <button
                 type="button"
-                onClick={() => setShowDayInShowBannerDismissed(true)}
+                onClick={() => setInShowNudgeDismissed(true)}
                 className="rounded-lg px-2 py-1.5 text-xs text-amber-200/70 hover:bg-amber-900 hover:text-amber-100"
               >
                 Dismiss

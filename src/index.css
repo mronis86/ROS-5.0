@@ -291,6 +291,21 @@ html.led-output-broadcast #root,
   animation: ros-preshow-tally-pulse 1.6s ease-in-out infinite;
 }
 
+@keyframes ros-inshow-nudge-pulse {
+  0%,
+  100% {
+    background-color: rgba(69, 26, 3, 0.92);
+    border-color: rgba(180, 83, 9, 0.55);
+  }
+  50% {
+    background-color: rgba(120, 53, 15, 0.98);
+    border-color: rgba(251, 191, 36, 0.9);
+  }
+}
+.ros-inshow-nudge-banner {
+  animation: ros-inshow-nudge-pulse 1.8s ease-in-out infinite;
+}
+
 /* Cue Cards — bullets/numbers match text size and sit beside the line (incl. when centered) */
 .cue-card-body ul,
 .cue-card-body ol {
