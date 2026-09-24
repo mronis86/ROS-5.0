@@ -22,7 +22,7 @@
     "appId": "com.sinor.ros.vmix-datasource",
     "productName": "ROS vMix DataSource Bridge",
     "directories": {
-      "output": "dist-ready-220139",
+      "output": "dist-ready-20260924",
       "buildResources": "build"
     },
     "files": [

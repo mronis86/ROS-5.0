@@ -43,22 +43,55 @@ let loadedEvents = [];
 let eventFilter = 'upcoming';
 
 function eventDateMs(ev) {
-  const raw = ev?.date || ev?.event_date || ev?.eventDate || '';
+  const raw = String(ev?.date || ev?.event_date || ev?.eventDate || '').trim();
+  // Parse YYYY-MM-DD as local calendar day (avoid UTC shift from Date('YYYY-MM-DD'))
+  const parts = raw.split('-').map(Number);
+  if (parts.length >= 3 && parts.every((n) => Number.isFinite(n))) {
+    return new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+  }
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return null;
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Multi-day length from calendar row (schedule_data or top-level). */
+function eventNumberOfDays(ev) {
+  const sd = ev?.schedule_data || ev?.scheduleData || {};
+  const n = Number(ev?.numberOfDays ?? ev?.number_of_days ?? sd.numberOfDays ?? sd.number_of_days);
+  return Math.max(1, Math.floor(Number.isFinite(n) ? n : 1));
+}
+
+/** Last inclusive calendar day of the event (start + days - 1). */
+function eventLastDayMs(ev) {
+  const startMs = eventDateMs(ev);
+  if (startMs == null) return null;
+  const days = eventNumberOfDays(ev);
+  const end = new Date(startMs);
+  end.setDate(end.getDate() + (days - 1));
+  return end.getTime();
 }
 
 function formatEventDate(ev) {
   const ms = eventDateMs(ev);
   if (ms == null) return '';
   try {
-    return new Date(ms).toLocaleDateString(undefined, {
+    const days = eventNumberOfDays(ev);
+    const startLabel = new Date(ms).toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
     });
+    if (days <= 1) return startLabel;
+    const endMs = eventLastDayMs(ev);
+    const endLabel =
+      endMs != null
+        ? new Date(endMs).toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+          })
+        : '';
+    return endLabel ? `${startLabel}–${endLabel}` : startLabel;
   } catch {
     return '';
   }
@@ -70,10 +103,11 @@ function filterAndSortEvents(events, filter) {
   const todayMs = today.getTime();
   const list = Array.isArray(events) ? events.slice() : [];
 
+  // Upcoming = still happening through last day (inclusive). Past only after last day ends.
   const filtered = list.filter((ev) => {
-    const ms = eventDateMs(ev);
-    if (ms == null) return filter === 'upcoming';
-    return filter === 'upcoming' ? ms >= todayMs : ms < todayMs;
+    const lastMs = eventLastDayMs(ev);
+    if (lastMs == null) return filter === 'upcoming';
+    return filter === 'upcoming' ? lastMs >= todayMs : lastMs < todayMs;
   });
 
   filtered.sort((a, b) => {
