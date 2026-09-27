@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
+import { calculateScheduleStartTime, dayStartFor } from '../lib/scheduleStartTime';
 
 interface ScheduleItem {
   id: number;
@@ -130,6 +131,7 @@ const ReportsPage: React.FC = () => {
 
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [masterStartTime, setMasterStartTime] = useState('');
+  const [dayStartTimes, setDayStartTimes] = useState<Record<number | string, string>>({});
   const [reportType, setReportType] = useState('showfile');
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('landscape');
@@ -201,6 +203,28 @@ const ReportsPage: React.FC = () => {
   const refreshReportData = useCallback(async () => {
     const eventIdForFetch = event?.id || eventIdParam;
     setIsRefreshing(true);
+
+    const loadDayStartTimesFromStorage = (id: string | null | undefined): Record<number | string, string> => {
+      if (!id) return {};
+      try {
+        const raw = localStorage.getItem(`dayStartTimes_${id}`);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    };
+
+    const loadMasterStartFromStorage = (id: string | null | undefined): string => {
+      let saved = id ? localStorage.getItem(`masterStartTime_${id}`) : null;
+      if (!saved) {
+        const keys = Object.keys(localStorage).filter(k => k.startsWith('masterStartTime_'));
+        if (keys.length > 0) saved = localStorage.getItem(keys[keys.length - 1]);
+      }
+      return saved || '09:00';
+    };
+
     try {
       // 1) Try API first for latest schedule + settings (use URL param if event.id not set yet)
       if (eventIdForFetch) {
@@ -212,17 +236,19 @@ const ReportsPage: React.FC = () => {
             const fromStorage = loadScheduleFromStorage();
             if (fromStorage.length > 0) setSchedule(fromStorage);
           }
+
+          const apiDayStarts =
+            data?.settings?.dayStartTimes && typeof data.settings.dayStartTimes === 'object'
+              ? (data.settings.dayStartTimes as Record<number | string, string>)
+              : null;
+          setDayStartTimes(apiDayStarts || loadDayStartTimesFromStorage(eventIdForFetch));
+
           if (data?.settings?.masterStartTime) {
             setMasterStartTime(data.settings.masterStartTime);
-          } else if (data?.settings?.dayStartTimes?.['1']) {
-            setMasterStartTime(data.settings.dayStartTimes['1']);
+          } else if (apiDayStarts?.['1'] || apiDayStarts?.[1]) {
+            setMasterStartTime(String(apiDayStarts['1'] ?? apiDayStarts[1]));
           } else {
-            let saved = localStorage.getItem(`masterStartTime_${eventIdForFetch}`);
-            if (!saved) {
-              const keys = Object.keys(localStorage).filter(k => k.startsWith('masterStartTime_'));
-              if (keys.length > 0) saved = localStorage.getItem(keys[keys.length - 1]);
-            }
-            setMasterStartTime(saved || '09:00');
+            setMasterStartTime(loadMasterStartFromStorage(eventIdForFetch));
           }
           if (data?.settings?.timezone) {
             setEventTimezone(data.settings.timezone);
@@ -244,12 +270,8 @@ const ReportsPage: React.FC = () => {
         } catch {
           const fromStorage = loadScheduleFromStorage();
           if (fromStorage.length > 0) setSchedule(fromStorage);
-          let saved = eventIdForFetch ? localStorage.getItem(`masterStartTime_${eventIdForFetch}`) : null;
-          if (!saved) {
-            const keys = Object.keys(localStorage).filter(k => k.startsWith('masterStartTime_'));
-            if (keys.length > 0) saved = localStorage.getItem(keys[keys.length - 1]);
-          }
-          setMasterStartTime(saved || '09:00');
+          setDayStartTimes(loadDayStartTimesFromStorage(eventIdForFetch));
+          setMasterStartTime(loadMasterStartFromStorage(eventIdForFetch));
         }
       } else {
         const fromStorage = loadScheduleFromStorage();
@@ -468,48 +490,12 @@ const ReportsPage: React.FC = () => {
     };
   };
 
-  // Calculate start time function (simple - no overtime adjustments for print reports)
+  // Same scheduled start math as online Run of Show (day starts + seconds + indented parents)
   const calculateStartTime = (index: number) => {
-    console.log(`calculateStartTime called with index: ${index}, masterStartTime: ${masterStartTime}`);
-
-    if (!masterStartTime) {
-      console.log('No master start time, returning empty string');
-      return '';
-    }
-
-    const currentItem = schedule[index];
-    if (currentItem?.isIndented) {
-      for (let j = index - 1; j >= 0; j--) {
-        if (!schedule[j].isIndented) {
-          return calculateStartTime(j);
-        }
-      }
-      return '';
-    }
-
-    let totalMinutes = 0;
-    for (let i = 0; i < index; i++) {
-      const item = schedule[i];
-      if (item.isIndented) continue;
-      totalMinutes += (item.durationHours * 60) + item.durationMinutes;
-    }
-    
-    console.log(`Total minutes for index ${index}: ${totalMinutes}`);
-    
-    const [startHours, startMinutes] = masterStartTime.split(':').map(Number);
-    const startDate = new Date();
-    startDate.setHours(startHours, startMinutes + totalMinutes, 0, 0);
-    
-    // Format as 12-hour time (e.g., "1:30 PM")
-    const result = startDate.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    });
-    
-    console.log(`Calculated start time for index ${index}: ${result}`);
-    return result;
+    return calculateScheduleStartTime(schedule, index, masterStartTime, dayStartTimes);
   };
+
+  const reportDayStartTime = dayStartFor(selectedDay, masterStartTime, dayStartTimes);
 
   // Get color for program type badge (matching RunOfShowPage colors)
   const getProgramTypeColor = (programType: string) => {
@@ -1266,7 +1252,7 @@ const ReportsPage: React.FC = () => {
             <h2>${event?.name || 'Event'}${(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''}</h2>
           </div>
           <div class="event-info">
-            <p><strong>Date:</strong> ${displayDate} | <strong>Location:</strong> ${event?.location || 'Not specified'} | <strong>Start Time:</strong> ${formatMasterStartTime(masterStartTime)} | <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
+            <p><strong>Date:</strong> ${displayDate} | <strong>Location:</strong> ${event?.location || 'Not specified'} | <strong>Start Time:</strong> ${formatMasterStartTime(reportDayStartTime)} | <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
           </div>
           
       `;
@@ -1877,7 +1863,7 @@ const ReportsPage: React.FC = () => {
             <h2>${event?.name || 'Event'}${(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''}</h2>
           </div>
           <div class="event-info">
-            <p><strong>Date:</strong> ${displayDate} | <strong>Location:</strong> ${event?.location || 'Not specified'} | <strong>Start Time:</strong> ${formatMasterStartTime(masterStartTime)} | <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
+            <p><strong>Date:</strong> ${displayDate} | <strong>Location:</strong> ${event?.location || 'Not specified'} | <strong>Start Time:</strong> ${formatMasterStartTime(reportDayStartTime)} | <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
           </div>
           
       `;
@@ -2216,7 +2202,7 @@ const ReportsPage: React.FC = () => {
           <div class="event-info">
             <p><strong>Date:</strong> ${displayDate} | 
                <strong>Location:</strong> ${event?.location || 'Not specified'} | 
-               <strong>Start Time:</strong> ${formatMasterStartTime(masterStartTime)} | 
+               <strong>Start Time:</strong> ${formatMasterStartTime(reportDayStartTime)} | 
                <strong>Total Items:</strong> ${schedule.length} | <strong>Day:</strong> ${selectedDay}</p>
           </div>
           
@@ -2581,7 +2567,7 @@ const ReportsPage: React.FC = () => {
               <div className="text-slate-300 text-sm">
                 <p><strong>Event:</strong> {event?.name || 'Current Event'}</p>
                 <p><strong>Total Items:</strong> {schedule.length}{(event?.numberOfDays && event.numberOfDays > 1) ? ` | <strong>Day ${selectedDay} Items:</strong> ${schedule.filter(item => (item.day || 1) === selectedDay).length}` : ''}</p>
-                <p><strong>Master Start Time:</strong> {formatMasterStartTime(masterStartTime)}</p>
+                <p><strong>Master Start Time:</strong> {formatMasterStartTime(reportDayStartTime)}</p>
                 <p><strong>Report Type:</strong> {reportType === 'showfile' ? 'ROS Show' : reportType === 'speakers' ? 'ROS Speakers' : 'ROS CONDENSED'}</p>
                 <p><strong>Format:</strong> {reportType === 'showfile' ? 'Section-based with speaker photos' : reportType === 'speakers' ? 'Section-based with dedicated speaker column' : 'Table format'}</p>
                 <p><strong>Orientation:</strong> {printOrientation === 'landscape' ? 'Landscape (recommended for tables)' : 'Portrait'}</p>
