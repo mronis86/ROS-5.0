@@ -31,6 +31,7 @@ import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeade
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import { canAccessAccessManager, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
+import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
 import { shouldConfirmCueRecordingMark } from '../lib/cueRecording';
 import {
   type AudioCalloutKind,
@@ -915,6 +916,9 @@ const RunOfShowPage: React.FC = () => {
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
   /** Calendar venue TZ — wins over ROS settings so laptop/default NY does not override. */
   const calendarTimezoneRef = useRef<string | null>(null);
+  const [extendEventControlsEnabled, setExtendEventControlsEnabled] = useState(
+    event?.extendEventControlsEnabled === true
+  );
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -7582,9 +7586,6 @@ const RunOfShowPage: React.FC = () => {
     if (event?.timezone) {
       console.log('🌍 Setting event timezone from location.state:', event.timezone);
       applyCalendarTz(event.timezone);
-      return () => {
-        cancelled = true;
-      };
     }
 
     if (!event?.id) {
@@ -7596,13 +7597,23 @@ const RunOfShowPage: React.FC = () => {
     (async () => {
       try {
         const cal = await DatabaseService.getCalendarEvent(event.id);
+        if (cancelled) return;
         const tz = cal?.schedule_data?.timezone;
-        if (tz) {
+        if (tz && !event?.timezone) {
           console.log('🌍 Setting event timezone from calendar:', tz);
           applyCalendarTz(tz);
         }
+        const fromCal =
+          (cal as { extendEventControlsEnabled?: boolean } | null)?.extendEventControlsEnabled ===
+            true || parseExtendEventControls(cal?.schedule_data).enabled;
+        if (fromCal) {
+          setExtendEventControlsEnabled(true);
+        } else {
+          const ext = await DatabaseService.getExtendEventControls(event.id);
+          if (!cancelled) setExtendEventControlsEnabled(ext.enabled);
+        }
       } catch (e) {
-        console.warn('🌍 Could not load calendar timezone:', e);
+        console.warn('🌍 Could not load calendar event metadata:', e);
       }
     })();
 
@@ -13392,6 +13403,22 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Content review
                       </button>
+                      {(extendEventControlsEnabled || eventHasExtendEventControls(event)) && (
+                        <button
+                          onClick={() => {
+                            setShowMenuDropdown(false);
+                            const url = `/extend-event-controls?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                            window.open(url, '_blank');
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                          title="Event-specific extended controls (e.g. Civics Bee Students)"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h10M4 18h7" />
+                          </svg>
+                          Extend Event Controls
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);

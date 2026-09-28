@@ -66,6 +66,13 @@ const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers'
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
 const {
+  ensureExtendedEventDataSchema,
+  loadExtendEventControls,
+  loadExtendEventControlsMap,
+  setExtendEventControls,
+  saveExtendModuleData,
+} = require('./lib/extend-event-controls');
+const {
   isMissingShareTableError,
   ensureEventShareSchema,
   ensureEventShareToken,
@@ -2684,6 +2691,30 @@ app.get('/api/calendar-events', async (req, res) => {
       (result.rows || []).map(normalizeCalendarEvent),
       req.auth
     );
+
+    try {
+      await ensureExtendedEventDataSchema(pool);
+      const extMap = await loadExtendEventControlsMap(
+        pool,
+        rows.map((r) => r.id)
+      );
+      for (const row of rows) {
+        const ext = extMap.get(String(row.id));
+        if (!ext) continue;
+        row.extendEventControlsEnabled = ext.enabled;
+        row.extendEventControlModules = ext.modules;
+        if (!row.schedule_data || typeof row.schedule_data !== 'object') {
+          row.schedule_data = {};
+        }
+        row.schedule_data.extendEventControls = {
+          enabled: ext.enabled,
+          modules: ext.modules,
+        };
+      }
+    } catch (extErr) {
+      console.warn('⚠️ Could not attach extended_event_data to calendar list:', extErr.message || extErr);
+    }
+
     res.json(rows);
   } catch (error) {
     console.error('Error fetching calendar events:', error);
@@ -2885,7 +2916,22 @@ app.get('/api/calendar-events/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Event not found' });
     }
-    res.json(normalizeCalendarEvent(result.rows[0]));
+    const row = normalizeCalendarEvent(result.rows[0]);
+    try {
+      const ext = await loadExtendEventControls(pool, id);
+      row.extendEventControlsEnabled = ext.enabled;
+      row.extendEventControlModules = ext.modules;
+      if (!row.schedule_data || typeof row.schedule_data !== 'object') {
+        row.schedule_data = {};
+      }
+      row.schedule_data.extendEventControls = {
+        enabled: ext.enabled,
+        modules: ext.modules,
+      };
+    } catch (extErr) {
+      console.warn('⚠️ Could not attach extended_event_data:', extErr.message || extErr);
+    }
+    res.json(row);
   } catch (error) {
     console.error('Error fetching calendar event:', error);
     res.status(500).json({ error: 'Failed to fetch calendar event' });
@@ -3675,6 +3721,75 @@ app.get('/api/display-sync/:eventId', async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching display sync:', error);
     res.status(500).json({ error: 'Failed to fetch display sync' });
+  }
+});
+
+// Per-event Extend Event Controls (admin) — specialty modules like Civics Bee
+app.patch('/api/calendar-events/:id/extend-controls', async (req, res) => {
+  try {
+    if (!req.auth?.isAdmin && !requireAdminAccess(req, res)) return;
+
+    const { id } = req.params;
+    const { enabled, modules } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled (boolean) is required' });
+    }
+
+    const result = await setExtendEventControls(pool, id, { enabled, modules });
+    if (!result.ok) {
+      return res.status(result.status || 500).json({ error: result.error || 'Update failed' });
+    }
+
+    res.json({
+      id: String(id),
+      enabled: result.config.enabled,
+      modules: result.config.modules,
+    });
+  } catch (error) {
+    console.error('❌ Error updating extend event controls:', error);
+    res.status(500).json({ error: 'Failed to update extend event controls' });
+  }
+});
+
+app.get('/api/extend-controls/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const config = await loadExtendEventControls(pool, eventId);
+    res.json({
+      eventId,
+      enabled: config.enabled,
+      modules: config.modules,
+      moduleData: config.moduleData,
+    });
+  } catch (error) {
+    console.error('❌ Error fetching extend event controls:', error);
+    res.status(500).json({ error: 'Failed to fetch extend event controls' });
+  }
+});
+
+app.put('/api/extend-controls/:eventId/modules/:moduleKey', async (req, res) => {
+  try {
+    const { eventId, moduleKey } = req.params;
+    const payload = req.body?.data ?? req.body;
+    if (payload == null || typeof payload !== 'object') {
+      return res.status(400).json({ error: 'JSON module payload required' });
+    }
+
+    const result = await saveExtendModuleData(pool, eventId, moduleKey, payload);
+    if (!result.ok) {
+      return res.status(result.status || 500).json({ error: result.error || 'Save failed' });
+    }
+
+    res.json({
+      eventId: String(eventId),
+      moduleKey,
+      enabled: result.config.enabled,
+      modules: result.config.modules,
+      moduleData: result.config.moduleData,
+    });
+  } catch (error) {
+    console.error('❌ Error saving extend module data:', error);
+    res.status(500).json({ error: 'Failed to save extend module data' });
   }
 });
 
@@ -9931,6 +10046,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ event_board tables ready');
     } catch (err) {
       console.warn('⚠️ event_board sync skipped:', err.message || err);
+    }
+    try {
+      await ensureExtendedEventDataSchema(pool);
+      console.log('✅ extended_event_data table ready');
+    } catch (err) {
+      console.warn('⚠️ extended_event_data sync skipped:', err.message || err);
     }
   }
 });

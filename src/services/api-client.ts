@@ -354,6 +354,52 @@ class ApiClient {
     return result;
   }
 
+  async patchExtendEventControls(
+    calendarEventId: string,
+    payload: { enabled: boolean; modules?: string[] }
+  ) {
+    const result = await this.request<{ enabled?: boolean; modules?: string[] }>(
+      `/api/calendar-events/${encodeURIComponent(calendarEventId)}/extend-controls`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    );
+    this.invalidateCalendarEventsCache();
+    return result;
+  }
+
+  async getExtendEventControls(eventId: string): Promise<{
+    enabled: boolean;
+    modules: string[];
+    moduleData: Record<string, unknown>;
+  }> {
+    const result = await this.request(
+      `/api/extend-controls/${encodeURIComponent(eventId)}`,
+      {},
+      `extendControls_${eventId}`,
+      60 * 1000
+    );
+    return {
+      enabled: result?.enabled === true,
+      modules: Array.isArray(result?.modules) ? result.modules : [],
+      moduleData:
+        result?.moduleData && typeof result.moduleData === 'object' ? result.moduleData : {},
+    };
+  }
+
+  async saveExtendModuleData(eventId: string, moduleKey: string, data: unknown) {
+    const result = await this.request(
+      `/api/extend-controls/${encodeURIComponent(eventId)}/modules/${encodeURIComponent(moduleKey)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ data }),
+      }
+    );
+    this.cache.delete(`extendControls_${eventId}`);
+    return result;
+  }
+
   async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show') {
     const result = await this.request(`/api/show-mode/${eventId}`, {
       method: 'PATCH',

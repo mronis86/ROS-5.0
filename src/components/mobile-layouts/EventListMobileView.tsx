@@ -46,6 +46,7 @@ type EventListMobileViewProps = {
   isAdminUser?: boolean;
   displaySyncSavingId?: string | null;
   onToggleDisplaySync?: (event: Event) => void;
+  onConfigureExtendControls?: (event: Event) => void;
 };
 
 const EventListMobileView: React.FC<EventListMobileViewProps> = ({
@@ -78,6 +79,7 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   isAdminUser = false,
   displaySyncSavingId = null,
   onToggleDisplaySync,
+  onConfigureExtendControls,
 }) => {
   const [sortKey, setSortKey] = useState<MobileSortKey>(() => (activeTab === 'past' ? 'date_desc' : 'date_asc'));
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -376,6 +378,20 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                           saving={displaySyncSavingId === event.id}
                           onToggle={() => onToggleDisplaySync(event)}
                         />
+                      ) : null}
+                      {isAdminUser && activeTab !== 'quickMode' && onConfigureExtendControls ? (
+                        <button
+                          type="button"
+                          onClick={() => onConfigureExtendControls(event)}
+                          className={`inline-flex min-h-[36px] w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs font-semibold ${
+                            event.extendEventControlsEnabled
+                              ? 'border-violet-600/70 bg-violet-950/40 text-violet-200'
+                              : 'border-slate-600 bg-slate-800 text-slate-300'
+                          }`}
+                        >
+                          <span>Extend Event Controls</span>
+                          <span>{event.extendEventControlsEnabled ? 'On' : 'Off'}</span>
+                        </button>
                       ) : null}
                       <EventListRowActions
                         layout="mobile"

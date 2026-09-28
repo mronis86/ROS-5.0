@@ -520,6 +520,44 @@ export class DatabaseService {
     }
   }
 
+  static async setExtendEventControls(
+    calendarEventId: string,
+    config: { enabled: boolean; modules?: string[] }
+  ): Promise<boolean> {
+    try {
+      await apiClient.patchExtendEventControls(calendarEventId, config);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception updating extend event controls:', error);
+      return false;
+    }
+  }
+
+  static async getExtendEventControls(
+    eventId: string
+  ): Promise<{ enabled: boolean; modules: string[]; moduleData: Record<string, unknown> }> {
+    try {
+      return await apiClient.getExtendEventControls(eventId);
+    } catch (error) {
+      console.error('❌ Exception getting extend event controls:', error);
+      return { enabled: false, modules: [], moduleData: {} };
+    }
+  }
+
+  static async saveExtendModuleData(
+    eventId: string,
+    moduleKey: string,
+    data: unknown
+  ): Promise<boolean> {
+    try {
+      await apiClient.saveExtendModuleData(eventId, moduleKey, data);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception saving extend module data:', error);
+      return false;
+    }
+  }
+
   static async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show'): Promise<boolean> {
     try {
       await apiClient.saveShowMode(eventId, showMode);

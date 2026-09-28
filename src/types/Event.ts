@@ -104,6 +104,10 @@ export interface Event {
   calendarId?: string;
   /** When false, follower pages (Green Room, Photo, etc.) stop syncing. Default true. */
   displaySyncEnabled?: boolean;
+  /** Admin-enabled specialty controls for this event (ROS menu). */
+  extendEventControlsEnabled?: boolean;
+  /** Which Extend Event Controls modules are on (e.g. civicsBee). */
+  extendEventControlModules?: import('../lib/extendEventControls').ExtendEventControlModule[];
 }
 
 export interface EventFormData {

@@ -35,7 +35,9 @@ import QuickModeBoltIcon from '../components/QuickModeBoltIcon';
 import EventListRowActions from '../components/EventListRowActions';
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import { parseDisplaySyncEnabled, DISPLAY_SYNC_COLUMN_LABEL } from '../lib/displaySync';
+import { parseExtendEventControls } from '../lib/extendEventControls';
 import EventDisplaySyncToggle from '../components/EventDisplaySyncToggle';
+import ExtendEventControlsConfigModal from '../components/ExtendEventControlsConfigModal';
 import ShareEventAccessModal from '../components/ShareEventAccessModal';
 import EventStreamDetailsFields from '../components/EventStreamDetailsFields';
 import StreamBroadcastStatusMark from '../components/StreamBroadcastStatusMark';
@@ -149,6 +151,8 @@ const EventListPage: React.FC = () => {
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<Event[]>([]);
   const [permanentDelete, setPermanentDelete] = useState(false);
   const [displaySyncSavingId, setDisplaySyncSavingId] = useState<string | null>(null);
+  const [extendControlsEvent, setExtendControlsEvent] = useState<Event | null>(null);
+  const [extendControlsSaving, setExtendControlsSaving] = useState(false);
   const isAdminUser = canAccessAdmin(user);
 
   const toggleDisplaySync = async (event: Event) => {
@@ -169,6 +173,33 @@ const EventListPage: React.FC = () => {
       );
       alert('Failed to update display sync for this event.');
     }
+  };
+
+  const saveExtendEventControls = async (config: {
+    enabled: boolean;
+    modules: string[];
+  }) => {
+    if (!extendControlsEvent || !isAdminUser) return;
+    const calendarId = extendControlsEvent.calendarId || extendControlsEvent.id;
+    setExtendControlsSaving(true);
+    const ok = await DatabaseService.setExtendEventControls(calendarId, config);
+    setExtendControlsSaving(false);
+    if (!ok) {
+      alert('Failed to update Extend Event Controls for this event.');
+      return;
+    }
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.id === extendControlsEvent.id
+          ? {
+              ...e,
+              extendEventControlsEnabled: config.enabled,
+              extendEventControlModules: config.modules as Event['extendEventControlModules'],
+            }
+          : e
+      )
+    );
+    setExtendControlsEvent(null);
   };
 
   const generateDeleteCode = () => {
@@ -280,6 +311,27 @@ const EventListPage: React.FC = () => {
             ),
             isQuickMode: isQuickModeCalendarEvent(calEvent),
             displaySyncEnabled: parseDisplaySyncEnabled(calEvent.schedule_data),
+            ...(() => {
+              const fromApi = (calEvent as {
+                extendEventControlsEnabled?: boolean;
+                extendEventControlModules?: string[];
+              }).extendEventControlsEnabled;
+              const ext = parseExtendEventControls(calEvent.schedule_data);
+              const enabled = fromApi === true || ext.enabled;
+              const modules =
+                Array.isArray(
+                  (calEvent as { extendEventControlModules?: string[] }).extendEventControlModules
+                ) &&
+                (calEvent as { extendEventControlModules?: string[] }).extendEventControlModules!
+                  .length > 0
+                  ? ((calEvent as { extendEventControlModules: string[] })
+                      .extendEventControlModules as Event['extendEventControlModules'])
+                  : ext.modules;
+              return {
+                extendEventControlsEnabled: enabled,
+                extendEventControlModules: modules,
+              };
+            })(),
             created_at: calEvent.created_at || new Date().toISOString(),
             updated_at: calEvent.updated_at || new Date().toISOString()
           };
@@ -1259,11 +1311,25 @@ const EventListPage: React.FC = () => {
                         </td>
                         {isAdminUser && (
                           <td className="px-2 py-2 border-r border-slate-600 text-center">
-                            <EventDisplaySyncToggle
-                              enabled={event.displaySyncEnabled !== false}
-                              saving={displaySyncSavingId === event.id}
-                              onToggle={() => void toggleDisplaySync(event)}
-                            />
+                            <div className="flex flex-col items-center gap-1">
+                              <EventDisplaySyncToggle
+                                enabled={event.displaySyncEnabled !== false}
+                                saving={displaySyncSavingId === event.id}
+                                onToggle={() => void toggleDisplaySync(event)}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setExtendControlsEvent(event)}
+                                title="Configure Extend Event Controls modules for this event"
+                                className={`rounded border px-2 py-0.5 text-[10px] font-semibold ${
+                                  event.extendEventControlsEnabled
+                                    ? 'border-violet-600/70 bg-violet-950/50 text-violet-200'
+                                    : 'border-slate-600 bg-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                Extend {event.extendEventControlsEnabled ? 'On' : 'Off'}
+                              </button>
+                            </div>
                           </td>
                         )}
                           </>
@@ -1327,6 +1393,7 @@ const EventListPage: React.FC = () => {
             isAdminUser={isAdminUser}
             displaySyncSavingId={displaySyncSavingId}
             onToggleDisplaySync={(event) => void toggleDisplaySync(event)}
+            onConfigureExtendControls={(event) => setExtendControlsEvent(event)}
           />
         )}
       </div>
@@ -1941,6 +2008,20 @@ const EventListPage: React.FC = () => {
         open={shareAccessEvent != null}
         event={shareAccessEvent}
         onClose={() => setShareAccessEvent(null)}
+      />
+
+      <ExtendEventControlsConfigModal
+        open={extendControlsEvent != null}
+        eventName={extendControlsEvent?.name || ''}
+        initial={{
+          enabled: extendControlsEvent?.extendEventControlsEnabled === true,
+          modules: extendControlsEvent?.extendEventControlModules?.length
+            ? extendControlsEvent.extendEventControlModules
+            : ['civicsBee'],
+        }}
+        saving={extendControlsSaving}
+        onClose={() => setExtendControlsEvent(null)}
+        onSave={(config) => void saveExtendEventControls(config)}
       />
 
     </div>
