@@ -8,7 +8,7 @@ import {
   CivicsBeeTier,
   countCivicsBeeByFilter,
   filterCivicsBeeEntries,
-} from '../lib/civicsBee';
+} from '../../lib/civicsBee';
 
 type CivicsBeeStudentsPanelProps = {
   roster: CivicsBeeRoster;
