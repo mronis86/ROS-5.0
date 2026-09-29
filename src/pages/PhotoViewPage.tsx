@@ -10,6 +10,7 @@ import { socketClient } from '../services/socket-client';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import {
   DISPLAY_SESSION_MAX_HOURS,
@@ -304,8 +305,17 @@ const PhotoViewPage: React.FC = () => {
       }
     }
     
-    // Add show start overtime for START cue and all rows after it
-    if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+    // Add ★ show-start overtime only for rows on the START cue's day
+    if (
+      shouldApplyShowStartOvertime({
+        showStartOvertime,
+        startCueId,
+        startCueIndex,
+        rowIndex: index,
+        schedule,
+        rowDay: currentItem.day || 1,
+      })
+    ) {
       totalOvertimeMinutes += showStartOvertime;
     }
     
@@ -3132,11 +3142,20 @@ const PhotoViewPage: React.FC = () => {
                                   totalOvertime += overtimeMinutes[prevItem.id] || 0;
                                 }
                               }
-                              // Add show start overtime for rows after START
+                              // Add ★ show-start overtime only for rows on the START cue's day
                               if (showStartOvertime !== 0 && startCueId !== null) {
                                 const startCueIndex = schedule.findIndex(s => s.id === startCueId);
                                 const currentIndex = schedule.findIndex(s => s.id === item.id);
-                                if (startCueIndex !== -1 && currentIndex > startCueIndex) {
+                                if (
+                                  shouldApplyShowStartOvertime({
+                                    showStartOvertime,
+                                    startCueId,
+                                    startCueIndex,
+                                    rowIndex: currentIndex,
+                                    schedule,
+                                    rowDay: item.day || 1,
+                                  })
+                                ) {
                                   totalOvertime += showStartOvertime;
                                 }
                               }
@@ -3172,11 +3191,20 @@ const PhotoViewPage: React.FC = () => {
                                   totalOvertime += overtimeMinutes[prevItem.id] || 0;
                                 }
                               }
-                              // Add show start overtime for rows after START
+                              // Add ★ show-start overtime only for rows on the START cue's day
                               if (showStartOvertime !== 0 && startCueId !== null) {
                                 const startCueIndex = schedule.findIndex(s => s.id === startCueId);
                                 const currentIndex = schedule.findIndex(s => s.id === item.id);
-                                if (startCueIndex !== -1 && currentIndex > startCueIndex) {
+                                if (
+                                  shouldApplyShowStartOvertime({
+                                    showStartOvertime,
+                                    startCueId,
+                                    startCueIndex,
+                                    rowIndex: currentIndex,
+                                    schedule,
+                                    rowDay: item.day || 1,
+                                  })
+                                ) {
                                   totalOvertime += showStartOvertime;
                                 }
                               }

@@ -16,6 +16,7 @@ import { apiAuthFetch } from '../lib/sessionAuth';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
@@ -466,8 +467,17 @@ const GreenRoomPage: React.FC = () => {
       }
     }
     
-    // Add show start overtime for START cue and all rows after it
-    if (currentShowStartOvertime !== 0 && currentStartCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+    // Add ★ show-start overtime only for rows on the START cue's day
+    if (
+      shouldApplyShowStartOvertime({
+        showStartOvertime: currentShowStartOvertime,
+        startCueId: currentStartCueId,
+        startCueIndex,
+        rowIndex: index,
+        schedule: currentSchedule,
+        rowDay: currentItem.day || 1,
+      })
+    ) {
       totalOvertimeMinutes += currentShowStartOvertime;
       // Removed verbose logging to prevent console spam
     }

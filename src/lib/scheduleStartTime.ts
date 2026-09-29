@@ -128,3 +128,37 @@ export function calculateScheduleStartTime(
 
   return calcAt(index);
 }
+
+/**
+ * ★ show-start offset applies only on the START cue's day.
+ * Without this, Day 1's late/early minutes bleed onto Day 2+ (those rows
+ * always have a higher schedule index than Day 1's ★).
+ */
+export function shouldApplyShowStartOvertime(opts: {
+  showStartOvertime: number;
+  startCueId: number | null | undefined;
+  startCueIndex: number;
+  rowIndex: number;
+  schedule: ScheduleStartItem[];
+  rowDay: number;
+}): boolean {
+  const {
+    showStartOvertime,
+    startCueId,
+    startCueIndex,
+    rowIndex,
+    schedule,
+    rowDay,
+  } = opts;
+  if (
+    !showStartOvertime ||
+    startCueId == null ||
+    startCueIndex < 0 ||
+    rowIndex < startCueIndex
+  ) {
+    return false;
+  }
+  const startCueDay = schedule[startCueIndex]?.day || 1;
+  return rowDay === startCueDay;
+}
+

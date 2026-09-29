@@ -75,6 +75,7 @@ import ScheduleRow from './ScheduleRow';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import { verifyClearLogPassword } from '../lib/adminAuth';
 import {
@@ -11109,8 +11110,17 @@ const RunOfShowPage: React.FC = () => {
       }
     }
 
-    // Add show start overtime for START cue and all rows after it
-    if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+    // Add ★ show-start overtime only for rows on the START cue's day
+    if (
+      shouldApplyShowStartOvertime({
+        showStartOvertime,
+        startCueId,
+        startCueIndex,
+        rowIndex: index,
+        schedule,
+        rowDay: currentItem.day || 1,
+      })
+    ) {
       totalOvertimeMinutes += showStartOvertime;
     }
 
@@ -11172,8 +11182,17 @@ const RunOfShowPage: React.FC = () => {
         }
       }
 
-      // Add show start overtime for START cue and all rows after it
-      if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+      // Add ★ show-start overtime only for rows on the START cue's day
+      if (
+        shouldApplyShowStartOvertime({
+          showStartOvertime,
+          startCueId,
+          startCueIndex,
+          rowIndex: index,
+          schedule,
+          rowDay: currentItemDay,
+        })
+      ) {
         totalOvertime += showStartOvertime;
       }
 
@@ -11915,11 +11934,29 @@ const RunOfShowPage: React.FC = () => {
           })();
         }}
         title="Enter Live Show Tracking Mode?"
-        message={
-          rehearsalBaseline
+        message={(() => {
+          const multiDay = Boolean(event?.numberOfDays && event.numberOfDays > 1);
+          const calendarDay = multiDay
+            ? getEventDayNumberForDate(event?.date, event?.numberOfDays)
+            : null;
+          const dayBits: string[] = [];
+          if (multiDay) {
+            dayBits.push(
+              `You are viewing Day ${selectedDay}. ★ show-start offsets apply only on the day that has the START cue — they will not carry into other days.`
+            );
+            if (calendarDay != null && calendarDay !== selectedDay) {
+              dayBits.push(
+                `Today's calendar date is Day ${calendarDay} of this event. Switch the day tabs to Day ${calendarDay} before continuing if that is the day you are running.`
+              );
+            } else if (calendarDay != null) {
+              dayBits.push(`Today's calendar date matches Day ${selectedDay}.`);
+            }
+          }
+          const core = rehearsalBaseline
             ? `Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. Your rehearsal baseline from ${new Date(rehearsalBaseline.capturedAt).toLocaleString()} will be kept for Show vs rehearsal. Hit OK to continue.`
-            : 'Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. The current schedule will be frozen as the rehearsal baseline for Show vs rehearsal. Hit OK to continue.'
-        }
+            : 'Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. The current schedule will be frozen as the rehearsal baseline for Show vs rehearsal. Hit OK to continue.';
+          return dayBits.length ? `${dayBits.join(' ')} ${core}` : core;
+        })()}
         confirmLabel="OK — Enter In-Show"
         cancelLabel="Cancel"
         confirmClassName="bg-green-600 hover:bg-green-500"

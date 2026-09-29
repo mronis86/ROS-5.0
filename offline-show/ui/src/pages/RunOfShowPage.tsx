@@ -47,6 +47,7 @@ import ScheduleRow from './ScheduleRow';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import { verifyClearLogPassword } from '../lib/adminAuth';
 import { apiJsonHeaders } from '../lib/sessionAuth';
@@ -9848,8 +9849,17 @@ const RunOfShowPage: React.FC = () => {
       }
     }
 
-    // Add show start overtime for START cue and all rows after it
-    if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+    // Add ★ show-start overtime only for rows on the START cue's day
+    if (
+      shouldApplyShowStartOvertime({
+        showStartOvertime,
+        startCueId,
+        startCueIndex,
+        rowIndex: index,
+        schedule,
+        rowDay: currentItem.day || 1,
+      })
+    ) {
       totalOvertimeMinutes += showStartOvertime;
     }
 
@@ -9911,8 +9921,17 @@ const RunOfShowPage: React.FC = () => {
         }
       }
 
-      // Add show start overtime for START cue and all rows after it
-      if (showStartOvertime !== 0 && startCueId !== null && startCueIndex !== -1 && index >= startCueIndex) {
+      // Add ★ show-start overtime only for rows on the START cue's day
+      if (
+        shouldApplyShowStartOvertime({
+          showStartOvertime,
+          startCueId,
+          startCueIndex,
+          rowIndex: index,
+          schedule,
+          rowDay: currentItemDay,
+        })
+      ) {
         totalOvertime += showStartOvertime;
       }
 
