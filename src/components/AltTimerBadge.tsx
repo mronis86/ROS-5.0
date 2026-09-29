@@ -15,7 +15,8 @@ type AltTimerBadgeProps = {
 };
 
 /**
- * Compact orange ALT pill + "CUE # - Segment Name" for Clock & Fullscreen secondary timers.
+ * Compact ALT pill + cue/label for Clock & Fullscreen secondary timers.
+ * Operator countdowns use a purple ALT pill; sub-cues stay orange.
  */
 export function AltTimerBadge({
   timer,
@@ -29,12 +30,15 @@ export function AltTimerBadge({
   const { cueLabel, segment } = getAltTimerParts(timer, scheduleItems);
   const line = cueOnly ? cueLabel : segment ? `${cueLabel} - ${segment}` : cueLabel;
   const status = cueOnly ? '' : String(statusPrefix || '').replace(/\s*-\s*$/, '').trim();
+  const isOperator =
+    (timer as any)?.source === 'operator' || (timer as any)?.timer_id === 'OPERATOR';
+  const badgeClass = isOperator
+    ? 'rounded bg-violet-500 px-2 py-0.5 text-xs font-black leading-none tracking-widest text-white translate-y-px'
+    : 'rounded bg-orange-500 px-2 py-0.5 text-xs font-black leading-none tracking-widest text-black translate-y-px';
 
   return (
     <span className="inline-flex flex-wrap items-center justify-center gap-1.5">
-      <span className="rounded bg-orange-500 px-2 py-0.5 text-xs font-black leading-none tracking-widest text-black translate-y-px">
-        ALT
-      </span>
+      <span className={badgeClass}>ALT</span>
       {status ? (
         <span className="text-sm font-semibold leading-none text-yellow-200">{status}</span>
       ) : null}

@@ -12,8 +12,8 @@ import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import {
+  isOperatorAltTimer,
   mapOperatorCountdownRow,
-  operatorAsSecondaryTimer,
   resolveDisplaySecondaryTimer,
 } from '../lib/operatorCountdown';
 import TeleprompterClockOverlay, {
@@ -150,20 +150,17 @@ const Clock: React.FC<ClockProps> = ({
     };
   };
 
-  /** Keep Op Timer in the same secondaryTimer slot sub-cues use (Clock ALT). */
-  const mergeOperatorIntoHybrid = (prev: any, mappedOp: ReturnType<typeof mapOperatorCountdownRow>) => {
-    const opSecondary = operatorAsSecondaryTimer(mappedOp);
-    const sub = prev?.secondaryTimer;
-    const subLive =
-      sub &&
-      sub.source !== 'operator' &&
-      (sub.is_running === true || sub.timer_state === 'running');
-    return {
-      ...prev,
-      operatorCountdown: mappedOp,
-      ...(opSecondary && !subLive ? { secondaryTimer: opSecondary } : {}),
-      ...(!mappedOp && sub?.source === 'operator' ? { secondaryTimer: null } : {}),
-    };
+  /** Op Timer lives only in operatorCountdown — never in secondaryTimer (cue) lifecycle. */
+  const setOperatorCountdown = (
+    prev: any,
+    mappedOp: ReturnType<typeof mapOperatorCountdownRow>
+  ) => {
+    const next: any = { ...prev, operatorCountdown: mappedOp };
+    // Strip any stale dual-write of Op into secondaryTimer
+    if (isOperatorAltTimer(prev?.secondaryTimer)) {
+      next.secondaryTimer = null;
+    }
+    return next;
   };
 
   const sameEventId = (id: unknown) => String(id || '') === String(eventId || '');
@@ -360,7 +357,7 @@ const Clock: React.FC<ClockProps> = ({
 
           const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
           setHybridTimerData((prev) =>
-            mergeOperatorIntoHybrid(prev, mapOperatorCountdownRow(operatorRow))
+            setOperatorCountdown(prev, mapOperatorCountdownRow(operatorRow))
           );
           
           // Load current timer message (enabled only; null clears stale display)
@@ -383,10 +380,10 @@ const Clock: React.FC<ClockProps> = ({
             console.log('🔄 Active timer changed - stopping secondary timer');
             console.log('🔄 Previous timer:', lastActiveTimerId);
             console.log('🔄 New timer:', currentActiveTimerId);
-            // Clear secondary timer when main timer changes (restore Op Timer if live)
+            // Clear sub-cue secondary only — Op Timer is independent
             setHybridTimerData(prev => ({
               ...prev,
-              secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
+              secondaryTimer: null,
             }));
           }
           
@@ -395,10 +392,10 @@ const Clock: React.FC<ClockProps> = ({
             console.log('🔄 New cue loaded - stopping secondary timer');
             console.log('🔄 Previous item_id:', lastActiveItemId);
             console.log('🔄 New item_id:', currentItemId);
-            // Clear secondary timer when new cue is loaded (restore Op Timer if live)
+            // Clear sub-cue secondary only — Op Timer is independent
             setHybridTimerData(prev => ({
               ...prev,
-              secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
+              secondaryTimer: null,
             }));
           }
           
@@ -417,11 +414,11 @@ const Clock: React.FC<ClockProps> = ({
           setLastActiveItemId(currentItemId);
           setLastActiveStartTime(currentStartTime);
         } else if (!activeTimer && lastActiveTimerId && supabaseOnly) {
-          // Active timer stopped completely - clear sub-cue secondary; keep Op Timer if live
+          // Active timer stopped — clear sub-cue secondary only; Op Timer stays
           console.log('🔄 Active timer stopped - stopping secondary timer and drift detection');
           setHybridTimerData(prev => ({
             ...prev,
-            secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
+            secondaryTimer: null,
           }));
           
           // WebSocket provides real-time updates, no drift detection cleanup needed
@@ -567,10 +564,10 @@ const Clock: React.FC<ClockProps> = ({
       onSubCueTimerStopped: (data: any) => {
         console.log('🔄 Clock: WebSocket sub-cue timer stopped:', data);
         if (data && sameEventId(data.event_id)) {
-          // Restore Op Timer into ALT slot when a sub-cue ends
+          // Clear sub-cue only — Op Timer is independent and keeps running
           setHybridTimerData((prev) => ({
             ...prev,
-            secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
+            secondaryTimer: null,
           }));
           console.log('✅ Clock: Sub-cue timer stopped via WebSocket');
         }
@@ -578,17 +575,13 @@ const Clock: React.FC<ClockProps> = ({
       onOperatorCountdownUpdated: (data: any) => {
         if (data && sameEventId(data.event_id)) {
           setHybridTimerData((prev) =>
-            mergeOperatorIntoHybrid(prev, mapOperatorCountdownRow(data))
+            setOperatorCountdown(prev, mapOperatorCountdownRow(data))
           );
         }
       },
       onOperatorCountdownCleared: (data: any) => {
         if (data && sameEventId(data.event_id)) {
-          setHybridTimerData((prev) => ({
-            ...prev,
-            operatorCountdown: null,
-            ...(prev?.secondaryTimer?.source === 'operator' ? { secondaryTimer: null } : {}),
-          }));
+          setHybridTimerData((prev) => setOperatorCountdown(prev, null));
         }
       },
       onTimerMessageUpdated: (data: any) => {
@@ -624,7 +617,7 @@ const Clock: React.FC<ClockProps> = ({
 
           const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
           setHybridTimerData((prev) =>
-            mergeOperatorIntoHybrid(prev, mapOperatorCountdownRow(operatorRow))
+            setOperatorCountdown(prev, mapOperatorCountdownRow(operatorRow))
           );
           
           // Load current timer message (enabled only; null clears stale display)
@@ -919,21 +912,51 @@ const Clock: React.FC<ClockProps> = ({
       operatorCountdown: hybridTimerData?.operatorCountdown,
     })
   );
-  const secondaryDisplayColor =
-    secondarySubTimer && isResolumeSynced(secondarySubTimer) ? 'text-yellow-300' : 'text-orange-400';
-  const secondaryResolumeLabel = secondarySubTimer
-    ? isResolumeSynced(secondarySubTimer)
-      ? ' · RESOLUME'
-      : isResolumeArmed(secondarySubTimer)
-        ? ' · RESOLUME (armed)'
-        : ''
-    : '';
+  const isOpAlt = isOperatorAltTimer(secondarySubTimer);
+  const secondaryDisplayColor = isOpAlt
+    ? 'text-violet-400'
+    : secondarySubTimer && isResolumeSynced(secondarySubTimer)
+      ? 'text-yellow-300'
+      : 'text-orange-400';
+  const secondaryResolumeLabel =
+    !isOpAlt && secondarySubTimer
+      ? isResolumeSynced(secondarySubTimer)
+        ? ' · RESOLUME'
+        : isResolumeArmed(secondarySubTimer)
+          ? ' · RESOLUME (armed)'
+          : ''
+      : '';
   const secondaryStatusPrefix =
-    secondarySubTimer && isResolumeSynced(secondarySubTimer) && secondarySubTimer.is_running
+    !isOpAlt && secondarySubTimer && isResolumeSynced(secondarySubTimer) && secondarySubTimer.is_running
       ? 'RUNNING · RESOLUME - '
-      : secondarySubTimer && isResolumeArmed(secondarySubTimer)
+      : !isOpAlt && secondarySubTimer && isResolumeArmed(secondarySubTimer)
         ? 'LOADED · RESOLUME (armed) - '
         : '';
+
+  /** Sub-cues hide at 0; Op Timer keeps counting until operator clears it. */
+  const secondaryStillVisible = (timer: any): boolean => {
+    if (!timer?.is_running) return false;
+    if (isOperatorAltTimer(timer)) return true;
+    if (timer.is_active) {
+      const startedAt = new Date(timer.started_at || timer.created_at);
+      const elapsed = Math.floor((Date.now() + clockOffset - startedAt.getTime()) / 1000);
+      const totalDuration = timer.duration_seconds || timer.duration || 0;
+      return totalDuration - elapsed > 0;
+    }
+    return true;
+  };
+
+  const secondaryRemainingSigned = (timer: any): number => {
+    if (!timer) return 0;
+    if (timer.is_running && timer.is_active) {
+      const startedAt = new Date(timer.started_at || timer.created_at);
+      const elapsed = Math.floor((Date.now() + clockOffset - startedAt.getTime()) / 1000);
+      const totalDuration = timer.duration_seconds || timer.duration || 0;
+      const rem = totalDuration - elapsed;
+      return isOperatorAltTimer(timer) ? rem : Math.max(0, rem);
+    }
+    return timer.duration_seconds || timer.duration || 0;
+  };
 
   // Prefer any currently enabled message; Pre Show uses OVER TIME-style label instead of overlay
   const activeStageMessage =
@@ -1234,32 +1257,7 @@ const Clock: React.FC<ClockProps> = ({
           const hasMessage = layoutCrowded;
           if (hasMessage) return false;
           
-          console.log('🔍 Clock: Secondary timer data:', {
-            is_running: currentSecondaryTimer.is_running,
-            is_active: currentSecondaryTimer.is_active,
-            remaining_seconds: currentSecondaryTimer.remaining_seconds,
-            duration_seconds: currentSecondaryTimer.duration_seconds
-          });
-          
-          // Hide timer if it's not running
-          if (!currentSecondaryTimer.is_running) {
-            console.log('🔍 Sub-cue timer not running - hiding');
-            return false;
-          }
-          
-          // Check if timer has expired (reached zero or negative)
-          if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-            const now = new Date();
-            const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-            const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-            const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-            const remaining = Math.max(0, totalDuration - elapsed);
-            
-            // Hide timer if it has expired (remaining <= 0)
-            if (remaining <= 0) return false;
-          }
-          
-          return true;
+          return secondaryStillVisible(currentSecondaryTimer);
         } else {
           // Clock always runs in Supabase-only mode
           return false;
@@ -1288,17 +1286,7 @@ const Clock: React.FC<ClockProps> = ({
             const currentSecondaryTimer = supabaseOnly ? secondarySubTimer : secondaryTimer;
             if (!currentSecondaryTimer) return 0;
             const _ = secondaryTimerUpdate;
-            if (supabaseOnly) {
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const syncedNow = Date.now() + clockOffset;
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((syncedNow - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                return Math.max(0, totalDuration - elapsed);
-              }
-              return currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-            }
-            return currentSecondaryTimer.remaining || 0;
+            return secondaryRemainingSigned(currentSecondaryTimer);
           })();
 
           const formatSecondary = (remaining: number) => {
@@ -1364,20 +1352,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (currentSecondaryTimer) {
-            // Check if timer has expired (reached zero or negative)
-            if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-              const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-              const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-              const remaining = Math.max(0, totalDuration - elapsed);
-              
-              // Only show as active if timer hasn't expired
-              hasSecondaryTimer = remaining > 0;
-            } else {
-              hasSecondaryTimer = true; // Show if timer is stopped but not expired
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
         } else {
           hasSecondaryTimer = !!secondaryTimer;
         }
@@ -1424,20 +1399,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (currentSecondaryTimer) {
-            // Check if timer has expired (reached zero or negative)
-            if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-              const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-              const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-              const remaining = Math.max(0, totalDuration - elapsed);
-              
-              // Only show as active if timer hasn't expired
-              hasSecondaryTimer = remaining > 0;
-            } else {
-              hasSecondaryTimer = true; // Show if timer is stopped but not expired
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
         } else {
           hasSecondaryTimer = !!secondaryTimer;
         }
@@ -1459,19 +1421,18 @@ const Clock: React.FC<ClockProps> = ({
           {/* Sub-cue Countdown Timer */}
           <div className="font-mono text-3xl md:text-4xl font-bold leading-none">
             {(() => {
-              const currentSecondaryTimer = secondarySubTimer;
-              const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-              const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-              const remaining = Math.max(0, totalDuration - elapsed);
-              
-              const hours = Math.floor(remaining / 3600);
-              const minutes = Math.floor((remaining % 3600) / 60);
-              const seconds = remaining % 60;
+              const _ = secondaryTimerUpdate;
+              const remaining = secondaryRemainingSigned(secondarySubTimer);
+              const absRemaining = Math.abs(remaining);
+              const hours = Math.floor(absRemaining / 3600);
+              const minutes = Math.floor((absRemaining % 3600) / 60);
+              const seconds = absRemaining % 60;
+              const prefix = remaining < 0 ? '-' : '';
               
               if (hours > 0) {
-                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
               } else {
-                return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
               }
             })()}
           </div>
@@ -1489,7 +1450,11 @@ const Clock: React.FC<ClockProps> = ({
                   const elapsed = calculateElapsed(t.started_at || t.created_at);
                   return Math.min(100, Math.max(0, ((total - elapsed) / total) * 100));
                 })()}%`,
-                backgroundColor: isResolumeSynced(secondarySubTimer) ? '#fde047' : '#fb923c',
+                backgroundColor: isOpAlt
+                  ? '#a78bfa'
+                  : isResolumeSynced(secondarySubTimer)
+                    ? '#fde047'
+                    : '#fb923c',
               }}
             />
           </div>
@@ -1501,27 +1466,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
         } else {
           hasSecondaryTimer = !!secondaryTimer;
         }
@@ -1655,27 +1600,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
         } else {
           hasSecondaryTimer = !!secondaryTimer;
         }
@@ -1740,27 +1665,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
         } else {
           hasSecondaryTimer = !!secondaryTimer;
         }
@@ -1825,27 +1730,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
         } else {
           hasSecondaryTimer = !!secondaryTimer;
         }
@@ -1872,27 +1757,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
         } else {
           hasSecondaryTimer = !!secondaryTimer;
         }

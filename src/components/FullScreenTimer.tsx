@@ -10,7 +10,7 @@ import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdow
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
-import { resolveDisplaySecondaryTimer } from '../lib/operatorCountdown';
+import { isOperatorAltTimer, resolveDisplaySecondaryTimer } from '../lib/operatorCountdown';
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
@@ -151,9 +151,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   // Indented sub-cue OR operator countdown — same ALT slot as Clock
   const displaySecondaryTimer =
     resolveDisplaySecondaryTimer(hybridTimerData) ||
-    (secondaryTimer?.source === 'operator' || secondaryTimer?.is_running
+    (!isOperatorAltTimer(secondaryTimer) && secondaryTimer?.is_running
       ? secondaryTimer
       : null);
+  const isOpAlt = isOperatorAltTimer(displaySecondaryTimer);
+  const secondaryDisplayColor = isOpAlt ? 'text-violet-400' : 'text-orange-400';
 
   const secondaryRemainingSeconds = (timer: any): number => {
     if (!timer) return 0;
@@ -161,10 +163,29 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       const startedAt = new Date(timer.started_at || timer.created_at);
       const elapsed = Math.floor((Date.now() - startedAt.getTime()) / 1000);
       const totalDuration = timer.duration_seconds || timer.duration || 0;
-      return Math.max(0, totalDuration - elapsed);
+      const rem = totalDuration - elapsed;
+      return isOperatorAltTimer(timer) ? rem : Math.max(0, rem);
     }
     if (typeof timer.remaining === 'number') return Math.max(0, timer.remaining);
     return Number(timer.duration_seconds || timer.duration || 0) || 0;
+  };
+
+  const secondaryStillVisible = (timer: any): boolean => {
+    if (!timer?.is_running) return false;
+    if (isOperatorAltTimer(timer)) return true;
+    return secondaryRemainingSeconds(timer) > 0;
+  };
+
+  const formatSecondaryTime = (remaining: number): string => {
+    const abs = Math.abs(remaining);
+    const hours = Math.floor(abs / 3600);
+    const minutes = Math.floor((abs % 3600) / 60);
+    const seconds = abs % 60;
+    const prefix = remaining < 0 ? '-' : '';
+    if (hours === 0) {
+      return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+    return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
   // Debug secondary timer prop (only when it changes)
@@ -898,6 +919,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           console.log('🔍 Sub-cue timer not running - hiding');
           return false;
         }
+
+        // Op Timer never auto-hides at 0 — only operator clear stops it
+        if (isOperatorAltTimer(currentSecondaryTimer)) return true;
         
         // Check if timer has expired (reached zero or negative)
         if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
@@ -941,7 +965,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }
             return (
                 <div
-                  className="mb-[-50px] text-center text-orange-400 text-xl md:text-2xl lg:text-3xl font-bold whitespace-nowrap"
+                  className={`mb-[-50px] text-center ${secondaryDisplayColor} text-xl md:text-2xl lg:text-3xl font-bold whitespace-nowrap`}
                   style={{ lineHeight: '1.2' }}
                 >
                   {label}
@@ -951,7 +975,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           {/* Large Time — same digit wrapper + progress-bar spacer as main timer */}
           <div className="text-center w-full flex flex-col items-center">
           <div
-            className={`text-orange-400 font-mono font-bold animate-in zoom-in duration-500 ${(() => {
+            className={`${secondaryDisplayColor} font-mono font-bold animate-in zoom-in duration-500 ${(() => {
               const currentSecondaryTimer = displaySecondaryTimer;
               if (!currentSecondaryTimer) return 'text-3xl md:text-4xl lg:text-5xl';
               
@@ -965,7 +989,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
                 remaining = currentSecondaryTimer.remaining || 0;
               }
               
-              const hours = Math.floor(remaining / 3600);
+              const hours = Math.floor(Math.abs(remaining) / 3600);
               
               // Check for messages (both Neon Only ON and OFF)
               if (hybridTimerData?.timerMessage) {
@@ -997,15 +1021,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
                 remaining = currentSecondaryTimer.remaining || 0;
               }
               
-              const hours = Math.floor(remaining / 3600);
-              const minutes = Math.floor((remaining % 3600) / 60);
-              const seconds = remaining % 60;
-
-              if (hours === 0) {
-                return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-              } else {
-                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-              }
+              return formatSecondaryTime(remaining);
             })()}
           </div>
           {(() => {
@@ -1028,7 +1044,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             return (
               <div className="w-40 mx-auto mt-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
                 <div
-                  className="h-full transition-all duration-1000 absolute top-0 right-0 bg-orange-400"
+                  className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                    isOpAlt ? 'bg-violet-400' : 'bg-orange-400'
+                  }`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -1043,24 +1061,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = displaySecondaryTimer;
-          if (currentSecondaryTimer) {
-            // Check if timer has expired (reached zero or negative)
-            if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-              const now = new Date();
-              const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-              const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-              const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-              const remaining = Math.max(0, totalDuration - elapsed);
-              
-              // Only show as active if timer hasn't expired
-              hasSecondaryTimer = remaining > 0;
-            } else {
-              hasSecondaryTimer = true; // Show if timer is stopped but not expired
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         } else {
-          hasSecondaryTimer = !!displaySecondaryTimer;
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1104,29 +1107,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = displaySecondaryTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         } else {
-          hasSecondaryTimer = !!displaySecondaryTimer;
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1185,29 +1168,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = displaySecondaryTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         } else {
-          hasSecondaryTimer = !!displaySecondaryTimer;
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1238,29 +1201,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = displaySecondaryTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         } else {
-          hasSecondaryTimer = !!displaySecondaryTimer;
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1291,29 +1234,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = displaySecondaryTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         } else {
-          hasSecondaryTimer = !!displaySecondaryTimer;
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1338,29 +1261,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = displaySecondaryTimer;
-          if (currentSecondaryTimer) {
-            // Hide timer if it's not running
-            if (!currentSecondaryTimer.is_running) {
-              hasSecondaryTimer = false;
-            } else {
-              // Check if timer has expired (reached zero or negative)
-              if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                const now = new Date();
-                const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                
-                // Only show as active if timer hasn't expired
-                hasSecondaryTimer = remaining > 0;
-              } else {
-                hasSecondaryTimer = true; // Show if timer is stopped but not expired
-              }
-            }
-          }
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         } else {
-          hasSecondaryTimer = !!displaySecondaryTimer;
+          hasSecondaryTimer = secondaryStillVisible(displaySecondaryTimer);
         }
         
         const hasMessage = hasBlockingStageMessage();

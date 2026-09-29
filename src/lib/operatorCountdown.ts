@@ -55,7 +55,7 @@ export function mapOperatorCountdownRow(row: OperatorCountdownRow | null | undef
   };
 }
 
-/** Shape compatible with Clock / FullScreen secondary (indented sub-cue) display. */
+/** Shape compatible with Clock / Full Screen secondary (ALT) display. */
 export function operatorAsSecondaryTimer(
   op: OperatorCountdownDisplay | null | undefined
 ): Record<string, unknown> | null {
@@ -74,32 +74,29 @@ export function operatorAsSecondaryTimer(
   };
 }
 
-function secondaryStillHasTime(sub: any): boolean {
-  if (!sub) return false;
-  const running = sub.is_running === true || sub.timer_state === 'running';
-  if (!running) return false;
-  const started = sub.started_at || sub.created_at;
-  const dur = Number(sub.duration_seconds ?? sub.duration) || 0;
-  if (!started || dur <= 0) return true;
-  const startedMs = new Date(started).getTime();
-  if (!Number.isFinite(startedMs)) return true;
-  return dur - (Date.now() - startedMs) / 1000 > 0;
+export function isOperatorAltTimer(timer: any): boolean {
+  return !!(timer && (timer.source === 'operator' || timer.timer_id === 'OPERATOR'));
+}
+
+function isLiveSubCue(sub: any): boolean {
+  if (!sub || isOperatorAltTimer(sub)) return false;
+  return sub.is_running === true || sub.timer_state === 'running';
 }
 
 /**
  * Prefer a live indented sub-cue; otherwise show the operator countdown in the
- * same secondary / ALT timer slot on Clock and Full Screen.
+ * same secondary / ALT timer slot. Op Timer state lives in operatorCountdown —
+ * never in secondaryTimer lifecycle (cue jumps must not clear it).
  */
 export function resolveDisplaySecondaryTimer(hybrid: {
   secondaryTimer?: any;
   operatorCountdown?: OperatorCountdownDisplay | null;
 } | null | undefined): any {
   const sub = hybrid?.secondaryTimer;
-  // Don't let an expired/stale sub-cue block the operator ALT slot
-  if (secondaryStillHasTime(sub) && sub?.source !== 'operator') {
+  if (isLiveSubCue(sub)) {
     return sub;
   }
-  return operatorAsSecondaryTimer(hybrid?.operatorCountdown) || (sub?.source === 'operator' ? sub : null);
+  return operatorAsSecondaryTimer(hybrid?.operatorCountdown);
 }
 
 export function operatorCountdownRemaining(
