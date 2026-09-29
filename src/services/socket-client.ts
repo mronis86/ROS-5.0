@@ -12,6 +12,8 @@ interface SocketCallbacks {
   onTimerStarted?: (data: any) => void;
   onSubCueTimerStarted?: (data: any) => void;
   onSubCueTimerStopped?: (data: any) => void; // NEW!
+  onOperatorCountdownUpdated?: (data: any) => void;
+  onOperatorCountdownCleared?: (data: any) => void;
   onActiveTimersUpdated?: (data: any) => void; // NEW!
   onResetAllStates?: (data: any) => void; // NEW! For reset events
   onLedOutputClear?: (data: { eventId: string }) => void;
@@ -198,6 +200,12 @@ class SocketClient {
           break;
         case 'subCueTimerStopped':
           this.callbacks.onSubCueTimerStopped?.(message.data);
+          break;
+        case 'operatorCountdownUpdated':
+          this.callbacks.onOperatorCountdownUpdated?.(message.data);
+          break;
+        case 'operatorCountdownCleared':
+          this.callbacks.onOperatorCountdownCleared?.(message.data);
           break;
         case 'activeTimersUpdated': // NEW!
           console.log('📡 SocketClient: Received activeTimersUpdated event:', message.data);

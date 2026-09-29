@@ -4,11 +4,13 @@ import {
   CIVICS_BEE_TIER_OPTIONS,
   CivicsBeeEntry,
   CivicsBeeFilter,
+  CivicsBeeImportResult,
   CivicsBeeRoster,
   CivicsBeeTier,
   countCivicsBeeByFilter,
   filterCivicsBeeEntries,
 } from '../../lib/civicsBee';
+import CivicsBeeExcelImportModal from './CivicsBeeExcelImportModal';
 
 type CivicsBeeStudentsPanelProps = {
   roster: CivicsBeeRoster;
@@ -29,6 +31,8 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
 }) => {
   const [filter, setFilter] = useState<CivicsBeeFilter>('all');
   const [search, setSearch] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
 
   const updateEntry = useCallback(
     (code: string, patch: Partial<CivicsBeeEntry>) => {
@@ -73,6 +77,17 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
     });
   };
 
+  const handleImportApply = (result: CivicsBeeImportResult) => {
+    if (readOnly) return;
+    onChange(result.roster);
+    const parts = [`Applied ${result.applied} student${result.applied === 1 ? '' : 's'} (In game on).`];
+    if (result.unmatched.length) {
+      parts.push(`${result.unmatched.length} unmatched state value${result.unmatched.length === 1 ? '' : 's'}.`);
+    }
+    setImportNotice(parts.join(' '));
+    setTimeout(() => setImportNotice(null), 5000);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -83,16 +98,31 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           </p>
         </div>
         {!readOnly && (
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={saving}
-            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save roster'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="rounded-md border border-sky-600/70 bg-sky-950/40 px-4 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-900/50"
+            >
+              Import Excel
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saving}
+              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save roster'}
+            </button>
+          </div>
         )}
       </div>
+
+      {importNotice && (
+        <div className="rounded-md border border-emerald-700/40 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-100">
+          {importNotice}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {FILTERS.map((f) => {
@@ -210,6 +240,15 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           </table>
         </div>
       </div>
+
+      {!readOnly && (
+        <CivicsBeeExcelImportModal
+          isOpen={importOpen}
+          roster={roster}
+          onClose={() => setImportOpen(false)}
+          onApply={handleImportApply}
+        />
+      )}
     </div>
   );
 };

@@ -172,3 +172,127 @@ export const CIVICS_BEE_TIER_OPTIONS: Array<{ value: CivicsBeeTier | ''; label: 
   { value: 'top10', label: 'Top 10' },
   { value: 'top5', label: 'Top 5' },
 ];
+
+/** Collapse punctuation / spacing for fuzzy jurisdiction matching. */
+export function normalizeJurisdictionKey(raw: string): string {
+  return String(raw || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const JURISDICTION_ALIASES: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  const add = (alias: string, code: string) => {
+    const key = normalizeJurisdictionKey(alias);
+    if (key) map[key] = code.toUpperCase();
+  };
+  for (const { code, name } of US_JURISDICTIONS) {
+    add(code, code);
+    add(name, code);
+  }
+  // Common spreadsheet variants
+  add('Washington DC', 'DC');
+  add('Washington D C', 'DC');
+  add('D C', 'DC');
+  add('District of Columbia DC', 'DC');
+  add('US Virgin Islands', 'VI');
+  add('U S Virgin Islands', 'VI');
+  add('Virgin Islands', 'VI');
+  add('Northern Marianas', 'MP');
+  add('CNMI', 'MP');
+  add('NMI', 'MP');
+  add('Puerto Rico PR', 'PR');
+  return map;
+})();
+
+/** Resolve a spreadsheet state cell to a roster jurisdiction code, or null. */
+export function resolveJurisdictionCode(raw: string): string | null {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  if (US_JURISDICTIONS.some((j) => j.code === upper)) return upper;
+  const key = normalizeJurisdictionKey(trimmed);
+  if (!key) return null;
+  if (JURISDICTION_ALIASES[key]) return JURISDICTION_ALIASES[key];
+  // Compact form without spaces (e.g. "newyork")
+  const compact = key.replace(/\s+/g, '');
+  for (const [alias, code] of Object.entries(JURISDICTION_ALIASES)) {
+    if (alias.replace(/\s+/g, '') === compact) return code;
+  }
+  return null;
+}
+
+export function mergeStudentNames(first: string, last: string): string {
+  return [String(first || '').trim(), String(last || '').trim()].filter(Boolean).join(' ');
+}
+
+export type CivicsBeeImportRow = {
+  stateRaw: string;
+  firstName: string;
+  lastName: string;
+};
+
+export type CivicsBeeImportResult = {
+  roster: CivicsBeeRoster;
+  applied: number;
+  unmatched: string[];
+  skippedEmpty: number;
+};
+
+/**
+ * Apply spreadsheet rows onto the roster: merge first+last → studentName,
+ * match state/territory, and mark matched rows as participating (in game).
+ * Unmatched states are left unchanged and reported.
+ */
+export function applyCivicsBeeImportRows(
+  roster: CivicsBeeRoster,
+  rows: CivicsBeeImportRow[]
+): CivicsBeeImportResult {
+  const byCode = new Map<string, { studentName: string }>();
+  const unmatched: string[] = [];
+  let skippedEmpty = 0;
+
+  for (const row of rows) {
+    const studentName = mergeStudentNames(row.firstName, row.lastName);
+    const stateRaw = String(row.stateRaw || '').trim();
+    if (!stateRaw && !studentName) {
+      skippedEmpty += 1;
+      continue;
+    }
+    const code = resolveJurisdictionCode(stateRaw);
+    if (!code) {
+      if (stateRaw) unmatched.push(stateRaw);
+      else skippedEmpty += 1;
+      continue;
+    }
+    if (!studentName) {
+      skippedEmpty += 1;
+      continue;
+    }
+    byCode.set(code, { studentName });
+  }
+
+  let applied = 0;
+  const entries = roster.entries.map((entry) => {
+    const hit = byCode.get(entry.code);
+    if (!hit) return entry;
+    applied += 1;
+    return {
+      ...entry,
+      studentName: hit.studentName,
+      participating: true,
+    };
+  });
+
+  return {
+    roster: { ...roster, entries },
+    applied,
+    unmatched: [...new Set(unmatched)],
+    skippedEmpty,
+  };
+}

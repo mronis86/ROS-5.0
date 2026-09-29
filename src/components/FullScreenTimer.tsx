@@ -10,6 +10,7 @@ import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdow
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
+import OperatorCountdownStrip from './OperatorCountdownStrip';
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
@@ -775,6 +776,16 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         </div>
       ) : null}
 
+      {hybridTimerData?.operatorCountdown?.is_active &&
+      (hybridTimerData?.secondaryTimer?.is_running || secondaryTimer) ? (
+        <div className="absolute top-3 left-1/2 z-30 -translate-x-1/2">
+          <OperatorCountdownStrip
+            timer={hybridTimerData.operatorCountdown}
+            clockOffsetMs={clockOffset}
+          />
+        </div>
+      ) : null}
+
       {stageFeedActive && activeFsMessage ? (
         <div className="absolute bottom-[16%] left-1/2 z-30 w-[min(90vw,56rem)] -translate-x-1/2 rounded-lg border-2 border-white/80 bg-black/70 px-6 py-3 text-center text-2xl font-bold text-white md:text-3xl">
           {activeFsMessage.message}
@@ -864,6 +875,18 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           </div>
         </div>
       )}
+
+      {!hybridTimerData?.secondaryTimer?.is_running &&
+        !secondaryTimer?.isActive &&
+        hybridTimerData?.operatorCountdown?.is_active && (
+          <div className="flex flex-1 flex-col items-center justify-center animate-in fade-in duration-500">
+            <OperatorCountdownStrip
+              large
+              timer={hybridTimerData.operatorCountdown}
+              clockOffsetMs={clockOffset}
+            />
+          </div>
+        )}
 
       {/* Secondary Timer Display - Bottom layout when message is active, center when no message */}
       {(() => {

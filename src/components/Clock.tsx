@@ -11,6 +11,8 @@ import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdow
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
+import OperatorCountdownStrip from './OperatorCountdownStrip';
+import { mapOperatorCountdownRow } from '../lib/operatorCountdown';
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
@@ -334,6 +336,12 @@ const Clock: React.FC<ClockProps> = ({
           } else {
             setHybridTimerData(prev => ({ ...prev, secondaryTimer: null }));
           }
+
+          const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
+          setHybridTimerData((prev) => ({
+            ...prev,
+            operatorCountdown: mapOperatorCountdownRow(operatorRow),
+          }));
           
           // Load current timer message (enabled only; null clears stale display)
           const timerMessage = await DatabaseService.getTimerMessage(eventId);
@@ -547,6 +555,19 @@ const Clock: React.FC<ClockProps> = ({
           console.log('✅ Clock: Sub-cue timer stopped via WebSocket');
         }
       },
+      onOperatorCountdownUpdated: (data: any) => {
+        if (data && data.event_id === eventId) {
+          setHybridTimerData((prev) => ({
+            ...prev,
+            operatorCountdown: mapOperatorCountdownRow(data),
+          }));
+        }
+      },
+      onOperatorCountdownCleared: (data: any) => {
+        if (data && data.event_id === eventId) {
+          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: null }));
+        }
+      },
       onTimerMessageUpdated: (data: any) => {
         console.log('📨 Clock: WebSocket timer message updated:', data);
         if (data && data.event_id === eventId) {
@@ -577,6 +598,12 @@ const Clock: React.FC<ClockProps> = ({
               console.log('✅ Clock: Initial sync - sub-cue timer loaded:', runningSubCueTimer);
             }
           }
+
+          const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
+          setHybridTimerData((prev) => ({
+            ...prev,
+            operatorCountdown: mapOperatorCountdownRow(operatorRow),
+          }));
           
           // Load current timer message (enabled only; null clears stale display)
           const timerMessage = await DatabaseService.getTimerMessage(eventId);
@@ -1074,6 +1101,17 @@ const Clock: React.FC<ClockProps> = ({
         </div>
       ) : null}
 
+      {supabaseOnly &&
+      hybridTimerData?.operatorCountdown?.is_active &&
+      hybridTimerData?.secondaryTimer?.is_running ? (
+        <div className="absolute top-3 left-1/2 z-30 -translate-x-1/2">
+          <OperatorCountdownStrip
+            timer={hybridTimerData.operatorCountdown}
+            clockOffsetMs={clockOffset}
+          />
+        </div>
+      ) : null}
+
       {stageFeedActive && activeStageMessage ? (
         <div className="absolute bottom-[16%] left-1/2 z-30 w-[min(90vw,56rem)] -translate-x-1/2 rounded-lg border-2 border-white/80 bg-black/70 px-6 py-3 text-center text-2xl font-bold text-white md:text-3xl">
           {activeStageMessage.message}
@@ -1157,6 +1195,19 @@ const Clock: React.FC<ClockProps> = ({
           </div>
         </div>
       )}
+
+      {supabaseOnly &&
+        !hybridTimerData?.secondaryTimer?.is_running &&
+        hybridTimerData?.operatorCountdown?.is_active &&
+        !layoutCrowded && (
+          <div className="flex flex-1 flex-col items-center justify-center animate-in fade-in duration-500">
+            <OperatorCountdownStrip
+              large
+              timer={hybridTimerData.operatorCountdown}
+              clockOffsetMs={clockOffset}
+            />
+          </div>
+        )}
 
       {/* Secondary Timer Display - Only when NO message is active */}
       {(() => {

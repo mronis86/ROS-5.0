@@ -68,6 +68,8 @@ import AgendaImportModal from '../components/AgendaImportModal';
 import ImportCSVModal from '../components/ImportCSVModal';
 import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
+import OperatorCountdownModal from '../components/OperatorCountdownModal';
+import { mapOperatorCountdownRow } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
 import AssetRetentionNotice, { formatCueFileExpiry, formatCueFileSize } from '../components/AssetRetentionNotice';
@@ -1296,6 +1298,8 @@ const RunOfShowPage: React.FC = () => {
     complete: boolean;
   } | null>(null);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
+  const [showOperatorCountdownModal, setShowOperatorCountdownModal] = useState(false);
+  const [operatorCountdownLive, setOperatorCountdownLive] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [messageFlashing, setMessageFlashing] = useState(false);
   const [messageEnabled, setMessageEnabled] = useState(false);
@@ -2945,6 +2949,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Load active sub-cue timer from API
       loadActiveSubCueTimerFromAPI();
+      loadOperatorCountdownFromAPI();
       
       // Test database connection
       testDatabaseConnection();
@@ -3699,6 +3704,18 @@ const RunOfShowPage: React.FC = () => {
       }
     } catch (error) {
       console.error('❌ Error loading active timer from API:', error);
+    }
+  };
+
+  const loadOperatorCountdownFromAPI = async () => {
+    if (!event?.id) return;
+    try {
+      const row = await DatabaseService.getOperatorCountdown(event.id);
+      const mapped = mapOperatorCountdownRow(row);
+      setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }));
+      setOperatorCountdownLive(!!(row?.is_active && row?.is_running));
+    } catch (error) {
+      console.warn('⚠️ Error loading operator countdown:', error);
     }
   };
 
@@ -8069,6 +8086,19 @@ const RunOfShowPage: React.FC = () => {
             ...prev,
             [data.item_id]: true
           }));
+        }
+      },
+      onOperatorCountdownUpdated: (data: any) => {
+        if (data && data.event_id === event?.id) {
+          const mapped = mapOperatorCountdownRow(data);
+          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }));
+          setOperatorCountdownLive(!!(data.is_active && data.is_running));
+        }
+      },
+      onOperatorCountdownCleared: (data: any) => {
+        if (data && data.event_id === event?.id) {
+          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: null }));
+          setOperatorCountdownLive(false);
         }
       },
       onSubCueTimerStarted: (data: any) => {
@@ -13263,6 +13293,34 @@ const RunOfShowPage: React.FC = () => {
                             className="absolute top-0 z-[60] w-52 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
                           >
                             <button
+                              type="button"
+                              onClick={() => {
+                                if (currentUserRole === 'VIEWER') {
+                                  alert('Viewers cannot send operator timers. Change role to EDITOR or OPERATOR.');
+                                  return;
+                                }
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                setShowOperatorCountdownModal(true);
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Program a countdown for Clock and Full Screen Timer (separate from main cue timer)"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span className="flex-1">Op Timer</span>
+                              {operatorCountdownLive ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                                  Live
+                                </span>
+                              ) : null}
+                            </button>
+                            <button
                               onClick={() => {
                                 setShowMenuDropdown(false);
                                 setShowOperatorActionsSubmenu(false);
@@ -14201,8 +14259,16 @@ const RunOfShowPage: React.FC = () => {
                 </button>
               </div>
               
-              {/* Messages Button — EDITOR + OPERATOR */}
+              {/* Messages — EDITOR + OPERATOR */}
               <div className="flex items-center gap-2">
+                {operatorCountdownLive && (
+                  <span
+                    className="rounded border border-violet-500/50 bg-violet-950/50 px-2 py-1 text-xs font-semibold text-violet-200"
+                    title="Operator countdown is live on Clock / Full Screen"
+                  >
+                    Op timer live
+                  </span>
+                )}
                 <button
                   onClick={() => {
                     if (currentUserRole === 'VIEWER') {
@@ -18113,6 +18179,23 @@ const RunOfShowPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {showOperatorCountdownModal && event?.id && (
+        <OperatorCountdownModal
+          isOpen={showOperatorCountdownModal}
+          eventId={event.id}
+          userId={user?.id}
+          userName={user?.full_name || user?.email || undefined}
+          userRole={currentUserRole || undefined}
+          liveCountdown={hybridTimerData?.operatorCountdown ?? null}
+          onClose={() => setShowOperatorCountdownModal(false)}
+          onStarted={() => setOperatorCountdownLive(true)}
+          onCleared={() => setOperatorCountdownLive(false)}
+          onLiveRow={(mapped) =>
+            setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }))
+          }
+        />
       )}
 
       {/* Filter View Modal */}

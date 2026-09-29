@@ -11,6 +11,7 @@ import {
 } from '../lib/displaySession';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import type { TeleprompterClockFeed } from '../components/TeleprompterClockOverlay';
+import { mapOperatorCountdownRow } from '../lib/operatorCountdown';
 
 const FullScreenTimerPage: React.FC = () => {
   const location = useLocation();
@@ -123,8 +124,15 @@ const FullScreenTimerPage: React.FC = () => {
     const loadMessage = async () => {
       if (!connectionEnabledRef.current) return;
       try {
-        const message = await DatabaseService.getTimerMessage(eventId);
+        const [message, operatorRow] = await Promise.all([
+          DatabaseService.getTimerMessage(eventId),
+          DatabaseService.getOperatorCountdown(eventId),
+        ]);
         setSupabaseMessage(message);
+        setHybridTimerData((prev: any) => ({
+          ...(prev || {}),
+          operatorCountdown: mapOperatorCountdownRow(operatorRow),
+        }));
         console.log('📨 Loaded timer message from API:', message);
       } catch (error) {
         console.error('❌ Error loading timer message:', error);
@@ -198,6 +206,19 @@ const FullScreenTimerPage: React.FC = () => {
             secondaryTimer: null
           }));
           console.log('✅ FullScreenTimer: Sub-cue timer stopped via WebSocket');
+        }
+      },
+      onOperatorCountdownUpdated: (data: any) => {
+        if (data && data.event_id === eventId) {
+          setHybridTimerData((prev) => ({
+            ...prev,
+            operatorCountdown: mapOperatorCountdownRow(data),
+          }));
+        }
+      },
+      onOperatorCountdownCleared: (data: any) => {
+        if (data && data.event_id === eventId) {
+          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: null }));
         }
       },
       onActiveTimersUpdated: (data: any) => {

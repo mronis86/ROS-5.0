@@ -1289,6 +1289,98 @@ export class DatabaseService {
     }
   }
 
+  static async getOperatorCountdown(eventId: string) {
+    try {
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/operator-countdown/${eventId}`);
+      if (response.status === 404) return null;
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data && typeof data === 'object' ? data : null;
+    } catch (error) {
+      console.error('❌ Error getting operator countdown:', error);
+      return null;
+    }
+  }
+
+  static async saveOperatorCountdownProgram(
+    eventId: string,
+    program: { label: string; duration_seconds: number }
+  ): Promise<boolean> {
+    try {
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/operator-countdown/${eventId}`, {
+        method: 'PUT',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify(program),
+      });
+      return response.ok;
+    } catch (error) {
+      console.error('❌ Error saving operator countdown program:', error);
+      return false;
+    }
+  }
+
+  static async startOperatorCountdown(
+    eventId: string,
+    meta?: {
+      userId?: string;
+      userName?: string;
+      userRole?: string;
+      label?: string;
+      duration_seconds?: number;
+    }
+  ) {
+    try {
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/operator-countdown/${eventId}/start`, {
+        method: 'POST',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify({
+          user_id: meta?.userId,
+          user_name: meta?.userName,
+          user_role: meta?.userRole,
+          label: meta?.label,
+          duration_seconds: meta?.duration_seconds,
+        }),
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error('❌ Error starting operator countdown:', error);
+      return null;
+    }
+  }
+
+  static async adjustOperatorCountdown(
+    eventId: string,
+    body: { delta_seconds?: number; duration_seconds?: number; restart?: boolean }
+  ) {
+    try {
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/operator-countdown/${eventId}/adjust`, {
+        method: 'PUT',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error('❌ Error adjusting operator countdown:', error);
+      return null;
+    }
+  }
+
+  static async clearOperatorCountdown(eventId: string): Promise<boolean> {
+    try {
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/operator-countdown/${eventId}/clear`, {
+        method: 'PUT',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify({}),
+      });
+      return response.ok;
+    } catch (error) {
+      console.error('❌ Error clearing operator countdown:', error);
+      return false;
+    }
+  }
+
   static async stopSubCueTimer(eventId: string, itemId?: number) {
     try {
       console.log('🔄 Stopping sub-cue timer via API:', { eventId, itemId });

@@ -7229,6 +7229,179 @@ app.post('/api/timer-messages', async (req, res) => {
   }
 });
 
+// --- Operator countdown (programmable, one per event; Clock / FS / Photo) ---
+app.get('/api/operator-countdown/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM operator_countdowns WHERE event_id = $1',
+      [eventId]
+    );
+    if (!result.rows.length) {
+      return res.json(null);
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    if (String(error?.message || '').includes('operator_countdowns')) {
+      return res.json(null);
+    }
+    console.error('Error fetching operator countdown:', error);
+    res.status(500).json({ error: 'Failed to fetch operator countdown' });
+  }
+});
+
+app.put('/api/operator-countdown/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { label, duration_seconds } = req.body || {};
+    const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
+    const name = String(label || 'Operator Timer').trim() || 'Operator Timer';
+    const result = await pool.query(
+      `INSERT INTO operator_countdowns (event_id, label, duration_seconds, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (event_id) DO UPDATE SET
+         label = EXCLUDED.label,
+         duration_seconds = EXCLUDED.duration_seconds,
+         updated_at = NOW()
+       RETURNING *`,
+      [eventId, name, dur]
+    );
+    broadcastUpdate(eventId, 'operatorCountdownUpdated', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error saving operator countdown program:', error);
+    res.status(500).json({ error: 'Failed to save operator countdown' });
+  }
+});
+
+app.post('/api/operator-countdown/:eventId/start', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { user_id, user_name, user_role, label, duration_seconds } = req.body || {};
+    let dur = duration_seconds != null ? Math.max(1, Math.floor(Number(duration_seconds))) : null;
+    let name = label != null ? String(label).trim() : null;
+
+    const existing = await pool.query(
+      'SELECT * FROM operator_countdowns WHERE event_id = $1',
+      [eventId]
+    );
+    if (existing.rows.length) {
+      if (dur == null) dur = existing.rows[0].duration_seconds;
+      if (!name) name = existing.rows[0].label;
+    }
+    if (dur == null) dur = 300;
+    if (!name) name = 'Operator Timer';
+
+    const result = await pool.query(
+      `INSERT INTO operator_countdowns (
+         event_id, label, duration_seconds, is_active, is_running, started_at,
+         sent_by, sent_by_name, sent_by_role, updated_at
+       ) VALUES ($1, $2, $3, true, true, NOW(), $4, $5, $6, NOW())
+       ON CONFLICT (event_id) DO UPDATE SET
+         label = EXCLUDED.label,
+         duration_seconds = EXCLUDED.duration_seconds,
+         is_active = true,
+         is_running = true,
+         started_at = NOW(),
+         sent_by = EXCLUDED.sent_by,
+         sent_by_name = EXCLUDED.sent_by_name,
+         sent_by_role = EXCLUDED.sent_by_role,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        eventId,
+        name,
+        dur,
+        user_id || null,
+        user_name || 'Unknown User',
+        user_role || 'VIEWER',
+      ]
+    );
+    broadcastUpdate(eventId, 'operatorCountdownUpdated', result.rows[0]);
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error starting operator countdown:', error);
+    res.status(500).json({ error: 'Failed to start operator countdown' });
+  }
+});
+
+app.put('/api/operator-countdown/:eventId/adjust', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { delta_seconds, duration_seconds, restart } = req.body || {};
+    const existing = await pool.query(
+      'SELECT * FROM operator_countdowns WHERE event_id = $1',
+      [eventId]
+    );
+    if (!existing.rows.length || !existing.rows[0].is_active) {
+      return res.status(404).json({ error: 'No active operator countdown' });
+    }
+    const row = existing.rows[0];
+    let nextDuration = Number(row.duration_seconds) || 60;
+    let nextStartedAt = row.started_at;
+
+    if (restart === true) {
+      nextDuration =
+        duration_seconds != null
+          ? Math.max(1, Math.floor(Number(duration_seconds)))
+          : nextDuration;
+      nextStartedAt = new Date().toISOString();
+    } else if (duration_seconds != null) {
+      nextDuration = Math.max(1, Math.floor(Number(duration_seconds)));
+    } else if (delta_seconds != null) {
+      const delta = Math.floor(Number(delta_seconds));
+      const startedMs = row.started_at ? new Date(row.started_at).getTime() : Date.now();
+      const elapsed = Math.max(0, (Date.now() - startedMs) / 1000);
+      const remaining = nextDuration - elapsed;
+      const newRemaining = Math.max(1, remaining + delta);
+      nextDuration = Math.max(1, Math.floor(elapsed + newRemaining));
+    } else {
+      return res.status(400).json({ error: 'Provide delta_seconds, duration_seconds, or restart' });
+    }
+
+    const result = await pool.query(
+      `UPDATE operator_countdowns SET
+         duration_seconds = $2,
+         started_at = $3,
+         is_active = true,
+         is_running = true,
+         updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING *`,
+      [eventId, nextDuration, nextStartedAt || new Date().toISOString()]
+    );
+    broadcastUpdate(eventId, 'operatorCountdownUpdated', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error adjusting operator countdown:', error);
+    res.status(500).json({ error: 'Failed to adjust operator countdown' });
+  }
+});
+
+app.put('/api/operator-countdown/:eventId/clear', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      `UPDATE operator_countdowns SET
+         is_active = false,
+         is_running = false,
+         started_at = NULL,
+         updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING *`,
+      [eventId]
+    );
+    broadcastUpdate(eventId, 'operatorCountdownCleared', { event_id: eventId });
+    res.json({
+      message: 'Operator countdown cleared',
+      row: result.rows[0] || null,
+    });
+  } catch (error) {
+    console.error('Error clearing operator countdown:', error);
+    res.status(500).json({ error: 'Failed to clear operator countdown' });
+  }
+});
+
 // Stop sub-cue timers
 app.put('/api/sub-cue-timers/stop', async (req, res) => {
   try {

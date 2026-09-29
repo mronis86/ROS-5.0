@@ -1685,6 +1685,7 @@ const PhotoViewPage: React.FC = () => {
             setSecondaryTimer(null);
             console.log('🔄 PhotoView: Initial sync completed - no active sub-cue timers');
           }
+
         } catch (error) {
           console.error('❌ PhotoView: Initial sync failed to load sub-cue timers:', error);
           setSecondaryTimer(null);
