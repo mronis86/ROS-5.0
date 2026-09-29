@@ -72,6 +72,7 @@ const {
   setExtendEventControls,
   saveExtendModuleData,
 } = require('./lib/extend-event-controls');
+const { buildCivicsBeeGraphicsCsv } = require('./lib/civics-bee');
 const {
   isMissingShareTableError,
   ensureEventShareSchema,
@@ -3813,6 +3814,32 @@ app.put('/api/extend-controls/:eventId/modules/:moduleKey', async (req, res) => 
   } catch (error) {
     console.error('❌ Error saving extend module data:', error);
     res.status(500).json({ error: 'Failed to save extend module data' });
+  }
+});
+
+// Civics Bee students CSV for custom graphics (First Name, Last Initial, State)
+app.get('/api/civics-bee.csv', async (req, res) => {
+  try {
+    const eventId = req.query.eventId;
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      return res.status(400).send('Error,Event ID is required\n');
+    }
+
+    const config = await loadExtendEventControls(pool, eventId);
+    const csv = buildCivicsBeeGraphicsCsv(config.moduleData?.civicsBee, req.query.filter);
+
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    return res.send(csv);
+  } catch (error) {
+    console.error('Error in civics-bee.csv:', error);
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    return res.status(500).send('Error,Failed to build Civics Bee CSV\n');
   }
 });
 

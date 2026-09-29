@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  buildCivicsBeeGraphicsCsv,
   CIVICS_BEE_FILTER_LABELS,
   CIVICS_BEE_TIER_OPTIONS,
   CivicsBeeEntry,
@@ -14,6 +15,7 @@ import CivicsBeeExcelImportModal from './CivicsBeeExcelImportModal';
 
 type CivicsBeeStudentsPanelProps = {
   roster: CivicsBeeRoster;
+  eventId?: string;
   saving?: boolean;
   readOnly?: boolean;
   onChange: (next: CivicsBeeRoster) => void;
@@ -22,8 +24,13 @@ type CivicsBeeStudentsPanelProps = {
 
 const FILTERS: CivicsBeeFilter[] = ['all', 'participating', 'top25', 'top10', 'top5'];
 
+const GRAPHICS_API_BASE =
+  ((import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
+    'https://ros-50-production.up.railway.app').replace(/\/$/, '');
+
 const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
   roster,
+  eventId,
   saving = false,
   readOnly = false,
   onChange,
@@ -33,6 +40,36 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
   const [search, setSearch] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const [importNotice, setImportNotice] = useState<string | null>(null);
+  const [graphicsNotice, setGraphicsNotice] = useState<string | null>(null);
+
+  const graphicsFilter: CivicsBeeFilter = filter === 'all' ? 'participating' : filter;
+
+  const graphicsCsvUrl = useMemo(() => {
+    if (!eventId) return '';
+    return `${GRAPHICS_API_BASE}/api/civics-bee.csv?eventId=${encodeURIComponent(eventId)}&filter=${graphicsFilter}`;
+  }, [eventId, graphicsFilter]);
+
+  const copyGraphicsCsvUrl = async () => {
+    if (!graphicsCsvUrl) return;
+    try {
+      await navigator.clipboard.writeText(graphicsCsvUrl);
+      setGraphicsNotice('Graphics CSV URL copied.');
+    } catch {
+      setGraphicsNotice('Could not copy URL — select it manually.');
+    }
+    setTimeout(() => setGraphicsNotice(null), 3000);
+  };
+
+  const downloadGraphicsCsv = () => {
+    const csv = buildCivicsBeeGraphicsCsv(roster.entries, graphicsFilter);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `civics-bee-${graphicsFilter}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const updateEntry = useCallback(
     (code: string, patch: Partial<CivicsBeeEntry>) => {
@@ -123,6 +160,45 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           {importNotice}
         </div>
       )}
+
+      <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-3 space-y-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Graphics CSV</h3>
+            <p className="text-xs text-slate-400">
+              Columns: First Name, Last Initial, State — filtered to{' '}
+              {CIVICS_BEE_FILTER_LABELS[graphicsFilter]}
+              {filter === 'all' ? ' (All view uses Participating for the feed)' : ''}.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={downloadGraphicsCsv}
+              className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+            >
+              Download CSV
+            </button>
+            {graphicsCsvUrl ? (
+              <button
+                type="button"
+                onClick={() => void copyGraphicsCsvUrl()}
+                className="rounded-md border border-violet-600/70 bg-violet-950/40 px-3 py-1.5 text-xs font-semibold text-violet-100 hover:bg-violet-900/50"
+              >
+                Copy live URL
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {graphicsCsvUrl ? (
+          <code className="block break-all rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-300">
+            {graphicsCsvUrl}
+          </code>
+        ) : (
+          <p className="text-xs text-slate-500">Open this page with an eventId to get a live graphics URL.</p>
+        )}
+        {graphicsNotice && <p className="text-xs text-emerald-300">{graphicsNotice}</p>}
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {FILTERS.map((f) => {

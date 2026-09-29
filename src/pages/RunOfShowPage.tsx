@@ -1688,6 +1688,23 @@ const RunOfShowPage: React.FC = () => {
   const RESOLUME_RUNNING_ROW_NUM_CLASS = 'bg-yellow-400/35 border-2 border-yellow-300';
 
   const hybridSecondaryTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
+  const liveOperatorCountdown =
+    hybridTimerData?.operatorCountdown?.is_active && hybridTimerData?.operatorCountdown?.is_running
+      ? hybridTimerData.operatorCountdown
+      : null;
+  /** Same top-right secondary line style as indented sub-timers (violet). */
+  const renderOperatorCountdownTopLine = () => {
+    if (!liveOperatorCountdown) return null;
+    const label = liveOperatorCountdown.cue_display || 'Operator Timer';
+    const time = formatOperatorCountdownTime(
+      operatorCountdownRemaining(liveOperatorCountdown, clockOffset)
+    );
+    return (
+      <div className="mt-0.5 text-lg font-bold whitespace-nowrap text-violet-400">
+        {`${label} - ${time}`}
+      </div>
+    );
+  };
 
   const itemMatchesTimerRow = (itemId: number, timer: { item_id?: unknown } | null | undefined) => {
     const tid = timer?.item_id;
@@ -13947,14 +13964,7 @@ const RunOfShowPage: React.FC = () => {
                         })()}
                       </div>
                     )}
-                  {hybridTimerData?.operatorCountdown?.is_active &&
-                    hybridTimerData?.operatorCountdown?.is_running && (
-                      <div className="mt-0.5 text-lg font-bold whitespace-nowrap text-violet-400">
-                        {`ALT · ${hybridTimerData.operatorCountdown.cue_display || 'Operator Timer'} - ${formatOperatorCountdownTime(
-                          operatorCountdownRemaining(hybridTimerData.operatorCountdown, clockOffset)
-                        )}`}
-                      </div>
-                    )}
+                  {renderOperatorCountdownTopLine()}
                   </div>
                 ) : Object.keys(activeTimers).length > 0 ? (
                   <div className="flex flex-col items-center gap-0.5">
@@ -13965,6 +13975,7 @@ const RunOfShowPage: React.FC = () => {
                           {formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
                         </div>
                       )}
+                      {renderOperatorCountdownTopLine()}
                     </div>
                     {rosPreshowRainbow ? (
                       <span
@@ -13980,6 +13991,7 @@ const RunOfShowPage: React.FC = () => {
                     <div className="text-lg text-yellow-400 font-bold">
                       LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields.cue)}
                     </div>
+                    {renderOperatorCountdownTopLine()}
                     {schedule.find((item) => item.id === activeItemId)?.programType === 'PreShow/End' ? (
                       <span
                         className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
@@ -13988,6 +14000,11 @@ const RunOfShowPage: React.FC = () => {
                         <span className="ros-rainbow-text">Pre Show</span>
                       </span>
                     ) : null}
+                  </div>
+                ) : liveOperatorCountdown ? (
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="text-lg text-slate-300 font-bold">Op Timer</div>
+                    {renderOperatorCountdownTopLine()}
                   </div>
                 ) : (
                   <div className="text-lg text-slate-300 font-bold">
@@ -14330,14 +14347,6 @@ const RunOfShowPage: React.FC = () => {
               
               {/* Messages — EDITOR + OPERATOR */}
               <div className="flex items-center gap-2">
-                {operatorCountdownLive && (
-                  <span
-                    className="rounded border border-violet-500/50 bg-violet-950/50 px-2 py-1 text-xs font-semibold text-violet-200"
-                    title="Operator countdown is live on Clock / Full Screen"
-                  >
-                    Op timer live
-                  </span>
-                )}
                 <button
                   onClick={() => {
                     if (currentUserRole === 'VIEWER') {
@@ -14884,34 +14893,32 @@ const RunOfShowPage: React.FC = () => {
                       );
                     })}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (currentUserRole === 'VIEWER') {
-                        alert('Only EDITORs and OPERATORs can mark days complete.');
-                        return;
+                  {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = completedDays.includes(selectedDay)
+                          ? completedDays.filter((d) => d !== selectedDay)
+                          : [...completedDays, selectedDay].sort((a, b) => a - b);
+                        setCompletedDays(next);
+                        completedDaysRef.current = next;
+                        handleUserEditing();
+                        void saveToAPI();
+                      }}
+                      className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                        completedDays.includes(selectedDay)
+                          ? 'border-emerald-500/60 bg-emerald-950/50 text-emerald-200 line-through'
+                          : 'border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700'
+                      }`}
+                      title={
+                        completedDays.includes(selectedDay)
+                          ? 'Day marked complete — click to reopen'
+                          : 'Mark this day complete so next launch prefers the next day'
                       }
-                      const next = completedDays.includes(selectedDay)
-                        ? completedDays.filter((d) => d !== selectedDay)
-                        : [...completedDays, selectedDay].sort((a, b) => a - b);
-                      setCompletedDays(next);
-                      completedDaysRef.current = next;
-                      handleUserEditing();
-                      void saveToAPI();
-                    }}
-                    className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
-                      completedDays.includes(selectedDay)
-                        ? 'border-emerald-500/60 bg-emerald-950/50 text-emerald-200 line-through'
-                        : 'border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700'
-                    }`}
-                    title={
-                      completedDays.includes(selectedDay)
-                        ? 'Day marked complete — click to reopen'
-                        : 'Mark this day complete so next launch prefers the next day'
-                    }
-                  >
-                    {completedDays.includes(selectedDay) ? 'Day done' : 'Mark day done'}
-                  </button>
+                    >
+                      {completedDays.includes(selectedDay) ? 'Day done' : 'Mark day done'}
+                    </button>
+                  )}
                 </div>
               )}
 

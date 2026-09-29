@@ -185,6 +185,7 @@ const ExtendEventControlsPage: React.FC = () => {
           {activeTab === 'civicsBee' && eventHasExtendModule(event, 'civicsBee') && (
             <CivicsBeeStudentsPanel
               roster={roster}
+              eventId={String(eventId)}
               saving={saving}
               onChange={setRoster}
               onSave={() => void saveCivicsBee()}

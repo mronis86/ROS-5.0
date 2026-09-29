@@ -231,6 +231,76 @@ export function mergeStudentNames(first: string, last: string): string {
   return [String(first || '').trim(), String(last || '').trim()].filter(Boolean).join(' ');
 }
 
+/** Split "First … Last" into first name(s) + last-name initial for graphics. */
+export function splitStudentNameForGraphics(studentName: string): {
+  firstName: string;
+  lastInitial: string;
+} {
+  const trimmed = String(studentName || '').trim().replace(/\s+/g, ' ');
+  if (!trimmed) return { firstName: '', lastInitial: '' };
+  const parts = trimmed.split(' ');
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastInitial: '' };
+  }
+  const last = parts[parts.length - 1];
+  const firstName = parts.slice(0, -1).join(' ');
+  const letter = last.match(/[A-Za-z]/)?.[0] || last.charAt(0);
+  return {
+    firstName,
+    lastInitial: letter ? letter.toUpperCase() : '',
+  };
+}
+
+function escapeCivicsCsvField(value: string): string {
+  const s = String(value ?? '');
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+export type CivicsBeeGraphicsRow = {
+  firstName: string;
+  lastInitial: string;
+  state: string;
+  code: string;
+};
+
+/** Graphics-oriented rows: First Name, Last initial, State (full name). */
+export function buildCivicsBeeGraphicsRows(
+  entries: CivicsBeeEntry[],
+  filter: CivicsBeeFilter = 'participating'
+): CivicsBeeGraphicsRow[] {
+  return filterCivicsBeeEntries(entries, filter)
+    .filter((e) => e.studentName.trim().length > 0)
+    .map((e) => {
+      const { firstName, lastInitial } = splitStudentNameForGraphics(e.studentName);
+      return {
+        firstName,
+        lastInitial,
+        state: e.name,
+        code: e.code,
+      };
+    });
+}
+
+/** CSV for custom graphics: First Name, Last Initial, State */
+export function buildCivicsBeeGraphicsCsv(
+  entries: CivicsBeeEntry[],
+  filter: CivicsBeeFilter = 'participating'
+): string {
+  const rows = buildCivicsBeeGraphicsRows(entries, filter);
+  const lines = ['First Name,Last Initial,State'];
+  for (const row of rows) {
+    lines.push(
+      [
+        escapeCivicsCsvField(row.firstName),
+        escapeCivicsCsvField(row.lastInitial),
+        escapeCivicsCsvField(row.state),
+      ].join(',')
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 export type CivicsBeeImportRow = {
   stateRaw: string;
   firstName: string;
