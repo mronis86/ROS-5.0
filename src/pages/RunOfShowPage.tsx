@@ -11935,27 +11935,34 @@ const RunOfShowPage: React.FC = () => {
         }}
         title="Enter Live Show Tracking Mode?"
         message={(() => {
-          const multiDay = Boolean(event?.numberOfDays && event.numberOfDays > 1);
-          const calendarDay = multiDay
-            ? getEventDayNumberForDate(event?.date, event?.numberOfDays)
-            : null;
-          const dayBits: string[] = [];
-          if (multiDay) {
-            dayBits.push(
-              `You are viewing Day ${selectedDay}. ★ show-start offsets apply only on the day that has the START cue — they will not carry into other days.`
-            );
-            if (calendarDay != null && calendarDay !== selectedDay) {
-              dayBits.push(
-                `Today's calendar date is Day ${calendarDay} of this event. Switch the day tabs to Day ${calendarDay} before continuing if that is the day you are running.`
-              );
-            } else if (calendarDay != null) {
-              dayBits.push(`Today's calendar date matches Day ${selectedDay}.`);
-            }
-          }
           const core = rehearsalBaseline
             ? `Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. Your rehearsal baseline from ${new Date(rehearsalBaseline.capturedAt).toLocaleString()} will be kept for Show vs rehearsal. Hit OK to continue.`
             : 'Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. The current schedule will be frozen as the rehearsal baseline for Show vs rehearsal. Hit OK to continue.';
-          return dayBits.length ? `${dayBits.join(' ')} ${core}` : core;
+          const multiDay = Boolean(event?.numberOfDays && event.numberOfDays > 1);
+          const rawStart = multiDay
+            ? (dayStartTimes[selectedDay] || dayStartTimes[String(selectedDay) as any] || masterStartTime)
+            : masterStartTime;
+          let startLabel = '';
+          if (rawStart) {
+            const [h, m] = String(rawStart).split(':').map(Number);
+            if (Number.isFinite(h) && Number.isFinite(m)) {
+              const d = new Date();
+              d.setHours(h, m, 0, 0);
+              startLabel = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            } else {
+              startLabel = String(rawStart);
+            }
+          }
+          if (!multiDay) {
+            return startLabel ? `Start ${startLabel}. ${core}` : core;
+          }
+          const calendarDay = getEventDayNumberForDate(event?.date, event?.numberOfDays);
+          const startBit = startLabel ? ` · start ${startLabel}` : '';
+          const dayNote =
+            calendarDay != null && calendarDay !== selectedDay
+              ? `Day ${selectedDay}${startBit} (today is Day ${calendarDay}). `
+              : `Day ${selectedDay}${startBit}. `;
+          return `${dayNote}${core}`;
         })()}
         confirmLabel="OK — Enter In-Show"
         cancelLabel="Cancel"
