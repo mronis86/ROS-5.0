@@ -8,6 +8,7 @@ import {
 } from '../lib/audioCallouts';
 import { shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import StageDirectionModal from '../components/StageDirectionModal';
+import StartTimeColumnCell from '../components/StartTimeColumnCell';
 
 export interface ScheduleRowProps {
   item: any;
@@ -62,6 +63,8 @@ export interface ScheduleRowProps {
   customColumns?: any[];
   visibleCustomColumns?: Record<string, boolean>;
   customColumnWidths?: Record<string, number>;
+  /** CSS flex `order` values for scroll columns (from Filter Columns reorder). */
+  columnFlexOrder?: Record<string, number>;
   getRowHeight?: Function;
   asFragment?: boolean;
   showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
@@ -133,6 +136,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   customColumns,
   visibleCustomColumns,
   customColumnWidths,
+  columnFlexOrder,
   getRowHeight,
   asFragment,
   showMode = 'in-show',
@@ -207,6 +211,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   };
 
   const canEditRecording = currentUserRole !== 'VIEWER';
+  const flexOrder = (key: string): number => columnFlexOrder?.[key] ?? 999;
 
   const setNeedsRecording = (next: boolean) => {
     if (isLockedByOther) return;
@@ -313,97 +318,29 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           </div>
         </>
       )}
-      {/* Start time, program type, and row details, mirroring RunOfShowPage*/}
-      {visibleColumns.start && (() => {
-        const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
-        const displayedStart = calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : null;
-        const isIndentedRow = Boolean(indentedCues[item.id] || item.isIndented);
-        // Prefer frozen Enter In-Show times for WAS so +/- minutes don't move the "was" line.
-        const wasStart =
-          lockedStartTime && String(lockedStartTime).trim()
-            ? String(lockedStartTime).trim()
-            : scheduledStart;
-        const startTimeRolled =
-          !isIndentedRow &&
-          showMode === 'in-show' &&
-          wasStart &&
-          displayedStart &&
-          wasStart !== displayedStart;
-        return (
-        <div
-          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.start }}
-        >
-          <div className="flex flex-col items-center gap-1">
-            <span className="text-white font-mono text-base font-bold">
-              {calculateStartTime && calculateStartTimeWithOvertime
-                ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)) || (isIndentedRow ? '↘' : '')
-                : isIndentedRow
-                  ? '↘'
-                  : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1))}
-            </span>
-            {startTimeRolled && wasStart && (
-              <span className="text-xs text-slate-400">
-                was {wasStart}
-              </span>
-            )}
-            {!isIndentedRow && showMode !== 'rehearsal' && (
-              (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) ||
-               (calculateStartTime && calculateStartTimeWithOvertime &&
-                String(calculateStartTime(index)) !== String(calculateStartTimeWithOvertime(index))))
-            ) && (
-              <span className={`text-sm font-bold px-2 py-1 rounded text-center leading-tight ${(() => {
-                if (item.id === startCueId) {
-                  return showStartOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
-                }
-                // Use precomputed cumulative overtime instead of calculating inline
-                const totalOvertime = cumulativeOvertime;
-                return totalOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
-              })()}`}
-                title="Time adjusted due to overtime"
-              >
-                {(() => {
-                  if (item.id === startCueId) {
-                    const showStartOT = showStartOvertime || 0;
-                    if (showStartOT > 0) {
-                      const hours = Math.floor(showStartOT / 60);
-                      const minutes = showStartOT % 60;
-                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                      return `+${timeDisplay} late`;
-                    } else if (showStartOT < 0) {
-                      const hours = Math.floor(Math.abs(showStartOT) / 60);
-                      const minutes = Math.abs(showStartOT) % 60;
-                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                      return `-${timeDisplay} early`;
-                    }
-                    return 'On time';
-                  }
-                  // Use precomputed cumulative overtime instead of calculating inline
-                  const totalOvertime = cumulativeOvertime;
-                  if (totalOvertime > 0) {
-                    const hours = Math.floor(totalOvertime / 60);
-                    const minutes = totalOvertime % 60;
-                    const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                    return `+${timeDisplay}`;
-                  } else if (totalOvertime < 0) {
-                    const hours = Math.floor(Math.abs(totalOvertime) / 60);
-                    const minutes = Math.abs(totalOvertime) % 60;
-                    const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                    return `-${timeDisplay}`;
-                  }
-                  return '0m';
-                })()}
-              </span>
-            )}
-          </div>
-        </div>
-        );
-      })()}
+      {/* Start time — skipped when pinned beside CUE (stickyStartColumn) */}
+      {visibleColumns.start && (
+        <StartTimeColumnCell
+          itemId={item.id}
+          index={index}
+          width={columnWidths.start}
+          isIndented={Boolean(indentedCues[item.id] || item.isIndented)}
+          showMode={showMode}
+          overtimeMinutes={overtimeMinutes}
+          startCueId={startCueId}
+          showStartOvertime={showStartOvertime}
+          cumulativeOvertime={cumulativeOvertime}
+          lockedStartTime={lockedStartTime}
+          calculateStartTime={calculateStartTime}
+          calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+          style={{ order: flexOrder('start') }}
+        />
+      )}
       {/* Program type column (moved directly after Start) */}
       {visibleColumns.programType && (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.programType }}
+          style={{ width: columnWidths.programType, order: flexOrder('programType') }}
         >
           <select
             value={item.programType || ''}
@@ -489,7 +426,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         return (
         <div 
           className={`px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 gap-0.5 ${durationChanged ? 'bg-amber-800/50 ring-2 ring-amber-400 rounded-md' : ''}`}
-          style={{ width: columnWidths.duration, minHeight: durationChanged ? 'auto' : undefined }}
+          style={{ width: columnWidths.duration, minHeight: durationChanged ? 'auto' : undefined, order: flexOrder('duration') }}
           title={durationChanged ? 'Duration changed from original' : undefined}
         >
           <div className="flex items-center gap-2">
@@ -645,7 +582,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.segmentName && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-          style={{ width: columnWidths.segmentName }}
+          style={{ width: columnWidths.segmentName, order: flexOrder('segmentName') }}
         >
           {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && onViewSegmentDetail ? (
             <button
@@ -738,7 +675,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.shotType && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.shotType, overflow: 'visible', zIndex: 1 }}
+          style={{ width: columnWidths.shotType, overflow: 'visible', zIndex: 1, order: flexOrder('shotType') }}
         >
           <select 
             value={item.shotType}
@@ -803,7 +740,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.pptQA && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.pptQA }}
+          style={{ width: columnWidths.pptQA, order: flexOrder('pptQA') }}
         >
           <div className="flex items-center gap-2">
             <label className="flex items-center gap-1">
@@ -890,7 +827,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.recording && (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.recording }}
+          style={{ width: columnWidths.recording, order: flexOrder('recording') }}
         >
           <label className="flex flex-col items-center gap-0.5">
             <input
@@ -927,7 +864,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.notes && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 transition-all duration-300 ease-in-out"
-          style={{ width: columnWidths.notes }}
+          style={{ width: columnWidths.notes, order: flexOrder('notes') }}
         >
           {!isLockedByOther && currentUserRole !== 'VIEWER' && (
             <div className="flex flex-wrap items-center gap-1 self-start">
@@ -1117,7 +1054,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.assets && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.assets }}
+          style={{ width: columnWidths.assets, order: flexOrder('assets') }}
         >
           <div
             onClick={() => {
@@ -1169,7 +1106,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.speakers && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-          style={{ width: columnWidths.speakers }}
+          style={{ width: columnWidths.speakers, order: flexOrder('speakers') }}
         >
           <div
             onClick={() => {
@@ -1218,7 +1155,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.public && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.public }}
+          style={{ width: columnWidths.public, order: flexOrder('public') }}
         >
           <input
             type="checkbox"
@@ -1262,7 +1199,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.timer && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.timer }}
+          style={{ width: columnWidths.timer, order: flexOrder('timer') }}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -1318,7 +1255,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.participants && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-start justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-          style={{ width: columnWidths.participants }}
+          style={{ width: columnWidths.participants, order: flexOrder('participants') }}
         >
           <div
             onClick={() => {
@@ -1353,7 +1290,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
             style={{ 
               width: (customColumnWidths && customColumnWidths[column.id]) || 256,
-              height: getRowHeight ? getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0) : undefined
+              height: getRowHeight ? getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0) : undefined,
+              order: flexOrder(`custom:${column.id}`),
             }}
           >
             <textarea
@@ -1455,6 +1393,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   // Re-render when visibility/width maps or theme/colors change (ref compare)
   if (prevProps.visibleColumns !== nextProps.visibleColumns) return false;
   if (prevProps.columnWidths !== nextProps.columnWidths) return false;
+  if (prevProps.columnFlexOrder !== nextProps.columnFlexOrder) return false;
   if (prevProps.programTypes !== nextProps.programTypes) return false;
   if (prevProps.programTypeColors !== nextProps.programTypeColors) return false;
   if (prevProps.shotTypes !== nextProps.shotTypes) return false;
