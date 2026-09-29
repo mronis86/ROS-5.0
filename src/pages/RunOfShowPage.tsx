@@ -1301,6 +1301,35 @@ const RunOfShowPage: React.FC = () => {
   const [showOperatorCountdownModal, setShowOperatorCountdownModal] = useState(false);
   const [operatorCountdownLive, setOperatorCountdownLive] = useState(false);
   const [, setOperatorCountdownTick] = useState(0);
+  const operatorTimerWindowRef = useRef<Window | null>(null);
+
+  const openOperatorTimerPopout = () => {
+    if (!event?.id) return;
+    if (currentUserRole === 'VIEWER') {
+      alert('Viewers cannot send operator timers. Change role to EDITOR or OPERATOR.');
+      return;
+    }
+    const params = new URLSearchParams({
+      eventId: event.id,
+    });
+    if (user?.id) params.set('userId', user.id);
+    if (user?.full_name || user?.email) {
+      params.set('userName', user.full_name || user.email || '');
+    }
+    if (currentUserRole) params.set('userRole', currentUserRole);
+    const url = `${window.location.origin}/operator-timer?${params.toString()}`;
+    const existing = operatorTimerWindowRef.current;
+    if (existing && !existing.closed) {
+      existing.focus();
+      return;
+    }
+    const win = window.open(
+      url,
+      'rosOperatorTimer',
+      'width=440,height=720,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes'
+    );
+    operatorTimerWindowRef.current = win;
+  };
   const [messageText, setMessageText] = useState('');
   const [messageFlashing, setMessageFlashing] = useState(false);
   const [messageEnabled, setMessageEnabled] = useState(false);
@@ -13321,7 +13350,7 @@ const RunOfShowPage: React.FC = () => {
                                   ? 'text-slate-500 cursor-not-allowed'
                                   : 'text-white hover:bg-slate-700'
                               }`}
-                              title="Program a countdown for Clock and Full Screen Timer (separate from main cue timer)"
+                              title="Open Op Timer as a modal panel on this page"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -13332,6 +13361,25 @@ const RunOfShowPage: React.FC = () => {
                                   Live
                                 </span>
                               ) : null}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                openOperatorTimerPopout();
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Open Op Timer in a small external window"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                              </svg>
+                              <span className="flex-1">Op Timer Window</span>
                             </button>
                             <button
                               onClick={() => {
@@ -18216,6 +18264,10 @@ const RunOfShowPage: React.FC = () => {
           onLiveRow={(mapped) =>
             setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }))
           }
+          onPopOut={() => {
+            setShowOperatorCountdownModal(false);
+            openOperatorTimerPopout();
+          }}
         />
       )}
 

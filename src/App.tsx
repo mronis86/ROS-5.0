@@ -40,6 +40,7 @@ import TeleprompterPage from './pages/TeleprompterPage';
 import CueCardsPage from './pages/CueCardsPage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
+import OperatorTimerPopoutPage from './pages/OperatorTimerPopoutPage';
 import QuickModePage from './pages/QuickModePage';
 import ComparisonPage from './pages/ComparisonPage';
 import DashboardPage from './pages/DashboardPage';
@@ -67,6 +68,7 @@ function AppContent() {
 
   const isFullScreenTimer = location.pathname === '/fullscreen-timer';
   const isPinNotesPopout = location.pathname === '/pin-notes-popout';
+  const isOperatorTimerPopout = location.pathname === '/operator-timer';
   const isClock = location.pathname === '/clock';
   const isStreamGuide = location.pathname === '/stream-guide';
   const isGreenRoom = location.pathname === '/green-room';
@@ -114,6 +116,7 @@ function AppContent() {
   const hideReportFab =
     isFullScreenTimer ||
     isPinNotesPopout ||
+    isOperatorTimerPopout ||
     isGreenRoom ||
     isPhotoView ||
     isMicManager ||
@@ -141,9 +144,9 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
       
-      {!isPinNotesPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -186,6 +189,7 @@ function AppContent() {
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/comparison" element={<ComparisonPage />} />
         <Route path="/pin-notes-popout" element={<PinNotesPopoutPage />} />
+        <Route path="/operator-timer" element={<OperatorTimerPopoutPage />} />
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/access" element={<AccessPortalPage />} />
