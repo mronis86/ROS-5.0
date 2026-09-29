@@ -75,7 +75,7 @@ const OperatorCountdownModal: React.FC<OperatorCountdownModalProps> = ({
     setBusy(true);
     setError(null);
     try {
-      const row = await DatabaseService.startOperatorCountdown(eventId, {
+      const { data: row, error: startError } = await DatabaseService.startOperatorCountdown(eventId, {
         userId,
         userName,
         userRole,
@@ -83,7 +83,11 @@ const OperatorCountdownModal: React.FC<OperatorCountdownModalProps> = ({
         duration_seconds,
       });
       if (!row) {
-        setError('Could not start timer on Clock / Full Screen.');
+        setError(
+          startError
+            ? `Could not start timer (${startError}). If this persists, Railway may still be deploying or migration 072 needs to run.`
+            : 'Could not start timer on Clock / Full Screen.'
+        );
         return;
       }
       onLiveRow?.(mapOperatorCountdownRow(row));

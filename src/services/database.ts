@@ -1328,7 +1328,7 @@ export class DatabaseService {
       label?: string;
       duration_seconds?: number;
     }
-  ) {
+  ): Promise<{ data: any; error: string | null }> {
     try {
       const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/operator-countdown/${eventId}/start`, {
         method: 'POST',
@@ -1341,11 +1341,21 @@ export class DatabaseService {
           duration_seconds: meta?.duration_seconds,
         }),
       });
-      if (!response.ok) return null;
-      return await response.json();
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`;
+        try {
+          const body = await response.json();
+          if (body?.error) detail = `${detail}: ${body.error}`;
+        } catch {
+          /* ignore */
+        }
+        console.error('❌ Failed to start operator countdown:', detail);
+        return { data: null, error: detail };
+      }
+      return { data: await response.json(), error: null };
     } catch (error) {
       console.error('❌ Error starting operator countdown:', error);
-      return null;
+      return { data: null, error: error instanceof Error ? error.message : 'Network error' };
     }
   }
 

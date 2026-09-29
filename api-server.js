@@ -1517,6 +1517,29 @@ async function runComplaintLineSyncTable(db) {
   `);
 }
 
+async function runOperatorCountdownsSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.operator_countdowns (
+      event_id UUID PRIMARY KEY,
+      label TEXT NOT NULL DEFAULT 'Operator Timer',
+      duration_seconds INTEGER NOT NULL DEFAULT 300 CHECK (duration_seconds > 0),
+      is_active BOOLEAN NOT NULL DEFAULT false,
+      is_running BOOLEAN NOT NULL DEFAULT false,
+      started_at TIMESTAMPTZ,
+      sent_by TEXT,
+      sent_by_name TEXT,
+      sent_by_role TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_operator_countdowns_active
+      ON public.operator_countdowns (event_id)
+      WHERE is_active = true AND is_running = true
+  `);
+}
+
 async function runCueCardsSyncTables(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS public.cue_card_decks (
@@ -10106,6 +10129,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ cue_card_decks / cue_card_comments tables synced');
     } catch (err) {
       console.warn('⚠️ cue cards sync skipped:', err.message || err);
+    }
+    try {
+      await runOperatorCountdownsSyncTable(pool);
+      console.log('✅ operator_countdowns table synced');
+    } catch (err) {
+      console.warn('⚠️ operator_countdowns sync skipped:', err.message || err);
     }
     try {
       await runCateringNotesSyncTable(pool);
