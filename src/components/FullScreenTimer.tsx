@@ -10,7 +10,7 @@ import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdow
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
-import OperatorCountdownStrip from './OperatorCountdownStrip';
+import { resolveDisplaySecondaryTimer } from '../lib/operatorCountdown';
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
@@ -148,6 +148,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   ) || null;
   const crowdedTimerBottom = stageFeedActive ? 'bottom-12' : 'bottom-20';
   const crowdedBarBottom = stageFeedActive ? 'bottom-5' : 'bottom-8';
+  // Indented sub-cue OR operator countdown — same ALT slot as Clock
+  const displaySecondaryTimer =
+    resolveDisplaySecondaryTimer(hybridTimerData) || secondaryTimer;
 
   // Debug secondary timer prop (only when it changes)
   useEffect(() => {
@@ -465,16 +468,19 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     };
   }, [supabaseOnly, eventId]);
 
-  // Update secondary timer every second when in hybrid mode (both Neon Only ON and OFF)
+  // Update secondary / operator ALT timer every second
   useEffect(() => {
-    if ((!supabaseOnly && !hybridTimerData?.secondaryTimer) || (supabaseOnly && !hybridTimerData?.secondaryTimer)) return;
+    const active =
+      !!displaySecondaryTimer?.is_running ||
+      !!displaySecondaryTimer?.isActive;
+    if (!active) return;
 
     const interval = setInterval(() => {
       setSecondaryTimerUpdate(prev => prev + 1);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [supabaseOnly, hybridTimerData?.secondaryTimer]);
+  }, [displaySecondaryTimer]);
 
   // Always run local timer for smooth updates in both Neon Only ON and OFF modes
   useEffect(() => {
@@ -776,16 +782,6 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         </div>
       ) : null}
 
-      {hybridTimerData?.operatorCountdown?.is_active &&
-      (hybridTimerData?.secondaryTimer?.is_running || secondaryTimer) ? (
-        <div className="absolute top-3 left-1/2 z-30 -translate-x-1/2">
-          <OperatorCountdownStrip
-            timer={hybridTimerData.operatorCountdown}
-            clockOffsetMs={clockOffset}
-          />
-        </div>
-      ) : null}
-
       {stageFeedActive && activeFsMessage ? (
         <div className="absolute bottom-[16%] left-1/2 z-30 w-[min(90vw,56rem)] -translate-x-1/2 rounded-lg border-2 border-white/80 bg-black/70 px-6 py-3 text-center text-2xl font-bold text-white md:text-3xl">
           {activeFsMessage.message}
@@ -876,22 +872,10 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         </div>
       )}
 
-      {!hybridTimerData?.secondaryTimer?.is_running &&
-        !secondaryTimer?.isActive &&
-        hybridTimerData?.operatorCountdown?.is_active && (
-          <div className="flex flex-1 flex-col items-center justify-center animate-in fade-in duration-500">
-            <OperatorCountdownStrip
-              large
-              timer={hybridTimerData.operatorCountdown}
-              clockOffsetMs={clockOffset}
-            />
-          </div>
-        )}
-
       {/* Secondary Timer Display - Bottom layout when message is active, center when no message */}
       {(() => {
-        // Check if we have a secondary timer in either mode
-        const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
+        // Indented sub-cue OR operator countdown (same ALT slot)
+        const currentSecondaryTimer = displaySecondaryTimer;
         if (!currentSecondaryTimer) return false;
           
         // Hide timer if it's not running
@@ -929,14 +913,14 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               ? !!hybridTimerData.timerMessage.enabled
               : !!(messageEnabled && message) || !!(supabaseMessage && supabaseMessage.enabled);
             const label = (() => {
-              const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
+              const currentSecondaryTimer = displaySecondaryTimer;
               if (!currentSecondaryTimer) return null;
               return <AltTimerBadge timer={currentSecondaryTimer} />;
             })();
             if (hasMessage) {
               return (
                 <div className="mb-1 text-lg font-bold leading-none whitespace-nowrap">
-                  <AltTimerBadge timer={hybridTimerData?.secondaryTimer || secondaryTimer} cueOnly />
+                  <AltTimerBadge timer={displaySecondaryTimer} cueOnly />
                 </div>
               );
             }
@@ -953,7 +937,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           <div className="text-center w-full flex flex-col items-center">
           <div
             className={`text-orange-400 font-mono font-bold animate-in zoom-in duration-500 ${(() => {
-              const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
+              const currentSecondaryTimer = displaySecondaryTimer;
               if (!currentSecondaryTimer) return 'text-3xl md:text-4xl lg:text-5xl';
               
               // Use secondaryTimerUpdate to trigger re-calculation every second
@@ -995,7 +979,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             style={{ lineHeight: '1' }}
           >
             {(() => {
-              const currentSecondaryTimer = hybridTimerData?.secondaryTimer || secondaryTimer;
+              const currentSecondaryTimer = displaySecondaryTimer;
               if (!currentSecondaryTimer) return '00:00';
               
               // Use secondaryTimerUpdate to trigger re-calculation every second
@@ -1038,7 +1022,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             if (!hasMessage) {
               return <div className="w-full max-w-5xl mt-0 h-8" aria-hidden />;
             }
-            const t = hybridTimerData?.secondaryTimer || secondaryTimer;
+            const t = displaySecondaryTimer;
             let pct = 0;
             if (t) {
               const total = t.duration_seconds || t.duration || 0;
@@ -1066,7 +1050,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = displaySecondaryTimer;
           if (currentSecondaryTimer) {
             // Check if timer has expired (reached zero or negative)
             if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
@@ -1083,7 +1067,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }
           }
         } else {
-          hasSecondaryTimer = !!secondaryTimer;
+          hasSecondaryTimer = !!displaySecondaryTimer;
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1127,7 +1111,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = displaySecondaryTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1149,7 +1133,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }
           }
         } else {
-          hasSecondaryTimer = !!secondaryTimer;
+          hasSecondaryTimer = !!displaySecondaryTimer;
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1208,7 +1192,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = displaySecondaryTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1230,7 +1214,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }
           }
         } else {
-          hasSecondaryTimer = !!secondaryTimer;
+          hasSecondaryTimer = !!displaySecondaryTimer;
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1261,7 +1245,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = displaySecondaryTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1283,7 +1267,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }
           }
         } else {
-          hasSecondaryTimer = !!secondaryTimer;
+          hasSecondaryTimer = !!displaySecondaryTimer;
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1314,7 +1298,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = displaySecondaryTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1336,7 +1320,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }
           }
         } else {
-          hasSecondaryTimer = !!secondaryTimer;
+          hasSecondaryTimer = !!displaySecondaryTimer;
         }
         
         const hasMessage = hasBlockingStageMessage();
@@ -1361,7 +1345,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = displaySecondaryTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1383,7 +1367,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }
           }
         } else {
-          hasSecondaryTimer = !!secondaryTimer;
+          hasSecondaryTimer = !!displaySecondaryTimer;
         }
         
         const hasMessage = hasBlockingStageMessage();

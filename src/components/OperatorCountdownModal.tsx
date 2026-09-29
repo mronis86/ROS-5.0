@@ -172,7 +172,8 @@ const OperatorCountdownModal: React.FC<OperatorCountdownModalProps> = ({
           <div>
             <h3 className="text-xl font-bold text-white">Operator timers</h3>
             <p className="mt-1 text-sm text-slate-400">
-              Run presets or a custom time to Clock and Full Screen. Adjust or reset while live.
+              Run presets or a custom time. It shows on Clock / Full Screen in the same ALT
+              slot as indented sub-timers (sub-cue wins if both are running).
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Close">

@@ -11,8 +11,7 @@ import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdow
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
-import OperatorCountdownStrip from './OperatorCountdownStrip';
-import { mapOperatorCountdownRow } from '../lib/operatorCountdown';
+import { mapOperatorCountdownRow, resolveDisplaySecondaryTimer } from '../lib/operatorCountdown';
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
@@ -719,14 +718,21 @@ const Clock: React.FC<ClockProps> = ({
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component
 
-  // Update secondary timer every second when in hybrid mode
+  // Update secondary / operator ALT timer every second when in hybrid mode
   useEffect(() => {
-    if (!supabaseOnly || !hybridTimerData?.secondaryTimer) return;
+    if (!supabaseOnly) return;
+    const active =
+      !!hybridTimerData?.secondaryTimer?.is_running ||
+      !!(
+        hybridTimerData?.operatorCountdown?.is_active &&
+        hybridTimerData?.operatorCountdown?.is_running
+      );
+    if (!active) return;
 
     return startSecondTicker(() => {
       setSecondaryTimerUpdate(prev => prev + 1);
     });
-  }, [supabaseOnly, hybridTimerData?.secondaryTimer]);
+  }, [supabaseOnly, hybridTimerData?.secondaryTimer, hybridTimerData?.operatorCountdown]);
 
   // REMOVED: Duplicate timer effect that was causing flickering
   // The timer progress effect above (lines 74-134) handles all timer updates
@@ -880,7 +886,9 @@ const Clock: React.FC<ClockProps> = ({
   const elapsedForDisplay = getElapsedTime();
   const isOvertimeCountUp = useCountUp && timerProgress.total > 0 && elapsedForDisplay > timerProgress.total;
   const overtimeAmount = isOvertimeCountUp ? elapsedForDisplay - timerProgress.total : 0;
-  const secondarySubTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
+  const secondarySubTimer = enrichSubCueTimer(
+    supabaseOnly ? resolveDisplaySecondaryTimer(hybridTimerData) : secondaryTimer
+  );
   const secondaryDisplayColor =
     secondarySubTimer && isResolumeSynced(secondarySubTimer) ? 'text-yellow-300' : 'text-orange-400';
   const secondaryResolumeLabel = secondarySubTimer
@@ -1101,17 +1109,6 @@ const Clock: React.FC<ClockProps> = ({
         </div>
       ) : null}
 
-      {supabaseOnly &&
-      hybridTimerData?.operatorCountdown?.is_active &&
-      hybridTimerData?.secondaryTimer?.is_running ? (
-        <div className="absolute top-3 left-1/2 z-30 -translate-x-1/2">
-          <OperatorCountdownStrip
-            timer={hybridTimerData.operatorCountdown}
-            clockOffsetMs={clockOffset}
-          />
-        </div>
-      ) : null}
-
       {stageFeedActive && activeStageMessage ? (
         <div className="absolute bottom-[16%] left-1/2 z-30 w-[min(90vw,56rem)] -translate-x-1/2 rounded-lg border-2 border-white/80 bg-black/70 px-6 py-3 text-center text-2xl font-bold text-white md:text-3xl">
           {activeStageMessage.message}
@@ -1196,24 +1193,11 @@ const Clock: React.FC<ClockProps> = ({
         </div>
       )}
 
-      {supabaseOnly &&
-        !hybridTimerData?.secondaryTimer?.is_running &&
-        hybridTimerData?.operatorCountdown?.is_active &&
-        !layoutCrowded && (
-          <div className="flex flex-1 flex-col items-center justify-center animate-in fade-in duration-500">
-            <OperatorCountdownStrip
-              large
-              timer={hybridTimerData.operatorCountdown}
-              clockOffsetMs={clockOffset}
-            />
-          </div>
-        )}
-
       {/* Secondary Timer Display - Only when NO message is active */}
       {(() => {
-        // Check if we have a secondary timer in either mode
+        // Indented sub-cue OR operator countdown (same ALT slot)
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (!currentSecondaryTimer) return false;
           
           // Check if there's a message active - if so, don't show this timer (use the new layout instead)
@@ -1257,7 +1241,7 @@ const Clock: React.FC<ClockProps> = ({
             : !!(messageEnabled && message) || !!(supabaseMessage && supabaseMessage.enabled);
 
           const labelNode = (() => {
-            const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
+            const currentSecondaryTimer = supabaseOnly ? secondarySubTimer : secondaryTimer;
             if (!currentSecondaryTimer) return null;
             if (!supabaseOnly) return <span>ALT</span>;
             return (
@@ -1271,7 +1255,7 @@ const Clock: React.FC<ClockProps> = ({
           })();
 
           const remainingSeconds = (() => {
-            const currentSecondaryTimer = supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer;
+            const currentSecondaryTimer = supabaseOnly ? secondarySubTimer : secondaryTimer;
             if (!currentSecondaryTimer) return 0;
             const _ = secondaryTimerUpdate;
             if (supabaseOnly) {
@@ -1350,7 +1334,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (currentSecondaryTimer) {
             // Check if timer has expired (reached zero or negative)
             if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
@@ -1410,7 +1394,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (currentSecondaryTimer) {
             // Check if timer has expired (reached zero or negative)
             if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
@@ -1436,7 +1420,7 @@ const Clock: React.FC<ClockProps> = ({
           {/* Small secondary: ALT + CUE only — same scale as small main */}
           <div className="mb-1 text-lg font-bold leading-none">
             <AltTimerBadge
-              timer={hybridTimerData?.secondaryTimer}
+              timer={secondarySubTimer}
               scheduleItems={scheduleItems}
               cueOnly
             />
@@ -1445,7 +1429,7 @@ const Clock: React.FC<ClockProps> = ({
           {/* Sub-cue Countdown Timer */}
           <div className="font-mono text-3xl md:text-4xl font-bold leading-none">
             {(() => {
-              const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+              const currentSecondaryTimer = secondarySubTimer;
               const elapsed = calculateElapsed(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
               const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
               const remaining = Math.max(0, totalDuration - elapsed);
@@ -1467,7 +1451,7 @@ const Clock: React.FC<ClockProps> = ({
               className="h-full transition-all duration-1000 absolute top-0 right-0"
               style={{
                 width: `${(() => {
-                  const t = hybridTimerData?.secondaryTimer;
+                  const t = secondarySubTimer;
                   if (!t) return 0;
                   const _ = secondaryTimerUpdate;
                   const total = t.duration_seconds || t.duration || 0;
@@ -1487,7 +1471,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1641,7 +1625,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1726,7 +1710,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1811,7 +1795,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {
@@ -1858,7 +1842,7 @@ const Clock: React.FC<ClockProps> = ({
         let hasSecondaryTimer = false;
         
         if (supabaseOnly) {
-          const currentSecondaryTimer = hybridTimerData?.secondaryTimer;
+          const currentSecondaryTimer = secondarySubTimer;
           if (currentSecondaryTimer) {
             // Hide timer if it's not running
             if (!currentSecondaryTimer.is_running) {

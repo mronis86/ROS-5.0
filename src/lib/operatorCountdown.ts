@@ -50,6 +50,40 @@ export function mapOperatorCountdownRow(row: OperatorCountdownRow | null | undef
   };
 }
 
+/** Shape compatible with Clock / FullScreen secondary (indented sub-cue) display. */
+export function operatorAsSecondaryTimer(
+  op: OperatorCountdownDisplay | null | undefined
+): Record<string, unknown> | null {
+  if (!op?.is_active || !op.is_running || !op.started_at) return null;
+  return {
+    source: 'operator',
+    cue_display: op.cue_display,
+    cue: op.cue_display,
+    segment_name: '',
+    duration_seconds: op.duration_seconds,
+    is_active: true,
+    is_running: true,
+    started_at: op.started_at,
+    timer_id: 'OPERATOR',
+    timer_state: 'running',
+  };
+}
+
+/**
+ * Prefer a live indented sub-cue; otherwise show the operator countdown in the
+ * same secondary / ALT timer slot on Clock and Full Screen.
+ */
+export function resolveDisplaySecondaryTimer(hybrid: {
+  secondaryTimer?: any;
+  operatorCountdown?: OperatorCountdownDisplay | null;
+} | null | undefined): any {
+  const sub = hybrid?.secondaryTimer;
+  if (sub && (sub.is_running === true || sub.timer_state === 'running')) {
+    return sub;
+  }
+  return operatorAsSecondaryTimer(hybrid?.operatorCountdown);
+}
+
 export function operatorCountdownRemaining(
   timer: OperatorCountdownDisplay | null | undefined,
   clockOffsetMs = 0
