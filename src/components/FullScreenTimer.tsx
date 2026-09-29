@@ -150,7 +150,22 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const crowdedBarBottom = stageFeedActive ? 'bottom-5' : 'bottom-8';
   // Indented sub-cue OR operator countdown — same ALT slot as Clock
   const displaySecondaryTimer =
-    resolveDisplaySecondaryTimer(hybridTimerData) || secondaryTimer;
+    resolveDisplaySecondaryTimer(hybridTimerData) ||
+    (secondaryTimer?.source === 'operator' || secondaryTimer?.is_running
+      ? secondaryTimer
+      : null);
+
+  const secondaryRemainingSeconds = (timer: any): number => {
+    if (!timer) return 0;
+    if (timer.started_at || timer.created_at) {
+      const startedAt = new Date(timer.started_at || timer.created_at);
+      const elapsed = Math.floor((Date.now() - startedAt.getTime()) / 1000);
+      const totalDuration = timer.duration_seconds || timer.duration || 0;
+      return Math.max(0, totalDuration - elapsed);
+    }
+    if (typeof timer.remaining === 'number') return Math.max(0, timer.remaining);
+    return Number(timer.duration_seconds || timer.duration || 0) || 0;
+  };
 
   // Debug secondary timer prop (only when it changes)
   useEffect(() => {
@@ -944,19 +959,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               const _ = secondaryTimerUpdate;
               
               let remaining = 0;
-              if (supabaseOnly) {
-                // Supabase data structure - calculate remaining time in real-time
-                if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                  // Calculate remaining time based on start time and duration
-                  const now = new Date();
-                  const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                  const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                  const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = Math.max(0, totalDuration - elapsed);
-                } else {
-                  // Timer is not running, show full duration
-                  remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                }
+              if (currentSecondaryTimer.started_at || currentSecondaryTimer.created_at || supabaseOnly) {
+                remaining = secondaryRemainingSeconds(currentSecondaryTimer);
               } else {
                 remaining = currentSecondaryTimer.remaining || 0;
               }
@@ -986,19 +990,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               const _ = secondaryTimerUpdate;
               
               let remaining = 0;
-              if (supabaseOnly) {
-                // Supabase data structure - calculate remaining time in real-time
-                if (currentSecondaryTimer.is_running && currentSecondaryTimer.is_active) {
-                  // Calculate remaining time based on start time and duration
-                  const now = new Date();
-                  const startedAt = new Date(currentSecondaryTimer.started_at || currentSecondaryTimer.created_at);
-                  const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-                  const totalDuration = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                  remaining = Math.max(0, totalDuration - elapsed);
-                } else {
-                  // Timer is not running, show full duration
-                  remaining = currentSecondaryTimer.duration_seconds || currentSecondaryTimer.duration || 0;
-                }
+              if (currentSecondaryTimer.started_at || currentSecondaryTimer.created_at || supabaseOnly) {
+                remaining = secondaryRemainingSeconds(currentSecondaryTimer);
               } else {
                 // Props data structure - use remaining property
                 remaining = currentSecondaryTimer.remaining || 0;

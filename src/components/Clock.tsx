@@ -11,7 +11,11 @@ import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdow
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
-import { mapOperatorCountdownRow, resolveDisplaySecondaryTimer } from '../lib/operatorCountdown';
+import {
+  mapOperatorCountdownRow,
+  operatorAsSecondaryTimer,
+  resolveDisplaySecondaryTimer,
+} from '../lib/operatorCountdown';
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
@@ -145,6 +149,24 @@ const Clock: React.FC<ClockProps> = ({
         : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
     };
   };
+
+  /** Keep Op Timer in the same secondaryTimer slot sub-cues use (Clock ALT). */
+  const mergeOperatorIntoHybrid = (prev: any, mappedOp: ReturnType<typeof mapOperatorCountdownRow>) => {
+    const opSecondary = operatorAsSecondaryTimer(mappedOp);
+    const sub = prev?.secondaryTimer;
+    const subLive =
+      sub &&
+      sub.source !== 'operator' &&
+      (sub.is_running === true || sub.timer_state === 'running');
+    return {
+      ...prev,
+      operatorCountdown: mappedOp,
+      ...(opSecondary && !subLive ? { secondaryTimer: opSecondary } : {}),
+      ...(!mappedOp && sub?.source === 'operator' ? { secondaryTimer: null } : {}),
+    };
+  };
+
+  const sameEventId = (id: unknown) => String(id || '') === String(eventId || '');
 
   const getRemainingFromTimer = (
     timer: { started_at?: string; duration_seconds?: number } | null | undefined,
@@ -337,10 +359,9 @@ const Clock: React.FC<ClockProps> = ({
           }
 
           const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
-          setHybridTimerData((prev) => ({
-            ...prev,
-            operatorCountdown: mapOperatorCountdownRow(operatorRow),
-          }));
+          setHybridTimerData((prev) =>
+            mergeOperatorIntoHybrid(prev, mapOperatorCountdownRow(operatorRow))
+          );
           
           // Load current timer message (enabled only; null clears stale display)
           const timerMessage = await DatabaseService.getTimerMessage(eventId);
@@ -362,10 +383,10 @@ const Clock: React.FC<ClockProps> = ({
             console.log('🔄 Active timer changed - stopping secondary timer');
             console.log('🔄 Previous timer:', lastActiveTimerId);
             console.log('🔄 New timer:', currentActiveTimerId);
-            // Clear secondary timer when main timer changes
+            // Clear secondary timer when main timer changes (restore Op Timer if live)
             setHybridTimerData(prev => ({
               ...prev,
-              secondaryTimer: null
+              secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
             }));
           }
           
@@ -374,10 +395,10 @@ const Clock: React.FC<ClockProps> = ({
             console.log('🔄 New cue loaded - stopping secondary timer');
             console.log('🔄 Previous item_id:', lastActiveItemId);
             console.log('🔄 New item_id:', currentItemId);
-            // Clear secondary timer when new cue is loaded
+            // Clear secondary timer when new cue is loaded (restore Op Timer if live)
             setHybridTimerData(prev => ({
               ...prev,
-              secondaryTimer: null
+              secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
             }));
           }
           
@@ -396,11 +417,11 @@ const Clock: React.FC<ClockProps> = ({
           setLastActiveItemId(currentItemId);
           setLastActiveStartTime(currentStartTime);
         } else if (!activeTimer && lastActiveTimerId && supabaseOnly) {
-          // Active timer stopped completely - stop secondary timer and drift detection
+          // Active timer stopped completely - clear sub-cue secondary; keep Op Timer if live
           console.log('🔄 Active timer stopped - stopping secondary timer and drift detection');
           setHybridTimerData(prev => ({
             ...prev,
-            secondaryTimer: null
+            secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
           }));
           
           // WebSocket provides real-time updates, no drift detection cleanup needed
@@ -545,26 +566,29 @@ const Clock: React.FC<ClockProps> = ({
       },
       onSubCueTimerStopped: (data: any) => {
         console.log('🔄 Clock: WebSocket sub-cue timer stopped:', data);
-        if (data && data.event_id === eventId) {
-          // Clear secondary timer data
-          setHybridTimerData(prev => ({
+        if (data && sameEventId(data.event_id)) {
+          // Restore Op Timer into ALT slot when a sub-cue ends
+          setHybridTimerData((prev) => ({
             ...prev,
-            secondaryTimer: null
+            secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
           }));
           console.log('✅ Clock: Sub-cue timer stopped via WebSocket');
         }
       },
       onOperatorCountdownUpdated: (data: any) => {
-        if (data && data.event_id === eventId) {
-          setHybridTimerData((prev) => ({
-            ...prev,
-            operatorCountdown: mapOperatorCountdownRow(data),
-          }));
+        if (data && sameEventId(data.event_id)) {
+          setHybridTimerData((prev) =>
+            mergeOperatorIntoHybrid(prev, mapOperatorCountdownRow(data))
+          );
         }
       },
       onOperatorCountdownCleared: (data: any) => {
-        if (data && data.event_id === eventId) {
-          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: null }));
+        if (data && sameEventId(data.event_id)) {
+          setHybridTimerData((prev) => ({
+            ...prev,
+            operatorCountdown: null,
+            ...(prev?.secondaryTimer?.source === 'operator' ? { secondaryTimer: null } : {}),
+          }));
         }
       },
       onTimerMessageUpdated: (data: any) => {
@@ -599,10 +623,9 @@ const Clock: React.FC<ClockProps> = ({
           }
 
           const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
-          setHybridTimerData((prev) => ({
-            ...prev,
-            operatorCountdown: mapOperatorCountdownRow(operatorRow),
-          }));
+          setHybridTimerData((prev) =>
+            mergeOperatorIntoHybrid(prev, mapOperatorCountdownRow(operatorRow))
+          );
           
           // Load current timer message (enabled only; null clears stale display)
           const timerMessage = await DatabaseService.getTimerMessage(eventId);
@@ -627,7 +650,8 @@ const Clock: React.FC<ClockProps> = ({
           setHybridTimerData((prev) => ({
             ...prev,
             activeTimer: null,
-            secondaryTimer: null
+            secondaryTimer: null,
+            operatorCountdown: null,
           }));
           setLastActiveTimerId(null);
           setLastActiveItemId(null);
@@ -886,8 +910,14 @@ const Clock: React.FC<ClockProps> = ({
   const elapsedForDisplay = getElapsedTime();
   const isOvertimeCountUp = useCountUp && timerProgress.total > 0 && elapsedForDisplay > timerProgress.total;
   const overtimeAmount = isOvertimeCountUp ? elapsedForDisplay - timerProgress.total : 0;
+  // Always merge Op Timer into the ALT slot (not only when supabaseOnly)
   const secondarySubTimer = enrichSubCueTimer(
-    supabaseOnly ? resolveDisplaySecondaryTimer(hybridTimerData) : secondaryTimer
+    resolveDisplaySecondaryTimer({
+      secondaryTimer:
+        (supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer) ||
+        hybridTimerData?.secondaryTimer,
+      operatorCountdown: hybridTimerData?.operatorCountdown,
+    })
   );
   const secondaryDisplayColor =
     secondarySubTimer && isResolumeSynced(secondarySubTimer) ? 'text-yellow-300' : 'text-orange-400';

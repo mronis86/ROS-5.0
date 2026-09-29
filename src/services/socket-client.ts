@@ -83,6 +83,8 @@ class SocketClient {
     'onTimersStopped',
     'onSubCueTimerStarted',
     'onSubCueTimerStopped',
+    'onOperatorCountdownUpdated',
+    'onOperatorCountdownCleared',
     'onRunOfShowDataUpdated',
     'onLedOutputClear',
   ]);

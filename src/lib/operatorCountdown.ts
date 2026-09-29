@@ -4,8 +4,8 @@ export type OperatorCountdownRow = {
   event_id: string;
   label?: string;
   duration_seconds: number;
-  is_active?: boolean;
-  is_running?: boolean;
+  is_active?: boolean | number | string;
+  is_running?: boolean | number | string;
   started_at?: string | null;
   sent_by?: string | null;
   sent_by_name?: string | null;
@@ -37,15 +37,20 @@ export function durationFromParts(minutes: number, seconds: number): number {
 }
 
 export function mapOperatorCountdownRow(row: OperatorCountdownRow | null | undefined): OperatorCountdownDisplay | null {
-  if (!row || !row.is_active) return null;
+  if (!row || typeof row !== 'object') return null;
+  const active = row.is_active === true || row.is_active === 1 || row.is_active === 't' || row.is_active === 'true';
+  if (!active) return null;
+  const running =
+    row.is_running === true || row.is_running === 1 || row.is_running === 't' || row.is_running === 'true';
   const label = String(row.label || 'Operator Timer').trim() || 'Operator Timer';
+  const startedAt = row.started_at ? String(row.started_at) : null;
   return {
     source: 'operator',
     cue_display: label,
     duration_seconds: Number(row.duration_seconds) || 0,
-    is_active: row.is_active === true,
-    is_running: row.is_running === true,
-    started_at: row.started_at || null,
+    is_active: true,
+    is_running: !!running,
+    started_at: startedAt,
     timer_id: 'OPERATOR',
   };
 }
@@ -69,6 +74,18 @@ export function operatorAsSecondaryTimer(
   };
 }
 
+function secondaryStillHasTime(sub: any): boolean {
+  if (!sub) return false;
+  const running = sub.is_running === true || sub.timer_state === 'running';
+  if (!running) return false;
+  const started = sub.started_at || sub.created_at;
+  const dur = Number(sub.duration_seconds ?? sub.duration) || 0;
+  if (!started || dur <= 0) return true;
+  const startedMs = new Date(started).getTime();
+  if (!Number.isFinite(startedMs)) return true;
+  return dur - (Date.now() - startedMs) / 1000 > 0;
+}
+
 /**
  * Prefer a live indented sub-cue; otherwise show the operator countdown in the
  * same secondary / ALT timer slot on Clock and Full Screen.
@@ -78,10 +95,11 @@ export function resolveDisplaySecondaryTimer(hybrid: {
   operatorCountdown?: OperatorCountdownDisplay | null;
 } | null | undefined): any {
   const sub = hybrid?.secondaryTimer;
-  if (sub && (sub.is_running === true || sub.timer_state === 'running')) {
+  // Don't let an expired/stale sub-cue block the operator ALT slot
+  if (secondaryStillHasTime(sub) && sub?.source !== 'operator') {
     return sub;
   }
-  return operatorAsSecondaryTimer(hybrid?.operatorCountdown);
+  return operatorAsSecondaryTimer(hybrid?.operatorCountdown) || (sub?.source === 'operator' ? sub : null);
 }
 
 export function operatorCountdownRemaining(

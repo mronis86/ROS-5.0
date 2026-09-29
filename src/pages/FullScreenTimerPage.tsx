@@ -11,7 +11,10 @@ import {
 } from '../lib/displaySession';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import type { TeleprompterClockFeed } from '../components/TeleprompterClockOverlay';
-import { mapOperatorCountdownRow } from '../lib/operatorCountdown';
+import {
+  mapOperatorCountdownRow,
+  operatorAsSecondaryTimer,
+} from '../lib/operatorCountdown';
 
 const FullScreenTimerPage: React.FC = () => {
   const location = useLocation();
@@ -129,10 +132,22 @@ const FullScreenTimerPage: React.FC = () => {
           DatabaseService.getOperatorCountdown(eventId),
         ]);
         setSupabaseMessage(message);
-        setHybridTimerData((prev: any) => ({
-          ...(prev || {}),
-          operatorCountdown: mapOperatorCountdownRow(operatorRow),
-        }));
+        const mappedOp = mapOperatorCountdownRow(operatorRow);
+        const opSecondary = operatorAsSecondaryTimer(mappedOp);
+        setHybridTimerData((prev: any) => {
+          const base = prev || {};
+          const sub = base.secondaryTimer;
+          const subLive =
+            sub &&
+            sub.source !== 'operator' &&
+            (sub.is_running === true || sub.timer_state === 'running');
+          return {
+            ...base,
+            operatorCountdown: mappedOp,
+            ...(opSecondary && !subLive ? { secondaryTimer: opSecondary } : {}),
+            ...(!mappedOp && sub?.source === 'operator' ? { secondaryTimer: null } : {}),
+          };
+        });
         console.log('📨 Loaded timer message from API:', message);
       } catch (error) {
         console.error('❌ Error loading timer message:', error);
@@ -199,26 +214,40 @@ const FullScreenTimerPage: React.FC = () => {
       },
       onSubCueTimerStopped: (data: any) => {
         console.log('📡 FullScreenTimer: Sub-cue timer stopped via WebSocket from RunOfShowPage');
-        if (data && data.event_id === eventId) {
-          // Clear hybrid timer data sub-cue timer
-          setHybridTimerData(prev => ({
+        if (data && String(data.event_id) === String(eventId)) {
+          setHybridTimerData((prev) => ({
             ...prev,
-            secondaryTimer: null
+            secondaryTimer: operatorAsSecondaryTimer(prev?.operatorCountdown),
           }));
           console.log('✅ FullScreenTimer: Sub-cue timer stopped via WebSocket');
         }
       },
       onOperatorCountdownUpdated: (data: any) => {
-        if (data && data.event_id === eventId) {
-          setHybridTimerData((prev) => ({
-            ...prev,
-            operatorCountdown: mapOperatorCountdownRow(data),
-          }));
+        if (data && String(data.event_id) === String(eventId)) {
+          const mappedOp = mapOperatorCountdownRow(data);
+          const opSecondary = operatorAsSecondaryTimer(mappedOp);
+          setHybridTimerData((prev) => {
+            const sub = prev?.secondaryTimer;
+            const subLive =
+              sub &&
+              sub.source !== 'operator' &&
+              (sub.is_running === true || sub.timer_state === 'running');
+            return {
+              ...prev,
+              operatorCountdown: mappedOp,
+              ...(opSecondary && !subLive ? { secondaryTimer: opSecondary } : {}),
+              ...(!mappedOp && sub?.source === 'operator' ? { secondaryTimer: null } : {}),
+            };
+          });
         }
       },
       onOperatorCountdownCleared: (data: any) => {
-        if (data && data.event_id === eventId) {
-          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: null }));
+        if (data && String(data.event_id) === String(eventId)) {
+          setHybridTimerData((prev) => ({
+            ...prev,
+            operatorCountdown: null,
+            ...(prev?.secondaryTimer?.source === 'operator' ? { secondaryTimer: null } : {}),
+          }));
         }
       },
       onActiveTimersUpdated: (data: any) => {
