@@ -573,16 +573,18 @@ const Clock: React.FC<ClockProps> = ({
         }
       },
       onOperatorCountdownUpdated: (data: any) => {
-        if (data && sameEventId(data.event_id)) {
-          setHybridTimerData((prev) =>
-            setOperatorCountdown(prev, mapOperatorCountdownRow(data))
-          );
-        }
+        if (!data) return;
+        // WS room is already event-scoped; accept if event_id missing or matches
+        if (data.event_id != null && !sameEventId(data.event_id)) return;
+        console.log('⏱️ Clock: Op Timer updated via WebSocket', data);
+        setHybridTimerData((prev) =>
+          setOperatorCountdown(prev, mapOperatorCountdownRow(data))
+        );
       },
       onOperatorCountdownCleared: (data: any) => {
-        if (data && sameEventId(data.event_id)) {
-          setHybridTimerData((prev) => setOperatorCountdown(prev, null));
-        }
+        if (data?.event_id != null && !sameEventId(data.event_id)) return;
+        console.log('⏱️ Clock: Op Timer cleared via WebSocket');
+        setHybridTimerData((prev) => setOperatorCountdown(prev, null));
       },
       onTimerMessageUpdated: (data: any) => {
         console.log('📨 Clock: WebSocket timer message updated:', data);
@@ -731,7 +733,7 @@ const Clock: React.FC<ClockProps> = ({
       document.removeEventListener('visibilitychange', refreshClockOnReturn);
       socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
       socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
-      socketClient.disconnect(eventId);
+      socketClient.disconnect(eventId, 'clock');
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component
 
@@ -750,6 +752,45 @@ const Clock: React.FC<ClockProps> = ({
       setSecondaryTimerUpdate(prev => prev + 1);
     });
   }, [supabaseOnly, hybridTimerData?.secondaryTimer, hybridTimerData?.operatorCountdown]);
+
+  // Poll Op Timer so Clock still picks it up if a WS handler was dropped
+  useEffect(() => {
+    if (!supabaseOnly || !eventId) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
+        if (cancelled) return;
+        setHybridTimerData((prev) => {
+          const mapped = mapOperatorCountdownRow(operatorRow);
+          const prevOp = prev?.operatorCountdown;
+          if (
+            (!mapped && !prevOp) ||
+            (mapped &&
+              prevOp &&
+              mapped.started_at === prevOp.started_at &&
+              mapped.duration_seconds === prevOp.duration_seconds &&
+              mapped.cue_display === prevOp.cue_display &&
+              mapped.is_running === prevOp.is_running &&
+              mapped.is_active === prevOp.is_active)
+          ) {
+            return prev;
+          }
+          return setOperatorCountdown(prev, mapped);
+        });
+      } catch (err) {
+        console.warn('⏱️ Clock: Op Timer poll failed', err);
+      }
+    };
+
+    void poll();
+    const id = window.setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [supabaseOnly, eventId]);
 
   // REMOVED: Duplicate timer effect that was causing flickering
   // The timer progress effect above (lines 74-134) handles all timer updates

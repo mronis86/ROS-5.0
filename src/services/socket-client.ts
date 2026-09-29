@@ -65,6 +65,8 @@ class SocketClient {
   private socket: Socket | null = null;
   private eventId: string | null = null;
   private callbacks: SocketCallbacks = {};
+  /** Per-subscriber callback bags so Clock + ClockPage can share one socket. */
+  private callbackSets = new Map<string, SocketCallbacks>();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private disconnectedByAdmin = false;
@@ -87,6 +89,7 @@ class SocketClient {
     'onOperatorCountdownCleared',
     'onRunOfShowDataUpdated',
     'onLedOutputClear',
+    'onInitialSync',
   ]);
 
   private dispatchTimerMessage = (data: any) => {
@@ -99,7 +102,57 @@ class SocketClient {
     }
   };
 
+  private rebuildMergedCallbacks(): SocketCallbacks {
+    let merged: SocketCallbacks = {};
+    for (const bag of this.callbackSets.values()) {
+      for (const key of Object.keys(bag) as (keyof SocketCallbacks)[]) {
+        const next = bag[key];
+        if (next === undefined) continue;
+        const prev = merged[key];
+        if (
+          SocketClient.CHAIN_ON_MERGE.has(key) &&
+          typeof prev === 'function' &&
+          typeof next === 'function' &&
+          prev !== next
+        ) {
+          const prevFn = prev as (data: any) => void;
+          const nextFn = next as (data: any) => void;
+          (merged as any)[key] = (data: any) => {
+            try {
+              prevFn(data);
+            } catch (err) {
+              console.error(`❌ socket handler ${key} (prev) error:`, err);
+            }
+            try {
+              nextFn(data);
+            } catch (err) {
+              console.error(`❌ socket handler ${key} (next) error:`, err);
+            }
+          };
+        } else if (
+          key === 'onInitialSync' &&
+          typeof prev === 'function' &&
+          typeof next === 'function' &&
+          prev !== next
+        ) {
+          const prevFn = prev as () => Promise<void>;
+          const nextFn = next as () => Promise<void>;
+          (merged as any)[key] = async () => {
+            await prevFn();
+            await nextFn();
+          };
+        } else {
+          (merged as any)[key] = next;
+        }
+      }
+    }
+    merged.onTimerMessageUpdated = this.dispatchTimerMessage;
+    this.callbacks = merged;
+    return merged;
+  }
+
   private mergeCallbacks(incoming: SocketCallbacks): SocketCallbacks {
+    // Kept for reconnect path that passes already-merged callbacks
     const merged: SocketCallbacks = { ...this.callbacks };
     for (const key of Object.keys(incoming) as (keyof SocketCallbacks)[]) {
       const next = incoming[key];
@@ -125,6 +178,8 @@ class SocketClient {
   }
 
   connect(eventId: string, callbacks: SocketCallbacks, handlerKey: string = 'default') {
+    this.callbackSets.set(handlerKey, callbacks);
+
     if (
       callbacks.onTimerMessageUpdated &&
       callbacks.onTimerMessageUpdated !== this.dispatchTimerMessage
@@ -133,20 +188,26 @@ class SocketClient {
     }
 
     if (this.socket && this.eventId === eventId) {
-      console.log('Socket.IO already connected for this event. Merging callbacks.');
-      this.callbacks = this.mergeCallbacks(callbacks);
-      // Always dispatch to every registered message handler (Clock + ClockPage).
-      this.callbacks.onTimerMessageUpdated = this.dispatchTimerMessage;
+      console.log('Socket.IO already connected for this event. Merging callbacks.', handlerKey);
+      this.rebuildMergedCallbacks();
       if (!this.socket.connected) {
         this.socket.connect();
       }
       return;
     }
 
-    this.disconnect(); // Disconnect any existing connection
+    // Switching events — tear down fully
+    this.disconnect();
 
     this.eventId = eventId;
-    this.callbacks = { ...callbacks, onTimerMessageUpdated: this.dispatchTimerMessage };
+    this.callbackSets.set(handlerKey, callbacks);
+    if (
+      callbacks.onTimerMessageUpdated &&
+      callbacks.onTimerMessageUpdated !== this.dispatchTimerMessage
+    ) {
+      this.timerMessageHandlers.set(handlerKey, callbacks.onTimerMessageUpdated);
+    }
+    this.rebuildMergedCallbacks();
     const apiBaseUrl = getApiBaseUrl();
     this.socket = io(apiBaseUrl, {
       transports: ['websocket', 'polling'],
@@ -299,8 +360,9 @@ class SocketClient {
         this.reconnectAttempts++;
         console.log(`🔄 Attempting to reconnect Socket.IO (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
         setTimeout(() => {
-          if (this.eventId) {
-            this.connect(this.eventId, this.callbacks);
+          if (this.eventId && this.socket) {
+            // Keep existing per-subscriber callback sets; just reconnect the socket
+            this.socket.connect();
           }
         }, 2000 * this.reconnectAttempts);
       }
@@ -314,25 +376,50 @@ class SocketClient {
 
   disconnect(eventId?: string, handlerKey?: string) {
     if (handlerKey) {
+      this.callbackSets.delete(handlerKey);
       this.timerMessageHandlers.delete(handlerKey);
-    }
-    if (this.socket) {
-      if (eventId && this.eventId !== eventId) {
-        console.log(`Socket.IO: Not disconnecting, current eventId (${this.eventId}) does not match requested eventId (${eventId}).`);
+      // Another subscriber (e.g. Clock) still needs this socket — keep it alive
+      if (this.callbackSets.size > 0 && this.socket && this.eventId) {
+        if (eventId && this.eventId !== eventId) {
+          console.log(
+            `Socket.IO: Not disconnecting, current eventId (${this.eventId}) does not match requested eventId (${eventId}).`
+          );
+          return;
+        }
+        console.log(
+          `🔌 Socket.IO: Removed handler "${handlerKey}", keeping connection (${this.callbackSets.size} subscriber(s) left)`
+        );
+        this.rebuildMergedCallbacks();
         return;
       }
-      
+    }
+
+    if (this.socket) {
+      if (eventId && this.eventId !== eventId) {
+        console.log(
+          `Socket.IO: Not disconnecting, current eventId (${this.eventId}) does not match requested eventId (${eventId}).`
+        );
+        return;
+      }
+
       console.log(`🔌 Disconnecting Socket.IO for event: ${this.eventId}`);
-      
+
       if (this.eventId) {
         this.socket.emit('leaveEvent', this.eventId);
       }
-      
+
       this.socket.disconnect();
       this.socket = null;
       this.eventId = null;
+      this.callbackSets.clear();
       this.timerMessageHandlers.clear();
-      this.callbacks.onConnectionChange?.(false);
+      this.callbacks = {};
+      // Don't call onConnectionChange after clear — no subscribers left
+    } else {
+      this.callbackSets.clear();
+      this.timerMessageHandlers.clear();
+      this.callbacks = {};
+      this.eventId = null;
     }
   }
 

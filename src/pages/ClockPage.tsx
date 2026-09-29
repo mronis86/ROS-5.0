@@ -277,7 +277,7 @@ const ClockPage: React.FC = () => {
 
     return () => {
       console.log('📨 Cleaning up ClockPage WebSocket connection');
-      socketClient.disconnect(eventId);
+      socketClient.disconnect(eventId, 'clockPage');
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
     };
@@ -343,7 +343,7 @@ const ClockPage: React.FC = () => {
       
       setTimeout(() => {
         if (eventId) {
-          socketClient.disconnect(eventId);
+          socketClient.disconnect(eventId, 'clockPage');
           console.log('🔌 ClockPage: WebSocket disconnected');
         }
       }, 100);

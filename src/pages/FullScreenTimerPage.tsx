@@ -215,23 +215,23 @@ const FullScreenTimerPage: React.FC = () => {
         }
       },
       onOperatorCountdownUpdated: (data: any) => {
-        if (data && String(data.event_id) === String(eventId)) {
-          const mappedOp = mapOperatorCountdownRow(data);
-          setHybridTimerData((prev) => {
-            const next: any = { ...prev, operatorCountdown: mappedOp };
-            if (isOperatorAltTimer(prev?.secondaryTimer)) next.secondaryTimer = null;
-            return next;
-          });
-        }
+        if (!data) return;
+        if (data.event_id != null && String(data.event_id) !== String(eventId)) return;
+        console.log('⏱️ FullScreen: Op Timer updated via WebSocket', data);
+        const mappedOp = mapOperatorCountdownRow(data);
+        setHybridTimerData((prev) => {
+          const next: any = { ...prev, operatorCountdown: mappedOp };
+          if (isOperatorAltTimer(prev?.secondaryTimer)) next.secondaryTimer = null;
+          return next;
+        });
       },
       onOperatorCountdownCleared: (data: any) => {
-        if (data && String(data.event_id) === String(eventId)) {
-          setHybridTimerData((prev) => {
-            const next: any = { ...prev, operatorCountdown: null };
-            if (isOperatorAltTimer(prev?.secondaryTimer)) next.secondaryTimer = null;
-            return next;
-          });
-        }
+        if (data?.event_id != null && String(data.event_id) !== String(eventId)) return;
+        setHybridTimerData((prev) => {
+          const next: any = { ...prev, operatorCountdown: null };
+          if (isOperatorAltTimer(prev?.secondaryTimer)) next.secondaryTimer = null;
+          return next;
+        });
       },
       onActiveTimersUpdated: (data: any) => {
         console.log('📡 FullScreenTimer: Active timers updated via WebSocket from RunOfShowPage');
@@ -285,7 +285,7 @@ const FullScreenTimerPage: React.FC = () => {
     };
 
     if (connectionEnabledRef.current) {
-      socketClient.connect(eventId, callbacks);
+      socketClient.connect(eventId, callbacks, 'fullScreen');
     }
 
     const onCueCardsClockSync = (data: any) => {
@@ -351,10 +351,10 @@ const FullScreenTimerPage: React.FC = () => {
         console.log('👁️ FullScreenTimer: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
         socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
-        socketClient.disconnect(eventId);
+        socketClient.disconnect(eventId, 'fullScreen');
       } else if (!socketClient.isConnected()) {
         console.log('👁️ FullScreenTimer: Tab visible - silently reconnecting WebSocket (no modal)');
-        socketClient.connect(eventId, callbacks);
+        socketClient.connect(eventId, callbacks, 'fullScreen');
         socketClient.getSocket()?.on('cueCardsClockSync', onCueCardsClockSync);
         socketClient.getSocket()?.on('teleprompterClockSync', onTeleprompterClockSync);
         loadMessage();
@@ -367,11 +367,49 @@ const FullScreenTimerPage: React.FC = () => {
       console.log('📨 Cleaning up FullScreenTimer WebSocket connection');
       socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
       socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
-      socketClient.disconnect(eventId);
+      socketClient.disconnect(eventId, 'fullScreen');
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
     };
   }, [eventId, reconnectKey]);
+
+  // Poll Op Timer so Full Screen still picks it up if WS is missed
+  useEffect(() => {
+    if (!eventId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
+        if (cancelled) return;
+        const mappedOp = mapOperatorCountdownRow(operatorRow);
+        setHybridTimerData((prev: any) => {
+          const prevOp = prev?.operatorCountdown;
+          if (
+            (!mappedOp && !prevOp) ||
+            (mappedOp &&
+              prevOp &&
+              mappedOp.started_at === prevOp.started_at &&
+              mappedOp.duration_seconds === prevOp.duration_seconds &&
+              mappedOp.cue_display === prevOp.cue_display &&
+              mappedOp.is_running === prevOp.is_running)
+          ) {
+            return prev || {};
+          }
+          const next: any = { ...(prev || {}), operatorCountdown: mappedOp };
+          if (isOperatorAltTimer(prev?.secondaryTimer)) next.secondaryTimer = null;
+          return next;
+        });
+      } catch {
+        /* ignore */
+      }
+    };
+    void poll();
+    const id = window.setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [eventId]);
 
   // Update timer data from parent window if available
   useEffect(() => {
@@ -424,7 +462,7 @@ const FullScreenTimerPage: React.FC = () => {
       
       setTimeout(() => {
         if (eventId) {
-          socketClient.disconnect(eventId);
+          socketClient.disconnect(eventId, 'fullScreen');
           console.log('🔌 FullScreenTimerPage: WebSocket disconnected');
         }
       }, 100);

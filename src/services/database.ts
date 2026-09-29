@@ -1291,7 +1291,11 @@ export class DatabaseService {
 
   static async getOperatorCountdown(eventId: string) {
     try {
-      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/operator-countdown/${eventId}`);
+      // Display clocks / OBS often have no session token — do not use apiFetch's
+      // hard 401 short-circuit. GET /api/operator-countdown/:id is public for displays.
+      const response = await fetch(`${API_BASE_URL}/api/operator-countdown/${eventId}`, {
+        headers: apiJsonHeaders(),
+      });
       if (response.status === 404) return null;
       if (!response.ok) return null;
       const data = await response.json();

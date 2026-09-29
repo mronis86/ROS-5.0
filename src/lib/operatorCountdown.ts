@@ -38,10 +38,16 @@ export function durationFromParts(minutes: number, seconds: number): number {
 
 export function mapOperatorCountdownRow(row: OperatorCountdownRow | null | undefined): OperatorCountdownDisplay | null {
   if (!row || typeof row !== 'object') return null;
-  const active = row.is_active === true || row.is_active === 1 || row.is_active === 't' || row.is_active === 'true';
-  if (!active) return null;
   const running =
     row.is_running === true || row.is_running === 1 || row.is_running === 't' || row.is_running === 'true';
+  const active =
+    row.is_active === true ||
+    row.is_active === 1 ||
+    row.is_active === 't' ||
+    row.is_active === 'true' ||
+    // Some drivers omit is_active on RETURNING; treat running+started as live
+    (running && !!row.started_at);
+  if (!active) return null;
   const label = String(row.label || 'Operator Timer').trim() || 'Operator Timer';
   const startedAt = row.started_at ? String(row.started_at) : null;
   return {
