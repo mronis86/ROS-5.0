@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CUE_RECORDING_MARK_WARNING, itemMarkedByComms, resolveRecordingSource } from '../lib/cueRecording';
+import { CUE_RECORDING_MARK_WARNING, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY, itemMarkedByComms, resolveRecordingSource } from '../lib/cueRecording';
 import {
   formatSettleCueNoteText,
   prependSettleCueNote,
@@ -889,10 +889,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       )}
       {visibleColumns.recording && (
         <div
-          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
           style={{ width: columnWidths.recording }}
         >
-          <label className="flex flex-col items-center gap-0.5">
+          <label className="group/rec-tip relative flex flex-col items-center gap-0.5">
             <input
               type="checkbox"
               checked={!!item.needsRecording}
@@ -906,9 +906,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     ? 'Viewers cannot mark cues for recording'
                     : itemMarkedByComms(item)
                       ? 'Comms marked this cue for ASAP recording'
-                      : confirmRecordingMark
-                        ? 'Only for planned post content — not every segment (event Record already covers the show)'
-                        : 'Mark this cue for planned post content / export'
+                      : undefined
               }
             />
             <span className={`text-xs font-black tracking-wide ${item.needsRecording ? 'text-red-400' : 'text-slate-300'}`}>REC</span>
@@ -920,6 +918,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 COMMS
               </span>
             ) : null}
+            {!isLockedByOther && currentUserRole !== 'VIEWER' && !itemMarkedByComms(item) && (
+              <div
+                role="tooltip"
+                className="pointer-events-none absolute left-1/2 bottom-full z-[90] mb-2 w-96 -translate-x-1/2 rounded-md border-2 border-slate-500 bg-white px-5 py-4 text-left leading-snug text-black opacity-0 shadow-xl transition-opacity duration-150 group-hover/rec-tip:opacity-100 group-focus-within/rec-tip:opacity-100"
+              >
+                <div className="text-[22px] font-black text-black">{CUE_RECORDING_HOVER_TITLE}</div>
+                <div className="mt-2 text-[18px] font-bold text-neutral-900">{CUE_RECORDING_HOVER_BODY}</div>
+              </div>
+            )}
           </label>
         </div>
       )}

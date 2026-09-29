@@ -24,8 +24,15 @@ export function resolveRecordingSource(
   return 'ros';
 }
 
+/** Short header for custom REC hover tooltips. */
+export const CUE_RECORDING_HOVER_TITLE = 'For post / social export';
+
+/** Body for custom REC hover tooltips (keep readable on a large tip). */
+export const CUE_RECORDING_HOVER_BODY =
+  'Does not change your master record for the full program.';
+
 export const CUE_RECORDING_MARK_WARNING =
-  'Please only mark Record if you need this segment flagged for planned post content.\n\nDo not mark every segment. Show recording is already indicated by the event’s Record setting.';
+  'Mark only cues needed for post or social export.\n\nDoes not change your master record for the full program.';
 
 export function shouldConfirmCueRecordingMark(
   user: { is_admin?: boolean; is_comms?: boolean } | null | undefined

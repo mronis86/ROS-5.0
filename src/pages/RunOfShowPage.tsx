@@ -32,7 +32,7 @@ import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import { canAccessAccessManager, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
 import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
-import { shouldConfirmCueRecordingMark } from '../lib/cueRecording';
+import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
 import {
   type AudioCalloutKind,
   type VoCue,
@@ -14247,7 +14247,7 @@ const RunOfShowPage: React.FC = () => {
                       )}
                       {visibleColumns.recording && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
                           style={{ width: columnWidths.recording }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
@@ -14256,6 +14256,13 @@ const RunOfShowPage: React.FC = () => {
                               <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                             )}
                           </span>
+                          <div
+                            role="tooltip"
+                            className="pointer-events-none absolute left-1/2 top-full z-[90] mt-2 w-96 -translate-x-1/2 rounded-md border-2 border-slate-500 bg-white px-5 py-4 text-left leading-snug text-black opacity-0 shadow-xl transition-opacity duration-150 group-hover/rec-hdr:opacity-100"
+                          >
+                            <div className="text-[22px] font-black text-black">{CUE_RECORDING_HOVER_TITLE}</div>
+                            <div className="mt-2 text-[18px] font-bold text-neutral-900">{CUE_RECORDING_HOVER_BODY}</div>
+                          </div>
                           <div 
                             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                             onMouseDown={(e) => handleResizeStart(e, 'recording')}
@@ -15231,7 +15238,7 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.recording && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
                       style={{ width: columnWidths.recording }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
@@ -15240,6 +15247,13 @@ const RunOfShowPage: React.FC = () => {
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
                       </span>
+                      <div
+                        role="tooltip"
+                        className="pointer-events-none absolute left-1/2 top-full z-[90] mt-2 w-96 -translate-x-1/2 rounded-md border-2 border-slate-500 bg-white px-5 py-4 text-left leading-snug text-black opacity-0 shadow-xl transition-opacity duration-150 group-hover/rec-hdr:opacity-100"
+                      >
+                        <div className="text-[22px] font-black text-black">{CUE_RECORDING_HOVER_TITLE}</div>
+                        <div className="mt-2 text-[18px] font-bold text-neutral-900">{CUE_RECORDING_HOVER_BODY}</div>
+                      </div>
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                         onMouseDown={(e) => handleResizeStart(e, 'recording')}
