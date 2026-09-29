@@ -16,6 +16,19 @@ import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
+import {
+  GUEST_COLUMN_FILTER_STORAGE_KEY,
+  GUEST_COLUMN_ORDER_STORAGE_KEY,
+  GUEST_COLUMN_TOGGLE_OPTIONS,
+  GUEST_STICKY_START_STORAGE_KEY,
+  loadGuestColumnOrder,
+  loadGuestVisibleColumns,
+  loadStickyStart,
+  moveGuestColumnInOrder,
+  normalizeGuestColumnOrder,
+  type GuestScrollColumn,
+  type GuestVisibleColumns,
+} from '../lib/guestColumnPrefs';
 
 const REST_FALLBACK_MS = 12000;
 const ZOOM_STORAGE_KEY = 'guest-event-zoom';
@@ -61,6 +74,17 @@ const GuestEventPage: React.FC = () => {
   const [zoomLevel, setZoomLevel] = useState<number>(getStoredZoom);
   const [speakersItemId, setSpeakersItemId] = useState<number | null>(null);
   const [speakerPanel, setSpeakerPanel] = useState<SpeakerPanel>('photos');
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<GuestVisibleColumns>(() =>
+    loadGuestVisibleColumns(GUEST_COLUMN_FILTER_STORAGE_KEY)
+  );
+  const [stickyStartColumn, setStickyStartColumn] = useState(() =>
+    loadStickyStart(GUEST_STICKY_START_STORAGE_KEY)
+  );
+  const [columnOrder, setColumnOrder] = useState<GuestScrollColumn[]>(() =>
+    loadGuestColumnOrder(GUEST_COLUMN_ORDER_STORAGE_KEY)
+  );
+  const [columnDragKey, setColumnDragKey] = useState<string | null>(null);
 
   const timerSyncRef = useRef<{ itemId: number | null; elapsed: number; clientAt: number }>({
     itemId: null,
@@ -84,6 +108,49 @@ const GuestEventPage: React.FC = () => {
       /* ignore */
     }
   }, []);
+
+  const toggleColumn = useCallback((key: GuestScrollColumn) => {
+    setVisibleColumns((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      const anyOn = GUEST_COLUMN_TOGGLE_OPTIONS.some((opt) => next[opt.key]);
+      if (!anyOn) return prev;
+      try {
+        localStorage.setItem(GUEST_COLUMN_FILTER_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  const persistStickyStart = useCallback((value: boolean) => {
+    setStickyStartColumn(value);
+    try {
+      localStorage.setItem(GUEST_STICKY_START_STORAGE_KEY, value ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const persistColumnOrder = useCallback((next: GuestScrollColumn[]) => {
+    setColumnOrder(next);
+    try {
+      localStorage.setItem(GUEST_COLUMN_ORDER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const moveColumn = useCallback(
+    (from: number, to: number) => {
+      persistColumnOrder(moveGuestColumnInOrder(columnOrder, from, to));
+    },
+    [columnOrder, persistColumnOrder]
+  );
+
+  const activeFilterCount = GUEST_COLUMN_TOGGLE_OPTIONS.filter(
+    (opt) => !visibleColumns[opt.key]
+  ).length;
 
   const applyTimer = useCallback((incoming: GuestActiveTimer | null | undefined) => {
     setActiveTimer(mergeGuestActiveTimer(incoming, timerSyncRef));
@@ -355,6 +422,17 @@ const GuestEventPage: React.FC = () => {
                     ))
                   : null}
                 <span className="text-xs text-slate-500">{dayItems.length} cues</span>
+                <button
+                  type="button"
+                  onClick={() => setFilterPanelOpen((v) => !v)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                    filterPanelOpen || activeFilterCount > 0 || stickyStartColumn
+                      ? 'border-blue-500/70 bg-blue-950/50 text-blue-100'
+                      : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  Columns{activeFilterCount > 0 ? ` (${activeFilterCount} hidden)` : ''}
+                </button>
                 <div
                   className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 overflow-hidden"
                   title="Zoom schedule to fit more on screen"
@@ -395,6 +473,109 @@ const GuestEventPage: React.FC = () => {
                 className="min-w-[10rem] max-w-xs flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
               />
             </div>
+
+            {filterPanelOpen ? (
+              <div className="mx-auto max-w-[1800px] px-4 pb-3">
+                <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 space-y-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">
+                      Show columns
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {GUEST_COLUMN_TOGGLE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => toggleColumn(opt.key)}
+                          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
+                            visibleColumns[opt.key]
+                              ? 'border-blue-500 bg-blue-900/40 text-blue-100'
+                              : 'border-slate-600 text-slate-500'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label
+                    className={`flex items-start gap-2 ${!visibleColumns.start ? 'opacity-50' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded mt-0.5"
+                      checked={stickyStartColumn}
+                      disabled={!visibleColumns.start}
+                      onChange={(e) => persistStickyStart(e.target.checked)}
+                    />
+                    <span className="text-sm text-slate-200">
+                      Pin Start next to CUE
+                      <span className="block text-xs text-slate-500">
+                        Stays fixed on the left while other columns scroll
+                      </span>
+                    </span>
+                  </label>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">
+                      Column order
+                    </p>
+                    <div className="space-y-1.5">
+                      {columnOrder.map((key, index) => (
+                        <div
+                          key={key}
+                          draggable
+                          onDragStart={() => setColumnDragKey(key)}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={() => {
+                            if (!columnDragKey || columnDragKey === key) return;
+                            const from = columnOrder.indexOf(columnDragKey as GuestScrollColumn);
+                            const to = columnOrder.indexOf(key);
+                            if (from >= 0 && to >= 0) moveColumn(from, to);
+                            setColumnDragKey(null);
+                          }}
+                          onDragEnd={() => setColumnDragKey(null)}
+                          className={`flex items-center gap-2 rounded border border-slate-600/80 bg-slate-800/60 px-2 py-1 ${
+                            columnDragKey === key ? 'opacity-60 ring-1 ring-blue-400' : ''
+                          }`}
+                        >
+                          <span className="cursor-grab text-slate-500 select-none px-1" aria-hidden>
+                            ⋮⋮
+                          </span>
+                          <span className="flex-1 text-sm text-white truncate">
+                            {GUEST_COLUMN_TOGGLE_OPTIONS.find((o) => o.key === key)?.label || key}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => moveColumn(index, index - 1)}
+                            className="px-1.5 text-slate-300 hover:text-white disabled:opacity-30"
+                            title="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === columnOrder.length - 1}
+                            onClick={() => moveColumn(index, index + 1)}
+                            className="px-1.5 text-slate-300 hover:text-white disabled:opacity-30"
+                            title="Move down"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => persistColumnOrder(normalizeGuestColumnOrder(null))}
+                      className="mt-2 text-[11px] text-slate-400 hover:text-white"
+                    >
+                      Reset order
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -420,6 +601,9 @@ const GuestEventPage: React.FC = () => {
                 activeItemId={activeItemId}
                 timerRunning={timerRunning}
                 timerLoaded={timerLoaded}
+                visibleColumns={visibleColumns}
+                stickyStartColumn={stickyStartColumn}
+                columnOrder={columnOrder}
                 onOpenSpeakers={(itemId) => {
                   setSpeakersItemId(itemId);
                   setSpeakerPanel('photos');

@@ -13,6 +13,7 @@ import {
   isPreshowTimerMessage,
   parsePreshowShowDay,
   resolvePreshowStartHHMM,
+  resolvePreshowWorkingDay,
   type PreshowShowDayArmed,
   PRESHOW_COUNTDOWN_MESSAGE,
   PRESHOW_MESSAGE_TYPE,
@@ -61,7 +62,7 @@ import PinNotesColumnModal from '../components/PinNotesColumnModal';
 import ComplaintLineModal from '../components/ComplaintLineModal';
 import ComplaintLineFab from '../components/ComplaintLineFab';
 import PreFlightChecklistModal from '../components/PreFlightChecklistModal';
-import { getEventDayNumberForDate } from '../lib/preflightChecklist';
+import { getEventDayNumberForDate, parseCompletedDays, resolveLaunchSelectedDay } from '../lib/preflightChecklist';
 import ExcelImportModal from '../components/ExcelImportModal';
 import AgendaImportModal from '../components/AgendaImportModal';
 import ImportCSVModal from '../components/ImportCSVModal';
@@ -914,6 +915,9 @@ const RunOfShowPage: React.FC = () => {
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
   const [selectedDay, setSelectedDay] = useState<number>(1);
+  const initialDayAppliedForEventRef = useRef<string | null>(null);
+  const userChangedDayRef = useRef(false);
+  const [completedDays, setCompletedDays] = useState<number[]>([]);
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
   /** Calendar venue TZ — wins over ROS settings so laptop/default NY does not override. */
   const calendarTimezoneRef = useRef<string | null>(null);
@@ -1084,6 +1088,25 @@ const RunOfShowPage: React.FC = () => {
   
   useEffect(() => {
     if (!event?.id) return;
+    userChangedDayRef.current = false;
+    setCompletedDays([]);
+    if (!(event.numberOfDays && event.numberOfDays > 1)) {
+      setSelectedDay(1);
+      initialDayAppliedForEventRef.current = event.id;
+      return;
+    }
+    setSelectedDay(
+      resolveLaunchSelectedDay({
+        eventDate: event.date,
+        numberOfDays: event.numberOfDays,
+        completedDays: [],
+      })
+    );
+    initialDayAppliedForEventRef.current = event.id;
+  }, [event?.id, event?.date, event?.numberOfDays]);
+
+  useEffect(() => {
+    if (!event?.id) return;
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
@@ -1143,7 +1166,7 @@ const RunOfShowPage: React.FC = () => {
     timer: hybridTimerData?.activeTimer,
     programType: activeCueForPreshow?.programType,
     itemId: activeCueForPreshow?.id ?? hybridTimerData?.activeTimer?.item_id,
-    topPreshowItemId: findTopPreshowCue(schedule, indentedCues)?.id ?? null,
+    topPreshowItemId: findTopPreshowCue(schedule, indentedCues, selectedDay)?.id ?? null,
   });
 
   // Admin/Crew: ~1 min after PreShow is running while still Rehearsal → In-Show overlay
@@ -2015,6 +2038,7 @@ const RunOfShowPage: React.FC = () => {
   const eventNameRef = useRef(eventName);
   const masterStartTimeRef = useRef(masterStartTime);
   const dayStartTimesRef = useRef(dayStartTimes);
+  const completedDaysRef = useRef(completedDays);
   const indentedCuesRef = useRef(indentedCues);
   const trackWasDurationsRef = useRef(trackWasDurations);
   const originalDurationsRef = useRef(originalDurations);
@@ -2034,6 +2058,7 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => { eventNameRef.current = eventName; }, [eventName]);
   useEffect(() => { masterStartTimeRef.current = masterStartTime; }, [masterStartTime]);
   useEffect(() => { dayStartTimesRef.current = dayStartTimes; }, [dayStartTimes]);
+  useEffect(() => { completedDaysRef.current = completedDays; }, [completedDays]);
   useEffect(() => { indentedCuesRef.current = indentedCues; }, [indentedCues]);
   useEffect(() => { trackWasDurationsRef.current = trackWasDurations; }, [trackWasDurations]);
   useEffect(() => { originalDurationsRef.current = originalDurations; }, [originalDurations]);
@@ -2339,7 +2364,12 @@ const RunOfShowPage: React.FC = () => {
       startLabel: string;
       key: string;
     } | null => {
-      const cue = findTopPreshowCue(schedule, indentedCues);
+      const workingDay = resolvePreshowWorkingDay(
+        event.date,
+        event.numberOfDays,
+        selectedDay
+      );
+      const cue = findTopPreshowCue(schedule, indentedCues, workingDay);
       if (!cue) return null;
       const startHHMM = resolvePreshowStartHHMM({
         cue,
@@ -2472,6 +2502,9 @@ const RunOfShowPage: React.FC = () => {
     clockOffset,
     currentUserRole,
     event?.id,
+    event?.date,
+    event?.numberOfDays,
+    selectedDay,
     user,
     activeTimers,
     hybridTimerData?.activeTimer?.item_id,
@@ -5904,7 +5937,8 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
 
-    const topPreshow = findTopPreshowCue(schedule, indentedCues);
+    const item = schedule.find((s) => s.id === itemId);
+    const topPreshow = findTopPreshowCue(schedule, indentedCues, item?.day || selectedDay);
     if (!topPreshow || topPreshow.id !== itemId) {
       void clearPreshowCountdownMessage();
     }
@@ -6082,7 +6116,6 @@ const RunOfShowPage: React.FC = () => {
     });
     
     // Initialize timer progress for the loaded CUE
-    const item = schedule.find(s => s.id === itemId);
     if (item) {
       if (showModeRef.current === 'in-show' && trackWasDurations && !originalDurations[itemId]) {
         setOriginalDurations(prev => ({
@@ -6428,7 +6461,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }) }
+          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }) }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -7143,6 +7176,7 @@ const RunOfShowPage: React.FC = () => {
           eventName: eventNameRef.current,
           masterStartTime: masterStartTimeRef.current,
           dayStartTimes: dayStartTimesRef.current,
+          completedDays: completedDaysRef.current,
           numberOfDays: event?.numberOfDays,
           timezone: eventTimezoneRef.current,
           lastSaved: new Date().toISOString(),
@@ -7327,6 +7361,25 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
+        const loadedCompleted = parseCompletedDays(
+          data.settings?.completedDays ?? data.settings?.completed_days,
+          event?.numberOfDays || 1
+        );
+        setCompletedDays(loadedCompleted);
+        if (
+          event?.id &&
+          event.numberOfDays &&
+          event.numberOfDays > 1 &&
+          !userChangedDayRef.current
+        ) {
+          setSelectedDay(
+            resolveLaunchSelectedDay({
+              eventDate: event.date,
+              numberOfDays: event.numberOfDays,
+              completedDays: loadedCompleted,
+            })
+          );
+        }
         // Prefer calendar venue timezone; fall back to ROS settings (never laptop zone).
         setEventTimezone(
           resolveShowTimezone(
@@ -7524,6 +7577,14 @@ const RunOfShowPage: React.FC = () => {
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
+        if (data.settings?.completedDays != null || data.settings?.completed_days != null) {
+          setCompletedDays(
+            parseCompletedDays(
+              data.settings?.completedDays ?? data.settings?.completed_days,
+              event?.numberOfDays || 1
+            )
+          );
+        }
         
         // Update change tracking - store updated_at for comparison
         setLastChangeAt(data.updated_at || null);
@@ -7686,6 +7747,14 @@ const RunOfShowPage: React.FC = () => {
             if (data.settings.dayStartTimes !== undefined) {
               setDayStartTimes(data.settings.dayStartTimes);
               console.log('✅ Real-time: Day start times updated');
+            }
+            if (data.settings.completedDays !== undefined || data.settings.completed_days !== undefined) {
+              setCompletedDays(
+                parseCompletedDays(
+                  data.settings.completedDays ?? data.settings.completed_days,
+                  event?.numberOfDays || 1
+                )
+              );
             }
             if (data.settings.timezone) {
               setEventTimezone(
@@ -9869,7 +9938,12 @@ const RunOfShowPage: React.FC = () => {
       );
       console.log('✅ Timer stopped in API');
 
-      const topPreshowOnStop = findTopPreshowCue(schedule, indentedCues);
+      const stoppedItem = schedule.find((s) => s.id === itemId);
+      const topPreshowOnStop = findTopPreshowCue(
+        schedule,
+        indentedCues,
+        stoppedItem?.day || selectedDay
+      );
       if (topPreshowOnStop && topPreshowOnStop.id === itemId) {
         void clearPreshowCountdownMessage();
 
@@ -10104,7 +10178,11 @@ const RunOfShowPage: React.FC = () => {
           console.error('❌ Start timer error:', error);
         }
 
-        const topPreshowOnStart = findTopPreshowCue(schedule, indentedCues);
+        const topPreshowOnStart = findTopPreshowCue(
+          schedule,
+          indentedCues,
+          item.day || selectedDay
+        );
         if (topPreshowOnStart && topPreshowOnStart.id === itemId) {
           void activatePreshowCountdownMessage();
         } else {
@@ -11703,7 +11781,12 @@ const RunOfShowPage: React.FC = () => {
         const armKey = `${event?.id}:${activePreshowWarn.itemId}:${activePreshowWarn.startHHMM}`;
         const isArmed = isPreshowArmedForKey(preshowShowDayArmed, armKey);
         const dismiss = () => {
-          const cue = findTopPreshowCue(schedule, indentedCues);
+          const workingDay = resolvePreshowWorkingDay(
+            event?.date,
+            event?.numberOfDays,
+            selectedDay
+          );
+          const cue = findTopPreshowCue(schedule, indentedCues, workingDay);
           const startHHMM = cue
             ? resolvePreshowStartHHMM({
                 cue,
@@ -11718,7 +11801,11 @@ const RunOfShowPage: React.FC = () => {
         };
         const confirmShowDay = () => {
           if (!event?.id || isArmed || preshowConfirmBusy) return;
-          const todayDay = getEventDayNumberForDate(event.date, event.numberOfDays) || 1;
+          const todayDay = resolvePreshowWorkingDay(
+            event.date,
+            event.numberOfDays,
+            selectedDay
+          );
           const payload = {
             confirmed: true as const,
             day: todayDay,
@@ -11737,6 +11824,10 @@ const RunOfShowPage: React.FC = () => {
               });
               if (ok) {
                 setPreshowShowDayArmed(payload);
+                if (event.numberOfDays && event.numberOfDays > 1) {
+                  userChangedDayRef.current = true;
+                  setSelectedDay(todayDay);
+                }
                 // Prime: load cue so everyone sees LOADED (start still fires at scheduled time)
                 try {
                   await loadCueRef.current(activePreshowWarn.itemId);
@@ -11822,7 +11913,12 @@ const RunOfShowPage: React.FC = () => {
                         }}
                       />
                       <span>
-                        <span className="font-semibold text-white">Confirm it is show day</span>
+                        <span className="font-semibold text-white">
+                          Confirm it is show day
+                          {event?.numberOfDays && event.numberOfDays > 1
+                            ? ` (Day ${resolvePreshowWorkingDay(event.date, event.numberOfDays, selectedDay)})`
+                            : ''}
+                        </span>
                         <span className="mt-0.5 block text-xs text-violet-200/80">
                           Arms Pre-Show globally so it auto-starts even if you&apos;re Viewer or Editor
                         </span>
@@ -14540,14 +14636,49 @@ const RunOfShowPage: React.FC = () => {
                     value={selectedDay}
                     onChange={(e) => {
                       handleUserEditing();
+                      userChangedDayRef.current = true;
                       setSelectedDay(parseInt(e.target.value));
                     }}
-                    className="px-4 py-2 bg-slate-700 border-2 border-slate-600 rounded-lg text-white focus:border-blue-500 focus:outline-none text-base font-semibold w-20"
+                    className="px-4 py-2 bg-slate-700 border-2 border-slate-600 rounded-lg text-white focus:border-blue-500 focus:outline-none text-base font-semibold w-28"
                   >
-                    {Array.from({ length: event.numberOfDays }, (_, i) => (
-                      <option key={i + 1} value={i + 1}>{i + 1}</option>
-                    ))}
+                    {Array.from({ length: event.numberOfDays }, (_, i) => {
+                      const day = i + 1;
+                      const done = completedDays.includes(day);
+                      return (
+                        <option key={day} value={day}>
+                          {done ? `${day} ✓` : String(day)}
+                        </option>
+                      );
+                    })}
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (currentUserRole === 'VIEWER') {
+                        alert('Only EDITORs and OPERATORs can mark days complete.');
+                        return;
+                      }
+                      const next = completedDays.includes(selectedDay)
+                        ? completedDays.filter((d) => d !== selectedDay)
+                        : [...completedDays, selectedDay].sort((a, b) => a - b);
+                      setCompletedDays(next);
+                      completedDaysRef.current = next;
+                      handleUserEditing();
+                      void saveToAPI();
+                    }}
+                    className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                      completedDays.includes(selectedDay)
+                        ? 'border-emerald-500/60 bg-emerald-950/50 text-emerald-200 line-through'
+                        : 'border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700'
+                    }`}
+                    title={
+                      completedDays.includes(selectedDay)
+                        ? 'Day marked complete — click to reopen'
+                        : 'Mark this day complete so next launch prefers the next day'
+                    }
+                  >
+                    {completedDays.includes(selectedDay) ? 'Day done' : 'Mark day done'}
+                  </button>
                 </div>
               )}
 

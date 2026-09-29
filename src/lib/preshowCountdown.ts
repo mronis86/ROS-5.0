@@ -1,5 +1,6 @@
 import { isIndentedScheduleItem, type IndentedCueLookup } from './scheduleStartTime';
 import { normalizeCalloutTimeToHHMM } from './eventLocalClock';
+import { getEventDayNumberForDate } from './preflightChecklist';
 
 export const PRESHOW_COUNTDOWN_MESSAGE = 'Pre Show Countdown';
 export const PRESHOW_MESSAGE_TYPE = 'preshow';
@@ -12,19 +13,38 @@ type CueLike = {
   isIndented?: boolean;
 };
 
-/** First non-indented cue overall, only if it is PreShow/End. */
+/**
+ * First non-indented cue for a day (or the whole schedule), only if it is PreShow/End.
+ * Pass `day` for multi-day events so Day 2+ PreShow gets warn/confirm/auto-start.
+ */
 export function findTopPreshowCue<T extends CueLike>(
   schedule: T[],
-  indentedLookup?: IndentedCueLookup | null
+  indentedLookup?: IndentedCueLookup | null,
+  day?: number | null
 ): T | null {
   if (!Array.isArray(schedule) || schedule.length === 0) return null;
+  const wantDay =
+    day != null && Number.isFinite(Number(day)) ? Math.floor(Number(day)) : null;
   for (const item of schedule) {
+    if (wantDay != null && (item.day || 1) !== wantDay) continue;
     if (isIndentedScheduleItem(item, indentedLookup || {})) continue;
     if (item.programType === 'PreShow/End') return item;
     return null;
   }
   return null;
 }
+
+/** Calendar show day when in range; otherwise `fallbackDay` (e.g. selectedDay). */
+export function resolvePreshowWorkingDay(
+  eventDate: string | null | undefined,
+  numberOfDays: number | null | undefined,
+  fallbackDay = 1
+): number {
+  const cal = getEventDayNumberForDate(eventDate, numberOfDays || 1);
+  if (cal != null) return cal;
+  return Math.max(1, Math.floor(Number(fallbackDay) || 1));
+}
+
 
 /**
  * Wall-clock HH:MM for the top PreShow cue (day master start, or locked override).

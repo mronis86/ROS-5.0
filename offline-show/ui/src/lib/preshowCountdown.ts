@@ -12,18 +12,51 @@ type CueLike = {
   isIndented?: boolean;
 };
 
-/** First non-indented cue overall, only if it is PreShow/End. */
+function eventDayNumberForDate(
+  eventDate?: string | null,
+  numberOfDays = 1,
+  now: Date = new Date()
+): number | null {
+  if (!eventDate) return null;
+  const start = new Date(`${String(eventDate).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+  const days = Math.max(1, Math.floor(Number(numberOfDays) || 1));
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayIndex = Math.floor((today.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+  if (dayIndex < 0 || dayIndex >= days) return null;
+  return dayIndex + 1;
+}
+
+/**
+ * First non-indented cue for a day (or the whole schedule), only if it is PreShow/End.
+ * Pass `day` for multi-day events so Day 2+ PreShow gets warn/confirm/auto-start.
+ */
 export function findTopPreshowCue<T extends CueLike>(
   schedule: T[],
-  indentedLookup?: IndentedCueLookup | null
+  indentedLookup?: IndentedCueLookup | null,
+  day?: number | null
 ): T | null {
   if (!Array.isArray(schedule) || schedule.length === 0) return null;
+  const wantDay =
+    day != null && Number.isFinite(Number(day)) ? Math.floor(Number(day)) : null;
   for (const item of schedule) {
+    if (wantDay != null && (item.day || 1) !== wantDay) continue;
     if (isIndentedScheduleItem(item, indentedLookup || {})) continue;
     if (item.programType === 'PreShow/End') return item;
     return null;
   }
   return null;
+}
+
+/** Calendar show day when in range; otherwise `fallbackDay` (e.g. selectedDay). */
+export function resolvePreshowWorkingDay(
+  eventDate: string | null | undefined,
+  numberOfDays: number | null | undefined,
+  fallbackDay = 1
+): number {
+  const cal = eventDayNumberForDate(eventDate, numberOfDays || 1);
+  if (cal != null) return cal;
+  return Math.max(1, Math.floor(Number(fallbackDay) || 1));
 }
 
 /**

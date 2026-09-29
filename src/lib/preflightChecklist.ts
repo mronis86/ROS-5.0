@@ -88,3 +88,46 @@ export function getEventDayNumberForDate(
   if (dayIndex < 0 || dayIndex >= days) return null;
   return dayIndex + 1;
 }
+
+/** Normalize completed-day list from settings (1-based day numbers). */
+export function parseCompletedDays(raw: unknown, maxDays = 30): number[] {
+  if (!Array.isArray(raw)) return [];
+  const max = Math.max(1, Math.floor(Number(maxDays) || 30));
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const v of raw) {
+    const n = Math.floor(Number(v));
+    if (!Number.isFinite(n) || n < 1 || n > max || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * Day to open on multi-day launch: calendar day if in range and not completed;
+ * else next incomplete after calendar; else first incomplete; else Day 1.
+ */
+export function resolveLaunchSelectedDay(opts: {
+  eventDate?: string | null;
+  numberOfDays?: number | null;
+  completedDays?: number[] | null;
+}): number {
+  const days = Math.max(1, Math.floor(Number(opts.numberOfDays) || 1));
+  const completed = new Set(parseCompletedDays(opts.completedDays, days));
+  const cal = getEventDayNumberForDate(opts.eventDate, days);
+
+  const firstIncompleteFrom = (start: number) => {
+    for (let d = start; d <= days; d++) {
+      if (!completed.has(d)) return d;
+    }
+    return null;
+  };
+
+  if (cal != null) {
+    if (!completed.has(cal)) return cal;
+    return firstIncompleteFrom(cal + 1) ?? cal;
+  }
+
+  return firstIncompleteFrom(1) ?? 1;
+}

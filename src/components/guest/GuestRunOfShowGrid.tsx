@@ -14,6 +14,16 @@ import {
   ROS_SHOT_TYPES,
   toScheduleRowItem,
 } from '../../lib/guestRosHelpers';
+import {
+  GUEST_COLUMN_LABELS,
+  GUEST_STICKY_CUE_WIDTH_PX,
+  GUEST_STICKY_NUM_WIDTH_PX,
+  GUEST_STICKY_START_LEFT_PX,
+  guestColumnFlexOrderMap,
+  normalizeGuestColumnOrder,
+  type GuestScrollColumn,
+  type GuestVisibleColumns,
+} from '../../lib/guestColumnPrefs';
 import { findParentScheduleIndex, isIndentedScheduleItem } from '../../lib/scheduleStartTime';
 
 function dayStartFor(
@@ -49,14 +59,17 @@ export interface GuestRunOfShowGridProps {
   activeItemId?: number | null;
   timerRunning?: boolean;
   timerLoaded?: boolean;
-  visibleColumns?: typeof GUEST_VISIBLE_COLUMNS;
+  visibleColumns?: GuestVisibleColumns;
+  /** When true, Start sticks beside CUE (outside horizontal scroll). */
+  stickyStartColumn?: boolean;
+  columnOrder?: GuestScrollColumn[];
   onOpenSpeakers: (itemId: number) => void;
   onViewSegmentDetail?: (itemId: number) => void;
 }
 
 /**
- * One flex row per cue — # / CUE stick left and stretch with notes/speakers
- * the same way Run of Show keeps side columns aligned to content height.
+ * One flex row per cue — # / CUE (and optional Start) stick left and stretch
+ * with notes/speakers the same way Run of Show keeps side columns aligned.
  */
 const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   schedule,
@@ -67,10 +80,23 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   timerRunning = false,
   timerLoaded = false,
   visibleColumns = GUEST_VISIBLE_COLUMNS,
+  stickyStartColumn = false,
+  columnOrder,
   onOpenSpeakers,
   onViewSegmentDetail,
 }) => {
   const columns = visibleColumns || GUEST_VISIBLE_COLUMNS;
+  const startPinnedBesideCue = stickyStartColumn && columns.start;
+  const scrollColumns = useMemo(
+    () => (startPinnedBesideCue ? { ...columns, start: false } : columns),
+    [startPinnedBesideCue, columns]
+  );
+  const orderedKeys = useMemo(
+    () => normalizeGuestColumnOrder(columnOrder || null),
+    [columnOrder]
+  );
+  const columnFlexOrder = useMemo(() => guestColumnFlexOrderMap(orderedKeys), [orderedKeys]);
+
   const scheduleRows = useMemo(() => schedule.map(toScheduleRowItem), [schedule]);
   const indentedCues = useMemo(() => buildIndentedLookup(schedule), [schedule]);
 
@@ -138,9 +164,43 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   );
 
   const getSpeakersHeight = useCallback(
-    (speakersText?: string) => estimateRowHeightRem('', speakersText, undefined, undefined, undefined, 0, GUEST_COLUMN_WIDTHS.notes),
+    (speakersText?: string) =>
+      estimateRowHeightRem('', speakersText, undefined, undefined, undefined, 0, GUEST_COLUMN_WIDTHS.notes),
     []
   );
+
+  const headerCell =
+    'h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center flex-shrink-0';
+
+  const renderScrollHeader = (key: GuestScrollColumn) => {
+    if (key === 'start' && startPinnedBesideCue) return null;
+    if (!scrollColumns[key]) return null;
+    const width = GUEST_COLUMN_WIDTHS[key as keyof typeof GUEST_COLUMN_WIDTHS];
+    return (
+      <div
+        key={key}
+        className={`${headerCell} px-4 border-r border-slate-600`}
+        style={{ width, order: columnFlexOrder[key] ?? 999 }}
+      >
+        {key === 'duration' ? (
+          <div className="text-center">
+            <div className="text-white font-bold">{GUEST_COLUMN_LABELS[key]}</div>
+            <div className="text-xs text-slate-400">HH MM SS</div>
+          </div>
+        ) : (
+          <span className="text-white font-bold">
+            {key === 'programType'
+              ? 'Program Type'
+              : key === 'segmentName'
+                ? 'Segment Name'
+                : key === 'shotType'
+                  ? 'Shot Type'
+                  : GUEST_COLUMN_LABELS[key]}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   if (filteredItems.length === 0) {
     return (
@@ -149,9 +209,6 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
       </div>
     );
   }
-
-  const headerCell =
-    'h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center flex-shrink-0';
 
   return (
     <div className="bg-slate-800 rounded-xl p-3 sm:p-4 shadow-2xl flex flex-col min-h-0 flex-1 h-full">
@@ -164,86 +221,37 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
           {/* Sticky header — same row structure as data rows */}
           <div className="flex sticky top-0 z-30 min-w-max">
             <div
-              className={`${headerCell} sticky left-0 z-40 w-12 border-r-2 border-slate-600`}
+              className={`${headerCell} sticky left-0 z-40 border-r-2 border-slate-600`}
+              style={{ width: GUEST_STICKY_NUM_WIDTH_PX }}
             >
               <span className="text-white font-bold text-xs">#</span>
             </div>
             <div
-              className={`${headerCell} sticky left-12 z-40 w-40`}
-              style={{ borderRight: '6px solid #475569' }}
+              className={`${headerCell} sticky z-40`}
+              style={{
+                left: GUEST_STICKY_NUM_WIDTH_PX,
+                width: GUEST_STICKY_CUE_WIDTH_PX,
+                borderRight: startPinnedBesideCue ? '1px solid #475569' : '6px solid #475569',
+              }}
             >
               <span className="text-white font-bold text-lg">CUE</span>
             </div>
-            {columns.start && (
+            {startPinnedBesideCue && (
               <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.start }}
+                className={`${headerCell} sticky z-40 px-2`}
+                style={{
+                  left: GUEST_STICKY_START_LEFT_PX,
+                  width: GUEST_COLUMN_WIDTHS.start,
+                  borderRight: '6px solid #475569',
+                }}
               >
                 <span className="text-white font-bold">Start</span>
               </div>
             )}
-            {columns.programType && (
-              <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.programType }}
-              >
-                <span className="text-white font-bold">Program Type</span>
-              </div>
-            )}
-            {columns.duration && (
-              <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.duration }}
-              >
-                <div className="text-center">
-                  <div className="text-white font-bold">Duration</div>
-                  <div className="text-xs text-slate-400">HH MM SS</div>
-                </div>
-              </div>
-            )}
-            {columns.segmentName && (
-              <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.segmentName }}
-              >
-                <span className="text-white font-bold">Segment Name</span>
-              </div>
-            )}
-            {columns.shotType && (
-              <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.shotType }}
-              >
-                <span className="text-white font-bold">Shot Type</span>
-              </div>
-            )}
-            {columns.pptQA && (
-              <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.pptQA }}
-              >
-                <span className="text-white font-bold">PPT/Q&A</span>
-              </div>
-            )}
-            {columns.notes && (
-              <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.notes }}
-              >
-                <span className="text-white font-bold">Notes</span>
-              </div>
-            )}
-            {columns.speakers && (
-              <div
-                className={`${headerCell} px-4 border-r border-slate-600`}
-                style={{ width: GUEST_COLUMN_WIDTHS.speakers }}
-              >
-                <span className="text-white font-bold">Speakers</span>
-              </div>
-            )}
+            {orderedKeys.map((key) => renderScrollHeader(key))}
           </div>
 
-          {/* Data rows — # and CUE are siblings of ScheduleRow cells so they stretch together */}
+          {/* Data rows — # / CUE / optional Start are siblings of ScheduleRow cells */}
           {filteredItems.map((item, index) => {
             const originalIndex = schedule.findIndex((s) => s.id === item.id);
             const rowIndex = originalIndex >= 0 ? originalIndex : index;
@@ -261,6 +269,8 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               0,
               GUEST_COLUMN_WIDTHS.notes
             );
+            const isIndented = Boolean(indentedCues[item.id] || item.isIndented);
+            const startLabel = calculateStartTime(rowIndex) || (isIndented ? '↘' : '—');
 
             return (
               <div
@@ -274,13 +284,18 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 }}
               >
                 <div
-                  className={`sticky left-0 z-20 w-12 flex-shrink-0 border-r-2 border-slate-600 flex items-center justify-center text-sm font-bold text-slate-400 ${rowBg}`}
+                  className={`sticky left-0 z-20 flex-shrink-0 border-r-2 border-slate-600 flex items-center justify-center text-sm font-bold text-slate-400 ${rowBg}`}
+                  style={{ width: GUEST_STICKY_NUM_WIDTH_PX }}
                 >
                   {index + 1}
                 </div>
                 <div
-                  className={`sticky left-12 z-20 w-40 flex-shrink-0 flex flex-col items-center justify-center gap-1 px-2 ${rowBg}`}
-                  style={{ borderRight: '6px solid #475569' }}
+                  className={`sticky z-20 flex-shrink-0 flex flex-col items-center justify-center gap-1 px-2 ${rowBg}`}
+                  style={{
+                    left: GUEST_STICKY_NUM_WIDTH_PX,
+                    width: GUEST_STICKY_CUE_WIDTH_PX,
+                    borderRight: startPinnedBesideCue ? '1px solid #475569' : '6px solid #475569',
+                  }}
                 >
                   <div className="flex w-full max-w-[9rem]">
                     <div className="flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-sm font-medium bg-slate-600">
@@ -294,12 +309,25 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                     </div>
                   </div>
                 </div>
+                {startPinnedBesideCue && (
+                  <div
+                    className={`sticky z-20 flex-shrink-0 flex items-center justify-center px-2 ${rowBg}`}
+                    style={{
+                      left: GUEST_STICKY_START_LEFT_PX,
+                      width: GUEST_COLUMN_WIDTHS.start,
+                      borderRight: '6px solid #475569',
+                    }}
+                  >
+                    <span className="text-white font-mono text-base font-bold">{startLabel}</span>
+                  </div>
+                )}
                 <ScheduleRow
                   asFragment
                   item={rowItem}
                   index={rowIndex}
                   columnWidths={GUEST_COLUMN_WIDTHS}
-                  visibleColumns={columns}
+                  visibleColumns={scrollColumns}
+                  columnFlexOrder={columnFlexOrder}
                   indentedCues={indentedCues}
                   overtimeMinutes={{}}
                   startCueId={null}

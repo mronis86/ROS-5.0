@@ -14,6 +14,17 @@ import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnec
 import { creativeDisplaySessionStorageKey } from '../lib/creativeDisplaySession';
 import { GUEST_VISIBLE_COLUMNS, ROS_PROGRAM_TYPES } from '../lib/guestRosHelpers';
 import {
+  CREATIVE_COLUMN_ORDER_STORAGE_KEY,
+  CREATIVE_STICKY_START_STORAGE_KEY,
+  GUEST_COLUMN_TOGGLE_OPTIONS,
+  loadGuestColumnOrder,
+  loadStickyStart,
+  moveGuestColumnInOrder,
+  normalizeGuestColumnOrder,
+  type GuestScrollColumn,
+  type GuestVisibleColumns,
+} from '../lib/guestColumnPrefs';
+import {
   buildCreativeExportCsv,
   buildCreativeExportText,
   CREATIVE_EXPORT_FIELD_OPTIONS,
@@ -32,18 +43,7 @@ const ZOOM_DEFAULT = 0.85;
 type HubTab = 'ros' | 'review';
 type SpeakerPanel = 'photos' | 'info';
 
-type CreativeVisibleColumns = typeof GUEST_VISIBLE_COLUMNS;
-
-const COLUMN_TOGGLE_OPTIONS: { key: keyof CreativeVisibleColumns; label: string }[] = [
-  { key: 'start', label: 'Start' },
-  { key: 'programType', label: 'Program' },
-  { key: 'duration', label: 'Duration' },
-  { key: 'segmentName', label: 'Segment' },
-  { key: 'shotType', label: 'Shot' },
-  { key: 'pptQA', label: 'PPT/Q&A' },
-  { key: 'notes', label: 'Notes' },
-  { key: 'speakers', label: 'Speakers' },
-];
+type CreativeVisibleColumns = GuestVisibleColumns;
 
 function getStoredZoom(): number {
   try {
@@ -107,6 +107,13 @@ const CreativeEventPage: React.FC = () => {
   const [query, setQuery] = useState('');
   const [zoomLevel, setZoomLevel] = useState<number>(getStoredZoom);
   const [visibleColumns, setVisibleColumns] = useState<CreativeVisibleColumns>(getStoredColumns);
+  const [stickyStartColumn, setStickyStartColumn] = useState(() =>
+    loadStickyStart(CREATIVE_STICKY_START_STORAGE_KEY)
+  );
+  const [columnOrder, setColumnOrder] = useState<GuestScrollColumn[]>(() =>
+    loadGuestColumnOrder(CREATIVE_COLUMN_ORDER_STORAGE_KEY)
+  );
+  const [columnDragKey, setColumnDragKey] = useState<string | null>(null);
   const [programTypeFilters, setProgramTypeFilters] = useState<string[]>([]);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [exportPanelOpen, setExportPanelOpen] = useState(false);
@@ -157,11 +164,11 @@ const CreativeEventPage: React.FC = () => {
     }
   }, []);
 
-  const toggleColumn = useCallback((key: keyof CreativeVisibleColumns) => {
+  const toggleColumn = useCallback((key: GuestScrollColumn) => {
     setVisibleColumns((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       // Keep at least one content column visible
-      const anyOn = COLUMN_TOGGLE_OPTIONS.some((opt) => next[opt.key]);
+      const anyOn = GUEST_COLUMN_TOGGLE_OPTIONS.some((opt) => next[opt.key]);
       if (!anyOn) return prev;
       try {
         localStorage.setItem(COLUMN_FILTER_STORAGE_KEY, JSON.stringify(next));
@@ -171,6 +178,31 @@ const CreativeEventPage: React.FC = () => {
       return next;
     });
   }, []);
+
+  const persistStickyStart = useCallback((value: boolean) => {
+    setStickyStartColumn(value);
+    try {
+      localStorage.setItem(CREATIVE_STICKY_START_STORAGE_KEY, value ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const persistColumnOrder = useCallback((next: GuestScrollColumn[]) => {
+    setColumnOrder(next);
+    try {
+      localStorage.setItem(CREATIVE_COLUMN_ORDER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const moveColumn = useCallback(
+    (from: number, to: number) => {
+      persistColumnOrder(moveGuestColumnInOrder(columnOrder, from, to));
+    },
+    [columnOrder, persistColumnOrder]
+  );
 
   const toggleProgramType = useCallback((type: string) => {
     setProgramTypeFilters((prev) =>
@@ -359,7 +391,7 @@ const CreativeEventPage: React.FC = () => {
   const contentWidthClass = isRosFullscreen ? 'max-w-none' : 'max-w-[1800px]';
   const activeFilterCount =
     programTypeFilters.length +
-    COLUMN_TOGGLE_OPTIONS.filter((opt) => !visibleColumns[opt.key]).length;
+    GUEST_COLUMN_TOGGLE_OPTIONS.filter((opt) => !visibleColumns[opt.key]).length;
 
   const runExport = useCallback(
     (format: 'csv' | 'txt') => {
@@ -596,7 +628,7 @@ const CreativeEventPage: React.FC = () => {
                   Show columns
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {COLUMN_TOGGLE_OPTIONS.map((opt) => (
+                  {GUEST_COLUMN_TOGGLE_OPTIONS.map((opt) => (
                     <button
                       key={opt.key}
                       type="button"
@@ -611,6 +643,81 @@ const CreativeEventPage: React.FC = () => {
                     </button>
                   ))}
                 </div>
+              </div>
+              <label
+                className={`flex items-start gap-2 ${!visibleColumns.start ? 'opacity-50' : ''}`}
+              >
+                <input
+                  type="checkbox"
+                  className="rounded mt-0.5"
+                  checked={stickyStartColumn}
+                  disabled={!visibleColumns.start}
+                  onChange={(e) => persistStickyStart(e.target.checked)}
+                />
+                <span className="text-sm text-slate-200">
+                  Pin Start next to CUE
+                  <span className="block text-xs text-slate-500">
+                    Stays fixed on the left while other columns scroll
+                  </span>
+                </span>
+              </label>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">
+                  Column order
+                </p>
+                <div className="space-y-1.5">
+                  {columnOrder.map((key, index) => (
+                    <div
+                      key={key}
+                      draggable
+                      onDragStart={() => setColumnDragKey(key)}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => {
+                        if (!columnDragKey || columnDragKey === key) return;
+                        const from = columnOrder.indexOf(columnDragKey as GuestScrollColumn);
+                        const to = columnOrder.indexOf(key);
+                        if (from >= 0 && to >= 0) moveColumn(from, to);
+                        setColumnDragKey(null);
+                      }}
+                      onDragEnd={() => setColumnDragKey(null)}
+                      className={`flex items-center gap-2 rounded border border-slate-600/80 bg-slate-800/60 px-2 py-1 ${
+                        columnDragKey === key ? 'opacity-60 ring-1 ring-violet-400' : ''
+                      }`}
+                    >
+                      <span className="cursor-grab text-slate-500 select-none px-1" aria-hidden>
+                        ⋮⋮
+                      </span>
+                      <span className="flex-1 text-sm text-white truncate">
+                        {GUEST_COLUMN_TOGGLE_OPTIONS.find((o) => o.key === key)?.label || key}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        onClick={() => moveColumn(index, index - 1)}
+                        className="px-1.5 text-slate-300 hover:text-white disabled:opacity-30"
+                        title="Move up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        disabled={index === columnOrder.length - 1}
+                        onClick={() => moveColumn(index, index + 1)}
+                        className="px-1.5 text-slate-300 hover:text-white disabled:opacity-30"
+                        title="Move down"
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => persistColumnOrder(normalizeGuestColumnOrder(null))}
+                  className="mt-2 text-[11px] text-slate-400 hover:text-white"
+                >
+                  Reset order
+                </button>
               </div>
               {programTypesInDay.length > 0 ? (
                 <div>
@@ -731,6 +838,8 @@ const CreativeEventPage: React.FC = () => {
                 masterStartTime={masterStartTime}
                 dayStartTimes={dayStartTimes}
                 visibleColumns={visibleColumns}
+                stickyStartColumn={stickyStartColumn}
+                columnOrder={columnOrder}
                 onOpenSpeakers={(itemId) => {
                   setSpeakersItemId(itemId);
                   setSpeakerPanel('photos');

@@ -62,6 +62,8 @@ export interface ScheduleRowProps {
   customColumns?: any[];
   visibleCustomColumns?: Record<string, boolean>;
   customColumnWidths?: Record<string, number>;
+  /** CSS flex `order` for scroll columns (guest/creative reorder). */
+  columnFlexOrder?: Record<string, number>;
   getRowHeight?: Function;
   asFragment?: boolean;
   showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
@@ -133,6 +135,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   customColumns,
   visibleCustomColumns,
   customColumnWidths,
+  columnFlexOrder,
   getRowHeight,
   asFragment,
   showMode = 'in-show',
@@ -207,6 +210,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   };
 
   const canEditRecording = currentUserRole !== 'VIEWER';
+  const flexOrder = (key: string): number => columnFlexOrder?.[key] ?? 999;
 
   const setNeedsRecording = (next: boolean) => {
     if (isLockedByOther) return;
@@ -332,7 +336,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         return (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.start }}
+          style={{ width: columnWidths.start, order: flexOrder('start') }}
         >
           <div className="flex flex-col items-center gap-1">
             <span className="text-white font-mono text-base font-bold">
@@ -403,7 +407,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.programType && (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.programType }}
+          style={{ width: columnWidths.programType, order: flexOrder('programType') }}
         >
           <select
             value={item.programType || ''}
@@ -489,7 +493,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         return (
         <div 
           className={`px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 gap-0.5 ${durationChanged ? 'bg-amber-800/50 ring-2 ring-amber-400 rounded-md' : ''}`}
-          style={{ width: columnWidths.duration, minHeight: durationChanged ? 'auto' : undefined }}
+          style={{ width: columnWidths.duration, minHeight: durationChanged ? 'auto' : undefined, order: flexOrder('duration') }}
           title={durationChanged ? 'Duration changed from original' : undefined}
         >
           <div className="flex items-center gap-2">
@@ -645,7 +649,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.segmentName && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-          style={{ width: columnWidths.segmentName }}
+          style={{ width: columnWidths.segmentName, order: flexOrder('segmentName') }}
         >
           {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && onViewSegmentDetail ? (
             <button
@@ -738,7 +742,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.shotType && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.shotType, overflow: 'visible', zIndex: 1 }}
+          style={{ width: columnWidths.shotType, overflow: 'visible', zIndex: 1, order: flexOrder('shotType') }}
         >
           <select 
             value={item.shotType}
@@ -803,7 +807,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.pptQA && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.pptQA }}
+          style={{ width: columnWidths.pptQA, order: flexOrder('pptQA') }}
         >
           <div className="flex items-center gap-2">
             <label className="flex items-center gap-1">
@@ -890,7 +894,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.recording && (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
-          style={{ width: columnWidths.recording }}
+          style={{ width: columnWidths.recording, order: flexOrder('recording') }}
         >
           <label className="group/rec-tip relative flex flex-col items-center gap-0.5">
             <input
@@ -934,7 +938,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.notes && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 transition-all duration-300 ease-in-out"
-          style={{ width: columnWidths.notes }}
+          style={{ width: columnWidths.notes, order: flexOrder('notes') }}
         >
           {!isLockedByOther && currentUserRole !== 'VIEWER' && (
             <div className="flex flex-wrap items-center gap-1 self-start">
@@ -1124,7 +1128,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.assets && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.assets }}
+          style={{ width: columnWidths.assets, order: flexOrder('assets') }}
         >
           <div
             onClick={() => {
@@ -1176,7 +1180,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.speakers && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-          style={{ width: columnWidths.speakers }}
+          style={{ width: columnWidths.speakers, order: flexOrder('speakers') }}
         >
           <div
             onClick={() => {
@@ -1225,7 +1229,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.public && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.public }}
+          style={{ width: columnWidths.public, order: flexOrder('public') }}
         >
           <input
             type="checkbox"
@@ -1269,7 +1273,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.timer && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.timer }}
+          style={{ width: columnWidths.timer, order: flexOrder('timer') }}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -1325,7 +1329,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {visibleColumns.participants && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-start justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
-          style={{ width: columnWidths.participants }}
+          style={{ width: columnWidths.participants, order: flexOrder('participants') }}
         >
           <div
             onClick={() => {
@@ -1360,7 +1364,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
             style={{ 
               width: (customColumnWidths && customColumnWidths[column.id]) || 256,
-              height: getRowHeight ? getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0) : undefined
+              height: getRowHeight ? getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0) : undefined,
+              order: flexOrder(`custom:${column.id}`),
             }}
           >
             <textarea
@@ -1462,6 +1467,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   // Re-render when visibility/width maps or theme/colors change (ref compare)
   if (prevProps.visibleColumns !== nextProps.visibleColumns) return false;
   if (prevProps.columnWidths !== nextProps.columnWidths) return false;
+  if (prevProps.columnFlexOrder !== nextProps.columnFlexOrder) return false;
   if (prevProps.programTypes !== nextProps.programTypes) return false;
   if (prevProps.programTypeColors !== nextProps.programTypeColors) return false;
   if (prevProps.shotTypes !== nextProps.shotTypes) return false;
