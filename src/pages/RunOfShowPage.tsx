@@ -73,11 +73,21 @@ import TimeToastIcon from '../components/TimeToastIcon';
 import AssetRetentionNotice, { formatCueFileExpiry, formatCueFileSize } from '../components/AssetRetentionNotice';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
+import StartTimeColumnCell from '../components/StartTimeColumnCell';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
+import {
+  BUILTIN_COLUMN_LABELS,
+  ROS_COLUMN_ORDER_STORAGE_KEY,
+  columnFlexOrderMap,
+  customColumnOrderKey,
+  moveColumnInOrder,
+  normalizeColumnOrder,
+  parseCustomColumnOrderKey,
+} from '../lib/rosColumnOrder';
 import { verifyClearLogPassword } from '../lib/adminAuth';
 import {
   baselineToOriginalDurations,
@@ -1420,6 +1430,73 @@ const RunOfShowPage: React.FC = () => {
     timer: true,
     custom: true
   });
+  /** When true, Start sits fixed beside CUE (outside horizontal scroll). */
+  const [stickyStartColumn, setStickyStartColumn] = useState(() => {
+    try {
+      return localStorage.getItem('rosStickyStartColumn') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('rosStickyStartColumn', stickyStartColumn ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [stickyStartColumn]);
+  const startPinnedBesideCue = stickyStartColumn && visibleColumns.start;
+  /** Columns passed into the scrollable ScheduleRow (Start omitted when pinned). */
+  const scrollVisibleColumns = useMemo(
+    () =>
+      startPinnedBesideCue ? { ...visibleColumns, start: false } : visibleColumns,
+    [startPinnedBesideCue, visibleColumns]
+  );
+
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(ROS_COLUMN_ORDER_STORAGE_KEY);
+      return normalizeColumnOrder(raw ? JSON.parse(raw) : null);
+    } catch {
+      return normalizeColumnOrder(null);
+    }
+  });
+  const [columnDragKey, setColumnDragKey] = useState<string | null>(null);
+
+  // Keep order in sync when custom columns are added/removed; persist preference.
+  useEffect(() => {
+    const customIds = customColumns.map((c) => c.id);
+    setColumnOrder((prev) => {
+      const next = normalizeColumnOrder(prev, customIds);
+      if (next.length === prev.length && next.every((k, i) => k === prev[i])) {
+        return prev;
+      }
+      return next;
+    });
+  }, [customColumns]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ROS_COLUMN_ORDER_STORAGE_KEY, JSON.stringify(columnOrder));
+    } catch {
+      /* ignore */
+    }
+  }, [columnOrder]);
+
+  const scrollColumnFlexOrder = useMemo(() => columnFlexOrderMap(columnOrder), [columnOrder]);
+  const colFlex = useCallback(
+    (key: string) => scrollColumnFlexOrder[key] ?? 999,
+    [scrollColumnFlexOrder]
+  );
+
+  const moveScrollColumn = useCallback((fromIndex: number, toIndex: number) => {
+    setColumnOrder((prev) => moveColumnInOrder(prev, fromIndex, toIndex));
+  }, []);
+
+  const resetScrollColumnOrder = useCallback(() => {
+    setColumnOrder(normalizeColumnOrder(null, customColumns.map((c) => c.id)));
+  }, [customColumns]);
+
   const [visibleCustomColumns, setVisibleCustomColumns] = useState<Record<string, boolean>>({});
   
   // Column widths state
@@ -14224,9 +14301,18 @@ const RunOfShowPage: React.FC = () => {
                   </button>
                 </div>
                 
-                {/* CUE Column Header */}
-                <div className="w-40 flex-shrink-0 bg-slate-900" style={{ borderRight: '6px solid #475569' }}>
-                  <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+                {/* CUE (+ optional pinned Start) — shared header strip so thin dividers match scroll columns */}
+                <div className="flex flex-shrink-0 bg-slate-900">
+                  <div
+                    className={`h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center ${
+                      startPinnedBesideCue ? 'w-40 border-r border-slate-600' : 'w-40'
+                    }`}
+                    style={
+                      startPinnedBesideCue
+                        ? undefined
+                        : { borderRight: '6px solid #475569' }
+                    }
+                  >
                     <span className="text-white font-bold text-lg flex items-center gap-1">
                       CUE
                       {currentUserRole === 'VIEWER' && (
@@ -14234,6 +14320,18 @@ const RunOfShowPage: React.FC = () => {
                       )}
                     </span>
                   </div>
+                  {startPinnedBesideCue && (
+                    <div
+                      className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative"
+                      style={{ width: columnWidths.start, borderRight: '6px solid #475569' }}
+                    >
+                      <span className="text-white font-bold">Start</span>
+                      <div
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                        onMouseDown={(e) => handleResizeStart(e, 'start')}
+                      />
+                    </div>
+                  )}
                 </div>
 
 
@@ -14241,10 +14339,10 @@ const RunOfShowPage: React.FC = () => {
                 <div className="flex-1 overflow-x-auto sticky-header-scroll-container" style={{ scrollbarWidth: 'thin' }}>
                   <div className="min-w-max">
                     <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex">
-                      {visibleColumns.start && (
+                      {visibleColumns.start && !startPinnedBesideCue && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.start }}
+                          style={{ width: columnWidths.start, order: colFlex('start') }}
                         >
                           <span className="text-white font-bold">Start</span>
                           <div 
@@ -14256,7 +14354,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.programType && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.programType }}
+                          style={{ width: columnWidths.programType, order: colFlex('programType') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Program Type
@@ -14273,7 +14371,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.duration && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.duration }}
+                          style={{ width: columnWidths.duration, order: colFlex('duration') }}
                         >
                           <div className="text-center">
                             <div className="text-white font-bold flex items-center justify-center gap-1">
@@ -14293,7 +14391,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.segmentName && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.segmentName }}
+                          style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Segment Name
@@ -14310,7 +14408,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.shotType && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.shotType }}
+                          style={{ width: columnWidths.shotType, order: colFlex('shotType') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Shot Type
@@ -14327,7 +14425,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.pptQA && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.pptQA }}
+                          style={{ width: columnWidths.pptQA, order: colFlex('pptQA') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             PPT/Q&A
@@ -14344,7 +14442,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.recording && (
                         <div 
                           className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
-                          style={{ width: columnWidths.recording }}
+                          style={{ width: columnWidths.recording, order: colFlex('recording') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Rec
@@ -14368,7 +14466,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.notes && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.notes }}
+                          style={{ width: columnWidths.notes, order: colFlex('notes') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Notes
@@ -14385,7 +14483,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.assets && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.assets }}
+                          style={{ width: columnWidths.assets, order: colFlex('assets') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Assets
@@ -14402,7 +14500,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.participants && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.participants }}
+                          style={{ width: columnWidths.participants, order: colFlex('participants') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Participants
@@ -14419,7 +14517,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.speakers && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.speakers }}
+                          style={{ width: columnWidths.speakers, order: colFlex('speakers') }}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Speakers
@@ -14436,7 +14534,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.public && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
-                          style={{ width: columnWidths.public }}
+                          style={{ width: columnWidths.public, order: colFlex('public') }}
                         >
                           <button
                             type="button"
@@ -14465,7 +14563,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.timer && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
-                          style={{ width: columnWidths.timer }}
+                          style={{ width: columnWidths.timer, order: colFlex('timer') }}
                         >
                           <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
                             Counter
@@ -14484,7 +14582,7 @@ const RunOfShowPage: React.FC = () => {
                           <div 
                             key={column.id} 
                             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center relative flex-shrink-0"
-                            style={{ width: customColumnWidths[column.id] || 256 }}
+                            style={{ width: customColumnWidths[column.id] || 256, order: colFlex(customColumnOrderKey(column.id)) }}
                           >
                             <span className="text-white font-bold">{column.name}</span>
                             <div 
@@ -15026,9 +15124,16 @@ const RunOfShowPage: React.FC = () => {
             </div>
             
             {/* CUE Column with Controls */}
-            <div className="w-40 flex-shrink-0 bg-slate-900" style={{ borderRight: '6px solid #475569' }}>
+            <div
+              className="w-40 flex-shrink-0 bg-slate-900"
+              style={startPinnedBesideCue ? undefined : { borderRight: '6px solid #475569' }}
+            >
               {/* Header */}
-              <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+              <div
+                className={`h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center ${
+                  startPinnedBesideCue ? 'border-r border-slate-600' : ''
+                }`}
+              >
                 <span className="text-white font-bold text-lg flex items-center gap-1">
                   CUE
                   {currentUserRole === 'VIEWER' && (
@@ -15040,14 +15145,20 @@ const RunOfShowPage: React.FC = () => {
               
                              {/* CUEs with Controls */}
                {getFilteredSchedule().length === 0 ? (
-                 <div className="h-24 flex items-center justify-center text-slate-500">
+                 <div
+                   className={`h-24 flex items-center justify-center text-slate-500 ${
+                     startPinnedBesideCue ? 'border-r border-slate-600' : ''
+                   }`}
+                 >
                    No items
                  </div>
                ) : (
                  getFilteredSchedule().map((item, index) => (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
-                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}`}
+                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)} ${
+                       startPinnedBesideCue ? 'border-r border-slate-600' : ''
+                     }`}
                      style={getSideColumnRowStyle(item)}
                    >
                    <div className="flex items-center gap-1">
@@ -15262,15 +15373,73 @@ const RunOfShowPage: React.FC = () => {
                 ))
               )}
             </div>
+
+            {/* Start pinned beside CUE (outside horizontal scroll) */}
+            {startPinnedBesideCue && (
+              <div
+                className="flex-shrink-0 bg-slate-900"
+                style={{ width: columnWidths.start }}
+              >
+                <div
+                  className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative"
+                  style={{ borderRight: '6px solid #475569' }}
+                >
+                  <span className="text-white font-bold">Start</span>
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                    onMouseDown={(e) => handleResizeStart(e, 'start')}
+                  />
+                </div>
+                {getFilteredSchedule().length === 0 ? (
+                  <div
+                    className="h-24 flex items-center justify-center text-slate-500"
+                    style={{ borderRight: '6px solid #475569' }}
+                  >
+                    —
+                  </div>
+                ) : (
+                  getFilteredSchedule().map((item, index) => {
+                    const originalIndex = schedule.findIndex((s) => s.id === item.id);
+                    return (
+                      <div
+                        key={`sticky-start-${item.id}`}
+                        className={`border-b-2 border-slate-600 flex items-stretch ${getSideColumnRowClass(item.id, index)}`}
+                        style={{
+                          ...getSideColumnRowStyle(item),
+                          borderRight: '6px solid #475569',
+                        }}
+                      >
+                        <StartTimeColumnCell
+                          itemId={item.id}
+                          index={originalIndex >= 0 ? originalIndex : index}
+                          width={columnWidths.start}
+                          isIndented={Boolean(indentedCues[item.id] || item.isIndented)}
+                          showMode={showMode}
+                          overtimeMinutes={overtimeMinutes}
+                          startCueId={startCueId}
+                          showStartOvertime={showStartOvertime}
+                          cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
+                          lockedStartTime={lockedStartTimes[item.id] || null}
+                          calculateStartTime={calculateStartTime}
+                          calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+                          className="border-r-0 h-full"
+                        />
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
             {/* Center Scrollable Section - Main Schedule Data */}
             <div id="main-scroll-container" className="flex-1 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
               <div className="min-w-max">
                 {/* Header Row */}
                 <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex">
-                  {visibleColumns.start && (
+                  {visibleColumns.start && !startPinnedBesideCue && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.start }}
+                      style={{ width: columnWidths.start, order: colFlex('start') }}
                     >
                       <span className="text-white font-bold">Start</span>
                       <div 
@@ -15282,7 +15451,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.programType && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.programType }}
+                      style={{ width: columnWidths.programType, order: colFlex('programType') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Program Type
@@ -15299,7 +15468,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.duration && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.duration }}
+                      style={{ width: columnWidths.duration, order: colFlex('duration') }}
                     >
                       <div className="text-center">
                         <div className="text-white font-bold flex items-center justify-center gap-1">
@@ -15319,7 +15488,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.segmentName && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.segmentName }}
+                      style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Segment Name
@@ -15336,7 +15505,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.shotType && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.shotType }}
+                      style={{ width: columnWidths.shotType, order: colFlex('shotType') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Shot Type
@@ -15353,7 +15522,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.pptQA && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.pptQA }}
+                      style={{ width: columnWidths.pptQA, order: colFlex('pptQA') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         PPT/Q&A
@@ -15370,7 +15539,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.recording && (
                     <div 
                       className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
-                      style={{ width: columnWidths.recording }}
+                      style={{ width: columnWidths.recording, order: colFlex('recording') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Rec
@@ -15394,7 +15563,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.notes && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.notes }}
+                      style={{ width: columnWidths.notes, order: colFlex('notes') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Notes
@@ -15411,7 +15580,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.assets && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.assets }}
+                      style={{ width: columnWidths.assets, order: colFlex('assets') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Assets
@@ -15428,7 +15597,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.participants && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.participants }}
+                      style={{ width: columnWidths.participants, order: colFlex('participants') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Participants
@@ -15445,7 +15614,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.speakers && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.speakers }}
+                      style={{ width: columnWidths.speakers, order: colFlex('speakers') }}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Speakers
@@ -15462,7 +15631,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.public && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
-                      style={{ width: columnWidths.public }}
+                      style={{ width: columnWidths.public, order: colFlex('public') }}
                     >
                       <button
                         type="button"
@@ -15491,7 +15660,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.timer && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
-                      style={{ width: columnWidths.timer }}
+                      style={{ width: columnWidths.timer, order: colFlex('timer') }}
                     >
                       <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
                         Counter
@@ -15510,7 +15679,7 @@ const RunOfShowPage: React.FC = () => {
                       <div 
                         key={column.id} 
                         className="px-4 py-2 border-r border-slate-600 flex items-center justify-center relative flex-shrink-0"
-                        style={{ width: customColumnWidths[column.id] || 256 }}
+                        style={{ width: customColumnWidths[column.id] || 256, order: colFlex(customColumnOrderKey(column.id)) }}
                       >
                         <span className="text-white font-bold">{column.name}</span>
                         <button
@@ -15569,7 +15738,8 @@ const RunOfShowPage: React.FC = () => {
                         item={item}
                         index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}
-                        visibleColumns={visibleColumns}
+                        visibleColumns={scrollVisibleColumns}
+                        columnFlexOrder={scrollColumnFlexOrder}
                         indentedCues={indentedCues}
                         overtimeMinutes={overtimeMinutes}
                         startCueId={startCueId}
@@ -17948,7 +18118,7 @@ const RunOfShowPage: React.FC = () => {
       {/* Filter View Modal */}
       {showFilterModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg max-w-md w-full max-h-[80vh] flex flex-col">
+          <div className="bg-slate-800 rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b border-slate-600">
               <h2 className="text-lg font-bold text-white">Filter Columns</h2>
@@ -17963,161 +18133,128 @@ const RunOfShowPage: React.FC = () => {
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-4">
               <div className="space-y-3">
-                <p className="text-slate-300 text-sm mb-4">Select which columns to display in the schedule:</p>
-                
+                <p className="text-slate-300 text-sm">
+                  Toggle columns and drag (or use ↑↓) to reorder scrollable columns. # and CUE stay fixed on the left.
+                </p>
+
                 <div className="space-y-2">
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.start}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, start: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Start Time</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.programType}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, programType: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Program Type</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.duration}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, duration: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Duration</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.segmentName}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, segmentName: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Segment Name</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.shotType}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, shotType: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Shot Type</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.pptQA}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, pptQA: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">PPT/Q&A</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.recording}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, recording: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Recording</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.notes}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, notes: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Notes</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.assets}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, assets: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Assets</span>
-                  </label>
-                  
-                  {/* Participants section hidden */}
-                  {/* <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.participants}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, participants: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Participants</span>
-                  </label> */}
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.speakers}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, speakers: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Speakers</span>
-                  </label>
-                  
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.public}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, public: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Public</span>
-                  </label>
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.timer}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, timer: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Counter</span>
-                  </label>
-                  
-                  {customColumns.map((column, index) => (
-                    <label key={column.id} className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={visibleCustomColumns[column.id] !== false}
-                        onChange={(e) => setVisibleCustomColumns(prev => ({ ...prev, [column.id]: e.target.checked }))}
-                        className="rounded"
-                      />
-                      <span className="text-white">
-                        {column.name}
-                        <span className="text-slate-400 text-xs ml-2">(Custom)</span>
-                      </span>
-                    </label>
-                  ))}
+                  {columnOrder.map((key, index) => {
+                    const customId = parseCustomColumnOrderKey(key);
+                    const customCol = customId
+                      ? customColumns.find((c) => c.id === customId)
+                      : null;
+                    if (customId && !customCol) return null;
+
+                    const label = customCol
+                      ? customCol.name
+                      : BUILTIN_COLUMN_LABELS[key as keyof typeof BUILTIN_COLUMN_LABELS] || key;
+                    const checked = customId
+                      ? visibleCustomColumns[customId] !== false
+                      : Boolean((visibleColumns as Record<string, boolean>)[key]);
+
+                    return (
+                      <div key={key} className="space-y-1">
+                        <div
+                          draggable
+                          onDragStart={() => setColumnDragKey(key)}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={() => {
+                            if (!columnDragKey || columnDragKey === key) return;
+                            const from = columnOrder.indexOf(columnDragKey);
+                            const to = columnOrder.indexOf(key);
+                            if (from >= 0 && to >= 0) moveScrollColumn(from, to);
+                            setColumnDragKey(null);
+                          }}
+                          onDragEnd={() => setColumnDragKey(null)}
+                          className={`flex items-center gap-2 rounded border border-slate-600/80 bg-slate-700/40 px-2 py-1.5 ${
+                            columnDragKey === key ? 'opacity-60 ring-1 ring-blue-400' : ''
+                          }`}
+                        >
+                          <span
+                            className="cursor-grab text-slate-500 select-none px-1"
+                            title="Drag to reorder"
+                            aria-hidden
+                          >
+                            ⋮⋮
+                          </span>
+                          <label className="flex flex-1 items-center gap-3 min-w-0 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                if (customId) {
+                                  setVisibleCustomColumns((prev) => ({
+                                    ...prev,
+                                    [customId]: e.target.checked,
+                                  }));
+                                } else {
+                                  setVisibleColumns((prev) => ({
+                                    ...prev,
+                                    [key]: e.target.checked,
+                                  }));
+                                }
+                              }}
+                              className="rounded"
+                            />
+                            <span className="text-white truncate">
+                              {label}
+                              {customCol && (
+                                <span className="text-slate-400 text-xs ml-2">(Custom)</span>
+                              )}
+                            </span>
+                          </label>
+                          <div className="flex items-center gap-0.5 flex-shrink-0">
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={() => moveScrollColumn(index, index - 1)}
+                              className="px-1.5 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 text-sm"
+                              title="Move up"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === columnOrder.length - 1}
+                              onClick={() => moveScrollColumn(index, index + 1)}
+                              className="px-1.5 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 text-sm"
+                              title="Move down"
+                            >
+                              ↓
+                            </button>
+                          </div>
+                        </div>
+
+                        {key === 'start' && (
+                          <label
+                            className={`flex items-start gap-3 ml-10 ${!visibleColumns.start ? 'opacity-50' : ''}`}
+                            title="Keep Start fixed next to CUE when scrolling horizontally"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={stickyStartColumn}
+                              disabled={!visibleColumns.start}
+                              onChange={(e) => setStickyStartColumn(e.target.checked)}
+                              className="rounded mt-0.5"
+                            />
+                            <span className="text-slate-200 text-sm">
+                              Pin Start next to CUE
+                              <span className="block text-xs text-slate-400 font-normal">
+                                Stays fixed on the left while other columns scroll
+                              </span>
+                            </span>
+                          </label>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
             
             {/* Modal Footer */}
             <div className="p-4 border-t border-slate-600">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => {
                     setVisibleColumns({
@@ -18177,8 +18314,16 @@ const RunOfShowPage: React.FC = () => {
                   Hide All
                 </button>
                 <button
+                  type="button"
+                  onClick={resetScrollColumnOrder}
+                  className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded transition-colors text-sm"
+                  title="Restore default left-to-right column order"
+                >
+                  Reset Order
+                </button>
+                <button
                   onClick={() => setShowFilterModal(false)}
-                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded transition-colors text-sm"
+                  className="flex-1 min-w-[7rem] px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded transition-colors text-sm"
                 >
                   Apply Filters
                 </button>

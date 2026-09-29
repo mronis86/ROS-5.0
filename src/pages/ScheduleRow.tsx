@@ -8,6 +8,7 @@ import {
 } from '../lib/audioCallouts';
 import { shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import StageDirectionModal from '../components/StageDirectionModal';
+import StartTimeColumnCell from '../components/StartTimeColumnCell';
 
 export interface ScheduleRowProps {
   item: any;
@@ -62,7 +63,7 @@ export interface ScheduleRowProps {
   customColumns?: any[];
   visibleCustomColumns?: Record<string, boolean>;
   customColumnWidths?: Record<string, number>;
-  /** CSS flex `order` for scroll columns (guest/creative reorder). */
+  /** CSS flex `order` values for scroll columns (from Filter Columns reorder). */
   columnFlexOrder?: Record<string, number>;
   getRowHeight?: Function;
   asFragment?: boolean;
@@ -317,92 +318,24 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           </div>
         </>
       )}
-      {/* Start time, program type, and row details, mirroring RunOfShowPage*/}
-      {visibleColumns.start && (() => {
-        const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
-        const displayedStart = calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : null;
-        const isIndentedRow = Boolean(indentedCues[item.id] || item.isIndented);
-        // Prefer frozen Enter In-Show times for WAS so +/- minutes don't move the "was" line.
-        const wasStart =
-          lockedStartTime && String(lockedStartTime).trim()
-            ? String(lockedStartTime).trim()
-            : scheduledStart;
-        const startTimeRolled =
-          !isIndentedRow &&
-          showMode === 'in-show' &&
-          wasStart &&
-          displayedStart &&
-          wasStart !== displayedStart;
-        return (
-        <div
-          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-          style={{ width: columnWidths.start, order: flexOrder('start') }}
-        >
-          <div className="flex flex-col items-center gap-1">
-            <span className="text-white font-mono text-base font-bold">
-              {calculateStartTime && calculateStartTimeWithOvertime
-                ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)) || (isIndentedRow ? '↘' : '')
-                : isIndentedRow
-                  ? '↘'
-                  : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1))}
-            </span>
-            {startTimeRolled && wasStart && (
-              <span className="text-xs text-slate-400">
-                was {wasStart}
-              </span>
-            )}
-            {!isIndentedRow && showMode !== 'rehearsal' && (
-              (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) ||
-               (calculateStartTime && calculateStartTimeWithOvertime &&
-                String(calculateStartTime(index)) !== String(calculateStartTimeWithOvertime(index))))
-            ) && (
-              <span className={`text-sm font-bold px-2 py-1 rounded text-center leading-tight ${(() => {
-                if (item.id === startCueId) {
-                  return showStartOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
-                }
-                // Use precomputed cumulative overtime instead of calculating inline
-                const totalOvertime = cumulativeOvertime;
-                return totalOvertime > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30';
-              })()}`}
-                title="Time adjusted due to overtime"
-              >
-                {(() => {
-                  if (item.id === startCueId) {
-                    const showStartOT = showStartOvertime || 0;
-                    if (showStartOT > 0) {
-                      const hours = Math.floor(showStartOT / 60);
-                      const minutes = showStartOT % 60;
-                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                      return `+${timeDisplay} late`;
-                    } else if (showStartOT < 0) {
-                      const hours = Math.floor(Math.abs(showStartOT) / 60);
-                      const minutes = Math.abs(showStartOT) % 60;
-                      const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                      return `-${timeDisplay} early`;
-                    }
-                    return 'On time';
-                  }
-                  // Use precomputed cumulative overtime instead of calculating inline
-                  const totalOvertime = cumulativeOvertime;
-                  if (totalOvertime > 0) {
-                    const hours = Math.floor(totalOvertime / 60);
-                    const minutes = totalOvertime % 60;
-                    const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                    return `+${timeDisplay}`;
-                  } else if (totalOvertime < 0) {
-                    const hours = Math.floor(Math.abs(totalOvertime) / 60);
-                    const minutes = Math.abs(totalOvertime) % 60;
-                    const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                    return `-${timeDisplay}`;
-                  }
-                  return '0m';
-                })()}
-              </span>
-            )}
-          </div>
-        </div>
-        );
-      })()}
+      {/* Start time — skipped when pinned beside CUE (stickyStartColumn) */}
+      {visibleColumns.start && (
+        <StartTimeColumnCell
+          itemId={item.id}
+          index={index}
+          width={columnWidths.start}
+          isIndented={Boolean(indentedCues[item.id] || item.isIndented)}
+          showMode={showMode}
+          overtimeMinutes={overtimeMinutes}
+          startCueId={startCueId}
+          showStartOvertime={showStartOvertime}
+          cumulativeOvertime={cumulativeOvertime}
+          lockedStartTime={lockedStartTime}
+          calculateStartTime={calculateStartTime}
+          calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+          style={{ order: flexOrder('start') }}
+        />
+      )}
       {/* Program type column (moved directly after Start) */}
       {visibleColumns.programType && (
         <div
