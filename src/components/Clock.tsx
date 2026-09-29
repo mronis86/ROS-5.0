@@ -12,6 +12,8 @@ import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import {
+  getLiveIndentedSubTimer,
+  hasDualAltLayout,
   isOperatorAltTimer,
   mapOperatorCountdownRow,
   resolveDisplaySecondaryTimer,
@@ -944,21 +946,25 @@ const Clock: React.FC<ClockProps> = ({
   const elapsedForDisplay = getElapsedTime();
   const isOvertimeCountUp = useCountUp && timerProgress.total > 0 && elapsedForDisplay > timerProgress.total;
   const overtimeAmount = isOvertimeCountUp ? elapsedForDisplay - timerProgress.total : 0;
-  // Always merge Op Timer into the ALT slot (not only when supabaseOnly)
-  const secondarySubTimer = enrichSubCueTimer(
-    resolveDisplaySecondaryTimer({
-      secondaryTimer:
-        (supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer) ||
-        hybridTimerData?.secondaryTimer,
-      operatorCountdown: hybridTimerData?.operatorCountdown,
-    })
-  );
+  const hybridForAlt = {
+    secondaryTimer:
+      (supabaseOnly ? hybridTimerData?.secondaryTimer : secondaryTimer) ||
+      hybridTimerData?.secondaryTimer,
+    operatorCountdown: hybridTimerData?.operatorCountdown,
+  };
+  // Large ALT: Op wins; indented alone uses this slot too
+  const secondarySubTimer = enrichSubCueTimer(resolveDisplaySecondaryTimer(hybridForAlt));
+  const indentedSubTimer = enrichSubCueTimer(getLiveIndentedSubTimer(hybridForAlt));
+  // Op + indented both live → main+indented go small (like messages); Op stays large center
+  const dualAltLayout = hasDualAltLayout(hybridForAlt);
   const isOpAlt = isOperatorAltTimer(secondarySubTimer);
   const secondaryDisplayColor = isOpAlt
     ? 'text-violet-400'
     : secondarySubTimer && isResolumeSynced(secondarySubTimer)
       ? 'text-yellow-300'
       : 'text-orange-400';
+  const indentedDisplayColor =
+    indentedSubTimer && isResolumeSynced(indentedSubTimer) ? 'text-yellow-300' : 'text-orange-400';
   const secondaryResolumeLabel =
     !isOpAlt && secondarySubTimer
       ? isResolumeSynced(secondarySubTimer)
@@ -989,7 +995,7 @@ const Clock: React.FC<ClockProps> = ({
 
   const secondaryRemainingSigned = (timer: any): number => {
     if (!timer) return 0;
-    if (timer.is_running && timer.is_active) {
+    if (timer.is_running && (timer.is_active || isOperatorAltTimer(timer))) {
       const startedAt = new Date(timer.started_at || timer.created_at);
       const elapsed = Math.floor((Date.now() + clockOffset - startedAt.getTime()) / 1000);
       const totalDuration = timer.duration_seconds || timer.duration || 0;
@@ -1009,10 +1015,14 @@ const Clock: React.FC<ClockProps> = ({
     teleprompterClockFeed?.enabled && teleprompterClockFeed.scriptText
   );
   const stageFeedActive = cueClockActive || teleprompterClockActive;
-  /** Push main timers to the bottom when a stage message OR cue/teleprompter feed is up */
+  /** Message / cue-card crowding (not Op+indented dual — that keeps Op large) */
   const layoutCrowded = !!activeStageMessage || stageFeedActive;
+  /** Main (+ indented) go small: message crowding OR Op+indented dual */
+  const layoutSmallMain = layoutCrowded || dualAltLayout;
   const crowdedTimerBottom = stageFeedActive ? 'bottom-12' : 'bottom-20';
   const crowdedBarBottom = stageFeedActive ? 'bottom-5' : 'bottom-8';
+  const hasLargeAlt = secondaryStillVisible(secondarySubTimer);
+  const hasIndentedSmall = dualAltLayout && secondaryStillVisible(indentedSubTimer);
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
@@ -1287,22 +1297,15 @@ const Clock: React.FC<ClockProps> = ({
         </div>
       )}
 
-      {/* Secondary Timer Display - Only when NO message is active */}
+      {/* Secondary Timer Display - Large ALT (Op preferred, else indented). Hidden only for stage messages. */}
       {(() => {
-        // Indented sub-cue OR operator countdown (same ALT slot)
         if (supabaseOnly) {
-          const currentSecondaryTimer = secondarySubTimer;
-          if (!currentSecondaryTimer) return false;
-          
-          // Check if there's a message active - if so, don't show this timer (use the new layout instead)
-          const hasMessage = layoutCrowded;
-          if (hasMessage) return false;
-          
-          return secondaryStillVisible(currentSecondaryTimer);
-        } else {
-          // Clock always runs in Supabase-only mode
-          return false;
+          if (!hasLargeAlt) return false;
+          // Stage message / cue-card feed — use compact bottom layout instead
+          if (layoutCrowded) return false;
+          return true;
         }
+        return false;
       })() && (
         (() => {
           const hasMessage = supabaseOnly
@@ -1388,19 +1391,11 @@ const Clock: React.FC<ClockProps> = ({
         })()
       )}
 
-      {/* Main Timer Layout - When there's both a secondary timer AND a message (small layout) */}
+      {/* Main Timer Layout - Small when message OR Op+indented dual (or large ALT alone pushes main down elsewhere) */}
       {(() => {
-        let hasSecondaryTimer = false;
-        
-        if (supabaseOnly) {
-          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
-        } else {
-          hasSecondaryTimer = !!secondaryTimer;
-        }
-        
         const hasMessage = layoutCrowded;
-        
-        return hasSecondaryTimer && hasMessage;
+        // Message crowding OR Op+indented dual: main goes small left
+        return (hasLargeAlt || hasIndentedSmall) && layoutSmallMain && (hasMessage || dualAltLayout);
       })() && (
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-[18%] -translate-x-1/2 min-w-[11rem]`}>
           {/* Overtime Indicator - Above main timer when both message and secondary timer are active */}
@@ -1435,25 +1430,22 @@ const Clock: React.FC<ClockProps> = ({
         </div>
       )}
 
-      {/* Sub-cue Timer Display - When there's both a secondary timer AND a message (small layout) */}
+      {/* Small indented / secondary — right side when message OR when Op is large + indented also live */}
       {(() => {
-        let hasSecondaryTimer = false;
-        
-        if (supabaseOnly) {
-          hasSecondaryTimer = secondaryStillVisible(secondarySubTimer);
-        } else {
-          hasSecondaryTimer = !!secondaryTimer;
+        if (layoutCrowded && hasLargeAlt && !dualAltLayout) {
+          // Message mode with a single ALT (op or indented) — show it small right
+          return true;
         }
-        
-        const hasMessage = layoutCrowded;
-        
-        return hasSecondaryTimer && hasMessage;
+        // Op large center + indented small right
+        return hasIndentedSmall && !layoutCrowded;
       })() && (
-        <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} right-[18%] translate-x-1/2 min-w-[11rem] ${secondaryDisplayColor}`}>
+        <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} right-[18%] translate-x-1/2 min-w-[11rem] ${
+          dualAltLayout ? indentedDisplayColor : secondaryDisplayColor
+        }`}>
           {/* Small secondary: ALT + CUE only — same scale as small main */}
           <div className="mb-1 text-lg font-bold leading-none">
             <AltTimerBadge
-              timer={secondarySubTimer}
+              timer={dualAltLayout ? indentedSubTimer : secondarySubTimer}
               scheduleItems={scheduleItems}
               cueOnly
             />
@@ -1463,7 +1455,8 @@ const Clock: React.FC<ClockProps> = ({
           <div className="font-mono text-3xl md:text-4xl font-bold leading-none">
             {(() => {
               const _ = secondaryTimerUpdate;
-              const remaining = secondaryRemainingSigned(secondarySubTimer);
+              const t = dualAltLayout ? indentedSubTimer : secondarySubTimer;
+              const remaining = secondaryRemainingSigned(t);
               const absRemaining = Math.abs(remaining);
               const hours = Math.floor(absRemaining / 3600);
               const minutes = Math.floor((absRemaining % 3600) / 60);
@@ -1483,7 +1476,7 @@ const Clock: React.FC<ClockProps> = ({
               className="h-full transition-all duration-1000 absolute top-0 right-0"
               style={{
                 width: `${(() => {
-                  const t = secondarySubTimer;
+                  const t = dualAltLayout ? indentedSubTimer : secondarySubTimer;
                   if (!t) return 0;
                   const _ = secondaryTimerUpdate;
                   const total = t.duration_seconds || t.duration || 0;
@@ -1491,11 +1484,15 @@ const Clock: React.FC<ClockProps> = ({
                   const elapsed = calculateElapsed(t.started_at || t.created_at);
                   return Math.min(100, Math.max(0, ((total - elapsed) / total) * 100));
                 })()}%`,
-                backgroundColor: isOpAlt
-                  ? '#a78bfa'
-                  : isResolumeSynced(secondarySubTimer)
+                backgroundColor: dualAltLayout
+                  ? isResolumeSynced(indentedSubTimer)
                     ? '#fde047'
-                    : '#fb923c',
+                    : '#fb923c'
+                  : isOpAlt
+                    ? '#a78bfa'
+                    : isResolumeSynced(secondarySubTimer)
+                      ? '#fde047'
+                      : '#fb923c',
               }}
             />
           </div>
@@ -1713,7 +1710,7 @@ const Clock: React.FC<ClockProps> = ({
         
         const hasMessage = layoutCrowded;
         
-        return hasSecondaryTimer && !hasMessage;
+        return hasSecondaryTimer && !hasMessage && !dualAltLayout;
       })() && (
         <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
           {useTimeOfDay ? (
@@ -1805,7 +1802,7 @@ const Clock: React.FC<ClockProps> = ({
         
         const hasMessage = layoutCrowded;
         
-        return hasSecondaryTimer && !hasMessage;
+        return hasSecondaryTimer && !hasMessage && !dualAltLayout;
       })() && (
         <div className="w-full transition-all duration-500 ease-in-out absolute bottom-8 left-1/2 transform -translate-x-1/2 max-w-2xl">
           <div className="w-full bg-slate-700 rounded-full overflow-hidden border-3 border-slate-600 relative h-2">

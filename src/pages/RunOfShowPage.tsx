@@ -69,7 +69,7 @@ import ImportCSVModal from '../components/ImportCSVModal';
 import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
 import OperatorCountdownModal from '../components/OperatorCountdownModal';
-import { mapOperatorCountdownRow } from '../lib/operatorCountdown';
+import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
 import AssetRetentionNotice, { formatCueFileExpiry, formatCueFileSize } from '../components/AssetRetentionNotice';
@@ -1300,6 +1300,7 @@ const RunOfShowPage: React.FC = () => {
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [showOperatorCountdownModal, setShowOperatorCountdownModal] = useState(false);
   const [operatorCountdownLive, setOperatorCountdownLive] = useState(false);
+  const [, setOperatorCountdownTick] = useState(0);
   const [messageText, setMessageText] = useState('');
   const [messageFlashing, setMessageFlashing] = useState(false);
   const [messageEnabled, setMessageEnabled] = useState(false);
@@ -3713,11 +3714,23 @@ const RunOfShowPage: React.FC = () => {
       const row = await DatabaseService.getOperatorCountdown(event.id);
       const mapped = mapOperatorCountdownRow(row);
       setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }));
-      setOperatorCountdownLive(!!(row?.is_active && row?.is_running));
+      setOperatorCountdownLive(!!mapped?.is_running);
     } catch (error) {
       console.warn('⚠️ Error loading operator countdown:', error);
     }
   };
+
+  // Keep Op Timer header countdown ticking like indented sub-timers
+  useEffect(() => {
+    const op = hybridTimerData?.operatorCountdown;
+    if (!op?.is_active || !op?.is_running) return;
+    const id = window.setInterval(() => setOperatorCountdownTick((n) => n + 1), 250);
+    return () => window.clearInterval(id);
+  }, [
+    hybridTimerData?.operatorCountdown?.is_active,
+    hybridTimerData?.operatorCountdown?.is_running,
+    hybridTimerData?.operatorCountdown?.started_at,
+  ]);
 
   // Load active sub-cue timer from API
   const loadActiveSubCueTimerFromAPI = async () => {
@@ -8092,7 +8105,7 @@ const RunOfShowPage: React.FC = () => {
         if (data && data.event_id === event?.id) {
           const mapped = mapOperatorCountdownRow(data);
           setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }));
-          setOperatorCountdownLive(!!(data.is_active && data.is_running));
+          setOperatorCountdownLive(!!mapped?.is_running);
         }
       },
       onOperatorCountdownCleared: (data: any) => {
@@ -13884,6 +13897,14 @@ const RunOfShowPage: React.FC = () => {
                             <div className={`text-lg font-bold whitespace-nowrap ${colorClass}`}>{line}</div>
                           );
                         })()}
+                      </div>
+                    )}
+                  {hybridTimerData?.operatorCountdown?.is_active &&
+                    hybridTimerData?.operatorCountdown?.is_running && (
+                      <div className="mt-0.5 text-lg font-bold whitespace-nowrap text-violet-400">
+                        {`ALT · ${hybridTimerData.operatorCountdown.cue_display || 'Operator Timer'} - ${formatOperatorCountdownTime(
+                          operatorCountdownRemaining(hybridTimerData.operatorCountdown, clockOffset)
+                        )}`}
                       </div>
                     )}
                   </div>

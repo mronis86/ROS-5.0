@@ -84,25 +84,40 @@ export function isOperatorAltTimer(timer: any): boolean {
   return !!(timer && (timer.source === 'operator' || timer.timer_id === 'OPERATOR'));
 }
 
-function isLiveSubCue(sub: any): boolean {
-  if (!sub || isOperatorAltTimer(sub)) return false;
-  return sub.is_running === true || sub.timer_state === 'running';
+/** Live indented sub-cue only (never the operator ALT). */
+export function getLiveIndentedSubTimer(hybrid: {
+  secondaryTimer?: any;
+} | null | undefined): any {
+  const sub = hybrid?.secondaryTimer;
+  if (!sub || isOperatorAltTimer(sub)) return null;
+  if (sub.is_running === true || sub.timer_state === 'running') return sub;
+  return null;
+}
+
+/** Live operator ALT timer shaped for Clock / Full Screen. */
+export function getLiveOpAltTimer(hybrid: {
+  operatorCountdown?: OperatorCountdownDisplay | null;
+} | null | undefined): any {
+  return operatorAsSecondaryTimer(hybrid?.operatorCountdown);
 }
 
 /**
- * Prefer a live indented sub-cue; otherwise show the operator countdown in the
- * same secondary / ALT timer slot. Op Timer state lives in operatorCountdown —
- * never in secondaryTimer lifecycle (cue jumps must not clear it).
+ * Large ALT slot: Op Timer wins when live; otherwise the indented sub-cue.
+ * When both are live, Op is large-center and indented goes small (message-style).
  */
 export function resolveDisplaySecondaryTimer(hybrid: {
   secondaryTimer?: any;
   operatorCountdown?: OperatorCountdownDisplay | null;
 } | null | undefined): any {
-  const sub = hybrid?.secondaryTimer;
-  if (isLiveSubCue(sub)) {
-    return sub;
-  }
-  return operatorAsSecondaryTimer(hybrid?.operatorCountdown);
+  return getLiveOpAltTimer(hybrid) || getLiveIndentedSubTimer(hybrid);
+}
+
+/** Both Op + indented running — Clock/FS use dual-small layout for main+indented. */
+export function hasDualAltLayout(hybrid: {
+  secondaryTimer?: any;
+  operatorCountdown?: OperatorCountdownDisplay | null;
+} | null | undefined): boolean {
+  return !!(getLiveOpAltTimer(hybrid) && getLiveIndentedSubTimer(hybrid));
 }
 
 export function operatorCountdownRemaining(
