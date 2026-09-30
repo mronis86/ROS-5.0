@@ -27,6 +27,11 @@ interface ScheduleItem {
   isIndented?: boolean;
 }
 
+interface CustomColumn {
+  id: string;
+  name: string;
+}
+
 const ReportsPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -129,6 +134,9 @@ const ReportsPage: React.FC = () => {
   const [reportType, setReportType] = useState('showfile');
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('landscape');
+  const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
+  const [customIncludeNotes, setCustomIncludeNotes] = useState(false);
+  const [customSelectedColumnIds, setCustomSelectedColumnIds] = useState<string[]>([]);
 
   // Number of report days: use event.numberOfDays, or max day in schedule, or settings from API (whichever is highest)
   const scheduleMaxDay = schedule.length ? Math.max(...schedule.map(s => s.day || 1)) : 0;
@@ -162,6 +170,12 @@ const ReportsPage: React.FC = () => {
   useEffect(() => {
     if (selectedDay > reportDaysCount) setSelectedDay(reportDaysCount);
   }, [reportDaysCount, selectedDay]);
+
+  // Drop custom-column selections that no longer exist on the event
+  useEffect(() => {
+    const valid = new Set(customColumns.map((c) => c.id));
+    setCustomSelectedColumnIds((prev) => prev.filter((id) => valid.has(id)));
+  }, [customColumns]);
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshSuccessAt, setRefreshSuccessAt] = useState<number | null>(null);
@@ -229,6 +243,14 @@ const ReportsPage: React.FC = () => {
           } else {
             const fromStorage = loadScheduleFromStorage();
             if (fromStorage.length > 0) setSchedule(fromStorage);
+          }
+
+          if (Array.isArray(data?.custom_columns)) {
+            setCustomColumns(
+              data.custom_columns
+                .map((c: any) => ({ id: String(c.id), name: String(c.name || c.id) }))
+                .filter((c: CustomColumn) => c.id)
+            );
           }
 
           const apiDayStarts =
@@ -2049,6 +2071,227 @@ const ReportsPage: React.FC = () => {
       `;
       
       return content;
+    } else if (reportType === 'custom') {
+      const selectedCols = customColumns.filter((c) => customSelectedColumnIds.includes(c.id));
+      // ROS stores custom cell values under column.name (not id)
+      const customFieldValue = (item: ScheduleItem, col: CustomColumn): string => {
+        const fields = item.customFields || {};
+        const byName = fields[col.name];
+        if (byName != null && String(byName).trim() !== '') return String(byName);
+        const byId = fields[col.id];
+        if (byId != null && String(byId).trim() !== '') return String(byId);
+        return '';
+      };
+
+      const notesPct = customIncludeNotes ? 12 : 0;
+      const segmentPct = 14;
+      const customCount = selectedCols.length;
+      const reservedPct = 7 + 12 + segmentPct + 7 + notesPct; // cue + program + segment + duration + notes
+      const customEachPct =
+        customCount > 0 ? Math.max(8, Math.floor((100 - reservedPct) / customCount)) : 0;
+
+      const headers: { label: string; className: string; widthPct?: number }[] = [
+        { label: 'CUE', className: 'col-cue', widthPct: 7 },
+        { label: 'PROGRAM TYPE', className: 'col-program', widthPct: 12 },
+        { label: 'SEGMENT NAME', className: 'col-segment', widthPct: segmentPct },
+        { label: 'DURATION', className: 'col-duration', widthPct: 7 },
+        ...(customIncludeNotes
+          ? [{ label: 'NOTES', className: 'col-notes', widthPct: notesPct }]
+          : []),
+        ...selectedCols.map((c) => ({
+          label: c.name.toUpperCase(),
+          className: 'col-custom',
+          widthPct: customEachPct,
+        })),
+      ];
+
+      let content = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>ROS Custom Report - ${event?.name || 'Event'}</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 20px;
+              font-size: 14px;
+              color: #111;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 16px;
+            }
+            .header h1 {
+              font-size: 24px;
+              margin: 0;
+            }
+            .header h2 {
+              font-size: 18px;
+              margin: 5px 0 0 0;
+              color: #666;
+            }
+            .event-info {
+              background: #f5f5f5;
+              padding: 15px;
+              border-radius: 5px;
+              margin-bottom: 12px;
+              font-size: 12px;
+              text-align: center;
+            }
+            .cue-chip {
+              display: inline-block;
+              padding: 2px 6px;
+              border-radius: 4px;
+              font-weight: bold;
+              font-size: 11px;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            table.custom-report {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 16px;
+              table-layout: fixed;
+            }
+            table.custom-report th,
+            table.custom-report td {
+              border: 1px solid #ddd;
+              padding: 6px 8px;
+              text-align: left;
+              font-size: 12px;
+              vertical-align: top;
+              color: #111;
+              overflow-wrap: anywhere;
+              word-break: break-word;
+              white-space: pre-wrap;
+            }
+            table.custom-report th {
+              background-color: #f2f2f2;
+              font-weight: 600;
+              white-space: normal;
+            }
+            .col-cue { width: 7%; }
+            .col-program { width: 12%; }
+            .col-segment { width: 14%; }
+            .col-duration { width: 7%; white-space: nowrap; }
+            .col-notes {
+              width: 12%;
+              font-size: 11px;
+            }
+            .col-custom {
+              min-width: 4.5rem;
+            }
+            tr {
+              -webkit-print-color-adjust: exact !important;
+              color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            tr.row-delay td:first-child {
+              box-shadow: inset 5px 0 0 #B45309;
+            }
+            tr.row-break td:first-child {
+              box-shadow: inset 5px 0 0 #DB2777;
+            }
+            tr.row-break.breakout td:first-child {
+              box-shadow: inset 5px 0 0 #0D9488;
+            }
+            ${reportNotesListCss}
+            .footer {
+              margin-top: 30px;
+              text-align: center;
+              color: #666;
+              font-size: 12px;
+            }
+            @media print {
+              body { margin: 0; }
+              .no-print { display: none; }
+              @page {
+                size: A4 ${orientation};
+                margin: 0.2in;
+              }
+              tr {
+                -webkit-print-color-adjust: exact !important;
+                color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>RUN OF SHOW REPORT - CUSTOM</h1>
+            <h2>${escapeHtml(event?.name || 'Event')}${(event?.numberOfDays && event.numberOfDays > 1) ? ` - Day ${selectedDay}` : ''}</h2>
+          </div>
+
+          <div class="event-info">
+            <p><strong>Date:</strong> ${escapeHtml(displayDate)} |
+               <strong>Location:</strong> ${escapeHtml(event?.location || 'Not specified')} |
+               <strong>Start Time:</strong> ${escapeHtml(formatMasterStartTime(reportDayStartTime))} |
+               <strong>Day:</strong> ${selectedDay} |
+               <strong>Items:</strong> ${filteredSchedule.length}</p>
+          </div>
+
+          <table class="custom-report">
+            <colgroup>
+              ${headers
+                .map((h) =>
+                  h.widthPct != null
+                    ? `<col class="${h.className}" style="width: ${h.widthPct}%" />`
+                    : `<col class="${h.className}" />`
+                )
+                .join('')}
+            </colgroup>
+            <thead>
+              <tr>
+                ${headers
+                  .map((h) => `<th class="${h.className}">${escapeHtml(h.label)}</th>`)
+                  .join('')}
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      filteredSchedule.forEach((item) => {
+        const duration = `${String(item.durationHours || 0).padStart(2, '0')}:${String(item.durationMinutes || 0).padStart(2, '0')}:${String(item.durationSeconds || 0).padStart(2, '0')}`;
+        const cueDisplay = formatCueDisplay(item.customFields?.cue);
+        const cueBadge = renderCueChip(item.programType || '', cueDisplay);
+        const rowClass = getCondensedRowClass(item.programType || '');
+        const breakoutClass = item.programType === 'Breakout Session' ? ' breakout' : '';
+        const programTypeLabel = String(item.programType || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') || '—';
+        const customCells = selectedCols
+          .map((col) => {
+            const raw = customFieldValue(item, col);
+            return `<td class="col-custom">${escapeHtml(raw)}</td>`;
+          })
+          .join('');
+        const notesCell = customIncludeNotes
+          ? `<td class="col-notes report-notes-cell">${notesHtmlForReport(item.notes)}</td>`
+          : '';
+
+        content += `
+          <tr class="${rowClass}${breakoutClass}" style="background-color: ${getRowBackgroundColor(item.programType)}; color: #111;">
+            <td class="col-cue">${cueBadge}</td>
+            <td class="col-program">${programTypeLabel}</td>
+            <td class="col-segment">${escapeHtml(item.segmentName || 'Untitled Segment')}</td>
+            <td class="col-duration">${duration}</td>
+            ${notesCell}
+            ${customCells}
+          </tr>
+        `;
+      });
+
+      content += `
+            </tbody>
+          </table>
+
+          <div class="footer">
+            <p>Generated: ${new Date().toLocaleString()} | Run of Show Application</p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      return content;
     } else {
       // Generate condensed table format
       let content = `
@@ -2347,7 +2590,15 @@ const ReportsPage: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `ros-${reportType === 'showfile' ? 'show-file' : reportType === 'speakers' ? 'speakers' : 'condensed'}${(event?.numberOfDays && event.numberOfDays > 1) ? `-day-${selectedDay}` : ''}-${event?.name?.replace(/\s+/g, '-') || 'event'}-${new Date().toISOString().split('T')[0]}.html`;
+    const reportSlug =
+      reportType === 'showfile'
+        ? 'show-file'
+        : reportType === 'speakers'
+          ? 'speakers'
+          : reportType === 'custom'
+            ? 'custom'
+            : 'condensed';
+    link.download = `ros-${reportSlug}${(event?.numberOfDays && event.numberOfDays > 1) ? `-day-${selectedDay}` : ''}-${event?.name?.replace(/\s+/g, '-') || 'event'}-${new Date().toISOString().split('T')[0]}.html`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2404,8 +2655,59 @@ const ReportsPage: React.FC = () => {
                       <option value="showfile">ROS Show</option>
                       <option value="speakers">ROS Speakers</option>
                       <option value="condensed">ROS CONDENSED</option>
+                      <option value="custom">ROS Custom</option>
                     </select>
                   </div>
+
+                  {reportType === 'custom' && (
+                    <div className="rounded-lg border border-slate-500 bg-slate-600/40 p-4 space-y-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-200 mb-1">Always included</p>
+                        <p className="text-xs text-slate-400">Cue · Program Type · Segment Name · Duration</p>
+                      </div>
+                      <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={customIncludeNotes}
+                          onChange={(e) => setCustomIncludeNotes(e.target.checked)}
+                          className="rounded border-slate-400 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                        />
+                        Include Notes
+                      </label>
+                      <div>
+                        <p className="text-sm font-medium text-slate-200 mb-2">Custom columns</p>
+                        {customColumns.length === 0 ? (
+                          <p className="text-xs text-slate-400">No custom columns on this event.</p>
+                        ) : (
+                          <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                            {customColumns.map((col) => {
+                              const checked = customSelectedColumnIds.includes(col.id);
+                              return (
+                                <label
+                                  key={col.id}
+                                  className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      setCustomSelectedColumnIds((prev) =>
+                                        e.target.checked
+                                          ? [...prev, col.id]
+                                          : prev.filter((id) => id !== col.id)
+                                      );
+                                    }}
+                                    className="rounded border-slate-400 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                                  />
+                                  {col.name}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Print Orientation */}
                   <div>
@@ -2489,6 +2791,7 @@ const ReportsPage: React.FC = () => {
                       <p><span className="text-blue-300 text-base">● ROS Show:</span> Section-based format with speaker photos</p>
                       <p><span className="text-orange-300 text-base">● ROS Speakers:</span> Section-based format with dedicated speaker column</p>
                       <p><span className="text-green-300 text-base">● ROS CONDENSED:</span> Table format with all information</p>
+                      <p><span className="text-cyan-300 text-base">● ROS Custom:</span> Cue, Program Type, Segment, Duration + optional Notes/custom columns</p>
                       <p><span className="text-purple-300 text-base">● Color Coding:</span> Sections colored by program type</p>
                     </div>
                   </div>
@@ -2569,8 +2872,23 @@ const ReportsPage: React.FC = () => {
                 <p><strong>Event:</strong> {event?.name || 'Current Event'}</p>
                 <p><strong>Total Items:</strong> {schedule.length}{(event?.numberOfDays && event.numberOfDays > 1) ? ` | <strong>Day ${selectedDay} Items:</strong> ${schedule.filter(item => (item.day || 1) === selectedDay).length}` : ''}</p>
                 <p><strong>Master Start Time:</strong> {formatMasterStartTime(reportDayStartTime)}</p>
-                <p><strong>Report Type:</strong> {reportType === 'showfile' ? 'ROS Show' : reportType === 'speakers' ? 'ROS Speakers' : 'ROS CONDENSED'}</p>
-                <p><strong>Format:</strong> {reportType === 'showfile' ? 'Section-based with speaker photos' : reportType === 'speakers' ? 'Section-based with dedicated speaker column' : 'Table format'}</p>
+                <p><strong>Report Type:</strong> {reportType === 'showfile' ? 'ROS Show' : reportType === 'speakers' ? 'ROS Speakers' : reportType === 'custom' ? 'ROS Custom' : 'ROS CONDENSED'}</p>
+                <p><strong>Format:</strong> {
+                  reportType === 'showfile'
+                    ? 'Section-based with speaker photos'
+                    : reportType === 'speakers'
+                      ? 'Section-based with dedicated speaker column'
+                      : reportType === 'custom'
+                        ? `Cue · Program Type · Segment · Duration${customIncludeNotes ? ' · Notes' : ''}${
+                            customSelectedColumnIds.length
+                              ? ` · ${customColumns
+                                  .filter((c) => customSelectedColumnIds.includes(c.id))
+                                  .map((c) => c.name)
+                                  .join(' · ')}`
+                              : ''
+                          }`
+                        : 'Table format'
+                }</p>
                 <p><strong>Orientation:</strong> {printOrientation === 'landscape' ? 'Landscape (recommended for tables)' : 'Portrait'}</p>
                 <p><strong>Color Coding:</strong> Sections colored by program type</p>
               </div>

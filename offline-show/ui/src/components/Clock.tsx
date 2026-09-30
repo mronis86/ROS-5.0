@@ -3,7 +3,12 @@ import DriftStatusIndicator from './DriftStatusIndicator';
 import { DatabaseService, TimerMessage } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { startSecondTicker } from '../utils/secondTicker';
-import { isPreshowTimerMessage } from '../lib/preshowCountdown';
+import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdown';
+import {
+  countdownColorForRemaining,
+  useCountdownColorMode,
+} from '../lib/countdownColor';
+import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import TeleprompterClockOverlay, {
@@ -76,6 +81,7 @@ const Clock: React.FC<ClockProps> = ({
   const [lastActiveItemId, setLastActiveItemId] = useState<number | null>(null);
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  const countdownColorMode = useCountdownColorMode();
 
   // Clock component always runs in WebSocket-only mode
 
@@ -748,6 +754,26 @@ const Clock: React.FC<ClockProps> = ({
     return Math.min(100, (progress.elapsed / progress.total) * 100);
   };
 
+  // Active cue timer mode: timeOfDay = swap + progress bar; todOnly = time of day only, no progress bar or time remaining
+  const activeItemId = hybridTimerData?.activeTimer?.item_id;
+  const activeItem = scheduleItems?.length && activeItemId != null
+    ? scheduleItems.find((i: any) => i.id === activeItemId || String(i.id) === String(activeItemId) || i.id == activeItemId)
+    : null;
+  const stageMessageForColor =
+    [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) ?? null;
+  const topPreshowItemId = Array.isArray(scheduleItems)
+    ? findTopPreshowCue(scheduleItems, null, activeItem?.day ?? null)?.id ?? null
+    : null;
+  const timerRunningForRainbow = !!(
+    hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active
+  );
+  const usePreshowRainbow = shouldUsePreshowRainbow(stageMessageForColor, {
+    isRunning: timerRunningForRainbow,
+    programType: activeItem?.programType || null,
+    itemId: activeItemId,
+    topPreshowItemId,
+  });
+
   const getCountUpProgressBarColor = () => {
     const progress = timerProgress;
     const elapsed = progress.elapsed;
@@ -755,13 +781,17 @@ const Clock: React.FC<ClockProps> = ({
     if (supabaseOnly && hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
-        return '#6b7280';
+        return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
     }
-    if (elapsed > progress.total) return '#ef4444'; // Red when overtime
-    if (remaining > 120) return '#10b981';
-    if (remaining > 30) return '#f59e0b';
-    return '#ef4444';
+    if (usePreshowRainbow) {
+      return countdownColorForRemaining(remaining, {
+        mode: countdownColorMode,
+        rainbow: true,
+      });
+    }
+    if (elapsed > progress.total) return countdownColorForRemaining(0, { mode: countdownColorMode });
+    return countdownColorForRemaining(remaining, { mode: countdownColorMode });
   };
 
   // Get remaining percentage for progress bar (same logic as RunOfShowPage)
@@ -790,26 +820,19 @@ const Clock: React.FC<ClockProps> = ({
     if (supabaseOnly && hybridTimerData?.activeTimer) {
       const activeTimer = hybridTimerData.activeTimer;
       if (!activeTimer.is_running || !activeTimer.is_active) {
-        // Timer is not running, show neutral color
-        return '#6b7280'; // Gray
+        return countdownColorForRemaining(0, { isRunning: false, mode: countdownColorMode });
       }
     }
-    
-    // Color based on remaining time
-    if (remainingSeconds > 120) { // More than 2 minutes
-      return '#10b981'; // Green
-    } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
-      return '#f59e0b'; // Yellow
-    } else { // Less than 30 seconds
-      return '#ef4444'; // Red
-    }
-  };
 
-  // Active cue timer mode: timeOfDay = swap + progress bar; todOnly = time of day only, no progress bar or time remaining
-  const activeItemId = hybridTimerData?.activeTimer?.item_id;
-  const activeItem = scheduleItems?.length && activeItemId != null
-    ? scheduleItems.find((i: any) => i.id === activeItemId || String(i.id) === String(activeItemId) || i.id == activeItemId)
-    : null;
+    if (usePreshowRainbow) {
+      return countdownColorForRemaining(remainingSeconds, {
+        mode: countdownColorMode,
+        rainbow: true,
+      });
+    }
+    
+    return countdownColorForRemaining(remainingSeconds, { mode: countdownColorMode });
+  };
   const timerDisplayValue = activeItem && (activeItem.timerDisplay ?? activeItem.timer_display ?? '');
   const normalizedTimer = typeof timerDisplayValue === 'string' ? timerDisplayValue.replace(/_/g, '').toLowerCase() : '';
   const isTodOnly = normalizedTimer === 'todonly';
@@ -865,7 +888,10 @@ const Clock: React.FC<ClockProps> = ({
           {showTimeRemainingAndBar ? (
             <>
               <div className="text-slate-400 text-lg mb-1">TIME REMAINING</div>
-              <div className="text-white" style={{ color: getProgressBarColor() }}>
+              <div
+                className={`text-white ${usePreshowRainbow ? 'ros-rainbow-text' : ''}`}
+                style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
+              >
                 {formatTime(getRemainingTime())}
               </div>
             </>
@@ -1338,8 +1364,8 @@ const Clock: React.FC<ClockProps> = ({
           )}
           
           <div 
-            className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none"
-            style={{ color: getProgressBarColor() }}
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none ${usePreshowRainbow ? "ros-rainbow-text" : ""}`}
+            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
           >
             {formatTime(getRemainingTime())}
           </div>
@@ -1512,8 +1538,8 @@ const Clock: React.FC<ClockProps> = ({
                     return hours === 0 
                       ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
                       : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
-                  })()}`}
-                  style={{ color: getCountUpProgressBarColor() }}
+                  })()} ${usePreshowRainbow ? 'ros-rainbow-text' : ''}`}
+            style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
                 >
                   {formatTime(elapsedForDisplay)}
                 </div>
@@ -1548,8 +1574,8 @@ const Clock: React.FC<ClockProps> = ({
                     return hours === 0 
                       ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
                       : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
-                  })()}`}
-                  style={{ color: getProgressBarColor() }}
+                  })()} ${usePreshowRainbow ? 'ros-rainbow-text' : ''}`}
+            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
                 >
                   {formatTime(getRemainingTime())}
                 </div>
@@ -1618,8 +1644,8 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               )}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getCountUpProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${usePreshowRainbow ? "ros-rainbow-text" : ""}`}
+            style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
               >
                 {formatTime(elapsedForDisplay)}
               </div>
@@ -1632,8 +1658,8 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               )}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${usePreshowRainbow ? "ros-rainbow-text" : ""}`}
+            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
               >
                 {formatTime(getRemainingTime())}
               </div>
@@ -1689,8 +1715,8 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               )}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getCountUpProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${usePreshowRainbow ? "ros-rainbow-text" : ""}`}
+            style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
               >
                 {formatTime(elapsedForDisplay)}
               </div>
@@ -1703,8 +1729,8 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               )}
               <div 
-                className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
-                style={{ color: getProgressBarColor() }}
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${usePreshowRainbow ? "ros-rainbow-text" : ""}`}
+            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
               >
                 {formatTime(getRemainingTime())}
               </div>

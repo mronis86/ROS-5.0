@@ -13,8 +13,9 @@ const App: React.FC = () => (
     <AuthProvider>
       <ActiveViewersProvider>
         <Routes>
-          {/* Full-screen timer display — no header or connectivity bar */}
+          {/* Full-screen timer displays — no header or connectivity bar */}
           <Route path="/timer" element={<OfflineTimerPage />} />
+          <Route path="/fullscreen-timer" element={<OfflineTimerPage />} />
           <Route element={<OfflineAppShell />}>
             <Route path="/" element={<EventListPage />} />
             <Route path="/run-of-show" element={<RunOfShowPage />} />

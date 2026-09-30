@@ -54,10 +54,18 @@ export function getAltTimerParts(
     item_id?: number | string | null;
     segment_name?: string | null;
     segmentName?: string | null;
+    source?: string | null;
+    timer_id?: string | null;
   } | null | undefined,
   scheduleItems?: any[] | null
 ): AltTimerParts {
   if (!timer) return { cueLabel: 'CUE', segment: '' };
+
+  // Operator countdown uses the same ALT badge slot — don't force a "CUE" prefix.
+  if (timer.source === 'operator' || timer.timer_id === 'OPERATOR') {
+    const label = String(timer.cue_display || timer.cue || 'Operator Timer').trim();
+    return { cueLabel: label || 'Operator Timer', segment: '' };
+  }
 
   const cueLabel = normalizeCueLabel(
     String(timer.cue_display || timer.cue || timer.cue_is || ''),

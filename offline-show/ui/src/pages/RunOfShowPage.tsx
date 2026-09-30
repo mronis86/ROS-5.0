@@ -6008,60 +6008,26 @@ const RunOfShowPage: React.FC = () => {
   };
 
 
-  // Open full-screen timer in new window
+  // Open full-screen timer in new window (same Offline Timer Clock display as /timer)
   const openFullScreenTimer = () => {
     setShowMenuDropdown(false);
-    
-    // Close existing timer window if open
+
     if (fullScreenTimerWindow && !fullScreenTimerWindow.closed) {
       fullScreenTimerWindow.close();
     }
 
-    // Get current timer data
-    const activeTimerIds = Object.keys(activeTimers);
-    const currentItem = activeTimerIds.length > 0 
-      ? schedule.find(item => activeTimers[item.id])
-      : schedule.find(item => item.id === activeItemId);
+    const timerUrl = event?.id
+      ? `/fullscreen-timer?eventId=${encodeURIComponent(event.id)}`
+      : '/fullscreen-timer';
 
-    const timerData = {
-      isRunning: activeTimerIds.length > 0,
-      elapsedTime: currentItem && timerProgress[currentItem.id] 
-        ? timerProgress[currentItem.id].elapsed 
-        : 0,
-      totalDuration: currentItem 
-        ? currentItem.durationHours * 3600 + currentItem.durationMinutes * 60 + currentItem.durationSeconds
-        : 0,
-      eventId: event?.id,
-      mainTimer: currentItem ? {
-        cue: currentItem.customFields.cue || 'CUE',
-        segmentName: currentItem.segmentName || ''
-      } : null,
-      secondaryTimer: secondaryTimer ? {
-        itemId: secondaryTimer.itemId,
-        remaining: secondaryTimer.remaining,
-        duration: secondaryTimer.duration,
-        cue: schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue || 'CUE',
-        segmentName: schedule.find(item => item.id === secondaryTimer.itemId)?.segmentName || ''
-      } : null
-    };
-
-    // Open new window
     const timerWindow = window.open(
-      '/fullscreen-timer',
+      timerUrl,
       'fullScreenTimer',
       'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
     );
 
     if (timerWindow) {
       setFullScreenTimerWindow(timerWindow);
-      
-      // Send initial data to the timer window
-      timerWindow.addEventListener('load', () => {
-        timerWindow.postMessage({
-          type: 'TIMER_UPDATE',
-          ...timerData
-        }, '*');
-      });
     }
   };
 

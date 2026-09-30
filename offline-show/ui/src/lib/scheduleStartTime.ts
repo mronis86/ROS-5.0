@@ -1,7 +1,15 @@
+import { formatScheduleClock } from './scheduleClockFormat';
+import { resolveTimedMarkerDisplayTime } from './timedMarker';
+
 export interface ScheduleStartItem {
   id: number;
   day?: number;
   isIndented?: boolean;
+  /** Timed marker under a parent: start time only, no duration. */
+  isTimedMarker?: boolean;
+  markerTimeMode?: 'absolute' | 'offset';
+  markerOffsetSeconds?: number;
+  markerAbsoluteSeconds?: number;
   durationHours?: number;
   durationMinutes?: number;
   durationSeconds?: number;
@@ -16,6 +24,8 @@ export function isIndentedScheduleItem(
   indentedLookup: IndentedCueLookup
 ): boolean {
   if (!item) return false;
+  // Timed markers are always grouped under a parent (do not advance the timeline).
+  if (item.isTimedMarker) return true;
   if (item.isIndented) return true;
   if (typeof indentedLookup === 'function') return indentedLookup(item.id);
   return Boolean(indentedLookup[item.id]);
@@ -63,9 +73,78 @@ function walkBackToParent(
   return -1;
 }
 
+export function dayStartFor(
+  day: number,
+  masterStartTime?: string,
+  dayStartTimes?: Record<number | string, string>
+): string {
+  if (dayStartTimes) {
+    const keyed = dayStartTimes[day] ?? dayStartTimes[String(day)];
+    if (keyed) return String(keyed).trim();
+  }
+  return String(masterStartTime || '').trim();
+}
+
+/**
+ * Per-cue wall-clock start from day/master start + prior same-day non-indented durations.
+ * Returns a 12h locale string (e.g. "9:00 AM") or '' if unavailable.
+ * `index` must be into the full ordered schedule (not a day-filtered slice).
+ */
+export function calculateScheduleStartTime(
+  schedule: ScheduleStartItem[],
+  index: number,
+  masterStartTime?: string,
+  dayStartTimes?: Record<number | string, string>,
+  indentedLookup: IndentedCueLookup = {}
+): string {
+  const calcAt = (idx: number): string => {
+    const current = schedule[idx];
+    if (!current) return '';
+
+    if (current.isTimedMarker) {
+      const parentIndex = findParentScheduleIndex(schedule, idx, indentedLookup);
+      // Absolute markers don't need parent start; offset markers do.
+      const parentStart = parentIndex >= 0 ? calcAt(parentIndex) : '';
+      return resolveTimedMarkerDisplayTime(current, parentStart);
+    }
+
+    if (isIndentedScheduleItem(current, indentedLookup)) {
+      const parentIndex = findParentScheduleIndex(schedule, idx, indentedLookup);
+      if (parentIndex < 0) return '';
+      return calcAt(parentIndex);
+    }
+
+    const itemDay = current.day || 1;
+    const startTime = dayStartFor(itemDay, masterStartTime, dayStartTimes);
+    if (!startTime) return '';
+
+    let totalSeconds = 0;
+    for (let i = 0; i < idx; i++) {
+      const item = schedule[i];
+      if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedLookup)) {
+        totalSeconds +=
+          (Number(item.durationHours) || 0) * 3600 +
+          (Number(item.durationMinutes) || 0) * 60 +
+          (Number(item.durationSeconds) || 0);
+      }
+    }
+
+    const parts = startTime.split(':').map(Number);
+    const hours = parts[0];
+    const minutes = parts[1];
+    const startSecs = Number.isFinite(parts[2]) ? parts[2] : 0;
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return '';
+    const totalStartSeconds = hours * 3600 + minutes * 60 + startSecs + totalSeconds;
+    return formatScheduleClock(totalStartSeconds, 'hm');
+  };
+
+  return calcAt(index);
+}
+
 /**
  * ★ show-start offset applies only on the START cue's day.
- * Without this, Day 1's late/early minutes bleed onto Day 2+.
+ * Without this, Day 1's late/early minutes bleed onto Day 2+ (those rows
+ * always have a higher schedule index than Day 1's ★).
  */
 export function shouldApplyShowStartOvertime(opts: {
   showStartOvertime: number;

@@ -7199,11 +7199,11 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  /** Clear master + per-day start times (Neon settings + this browser’s local cache). */
+  /** Clear master + per-day start times (Neon settings + this browser’s local cache). Admin/Crew only. */
   const clearMasterStartTimes = () => {
     if (!event?.id) return;
-    if (currentUserRole === 'VIEWER') {
-      alert('Viewers cannot clear start time. Switch to EDITOR or OPERATOR.');
+    if (!canAccessPreFlightChecklist(user)) {
+      alert('Only Admin or Crew can clear master start time.');
       return;
     }
     const multiDay = Boolean(event?.numberOfDays && event.numberOfDays > 1);
@@ -14461,12 +14461,12 @@ const RunOfShowPage: React.FC = () => {
                   }}
                   title={currentUserRole === 'VIEWER' ? 'Editors or Operators can change start time' : `Set ${(event?.numberOfDays && event.numberOfDays > 1) ? `Day ${selectedDay}` : 'master'} start time`}
                 />
-                {currentUserRole !== 'VIEWER' && (
+                {canAccessPreFlightChecklist(user) && (
                   <button
                     type="button"
                     onClick={clearMasterStartTimes}
                     className="px-2.5 py-2 text-xs font-semibold rounded-lg border border-slate-500 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white"
-                    title="Clear master/day start times (Neon + this browser). Start column blanks until you set a new time."
+                    title="Clear master/day start times (Admin/Crew only). Start column blanks until you set a new time."
                   >
                     Clear
                   </button>

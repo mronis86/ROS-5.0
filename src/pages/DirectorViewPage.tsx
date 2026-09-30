@@ -38,7 +38,11 @@ const ROS_ZOOM_KEY = 'director-view-zoom';
 const NOTES_ZOOM_KEY = 'director-view-notes-zoom';
 const SYNC_ZOOM_KEY = 'director-view-sync-zoom';
 const SYNC_HEIGHT_KEY = 'director-view-sync-height';
-const MAX_SYNC_COLUMNS = 5;
+const CHROME_KEY = 'director-view-chrome';
+const DOCK_CLOCK_KEY = 'director-view-dock-clock';
+const SYNC_CUE_VIEW_KEY = 'director-view-sync-cue-view';
+/** Bottom Current/Next strip supports six custom columns inline (especially in Maximize). */
+const MAX_SYNC_COLUMNS = 6;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 1.25;
 const ZOOM_STEP = 0.1;
@@ -151,8 +155,21 @@ function ScaleStepper({
 }
 
 type NotesSource = 'mine' | string; // operator user_id
+type NotesViewMode = 'plan' | 'follow';
+/** What the synced custom-column cards show. */
+type SyncCueView = 'both' | 'current' | 'next';
 
 type CustomColumn = { id: string; name: string };
+
+function loadSyncCueView(): SyncCueView {
+  try {
+    const raw = localStorage.getItem(SYNC_CUE_VIEW_KEY);
+    if (raw === 'current' || raw === 'next' || raw === 'both') return raw;
+  } catch {
+    /* ignore */
+  }
+  return 'both';
+}
 
 type RosRow = {
   id: number;
@@ -268,11 +285,33 @@ const DirectorViewPage: React.FC = () => {
   const [isResizingSyncHeight, setIsResizingSyncHeight] = useState(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [columnDragKey, setColumnDragKey] = useState<string | null>(null);
+  /** Logo + status/clock strip visible. Off = maximize schedule real estate. */
+  const [chromeExpanded, setChromeExpanded] = useState(() => {
+    try {
+      const raw = localStorage.getItem(CHROME_KEY);
+      if (raw === null) return true;
+      return raw !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  /** When chrome is collapsed, show current cue + timer in the bottom-right dock. */
+  const [dockClockVisible, setDockClockVisible] = useState(() => {
+    try {
+      const raw = localStorage.getItem(DOCK_CLOCK_KEY);
+      if (raw === null) return true;
+      return raw !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [syncCueView, setSyncCueView] = useState<SyncCueView>(loadSyncCueView);
 
   const [notesSource, setNotesSource] = useState<NotesSource>(() => {
     const saved = localStorage.getItem(NOTES_SOURCE_KEY);
     return saved || 'mine';
   });
+  const [notesViewMode, setNotesViewMode] = useState<NotesViewMode>('plan');
   const [operators, setOperators] = useState<UserEventNoteOperator[]>([]);
   const [personalNotes, setPersonalNotes] = useState<Record<number, string>>({});
   const [syncColumnIds, setSyncColumnIds] = useState<string[]>(() =>
@@ -519,6 +558,30 @@ const DirectorViewPage: React.FC = () => {
     }
   }, [syncHeightPct]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHROME_KEY, chromeExpanded ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [chromeExpanded]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DOCK_CLOCK_KEY, dockClockVisible ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [dockClockVisible]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SYNC_CUE_VIEW_KEY, syncCueView);
+    } catch {
+      /* ignore */
+    }
+  }, [syncCueView]);
+
   const persistZoom = useCallback((key: string, setter: (v: number) => void, value: number) => {
     const next = clampZoom(value);
     setter(next);
@@ -753,11 +816,6 @@ const DirectorViewPage: React.FC = () => {
       ? guestSchedule.find((i) => i.id === activeItemId) || null
       : null;
 
-  useEffect(() => {
-    if (!activeNoteRef.current || !notesListRef.current) return;
-    activeNoteRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [currentItem?.id, personalNotes]);
-
   const toggleSyncColumn = (columnId: string) => {
     setSyncColumnIds((prev) => {
       if (prev.includes(columnId)) return prev.filter((id) => id !== columnId);
@@ -821,14 +879,36 @@ const DirectorViewPage: React.FC = () => {
   }, [customColumns, persistVisibleColumns, persistVisibleCustomColumns, visibleColumns]);
 
   const notesRows = useMemo(() => {
+    if (notesViewMode === 'follow') {
+      const idx =
+        activeItemId != null ? dayItemsAll.findIndex((i) => i.id === activeItemId) : -1;
+      const start = idx >= 0 ? idx : 0;
+      return [0, 1, 2, 3]
+        .map((offset) => dayItemsAll[start + offset])
+        .filter(Boolean)
+        .map((item, rowIndex) => ({
+          item,
+          note: personalNotes[item.id] || '',
+          isCurrent:
+            item.id === currentItem?.id ||
+            (activeItemId != null && item.id === activeItemId),
+          followLabel: rowIndex === 0 ? 'Current' : `Next ${rowIndex}`,
+        }));
+    }
     return dayItemsAll
       .filter((item) => personalNotes[item.id])
       .map((item) => ({
         item,
         note: personalNotes[item.id],
         isCurrent: currentItem?.id === item.id,
+        followLabel: currentItem?.id === item.id ? 'Current' : '',
       }));
-  }, [dayItemsAll, personalNotes, currentItem?.id]);
+  }, [dayItemsAll, personalNotes, currentItem?.id, notesViewMode, activeItemId]);
+
+  useEffect(() => {
+    if (notesViewMode !== 'follow' || activeItemId == null) return;
+    activeNoteRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [notesViewMode, activeItemId, notesRows]);
 
   const syncColumns = useMemo(
     () =>
@@ -846,136 +926,245 @@ const DirectorViewPage: React.FC = () => {
     );
   }
 
+  const timerDisplay = hasTimer
+    ? remainingSeconds < 0
+      ? formatHms(remainingSeconds)
+      : formatClock(remainingSeconds)
+    : '—:—';
+  const timerColor = hasTimer
+    ? countdownColorForRemaining(remainingSeconds, { isRunning: timerRunning })
+    : '#64748b';
+
+  const syncColumnPicker = (
+    <div className="flex flex-wrap gap-1.5 items-center">
+      {customColumns.length === 0 ? (
+        <span className="text-xs text-slate-500">No custom columns</span>
+      ) : (
+        customColumns.map((col) => {
+          const on = syncColumnIds.includes(col.id);
+          const disabled = !on && syncColumnIds.length >= MAX_SYNC_COLUMNS;
+          return (
+            <button
+              key={col.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => toggleSyncColumn(col.id)}
+              className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                on
+                  ? 'bg-sky-700 border-sky-500 text-white'
+                  : 'bg-slate-800 border-slate-600 text-slate-300 disabled:opacity-40'
+              }`}
+              title={
+                on
+                  ? `Hide ${col.name} from sync strip`
+                  : `Show ${col.name} in sync strip (max ${MAX_SYNC_COLUMNS})`
+              }
+            >
+              {col.name}
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+
+  const syncCueViewToggle = (
+    <div
+      className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600 shrink-0"
+      title="Show Current, Next, or both in synced custom columns"
+    >
+      {(
+        [
+          { id: 'both', label: 'Both' },
+          { id: 'current', label: 'Current' },
+          { id: 'next', label: 'Next' },
+        ] as const
+      ).map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => setSyncCueView(opt.id)}
+          className={`px-2 py-1 text-[11px] font-semibold rounded-md ${
+            syncCueView === opt.id
+              ? opt.id === 'both'
+                ? 'bg-amber-600 text-white'
+                : opt.id === 'current'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-sky-600 text-white'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const syncStripTitle =
+    syncCueView === 'current'
+      ? 'Synced · Current'
+      : syncCueView === 'next'
+        ? 'Synced · Next'
+        : 'Synced · Current & Next';
+
+  const renderSyncColumnCard = (col: CustomColumn) => {
+    const showCurrent = syncCueView === 'both' || syncCueView === 'current';
+    const showNext = syncCueView === 'both' || syncCueView === 'next';
+    return (
+      <div
+        key={col.id}
+        className="rounded-lg border border-slate-600 bg-slate-950/80 p-2 min-h-0 min-w-0 flex flex-col overflow-hidden"
+      >
+        <div className="flex-shrink-0 text-[11px] font-bold uppercase tracking-wide text-sky-400 truncate mb-1">
+          {col.name}
+        </div>
+        <div
+          className={`flex-1 min-h-0 gap-1 overflow-hidden ${
+            showCurrent && showNext ? 'grid grid-rows-2' : 'flex flex-col'
+          }`}
+        >
+          {showCurrent ? (
+            <div
+              className={`min-h-0 overflow-y-auto ${
+                showNext ? '' : 'flex-1'
+              }`}
+            >
+              <div className="text-[10px] font-semibold text-emerald-400 uppercase mb-0.5">
+                Current
+              </div>
+              <div className="text-sm text-white whitespace-pre-wrap break-words">
+                {fieldValue(currentItem, col) || <span className="text-slate-600">—</span>}
+              </div>
+            </div>
+          ) : null}
+          {showNext ? (
+            <div
+              className={`min-h-0 overflow-y-auto ${
+                showCurrent ? 'border-t border-slate-800 pt-1' : 'flex-1'
+              }`}
+            >
+              <div className="text-[10px] font-semibold text-amber-400/90 uppercase mb-0.5">
+                Next
+              </div>
+              <div className="text-sm text-slate-200 whitespace-pre-wrap break-words">
+                {fieldValue(nextItem, col) || <span className="text-slate-600">—</span>}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-40 bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
-      <header className="flex-shrink-0 border-b border-slate-700 bg-slate-900/95 px-3 py-1.5 flex items-center gap-3 min-h-0">
-        <AppLogo size="sm" />
-        <div className="min-w-0 flex-1">
-          <AppBrandTitle
-            titleClassName="text-xs font-semibold text-slate-400 leading-tight"
-            showTagline={false}
-          />
-          <h1 className="text-sm font-semibold text-white truncate">
-            Director View · {eventName}
-          </h1>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <label className="text-xs text-slate-400 flex items-center gap-1 whitespace-nowrap">
-            Notes
-            <select
-              value={notesSource}
-              onChange={(e) => setNotesSource(e.target.value)}
-              className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white max-w-[9rem]"
-            >
-              <option value="mine">My notes</option>
-              {operators.map((op) => (
-                <option key={op.user_id} value={op.user_id}>
-                  {personColumnLabel(op.user_name || op.user_id)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() => setShowSyncPicker((v) => !v)}
-            className="px-2.5 py-1 text-sm rounded border border-slate-600 bg-slate-800 hover:bg-slate-700 whitespace-nowrap"
-          >
-            Sync ({syncColumnIds.length}/{MAX_SYNC_COLUMNS})
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void loadSchedule();
-              void loadNotes();
-            }}
-            className="px-2.5 py-1 text-sm rounded border border-slate-600 bg-slate-800 hover:bg-slate-700"
-          >
-            Refresh
-          </button>
-        </div>
-      </header>
+      {chromeExpanded ? (
+        <>
+          <header className="flex-shrink-0 border-b border-slate-700 bg-slate-900/95 px-3 py-1.5 flex items-center gap-3 min-h-0">
+            <AppLogo size="sm" />
+            <div className="min-w-0 flex-1">
+              <AppBrandTitle
+                titleClassName="text-xs font-semibold text-slate-400 leading-tight"
+                showTagline={false}
+              />
+              <h1 className="text-sm font-semibold text-white truncate">
+                Director View · {eventName}
+              </h1>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <label className="text-xs text-slate-400 flex items-center gap-1 whitespace-nowrap">
+                Notes
+                <select
+                  value={notesSource}
+                  onChange={(e) => setNotesSource(e.target.value)}
+                  className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white max-w-[9rem]"
+                >
+                  <option value="mine">My notes</option>
+                  {operators.map((op) => (
+                    <option key={op.user_id} value={op.user_id}>
+                      {personColumnLabel(op.user_name || op.user_id)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowSyncPicker((v) => !v)}
+                className="px-2.5 py-1 text-sm rounded border border-slate-600 bg-slate-800 hover:bg-slate-700 whitespace-nowrap"
+              >
+                Sync ({syncColumnIds.length}/{MAX_SYNC_COLUMNS})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void loadSchedule();
+                  void loadNotes();
+                }}
+                className="px-2.5 py-1 text-sm rounded border border-slate-600 bg-slate-800 hover:bg-slate-700"
+              >
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={() => setChromeExpanded(false)}
+                className="px-2.5 py-1 text-sm rounded border border-amber-600/70 bg-amber-950/40 hover:bg-amber-900/50 text-amber-100 whitespace-nowrap"
+                title="Hide logo and clock bar to free space"
+              >
+                Maximize
+              </button>
+            </div>
+          </header>
 
-      {/* Photo/Mic-style status bar */}
-      <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900/90 px-3 py-2">
-        <div className="flex items-center justify-between gap-4 min-w-0">
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">Current cue</p>
-            <p className="text-base font-semibold text-white truncate">
-              {liveCue?.segmentName || 'No cue loaded'}
-            </p>
-            <p className="text-xs text-slate-400 font-mono truncate">
-              {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
-              {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
-            </p>
+          <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900/90 px-3 py-2">
+            <div className="flex items-center justify-between gap-4 min-w-0">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">
+                  Current cue
+                </p>
+                <p className="text-base font-semibold text-white truncate">
+                  {liveCue?.segmentName || 'No cue loaded'}
+                </p>
+                <p className="text-xs text-slate-400 font-mono truncate">
+                  {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
+                  {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className={`text-sm font-bold ${statusClass}`}>{statusLabel}</p>
+                <p
+                  className="text-3xl font-mono font-bold tabular-nums leading-none mt-0.5"
+                  style={{ color: timerColor }}
+                >
+                  {timerDisplay}
+                </p>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  {timerRunning ? 'Remaining' : timerLoaded ? 'Loaded' : 'Standby'}
+                </p>
+              </div>
+            </div>
+            {hasTimer ? (
+              <div className="mt-2 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
+                <div
+                  className="h-full transition-all duration-300 absolute top-0 right-0"
+                  style={{
+                    width: `${remainingPct}%`,
+                    background: timerColor,
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
-          <div className="text-right shrink-0">
-            <p className={`text-sm font-bold ${statusClass}`}>{statusLabel}</p>
-            <p
-              className="text-3xl font-mono font-bold tabular-nums leading-none mt-0.5"
-              style={{
-                color: hasTimer
-                  ? countdownColorForRemaining(remainingSeconds, { isRunning: timerRunning })
-                  : '#64748b',
-              }}
-            >
-              {hasTimer
-                ? remainingSeconds < 0
-                  ? formatHms(remainingSeconds)
-                  : formatClock(remainingSeconds)
-                : '—:—'}
-            </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              {timerRunning ? 'Remaining' : timerLoaded ? 'Loaded' : 'Standby'}
-            </p>
-          </div>
-        </div>
-        {hasTimer ? (
-          <div className="mt-2 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
-            <div
-              className="h-full transition-all duration-300 absolute top-0 right-0"
-              style={{
-                width: `${remainingPct}%`,
-                background: countdownColorForRemaining(remainingSeconds, {
-                  isRunning: timerRunning,
-                }),
-              }}
-            />
-          </div>
-        ) : null}
-      </div>
 
-      {showSyncPicker && (
-        <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900 px-3 py-2 max-h-[18vh] overflow-y-auto">
-          <p className="text-xs text-slate-400 mb-2">
-            Choose up to {MAX_SYNC_COLUMNS} custom columns for the bottom Current / Next strip.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {customColumns.length === 0 ? (
-              <span className="text-sm text-slate-500">No custom columns on this event.</span>
-            ) : (
-              customColumns.map((col) => {
-                const on = syncColumnIds.includes(col.id);
-                const disabled = !on && syncColumnIds.length >= MAX_SYNC_COLUMNS;
-                return (
-                  <button
-                    key={col.id}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => toggleSyncColumn(col.id)}
-                    className={`px-2.5 py-1 rounded text-sm border ${
-                      on
-                        ? 'bg-sky-700 border-sky-500 text-white'
-                        : 'bg-slate-800 border-slate-600 text-slate-300 disabled:opacity-40'
-                    }`}
-                  >
-                    {col.name}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
+          {showSyncPicker ? (
+            <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900 px-3 py-2 max-h-[18vh] overflow-y-auto">
+              <p className="text-xs text-slate-400 mb-2">
+                Choose up to {MAX_SYNC_COLUMNS} custom columns for the bottom Current / Next strip.
+              </p>
+              {syncColumnPicker}
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
       {loading ? (
         <div className="flex-1 min-h-0 flex items-center justify-center text-slate-400">Loading…</div>
@@ -985,7 +1174,7 @@ const DirectorViewPage: React.FC = () => {
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          {/* ROS controls: day / filter / zoom / search */}
+          {/* Day selector — ROS Filter / Scale / Search live on the schedule pane */}
           <div className="flex-shrink-0 border-b border-slate-800 bg-slate-950/80 px-3 py-1.5 flex flex-wrap items-center gap-2 justify-between">
             <div className="flex flex-wrap items-center gap-2 min-w-0">
               {availableDays.length > 1
@@ -1005,193 +1194,62 @@ const DirectorViewPage: React.FC = () => {
                   ))
                 : null}
               <span className="text-xs text-slate-500">{dayItems.length} cues</span>
-              <button
-                type="button"
-                onClick={() => setFilterPanelOpen((v) => !v)}
-                className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${
-                  filterPanelOpen || activeFilterCount > 0 || stickyStartColumn
-                    ? 'border-blue-500/70 bg-blue-950/50 text-blue-100'
-                    : 'border-slate-600 text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                Filter Columns{activeFilterCount > 0 ? ` (${activeFilterCount} hidden)` : ''}
-              </button>
-              <ScaleStepper
-                label="ROS"
-                value={rosZoom}
-                onChange={setRosZoomPersisted}
-                title="Scale run of show"
-              />
-            </div>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search schedule…"
-              className="min-w-[8rem] max-w-xs w-48 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-            />
-          </div>
-
-          {filterPanelOpen ? (
-            <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900/90 px-3 py-2 max-h-[32vh] overflow-y-auto space-y-3">
-              <p className="text-slate-400 text-xs">
-                Toggle columns left-to-right (same order as the schedule). Drag chips or use ← → to
-                reorder. # and CUE stay fixed on the left.
-              </p>
-              <div className="flex flex-wrap gap-2 items-stretch content-start">
-                {columnOrder.map((key, index) => {
-                  const customId = parseCustomColumnOrderKey(key);
-                  const customCol = customId
-                    ? customColumns.find((c) => c.id === customId)
-                    : null;
-                  if (customId && !customCol) return null;
-
-                  const label = customCol
-                    ? customCol.name
-                    : GUEST_COLUMN_LABELS[key as GuestScrollColumn] || key;
-                  const checked = customId
-                    ? visibleCustomColumns[customId] !== false
-                    : Boolean(visibleColumns[key as GuestScrollColumn]);
-
-                  return (
-                    <div
-                      key={key}
-                      draggable
-                      onDragStart={() => setColumnDragKey(key)}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => {
-                        if (!columnDragKey || columnDragKey === key) return;
-                        const from = columnOrder.indexOf(columnDragKey);
-                        const to = columnOrder.indexOf(key);
-                        if (from >= 0 && to >= 0) moveScrollColumn(from, to);
-                        setColumnDragKey(null);
-                      }}
-                      onDragEnd={() => setColumnDragKey(null)}
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 max-w-full ${
-                        checked
-                          ? 'border-blue-500/70 bg-blue-950/50 text-blue-50'
-                          : 'border-slate-600 bg-slate-700/50 text-slate-400'
-                      } ${columnDragKey === key ? 'opacity-60 ring-1 ring-blue-400' : ''}`}
-                    >
-                      <span
-                        className="cursor-grab text-slate-500 select-none text-xs"
-                        title="Drag to reorder"
-                        aria-hidden
-                      >
-                        ⋮⋮
-                      </span>
-                      <label className="inline-flex items-center gap-1.5 cursor-pointer min-w-0">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            if (customId) {
-                              persistVisibleCustomColumns({
-                                ...visibleCustomColumns,
-                                [customId]: e.target.checked,
-                              });
-                            } else {
-                              const next = {
-                                ...visibleColumns,
-                                [key]: e.target.checked,
-                              } as GuestVisibleColumns;
-                              const anyOn = GUEST_COLUMN_TOGGLE_OPTIONS.some((opt) => next[opt.key]);
-                              if (!anyOn) return;
-                              persistVisibleColumns(next);
-                            }
-                          }}
-                          className="rounded flex-shrink-0"
-                        />
-                        <span className="text-sm font-medium truncate max-w-[10rem]" title={label}>
-                          {label}
-                        </span>
-                        {customCol ? (
-                          <span className="text-[10px] uppercase tracking-wide text-slate-500 flex-shrink-0">
-                            custom
-                          </span>
-                        ) : null}
-                      </label>
-                      <div className="inline-flex items-center flex-shrink-0 border-l border-slate-600/80 pl-1 ml-0.5">
-                        <button
-                          type="button"
-                          disabled={index === 0}
-                          onClick={() => moveScrollColumn(index, index - 1)}
-                          className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
-                          title="Move left"
-                        >
-                          ←
-                        </button>
-                        <button
-                          type="button"
-                          disabled={index === columnOrder.length - 1}
-                          onClick={() => moveScrollColumn(index, index + 1)}
-                          className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
-                          title="Move right"
-                        >
-                          →
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <label
-                className={`flex items-start gap-2 text-sm ${!visibleColumns.start ? 'opacity-50' : ''}`}
-              >
-                <input
-                  type="checkbox"
-                  className="rounded mt-0.5"
-                  checked={stickyStartColumn}
-                  disabled={!visibleColumns.start}
-                  onChange={(e) => persistStickyStart(e.target.checked)}
-                />
-                <span className="text-slate-200">
-                  Pin Start next to CUE
-                  <span className="block text-xs text-slate-500">
-                    # / CUE / Start stay fixed while other columns scroll
-                  </span>
+              {!chromeExpanded ? (
+                <span className="text-xs text-slate-500 truncate hidden sm:inline">
+                  {eventName}
                 </span>
-              </label>
-              <div className="flex flex-wrap gap-2">
+              ) : null}
+            </div>
+            {!chromeExpanded ? (
+              <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
+                <label className="text-xs text-slate-400 flex items-center gap-1 whitespace-nowrap">
+                  Notes
+                  <select
+                    value={notesSource}
+                    onChange={(e) => setNotesSource(e.target.value)}
+                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white max-w-[9rem]"
+                  >
+                    <option value="mine">My notes</option>
+                    {operators.map((op) => (
+                      <option key={op.user_id} value={op.user_id}>
+                        {personColumnLabel(op.user_name || op.user_id)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   type="button"
-                  onClick={showAllColumns}
-                  className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded text-xs"
+                  onClick={() => setDockClockVisible((v) => !v)}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded border whitespace-nowrap ${
+                    dockClockVisible
+                      ? 'border-emerald-500/70 bg-emerald-950/40 text-emerald-100'
+                      : 'border-slate-600 bg-slate-800 text-slate-300'
+                  }`}
+                  title="Show current cue + timer in the bottom-right dock"
                 >
-                  Show All
+                  Dock clock {dockClockVisible ? 'on' : 'off'}
                 </button>
                 <button
                   type="button"
-                  onClick={hideAllColumns}
-                  className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded text-xs"
+                  onClick={() => {
+                    void loadSchedule();
+                    void loadNotes();
+                  }}
+                  className="px-2.5 py-1 text-xs rounded border border-slate-600 bg-slate-800 hover:bg-slate-700"
                 >
-                  Hide All
+                  Refresh
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
-                    persistColumnOrder(
-                      normalizeGuestColumnOrderWithCustom(
-                        null,
-                        customColumns.map((c) => c.id)
-                      )
-                    )
-                  }
-                  className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded text-xs"
-                  title="Restore default left-to-right column order"
+                  onClick={() => setChromeExpanded(true)}
+                  className="px-2.5 py-1 text-xs font-semibold rounded border border-slate-500 bg-slate-800 hover:bg-slate-700 text-slate-100 whitespace-nowrap"
+                  title="Show logo and clock bar again"
                 >
-                  Reset Order
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterPanelOpen(false)}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded text-xs"
-                >
-                  Apply Filters
+                  Show header
                 </button>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
 
           {/* Notes + ROS + Sync height stack */}
           <div ref={panesStackRef} className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -1200,14 +1258,42 @@ const DirectorViewPage: React.FC = () => {
               className="min-h-0 min-w-0 flex flex-col overflow-hidden"
               style={{ flex: `0 0 ${leftWidthPct}%`, width: `${leftWidthPct}%` }}
             >
-              <div className="flex-shrink-0 px-3 py-1.5 border-b border-slate-700 flex items-center justify-between gap-2">
+              <div className="flex-shrink-0 px-3 py-1.5 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold text-sky-300">Personal notes</h2>
-                <ScaleStepper
-                  label="Scale"
-                  value={notesZoom}
-                  onChange={setNotesZoomPersisted}
-                  title="Scale personal notes"
-                />
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
+                    <button
+                      type="button"
+                      onClick={() => setNotesViewMode('plan')}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+                        notesViewMode === 'plan'
+                          ? 'bg-cyan-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Free scroll — all notes with content"
+                    >
+                      Scroll
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNotesViewMode('follow')}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+                        notesViewMode === 'follow'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Follow live cue plus the next three"
+                    >
+                      Follow
+                    </button>
+                  </div>
+                  <ScaleStepper
+                    label="Scale"
+                    value={notesZoom}
+                    onChange={setNotesZoomPersisted}
+                    title="Scale personal notes"
+                  />
+                </div>
               </div>
               <div
                 ref={notesListRef}
@@ -1223,9 +1309,13 @@ const DirectorViewPage: React.FC = () => {
                     Set an operator name in Notes popout first, or sign in, to load My notes.
                   </p>
                 ) : notesRows.length === 0 ? (
-                  <p className="text-sm text-slate-500 p-2">No personal notes for this day.</p>
+                  <p className="text-sm text-slate-500 p-2">
+                    {notesViewMode === 'follow'
+                      ? 'No cues for this day.'
+                      : 'No personal notes for this day.'}
+                  </p>
                 ) : (
-                  notesRows.map(({ item, note, isCurrent }) => (
+                  notesRows.map(({ item, note, isCurrent, followLabel }) => (
                     <div
                       key={item.id}
                       ref={isCurrent ? activeNoteRef : undefined}
@@ -1235,13 +1325,25 @@ const DirectorViewPage: React.FC = () => {
                           : 'border-slate-700 bg-slate-900/80'
                       }`}
                     >
-                      <div className="text-xs font-semibold text-slate-300 mb-1 truncate">
-                        {cueLabel(item)}
-                        {isCurrent ? (
-                          <span className="ml-2 text-emerald-400 uppercase tracking-wide">Now</span>
+                      <div className="flex items-center gap-2 mb-1 min-w-0">
+                        {followLabel ? (
+                          <span
+                            className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
+                              isCurrent
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-600 text-slate-200'
+                            }`}
+                          >
+                            {followLabel}
+                          </span>
                         ) : null}
+                        <div className="text-xs font-semibold text-slate-300 truncate min-w-0">
+                          {cueLabel(item)}
+                        </div>
                       </div>
-                      <div className="text-sm text-slate-100 whitespace-pre-wrap break-words">{note}</div>
+                      <div className="text-sm text-slate-100 whitespace-pre-wrap break-words">
+                        {note || <span className="text-slate-600">—</span>}
+                      </div>
                     </div>
                   ))
                 )}
@@ -1290,23 +1392,220 @@ const DirectorViewPage: React.FC = () => {
             </div>
 
             {/* overflow-hidden so sticky #/CUE/Start scroll inside the grid, not this pane */}
-            <main className="flex-1 min-w-0 min-h-0 overflow-hidden p-2 flex flex-col">
+            <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
+              <div className="flex-shrink-0 px-2 pt-2 pb-1.5 flex flex-wrap items-center gap-2 justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFilterPanelOpen((v) => !v)}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+                      filterPanelOpen || activeFilterCount > 0 || stickyStartColumn
+                        ? 'border-blue-500/70 bg-blue-950/50 text-blue-100'
+                        : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    Filter Columns{activeFilterCount > 0 ? ` (${activeFilterCount} hidden)` : ''}
+                  </button>
+                  <ScaleStepper
+                    label="ROS"
+                    value={rosZoom}
+                    onChange={setRosZoomPersisted}
+                    title="Scale run of show"
+                  />
+                </div>
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search schedule…"
+                  className="min-w-[8rem] max-w-xs w-48 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                />
+              </div>
+              {filterPanelOpen ? (
+                <div className="flex-shrink-0 mx-2 mb-1.5 rounded-lg border border-slate-700 bg-slate-900/90 px-3 py-2 max-h-[32vh] overflow-y-auto space-y-3">
+                  <p className="text-slate-400 text-xs">
+                    Toggle columns left-to-right (same order as the schedule). Drag chips or use ← →
+                    to reorder. # and CUE stay fixed on the left.
+                  </p>
+                  <div className="flex flex-wrap gap-2 items-stretch content-start">
+                    {columnOrder.map((key, index) => {
+                      const customId = parseCustomColumnOrderKey(key);
+                      const customCol = customId
+                        ? customColumns.find((c) => c.id === customId)
+                        : null;
+                      if (customId && !customCol) return null;
+
+                      const label = customCol
+                        ? customCol.name
+                        : GUEST_COLUMN_LABELS[key as GuestScrollColumn] || key;
+                      const checked = customId
+                        ? visibleCustomColumns[customId] !== false
+                        : Boolean(visibleColumns[key as GuestScrollColumn]);
+
+                      return (
+                        <div
+                          key={key}
+                          draggable
+                          onDragStart={() => setColumnDragKey(key)}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={() => {
+                            if (!columnDragKey || columnDragKey === key) return;
+                            const from = columnOrder.indexOf(columnDragKey);
+                            const to = columnOrder.indexOf(key);
+                            if (from >= 0 && to >= 0) moveScrollColumn(from, to);
+                            setColumnDragKey(null);
+                          }}
+                          onDragEnd={() => setColumnDragKey(null)}
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 max-w-full ${
+                            checked
+                              ? 'border-blue-500/70 bg-blue-950/50 text-blue-50'
+                              : 'border-slate-600 bg-slate-700/50 text-slate-400'
+                          } ${columnDragKey === key ? 'opacity-60 ring-1 ring-blue-400' : ''}`}
+                        >
+                          <span
+                            className="cursor-grab text-slate-500 select-none text-xs"
+                            title="Drag to reorder"
+                            aria-hidden
+                          >
+                            ⋮⋮
+                          </span>
+                          <label className="inline-flex items-center gap-1.5 cursor-pointer min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                if (customId) {
+                                  persistVisibleCustomColumns({
+                                    ...visibleCustomColumns,
+                                    [customId]: e.target.checked,
+                                  });
+                                } else {
+                                  const next = {
+                                    ...visibleColumns,
+                                    [key]: e.target.checked,
+                                  } as GuestVisibleColumns;
+                                  const anyOn = GUEST_COLUMN_TOGGLE_OPTIONS.some(
+                                    (opt) => next[opt.key]
+                                  );
+                                  if (!anyOn) return;
+                                  persistVisibleColumns(next);
+                                }
+                              }}
+                              className="rounded flex-shrink-0"
+                            />
+                            <span
+                              className="text-sm font-medium truncate max-w-[10rem]"
+                              title={label}
+                            >
+                              {label}
+                            </span>
+                            {customCol ? (
+                              <span className="text-[10px] uppercase tracking-wide text-slate-500 flex-shrink-0">
+                                custom
+                              </span>
+                            ) : null}
+                          </label>
+                          <div className="inline-flex items-center flex-shrink-0 border-l border-slate-600/80 pl-1 ml-0.5">
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={() => moveScrollColumn(index, index - 1)}
+                              className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
+                              title="Move left"
+                            >
+                              ←
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === columnOrder.length - 1}
+                              onClick={() => moveScrollColumn(index, index + 1)}
+                              className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
+                              title="Move right"
+                            >
+                              →
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <label
+                    className={`flex items-start gap-2 text-sm ${
+                      !visibleColumns.start ? 'opacity-50' : ''
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded mt-0.5"
+                      checked={stickyStartColumn}
+                      disabled={!visibleColumns.start}
+                      onChange={(e) => persistStickyStart(e.target.checked)}
+                    />
+                    <span className="text-slate-200">
+                      Pin Start next to CUE
+                      <span className="block text-xs text-slate-500">
+                        # / CUE / Start stay fixed while other columns scroll
+                      </span>
+                    </span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={showAllColumns}
+                      className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded text-xs"
+                    >
+                      Show All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={hideAllColumns}
+                      className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded text-xs"
+                    >
+                      Hide All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        persistColumnOrder(
+                          normalizeGuestColumnOrderWithCustom(
+                            null,
+                            customColumns.map((c) => c.id)
+                          )
+                        )
+                      }
+                      className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded text-xs"
+                      title="Restore default left-to-right column order"
+                    >
+                      Reset Order
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilterPanelOpen(false)}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded text-xs"
+                    >
+                      Apply Filters
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex-1 min-h-0 overflow-hidden px-2 pb-2 flex flex-col">
                 <GuestRunOfShowGrid
-                schedule={guestSchedule}
-                filteredItems={dayItems}
-                masterStartTime={masterStartTime}
-                dayStartTimes={dayStartTimes}
-                activeItemId={activeItemId}
-                timerRunning={timerRunning}
-                timerLoaded={timerLoaded}
-                visibleColumns={visibleColumns}
-                stickyStartColumn={stickyStartColumn}
-                columnOrder={columnOrder}
-                customColumns={customColumns}
-                visibleCustomColumns={visibleCustomColumns}
-                zoom={rosZoom}
-                onOpenSpeakers={(id) => setSpeakersItemId(id)}
-              />
+                  schedule={guestSchedule}
+                  filteredItems={dayItems}
+                  masterStartTime={masterStartTime}
+                  dayStartTimes={dayStartTimes}
+                  activeItemId={activeItemId}
+                  timerRunning={timerRunning}
+                  timerLoaded={timerLoaded}
+                  visibleColumns={visibleColumns}
+                  stickyStartColumn={stickyStartColumn}
+                  columnOrder={columnOrder}
+                  customColumns={customColumns}
+                  visibleCustomColumns={visibleCustomColumns}
+                  zoom={rosZoom}
+                  onOpenSpeakers={(id) => setSpeakersItemId(id)}
+                />
+              </div>
             </main>
           </div>
 
@@ -1356,30 +1655,94 @@ const DirectorViewPage: React.FC = () => {
             className="min-h-0 flex flex-col overflow-hidden border-t border-slate-700 bg-slate-900/95 px-3 py-2"
             style={{ flex: `0 0 ${syncHeightPct}%`, height: `${syncHeightPct}%` }}
           >
-            <div className="flex-shrink-0 flex items-center justify-between gap-2 mb-1.5 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
+            <div className="flex-shrink-0 flex items-center justify-between gap-2 mb-1.5 min-w-0 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0 flex-wrap">
                 <h2 className="text-sm font-semibold text-amber-300 whitespace-nowrap">
-                  Synced · Current & Next
+                  {syncStripTitle}
                 </h2>
                 <span className="text-[10px] tabular-nums text-slate-500">{syncHeightPct}% tall</span>
-              </div>
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-xs text-slate-500 truncate min-w-0 hidden sm:inline">
-                  Now: {cueLabel(currentItem)}
-                  {nextItem ? ` → Next: ${cueLabel(nextItem)}` : ''}
-                </span>
+                {syncCueViewToggle}
+                {chromeExpanded ? (
+                  <span className="text-xs text-slate-500 truncate min-w-0 hidden lg:inline">
+                    Now: {cueLabel(currentItem)}
+                    {nextItem ? ` → Next: ${cueLabel(nextItem)}` : ''}
+                  </span>
+                ) : null}
                 <ScaleStepper
                   label="Scale"
                   value={syncZoom}
                   onChange={setSyncZoomPersisted}
-                  title="Scale synced Current / Next cards"
+                  title="Scale synced custom column cards"
                 />
               </div>
+              {!chromeExpanded ? (
+                <div className="min-w-0 flex items-center gap-2 flex-wrap justify-end">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">
+                    Columns · up to {MAX_SYNC_COLUMNS}
+                  </span>
+                  {syncColumnPicker}
+                </div>
+              ) : null}
             </div>
-            {syncColumns.length === 0 ? (
+
+            {chromeExpanded && syncColumns.length === 0 ? (
               <p className="text-sm text-slate-500 flex-shrink-0">
                 Open Sync and pick up to {MAX_SYNC_COLUMNS} custom fields.
               </p>
+            ) : !chromeExpanded ? (
+              <div className="flex-1 min-h-0 flex gap-2 overflow-hidden">
+                <div
+                  className="flex-1 min-w-0 min-h-0 grid gap-2 overflow-hidden"
+                  style={{
+                    gridTemplateColumns:
+                      syncColumns.length > 0
+                        ? `repeat(${Math.min(syncColumns.length, MAX_SYNC_COLUMNS)}, minmax(0, 1fr))`
+                        : '1fr',
+                    ...(syncZoom !== 1 ? ({ zoom: syncZoom } as React.CSSProperties) : null),
+                  }}
+                >
+                  {syncColumns.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 min-h-0 flex items-center justify-center px-3">
+                      <span className="text-xs text-slate-500 text-center">
+                        Select custom columns above — cards fill this row; dock timer stays on the right.
+                      </span>
+                    </div>
+                  ) : (
+                    syncColumns.map((col) => renderSyncColumnCard(col))
+                  )}
+                </div>
+                {dockClockVisible ? (
+                  <div className="flex-shrink-0 w-[12.5rem] min-h-0 rounded-lg border border-slate-600 bg-slate-950/90 px-2.5 py-2 text-right flex flex-col overflow-hidden">
+                    <p className={`text-[10px] font-bold uppercase tracking-wide ${statusClass}`}>
+                      {statusLabel}
+                    </p>
+                    <p
+                      className="text-2xl font-mono font-bold tabular-nums leading-none mt-0.5"
+                      style={{ color: timerColor }}
+                    >
+                      {timerDisplay}
+                    </p>
+                    <p
+                      className="text-[11px] text-white font-semibold truncate mt-1.5"
+                      title={liveCue?.segmentName || ''}
+                    >
+                      {liveCue?.segmentName || 'No cue loaded'}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-mono truncate">
+                      {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
+                      {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
+                    </p>
+                    {hasTimer ? (
+                      <div className="mt-auto pt-1.5 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-1.5">
+                        <div
+                          className="h-full transition-all duration-300 absolute top-0 right-0"
+                          style={{ width: `${remainingPct}%`, background: timerColor }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div
                 className="flex-1 min-h-0 grid gap-2 overflow-hidden"
@@ -1388,38 +1751,7 @@ const DirectorViewPage: React.FC = () => {
                   ...(syncZoom !== 1 ? ({ zoom: syncZoom } as React.CSSProperties) : null),
                 }}
               >
-                {syncColumns.map((col) => (
-                  <div
-                    key={col.id}
-                    className="rounded-lg border border-slate-600 bg-slate-950/80 p-2 min-h-0 min-w-0 flex flex-col overflow-hidden"
-                  >
-                    <div className="flex-shrink-0 text-[11px] font-bold uppercase tracking-wide text-sky-400 truncate mb-1">
-                      {col.name}
-                    </div>
-                    <div className="flex-1 min-h-0 grid grid-rows-2 gap-1 overflow-hidden">
-                      <div className="min-h-0 overflow-y-auto">
-                        <div className="text-[10px] font-semibold text-emerald-400 uppercase mb-0.5">
-                          Current
-                        </div>
-                        <div className="text-sm text-white whitespace-pre-wrap break-words">
-                          {fieldValue(currentItem, col) || (
-                            <span className="text-slate-600">—</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="min-h-0 overflow-y-auto border-t border-slate-800 pt-1">
-                        <div className="text-[10px] font-semibold text-amber-400/90 uppercase mb-0.5">
-                          Next
-                        </div>
-                        <div className="text-sm text-slate-200 whitespace-pre-wrap break-words">
-                          {fieldValue(nextItem, col) || (
-                            <span className="text-slate-600">—</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                {syncColumns.map((col) => renderSyncColumnCard(col))}
               </div>
             )}
           </section>
