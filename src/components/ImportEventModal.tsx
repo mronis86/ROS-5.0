@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { DatabaseService } from '../services/database';
+import { apiClient } from '../services/api-client';
 import { Event } from '../types/Event';
 
 export interface ImportEventResult {
   scheduleItems: any[];
   customColumns: any[];
+  /** Personal Notes-popout rows copied into the target event (Neon). */
+  popoutNotesCopied?: number;
+  popoutNotesSkipped?: number;
+  popoutNotesError?: string | null;
 }
 
 interface ImportEventModalProps {
@@ -25,6 +30,7 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
   const [selectedSourceEventId, setSelectedSourceEventId] = useState<string>('');
   const [importSchedule, setImportSchedule] = useState(true);
   const [importCustomColumns, setImportCustomColumns] = useState(true);
+  const [importPopoutNotes, setImportPopoutNotes] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +40,7 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
     setError(null);
     setSearchQuery('');
     setSelectedSourceEventId('');
+    setImportPopoutNotes(false);
     const loadEvents = async () => {
       setIsLoading(true);
       try {
@@ -72,9 +79,21 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
     return nameMatch || dateMatch;
   });
 
+  const canImport =
+    Boolean(selectedSourceEventId) &&
+    (importSchedule || importCustomColumns || (importPopoutNotes && importSchedule));
+
   const handleImport = async () => {
-    if (!selectedSourceEventId || (!importSchedule && !importCustomColumns)) {
+    if (!selectedSourceEventId || !canImport) {
       setError('Please select a source event and at least one option to import.');
+      return;
+    }
+    if (importPopoutNotes && !importSchedule) {
+      setError('Import Schedule is required to import popout notes (row IDs must be remapped).');
+      return;
+    }
+    if (importPopoutNotes && !currentEventId) {
+      setError('Current event id is missing; cannot copy popout notes.');
       return;
     }
 
@@ -96,7 +115,7 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
       const newScheduleItems = importSchedule ? scheduleItems.map((item: any, index: number) => {
         const oldId = item.id;
         const newId = nextId + index;
-        if (oldId !== undefined) idMap.set(oldId, newId);
+        if (oldId !== undefined) idMap.set(Number(oldId), newId);
         return {
           ...item,
           id: newId
@@ -136,9 +155,35 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
         }
       }
 
+      let popoutNotesCopied = 0;
+      let popoutNotesSkipped = 0;
+      let popoutNotesError: string | null = null;
+
+      if (importPopoutNotes && currentEventId && idMap.size > 0) {
+        try {
+          const item_id_map: Record<string, number> = {};
+          idMap.forEach((newId, oldId) => {
+            item_id_map[String(oldId)] = newId;
+          });
+          const copyResult = await apiClient.copyUserEventNotes({
+            source_event_id: selectedSourceEventId,
+            target_event_id: currentEventId,
+            item_id_map,
+          });
+          popoutNotesCopied = copyResult.copied ?? 0;
+          popoutNotesSkipped = copyResult.skipped ?? 0;
+        } catch (notesErr) {
+          console.error('Error copying popout notes:', notesErr);
+          popoutNotesError = 'Schedule imported, but popout notes copy failed. Try again or copy notes manually.';
+        }
+      }
+
       onImport({
         scheduleItems: newScheduleItems,
-        customColumns: newCustomColumns
+        customColumns: newCustomColumns,
+        popoutNotesCopied,
+        popoutNotesSkipped,
+        popoutNotesError,
       });
       onClose();
     } catch (err) {
@@ -158,7 +203,7 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
           Import from Another Event
         </h3>
         <p className="text-slate-300 text-sm mb-4">
-          Copy schedule and/or custom columns from an existing event into the current event.
+          Copy schedule, custom columns, and/or personal Notes-popout notes from an existing event into the current event.
         </p>
 
         {isLoading ? (
@@ -208,7 +253,11 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
                 <input
                   type="checkbox"
                   checked={importSchedule}
-                  onChange={(e) => setImportSchedule(e.target.checked)}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setImportSchedule(on);
+                    if (!on) setImportPopoutNotes(false);
+                  }}
                   className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-slate-300">Import Schedule (all rows)</span>
@@ -221,6 +270,23 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
                   className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-slate-300">Import Custom Columns</span>
+              </label>
+              <label
+                className={`flex items-start gap-2 ${importSchedule ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={importPopoutNotes}
+                  disabled={!importSchedule}
+                  onChange={(e) => setImportPopoutNotes(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-slate-300">
+                  Import Popout Notes
+                  <span className="block text-xs text-slate-400 mt-0.5">
+                    Copies personal Notes-popout entries for all operators (requires Import Schedule). Shared Notes column still comes with the schedule.
+                  </span>
+                </span>
               </label>
             </div>
 
@@ -239,7 +305,7 @@ const ImportEventModal: React.FC<ImportEventModalProps> = ({
               </button>
               <button
                 onClick={handleImport}
-                disabled={!selectedSourceEventId || (!importSchedule && !importCustomColumns) || isImporting}
+                disabled={!canImport || isImporting}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
               >
                 {isImporting ? 'Importing...' : 'Import'}

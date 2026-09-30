@@ -7199,6 +7199,41 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  /** Clear master + per-day start times (Neon settings + this browser’s local cache). */
+  const clearMasterStartTimes = () => {
+    if (!event?.id) return;
+    if (currentUserRole === 'VIEWER') {
+      alert('Viewers cannot clear start time. Switch to EDITOR or OPERATOR.');
+      return;
+    }
+    const multiDay = Boolean(event?.numberOfDays && event.numberOfDays > 1);
+    const ok = window.confirm(
+      multiDay
+        ? 'Clear master and all day start times for this event?\n\nStart column will go blank until you set a new time. This saves to Neon.'
+        : 'Clear master start time for this event?\n\nStart column will go blank until you set a new time. This saves to Neon.'
+    );
+    if (!ok) return;
+
+    const previousMaster = masterStartTime;
+    const previousDays = { ...dayStartTimes };
+
+    handleUserEditing();
+    setMasterStartTime('');
+    setDayStartTimes({});
+    try {
+      localStorage.removeItem(`masterStartTime_${event.id}`);
+      localStorage.removeItem(`dayStartTimes_${event.id}`);
+    } catch {
+      /* ignore */
+    }
+
+    logChange('CLEAR_MASTER_START_TIMES', 'Cleared master/day start times for this event', {
+      fieldName: 'masterStartTime',
+      oldValue: { masterStartTime: previousMaster, dayStartTimes: previousDays },
+      newValue: { masterStartTime: '', dayStartTimes: {} },
+    });
+    console.log('✅ Cleared master/day start times for event', event.id);
+  };
 
   // Open full-screen timer in new window, new tab, or this tab
   const openFullScreenTimer = (mode: DisplayOpenMode = 'external') => {
@@ -9379,9 +9414,21 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  const handleImportFromEvent = useCallback((result: { scheduleItems: any[]; customColumns: any[] }) => {
+  const handleImportFromEvent = useCallback((result: {
+    scheduleItems: any[];
+    customColumns: any[];
+    popoutNotesCopied?: number;
+    popoutNotesSkipped?: number;
+    popoutNotesError?: string | null;
+  }) => {
     if (!event?.id) return;
-    const { scheduleItems: importedSchedule, customColumns: importedCustomCols } = result;
+    const {
+      scheduleItems: importedSchedule,
+      customColumns: importedCustomCols,
+      popoutNotesCopied = 0,
+      popoutNotesSkipped = 0,
+      popoutNotesError = null,
+    } = result;
     setSchedule(prev => importedSchedule.length > 0 ? importedSchedule : prev);
     setCustomColumns(prev => importedCustomCols.length > 0 ? importedCustomCols : prev);
     if (importedSchedule.length > 0) {
@@ -9390,11 +9437,17 @@ const RunOfShowPage: React.FC = () => {
     if (importedCustomCols.length > 0) {
       localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(importedCustomCols));
     }
-    logChange('IMPORT_EVENT', `Imported from another event: ${importedSchedule.length} schedule items, ${importedCustomCols.length} custom columns`, {
-      changeType: 'IMPORT',
-      itemCount: importedSchedule.length,
-      customColumnsCount: importedCustomCols.length
-    });
+    logChange(
+      'IMPORT_EVENT',
+      `Imported from another event: ${importedSchedule.length} schedule items, ${importedCustomCols.length} custom columns, ${popoutNotesCopied} popout notes`,
+      {
+        changeType: 'IMPORT',
+        itemCount: importedSchedule.length,
+        customColumnsCount: importedCustomCols.length,
+        popoutNotesCopied,
+        popoutNotesSkipped,
+      }
+    );
     const scheduleToSave = importedSchedule.length > 0 ? importedSchedule : schedule;
     const customColsToSave = importedCustomCols.length > 0 ? importedCustomCols : customColumns;
     DatabaseService.saveRunOfShowData({
@@ -9410,8 +9463,16 @@ const RunOfShowPage: React.FC = () => {
       userRole: currentUserRole || 'VIEWER'
     }).catch(err => console.error('Save after import failed:', err));
     handleUserEditing();
-    alert(`✅ Import complete!\n\nSchedule: ${importedSchedule.length} items\nCustom columns: ${importedCustomCols.length}`);
-  }, [event?.id, event?.name, event?.date, showMode, trackWasDurations, user, currentUserRole, schedule, customColumns]);
+    const notesLine =
+      popoutNotesError
+        ? `\nPopout notes: ${popoutNotesError}`
+        : popoutNotesCopied > 0 || popoutNotesSkipped > 0
+          ? `\nPopout notes: ${popoutNotesCopied} copied${popoutNotesSkipped > 0 ? ` (${popoutNotesSkipped} skipped)` : ''}`
+          : '';
+    alert(
+      `✅ Import complete!\n\nSchedule: ${importedSchedule.length} items\nCustom columns: ${importedCustomCols.length}${notesLine}`
+    );
+  }, [event?.id, event?.name, event?.date, event?.numberOfDays, showMode, trackWasDurations, user, currentUserRole, schedule, customColumns]);
 
   // Check for changes periodically (every 10 seconds) - only when page is visible
   useEffect(() => {
@@ -14404,6 +14465,16 @@ const RunOfShowPage: React.FC = () => {
                   }}
                   title={currentUserRole === 'VIEWER' ? 'Editors or Operators can change start time' : `Set ${(event?.numberOfDays && event.numberOfDays > 1) ? `Day ${selectedDay}` : 'master'} start time`}
                 />
+                {currentUserRole !== 'VIEWER' && (
+                  <button
+                    type="button"
+                    onClick={clearMasterStartTimes}
+                    className="px-2.5 py-2 text-xs font-semibold rounded-lg border border-slate-500 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white"
+                    title="Clear master/day start times (Neon + this browser). Start column blanks until you set a new time."
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
             </div>
             

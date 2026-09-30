@@ -667,6 +667,27 @@ class ApiClient {
     return result;
   }
 
+  /** Copy personal popout notes between events (remap schedule_item_id via item_id_map). */
+  async copyUserEventNotes(data: {
+    source_event_id: string;
+    target_event_id: string;
+    item_id_map: Record<string, number>;
+  }) {
+    const result = await this.request<{
+      ok: boolean;
+      copied: number;
+      skipped: number;
+      total: number;
+      source_event_id: string;
+      target_event_id: string;
+    }>('/api/user-event-notes/copy', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    this.cache.delete(`userEventNoteOperators_${data.target_event_id}`);
+    return result;
+  }
+
   // Complaint Line (Event Manager / Admin notes for post-show reports)
   async getComplaintLineNotes(eventId: string) {
     return this.request<{ notes: ComplaintLineNoteRow[] }>(

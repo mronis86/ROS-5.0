@@ -5450,6 +5450,87 @@ app.put('/api/user-event-notes', async (req, res) => {
   }
 });
 
+/** Copy personal popout notes from one event to another (remap schedule_item_id). */
+app.post('/api/user-event-notes/copy', async (req, res) => {
+  try {
+    const { source_event_id, target_event_id, item_id_map } = req.body || {};
+    if (!source_event_id || !target_event_id || !item_id_map || typeof item_id_map !== 'object') {
+      return res.status(400).json({
+        error: 'source_event_id, target_event_id, and item_id_map are required',
+      });
+    }
+    if (String(source_event_id) === String(target_event_id)) {
+      return res.status(400).json({ error: 'source and target event must differ' });
+    }
+
+    const idMap = new Map();
+    for (const [fromKey, toVal] of Object.entries(item_id_map)) {
+      const fromId = Number(fromKey);
+      const toId = Number(toVal);
+      if (Number.isFinite(fromId) && Number.isFinite(toId)) {
+        idMap.set(fromId, toId);
+      }
+    }
+    if (idMap.size === 0) {
+      return res.status(400).json({ error: 'item_id_map must contain at least one valid id pair' });
+    }
+
+    const source = await pool.query(
+      `SELECT user_id, user_name, schedule_item_id, column_key, content
+       FROM user_event_notes
+       WHERE event_id = $1
+         AND TRIM(COALESCE(content, '')) <> ''`,
+      [String(source_event_id)]
+    );
+
+    let copied = 0;
+    let skipped = 0;
+    for (const row of source.rows) {
+      const oldId = Number(row.schedule_item_id);
+      const newId = idMap.get(oldId);
+      if (newId == null) {
+        skipped += 1;
+        continue;
+      }
+      const key = row.column_key || 'personal';
+      await pool.query(
+        `INSERT INTO user_event_notes
+           (event_id, user_id, user_name, schedule_item_id, column_key, content, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (event_id, user_id, schedule_item_id, column_key)
+         DO UPDATE SET
+           content = EXCLUDED.content,
+           user_name = COALESCE(EXCLUDED.user_name, user_event_notes.user_name),
+           updated_at = NOW()`,
+        [
+          String(target_event_id),
+          row.user_id,
+          row.user_name || null,
+          newId,
+          key,
+          String(row.content ?? ''),
+        ]
+      );
+      copied += 1;
+    }
+
+    console.log(
+      `✅ Copied user_event_notes ${source_event_id} → ${target_event_id}: ${copied} copied, ${skipped} skipped`
+    );
+    res.json({
+      ok: true,
+      copied,
+      skipped,
+      total: source.rows.length,
+      source_event_id,
+      target_event_id,
+    });
+  } catch (error) {
+    console.error('Error copying user event notes:', error);
+    res.status(500).json({ error: 'Failed to copy user event notes' });
+  }
+});
+
 // Delete all personal notes for one person on an event (Notes popout manage)
 app.delete('/api/user-event-notes/:eventId/:userId', async (req, res) => {
   try {
