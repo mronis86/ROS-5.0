@@ -466,15 +466,17 @@ const MicManagerPage: React.FC = () => {
 
   const remainingSeconds = timerProgress.total - timerProgress.elapsed;
   const hasTimer = Boolean(activeItemId && (timerRunning || timerLoaded) && timerProgress.total > 0);
-  const micActiveProgramType =
+  const micActiveCue =
     activeItemId != null
-      ? schedule.find((s) => Number(s.id) === Number(activeItemId))?.programType
+      ? schedule.find((s) => Number(s.id) === Number(activeItemId))
       : null;
+  const micActiveProgramType = micActiveCue?.programType ?? null;
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     isRunning: timerRunning,
     programType: micActiveProgramType,
     itemId: activeItemId,
-    topPreshowItemId: findTopPreshowCue(schedule)?.id ?? null,
+    topPreshowItemId:
+      findTopPreshowCue(schedule, undefined, micActiveCue?.day ?? null)?.id ?? null,
   });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && timerProgress.total > 0

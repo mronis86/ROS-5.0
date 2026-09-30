@@ -374,15 +374,23 @@ const PhotoViewPage: React.FC = () => {
     hybridTimerData?.activeTimer?.item_id != null
       ? Number(hybridTimerData.activeTimer.item_id)
       : activeItemId;
-  const photoActiveProgramType =
+  const photoActiveCue =
     photoActiveItemId != null
-      ? schedule.find((s) => Number(s.id) === Number(photoActiveItemId))?.programType
+      ? schedule.find((s) => Number(s.id) === Number(photoActiveItemId))
       : null;
+  const photoActiveProgramType = photoActiveCue?.programType ?? null;
+  const photoTimerRunning = !!(
+    hybridTimerData?.activeTimer?.timer_state === 'running' ||
+    (hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active)
+  );
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     timer: hybridTimerData?.activeTimer,
+    isRunning: photoTimerRunning,
     programType: photoActiveProgramType,
     itemId: photoActiveItemId,
-    topPreshowItemId: findTopPreshowCue(schedule, indentedCues)?.id ?? null,
+    message: hybridTimerData?.timerMessage ?? null,
+    topPreshowItemId:
+      findTopPreshowCue(schedule, indentedCues, photoActiveCue?.day ?? null)?.id ?? null,
   });
   
   const [subCueTimers, setSubCueTimers] = useState<{[key: number]: {remaining: number, intervalId: NodeJS.Timeout}}>({});
@@ -3353,11 +3361,7 @@ const PhotoViewPage: React.FC = () => {
                           
                           return hasValidNotes;
                         })() && (
-                          <div className={`border-t border-slate-600 p-4 ${
-                            isIndented ? 'bg-amber-950' : 
-                            isActive ? (isRunning ? 'bg-green-950' : 'bg-blue-950') : 
-                            'bg-slate-800'
-                          }`}>
+                          <div className={`border-t border-slate-600 p-4 ${rowHighlight.bg}`}>
                             <div className="text-gray-400 text-sm mb-2 font-bold">NOTES:</div>
                             <div 
                               className={`notes-display text-sm ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'} break-words leading-relaxed`}

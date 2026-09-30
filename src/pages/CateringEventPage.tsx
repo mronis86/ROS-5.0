@@ -544,7 +544,8 @@ const CateringEventPage: React.FC = () => {
     isRunning: timerRunning,
     programType: current?.programType,
     itemId: activeId ?? current?.id ?? null,
-    topPreshowItemId: findTopPreshowCue(schedule, indented)?.id ?? null,
+    topPreshowItemId:
+      findTopPreshowCue(schedule, indented, current?.day ?? null)?.id ?? null,
   });
   const remainingPct =
     hasTimer && remainingSeconds >= 0 && progress.total > 0

@@ -3647,6 +3647,12 @@ const RunOfShowPage: React.FC = () => {
             delete newState[itemId];
             return newState;
           });
+          // Unindenting → main cue; default public on
+          setSchedule((prev) =>
+            prev.map((row) =>
+              row.id === itemId && !row.isTimedMarker ? { ...row, isIndented: false, isPublic: true } : row
+            )
+          );
           console.log('✅ Successfully removed indented status');
         }
       } else {
@@ -3676,6 +3682,12 @@ const RunOfShowPage: React.FC = () => {
               userName: user.full_name || user.email || 'Unknown User'
             }
           }));
+          // Indented cues are not public by default
+          setSchedule((prev) =>
+            prev.map((row) =>
+              row.id === itemId ? { ...row, isIndented: true, isPublic: false } : row
+            )
+          );
           console.log('✅ Successfully added indented status');
         }
       }
@@ -4921,7 +4933,7 @@ const RunOfShowPage: React.FC = () => {
     hasQA: false,
     needsRecording: false,
     timerId: '',
-    isPublic: false,
+    isPublic: true, // Main (non-indented) cues default to public
     isIndented: false,
     timerDisplay: 'countdown',
     customFields: {}
@@ -9802,11 +9814,14 @@ const RunOfShowPage: React.FC = () => {
 
 
   const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string; id?: number }) => {
+    const isIndentedItem = !!(newItem.isIndented || newItem.isTimedMarker);
     const item: ScheduleItem = {
       ...newItem,
       id: newItem.id && newItem.id > 0 ? newItem.id : modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now(),
       timerId: generateRandomTimerId(),
-      isIndented: newItem.isIndented || false,
+      isIndented: isIndentedItem,
+      // Main cues default public; indented / timed markers stay private unless explicitly set
+      isPublic: isIndentedItem ? false : newItem.isPublic !== false,
       customFields: {
         cue: newItem.cue || ''
       }
@@ -9884,7 +9899,7 @@ const RunOfShowPage: React.FC = () => {
       hasQA: false,
       needsRecording: false,
       timerId: '',
-      isPublic: false,
+      isPublic: true,
       isIndented: false,
       timerDisplay: 'countdown',
       customFields: {}
@@ -9967,7 +9982,7 @@ const RunOfShowPage: React.FC = () => {
           hasQA: false,
           needsRecording: false,
           timerId: generateRandomTimerId(),
-          isPublic: parentBreakout.isPublic || false,
+          isPublic: false, // Indented breakout rooms stay private
           isIndented: true,
           customFields: {
             cue: newCueNumber
@@ -11081,7 +11096,7 @@ const RunOfShowPage: React.FC = () => {
                 return tid;
               })()
             : generateRandomTimerId(usedTimerIds),
-          isPublic: row.isPublic || false,
+          isPublic: row.isIndented ? false : row.isPublic !== false,
           isIndented: row.isIndented || false,
           day: row.day ?? selectedDay,
           customFields: (() => {
@@ -15333,7 +15348,7 @@ const RunOfShowPage: React.FC = () => {
                     hasQA: false,
                     needsRecording: false,
                     timerId: '',
-                    isPublic: false,
+                    isPublic: true,
                     isIndented: false,
                     timerDisplay: 'countdown',
                     customFields: {}

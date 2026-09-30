@@ -11,11 +11,18 @@ type CueLike = {
   programType?: string;
   day?: number;
   isIndented?: boolean;
+  isTimedMarker?: boolean;
 };
+
+/** Program types that participate in PreShow countdown branding. */
+export function isPreshowProgramType(programType: string | null | undefined): boolean {
+  return String(programType || '').trim() === 'PreShow/End';
+}
 
 /**
  * First non-indented cue for a day (or the whole schedule), only if it is PreShow/End.
  * Pass `day` for multi-day events so Day 2+ PreShow gets warn/confirm/auto-start.
+ * Timed markers / indented rows are skipped (they never count as the top cue).
  */
 export function findTopPreshowCue<T extends CueLike>(
   schedule: T[],
@@ -27,8 +34,9 @@ export function findTopPreshowCue<T extends CueLike>(
     day != null && Number.isFinite(Number(day)) ? Math.floor(Number(day)) : null;
   for (const item of schedule) {
     if (wantDay != null && (item.day || 1) !== wantDay) continue;
-    if (isIndentedScheduleItem(item, indentedLookup || {})) continue;
-    if (item.programType === 'PreShow/End') return item;
+    // Prefer item flags so Clock/Full Screen work without indented_cues loaded
+    if (item.isTimedMarker || isIndentedScheduleItem(item, indentedLookup || {})) continue;
+    if (isPreshowProgramType(item.programType)) return item;
     return null;
   }
   return null;

@@ -186,7 +186,7 @@ const ImportCSVModal: React.FC<ImportCSVModalProps> = ({ isOpen, onClose, onImpo
       hasPPT: r.hasPPT,
       hasQA: r.hasQA,
       timerId: r.timerId || '',
-      isPublic: r.isPublic ?? false,
+      isPublic: r.isIndented ? false : (r.isPublic ?? true),
       isIndented: r.isIndented ?? false,
       day: r.day ?? 1,
       customFields: r.customFields || {}

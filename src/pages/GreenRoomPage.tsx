@@ -103,11 +103,13 @@ const GreenRoomPage: React.FC = () => {
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
-  const greenActiveProgramType =
+  const greenActiveCue =
     activeItemId != null
-      ? schedule.find((s) => Number(s.id) === Number(activeItemId))?.programType
+      ? schedule.find((s) => Number(s.id) === Number(activeItemId))
       : null;
-  const topPreshowItemId = findTopPreshowCue(schedule, indentedCues)?.id ?? null;
+  const greenActiveProgramType = greenActiveCue?.programType ?? null;
+  const topPreshowItemId =
+    findTopPreshowCue(schedule, indentedCues, greenActiveCue?.day ?? null)?.id ?? null;
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     isRunning: timerState === 'running',
     programType: greenActiveProgramType,

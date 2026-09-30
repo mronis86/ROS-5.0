@@ -763,7 +763,8 @@ const OperatorCueDisplayPage: React.FC = () => {
     isRunning: running,
     programType: current?.programType,
     itemId: activeId ?? current?.id ?? null,
-    topPreshowItemId: findTopPreshowCue(schedule)?.id ?? null,
+    topPreshowItemId:
+      findTopPreshowCue(schedule, undefined, current?.day ?? null)?.id ?? null,
   });
 
   const statusTextCls = running ? 'text-green-400' : loaded ? 'text-yellow-400' : 'text-slate-300';

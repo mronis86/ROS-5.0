@@ -878,16 +878,19 @@ const RunOfShowMobilePage: React.FC = () => {
   }, [hybridTimerData.activeTimer, items.length]);
 
   const effectivePrimaryLive = desktopPrimaryLive ?? primaryLive;
-  const mobileActiveProgramType =
+  const mobileActiveCue =
     effectivePrimaryLive?.itemId != null
-      ? items.find((i) => Number(i.id) === Number(effectivePrimaryLive.itemId))?.programType
+      ? items.find((i) => Number(i.id) === Number(effectivePrimaryLive.itemId))
       : null;
+  const mobileActiveProgramType = mobileActiveCue?.programType ?? null;
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     timer: hybridTimerData.activeTimer,
     isRunning: effectivePrimaryLive?.kind === 'running',
     programType: mobileActiveProgramType,
     itemId: effectivePrimaryLive?.itemId ?? null,
-    topPreshowItemId: findTopPreshowCue(items)?.id ?? null,
+    message: hybridTimerData?.timerMessage ?? null,
+    topPreshowItemId:
+      findTopPreshowCue(items, undefined, mobileActiveCue?.day ?? null)?.id ?? null,
   });
   const effectivePrimaryRemainingSec = useMemo(() => {
     const p = effectivePrimaryLive;

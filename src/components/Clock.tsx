@@ -86,18 +86,24 @@ const Clock: React.FC<ClockProps> = ({
   const countdownColorMode = useCountdownColorMode();
   const stageMessageForColor =
     [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) ?? null;
-  const activeCueProgramType = (() => {
-    const itemId = Number(
-      hybridTimerData?.activeTimer?.item_id ?? hybridTimerData?.activeTimer?.itemId ?? NaN
-    );
-    if (!Number.isFinite(itemId) || !Array.isArray(scheduleItems)) return null;
-    const cue = scheduleItems.find((s: any) => Number(s?.id) === itemId);
-    return cue?.programType || null;
-  })();
   const activeTimerItemId =
     hybridTimerData?.activeTimer?.item_id ?? hybridTimerData?.activeTimer?.itemId ?? null;
+  const activeCue = (() => {
+    if (!Array.isArray(scheduleItems) || activeTimerItemId == null) return null;
+    const idNum = Number(activeTimerItemId);
+    return (
+      scheduleItems.find(
+        (s: any) =>
+          s?.id === activeTimerItemId ||
+          String(s?.id) === String(activeTimerItemId) ||
+          (Number.isFinite(idNum) && Number(s?.id) === idNum)
+      ) || null
+    );
+  })();
+  const activeCueProgramType = activeCue?.programType || null;
+  // Prefer the running cue's day so Day 2+ PreShow matches (not Day 1's top cue)
   const topPreshowItemId = Array.isArray(scheduleItems)
-    ? findTopPreshowCue(scheduleItems)?.id ?? null
+    ? findTopPreshowCue(scheduleItems, null, activeCue?.day ?? null)?.id ?? null
     : null;
   const timerRunningForRainbow = !!(
     hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active

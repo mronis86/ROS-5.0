@@ -91,15 +91,22 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const timerRunningForRainbow = !!(
     hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active
   );
-  const activeCueProgramType =
+  const hybridCueProgramType =
     hybridTimerData?.cueData?.programType ||
     hybridTimerData?.activeTimer?.program_type ||
     hybridTimerData?.activeTimer?.programType ||
     null;
+  const activeTimerItemId =
+    hybridTimerData?.activeTimer?.item_id ??
+    hybridTimerData?.activeTimer?.itemId ??
+    itemId ??
+    null;
   const [topPreshowItemId, setTopPreshowItemId] = useState<number | null>(null);
+  const [scheduleCueProgramType, setScheduleCueProgramType] = useState<string | null>(null);
   useEffect(() => {
     if (!eventId) {
       setTopPreshowItemId(null);
+      setScheduleCueProgramType(null);
       return;
     }
     let cancelled = false;
@@ -107,24 +114,39 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       try {
         const data = await DatabaseService.getRunOfShowData(eventId);
         const items = Array.isArray(data?.schedule_items) ? data.schedule_items : [];
-        const top = findTopPreshowCue(items);
-        if (!cancelled) setTopPreshowItemId(top?.id ?? null);
+        let day: number | null = null;
+        let cueProgramType: string | null = null;
+        if (activeTimerItemId != null) {
+          const idNum = Number(activeTimerItemId);
+          const cue = items.find(
+            (s: any) =>
+              s?.id === activeTimerItemId ||
+              String(s?.id) === String(activeTimerItemId) ||
+              (Number.isFinite(idNum) && Number(s?.id) === idNum)
+          );
+          if (cue?.day != null) day = Number(cue.day) || 1;
+          cueProgramType = cue?.programType || null;
+        }
+        const top = findTopPreshowCue(items, null, day);
+        if (!cancelled) {
+          setTopPreshowItemId(top?.id ?? null);
+          setScheduleCueProgramType(cueProgramType);
+        }
       } catch {
-        if (!cancelled) setTopPreshowItemId(null);
+        if (!cancelled) {
+          setTopPreshowItemId(null);
+          setScheduleCueProgramType(null);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [eventId]);
+  }, [eventId, activeTimerItemId]);
   const usePreshowRainbow = shouldUsePreshowRainbow(stageMessageForColor, {
     isRunning: timerRunningForRainbow,
-    programType: activeCueProgramType,
-    itemId:
-      hybridTimerData?.activeTimer?.item_id ??
-      hybridTimerData?.activeTimer?.itemId ??
-      itemId ??
-      null,
+    programType: hybridCueProgramType || scheduleCueProgramType,
+    itemId: activeTimerItemId,
     topPreshowItemId,
   });
 

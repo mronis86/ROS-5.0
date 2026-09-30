@@ -322,11 +322,13 @@ const GuestEventPage: React.FC = () => {
       ? 'text-yellow-400'
       : 'text-slate-400';
   const isLive = liveSynced && socketConnected;
+  // Guest has no timer-message API; brand only when running cue is the day's top PreShow.
   const usePreshowRainbowColors = shouldUsePreshowRainbow(null, {
     isRunning: timerRunning,
     programType: activeItem?.programType,
     itemId: activeItemId,
-    topPreshowItemId: findTopPreshowCue(allItems)?.id ?? null,
+    topPreshowItemId:
+      findTopPreshowCue(allItems, undefined, activeItem?.day ?? null)?.id ?? null,
   });
 
   useEffect(() => {
