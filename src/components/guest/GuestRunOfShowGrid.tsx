@@ -20,11 +20,14 @@ import {
   GUEST_STICKY_NUM_WIDTH_PX,
   GUEST_STICKY_START_LEFT_PX,
   guestColumnFlexOrderMap,
-  normalizeGuestColumnOrder,
+  normalizeGuestColumnOrderWithCustom,
   type GuestScrollColumn,
   type GuestVisibleColumns,
 } from '../../lib/guestColumnPrefs';
+import { parseCustomColumnOrderKey } from '../../lib/rosColumnOrder';
 import { findParentScheduleIndex, isIndentedScheduleItem } from '../../lib/scheduleStartTime';
+
+export type GuestCustomColumn = { id: string; name: string };
 
 function dayStartFor(
   day: number,
@@ -62,7 +65,12 @@ export interface GuestRunOfShowGridProps {
   visibleColumns?: GuestVisibleColumns;
   /** When true, Start sticks beside CUE (outside horizontal scroll). */
   stickyStartColumn?: boolean;
-  columnOrder?: GuestScrollColumn[];
+  /** Built-in guest keys and optional `custom:{id}` entries. */
+  columnOrder?: string[];
+  customColumns?: GuestCustomColumn[];
+  visibleCustomColumns?: Record<string, boolean>;
+  /** Applied on the scrollport (not an ancestor) so sticky #/CUE/Start still work. */
+  zoom?: number;
   onOpenSpeakers: (itemId: number) => void;
   onViewSegmentDetail?: (itemId: number) => void;
 }
@@ -82,6 +90,9 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   visibleColumns = GUEST_VISIBLE_COLUMNS,
   stickyStartColumn = false,
   columnOrder,
+  customColumns = [],
+  visibleCustomColumns = {},
+  zoom,
   onOpenSpeakers,
   onViewSegmentDetail,
 }) => {
@@ -91,11 +102,17 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     () => (startPinnedBesideCue ? { ...columns, start: false } : columns),
     [startPinnedBesideCue, columns]
   );
+  const customIds = useMemo(() => customColumns.map((c) => c.id), [customColumns]);
   const orderedKeys = useMemo(
-    () => normalizeGuestColumnOrder(columnOrder || null),
-    [columnOrder]
+    () => normalizeGuestColumnOrderWithCustom(columnOrder || null, customIds),
+    [columnOrder, customIds]
   );
   const columnFlexOrder = useMemo(() => guestColumnFlexOrderMap(orderedKeys), [orderedKeys]);
+  const customById = useMemo(() => {
+    const map = new Map<string, GuestCustomColumn>();
+    for (const col of customColumns) map.set(col.id, col);
+    return map;
+  }, [customColumns]);
 
   const scheduleRows = useMemo(() => schedule.map(toScheduleRowItem), [schedule]);
   const indentedCues = useMemo(() => buildIndentedLookup(schedule), [schedule]);
@@ -172,30 +189,49 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   const headerCell =
     'h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center flex-shrink-0';
 
-  const renderScrollHeader = (key: GuestScrollColumn) => {
-    if (key === 'start' && startPinnedBesideCue) return null;
-    if (!scrollColumns[key]) return null;
-    const width = GUEST_COLUMN_WIDTHS[key as keyof typeof GUEST_COLUMN_WIDTHS];
+  const renderScrollHeader = (key: string) => {
+    const customId = parseCustomColumnOrderKey(key);
+    if (customId) {
+      if (visibleCustomColumns[customId] === false) return null;
+      const col = customById.get(customId);
+      if (!col) return null;
+      return (
+        <div
+          key={key}
+          className={`${headerCell} px-4 border-r border-slate-600`}
+          style={{ width: 256, order: columnFlexOrder[key] ?? 999 }}
+        >
+          <span className="text-white font-bold truncate px-1" title={col.name}>
+            {col.name}
+          </span>
+        </div>
+      );
+    }
+
+    const builtin = key as GuestScrollColumn;
+    if (builtin === 'start' && startPinnedBesideCue) return null;
+    if (!scrollColumns[builtin]) return null;
+    const width = GUEST_COLUMN_WIDTHS[builtin as keyof typeof GUEST_COLUMN_WIDTHS];
     return (
       <div
         key={key}
         className={`${headerCell} px-4 border-r border-slate-600`}
         style={{ width, order: columnFlexOrder[key] ?? 999 }}
       >
-        {key === 'duration' ? (
+        {builtin === 'duration' ? (
           <div className="text-center">
-            <div className="text-white font-bold">{GUEST_COLUMN_LABELS[key]}</div>
+            <div className="text-white font-bold">{GUEST_COLUMN_LABELS[builtin]}</div>
             <div className="text-xs text-slate-400">HH MM SS</div>
           </div>
         ) : (
           <span className="text-white font-bold">
-            {key === 'programType'
+            {builtin === 'programType'
               ? 'Program Type'
-              : key === 'segmentName'
+              : builtin === 'segmentName'
                 ? 'Segment Name'
-                : key === 'shotType'
+                : builtin === 'shotType'
                   ? 'Shot Type'
-                  : GUEST_COLUMN_LABELS[key]}
+                  : GUEST_COLUMN_LABELS[builtin]}
           </span>
         )}
       </div>
@@ -215,7 +251,12 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
       <div
         id="guest-schedule-scroll"
         className="flex-1 min-h-0 overflow-auto rounded-lg border-2 border-slate-600"
-        style={{ scrollbarWidth: 'thin' }}
+        style={{
+          scrollbarWidth: 'thin',
+          ...(typeof zoom === 'number' && zoom > 0 && zoom !== 1
+            ? ({ zoom } as React.CSSProperties)
+            : null),
+        }}
       >
         <div className="min-w-max bg-slate-900">
           {/* Sticky header — same row structure as data rows */}
@@ -264,8 +305,8 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               item.notes || '',
               item.speakersText,
               item.speakers,
-              undefined,
-              undefined,
+              item.customFields,
+              customColumns,
               0,
               GUEST_COLUMN_WIDTHS.notes
             );
@@ -351,8 +392,8 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   setViewingSpeakersItem={(id: number) => onOpenSpeakers(id)}
                   setShowViewSpeakersModal={noop}
                   onViewSegmentDetail={onViewSegmentDetail}
-                  customColumns={[]}
-                  visibleCustomColumns={{}}
+                  customColumns={customColumns}
+                  visibleCustomColumns={visibleCustomColumns}
                   customColumnWidths={{}}
                 />
               </div>

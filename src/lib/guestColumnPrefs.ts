@@ -1,4 +1,5 @@
 import { GUEST_VISIBLE_COLUMNS } from './guestRosHelpers';
+import { customColumnOrderKey } from './rosColumnOrder';
 
 export type GuestVisibleColumns = typeof GUEST_VISIBLE_COLUMNS;
 
@@ -105,6 +106,48 @@ export function loadGuestColumnOrder(storageKey: string): GuestScrollColumn[] {
     return normalizeGuestColumnOrder(raw ? JSON.parse(raw) : null);
   } catch {
     return normalizeGuestColumnOrder(null);
+  }
+}
+
+/** Guest/Director scroll order including `custom:{id}` keys (matches main ROS filter chips). */
+export function normalizeGuestColumnOrderWithCustom(
+  saved: string[] | null | undefined,
+  customIds: string[] = []
+): string[] {
+  const customKeys = customIds.map(customColumnOrderKey);
+  const allowed = new Set<string>([...GUEST_SCROLL_COLUMNS, ...customKeys]);
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const key of saved || []) {
+    if (allowed.has(key) && !seen.has(key)) {
+      result.push(key);
+      seen.add(key);
+    }
+  }
+  for (const key of GUEST_SCROLL_COLUMNS) {
+    if (!seen.has(key)) {
+      result.push(key);
+      seen.add(key);
+    }
+  }
+  for (const key of customKeys) {
+    if (!seen.has(key)) {
+      result.push(key);
+      seen.add(key);
+    }
+  }
+  return result;
+}
+
+export function loadGuestColumnOrderWithCustom(
+  storageKey: string,
+  customIds: string[] = []
+): string[] {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    return normalizeGuestColumnOrderWithCustom(raw ? JSON.parse(raw) : null, customIds);
+  } catch {
+    return normalizeGuestColumnOrderWithCustom(null, customIds);
   }
 }
 

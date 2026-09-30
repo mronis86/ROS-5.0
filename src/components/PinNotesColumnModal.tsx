@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { apiClient, type UserEventNoteOperator } from '../services/api-client';
 import {
   getStoredOperatorName,
@@ -48,6 +48,8 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
   const [loadingOperators, setLoadingOperators] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [manageError, setManageError] = useState<string | null>(null);
+  const [columnSearch, setColumnSearch] = useState('');
+  const [peopleSearch, setPeopleSearch] = useState('');
 
   const operatorLabel = (op: UserEventNoteOperator) =>
     personColumnLabel(
@@ -128,10 +130,30 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
     });
   };
 
-  const sharedOptions: PinNotesColumn[] = [
-    { type: 'notes', id: 'notes', name: 'Notes' },
-    ...customColumns.map((c) => ({ type: 'custom' as const, id: c.id, name: c.name })),
-  ];
+  const sharedOptions = useMemo<PinNotesColumn[]>(
+    () => [
+      { type: 'notes', id: 'notes', name: 'Notes' },
+      ...customColumns.map((c) => ({ type: 'custom' as const, id: c.id, name: c.name })),
+    ],
+    [customColumns]
+  );
+
+  const filteredShared = useMemo(() => {
+    const q = columnSearch.trim().toLowerCase();
+    if (!q) return sharedOptions;
+    return sharedOptions.filter((c) => c.name.toLowerCase().includes(q));
+  }, [sharedOptions, columnSearch]);
+
+  const filteredOperators = useMemo(() => {
+    const q = peopleSearch.trim().toLowerCase();
+    if (!q) return savedOperators;
+    return savedOperators.filter((op) => {
+      const label = personColumnLabel(
+        op.user_name?.trim() || op.user_id.replace(/^operator:/, '').replace(/-/g, ' ')
+      );
+      return label.toLowerCase().includes(q);
+    });
+  }, [savedOperators, peopleSearch]);
 
   const trimmedName = myNotesName.trim();
   const canOpen =
@@ -154,56 +176,98 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-4">
+      <div className="bg-slate-800 rounded-lg p-5 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-3">
           <h2 className="text-xl font-bold text-white">Notes popout</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">
             ×
           </button>
         </div>
-        <p className="text-slate-300 text-sm mb-5">
-          Choose what to show before opening. Cue always appears on the left. You can still change
-          columns later from the popout if needed.
+        <p className="text-slate-300 text-sm mb-4">
+          Pick columns left-to-right. Cue stays on the left. Search helps when there are many custom
+          columns or people.
         </p>
 
         <div className="mb-5">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <p className="text-slate-400 text-xs uppercase tracking-wide">Shared columns</p>
-            {selected.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setSelected([])}
-                className="text-xs text-slate-400 hover:text-white underline"
-              >
-                Clear
-              </button>
-            ) : null}
-          </div>
-          <div className="space-y-2">
-            {sharedOptions.map((col) => (
-              <label
-                key={col.type + col.id}
-                className="flex items-center gap-3 px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
-              >
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <p className="text-slate-400 text-xs uppercase tracking-wide">
+              Shared columns
+              <span className="normal-case tracking-normal text-slate-500 ml-2">
+                {selected.length} selected · {sharedOptions.length} available
+              </span>
+            </p>
+            <div className="flex items-center gap-2">
+              {sharedOptions.length > 8 ? (
                 <input
-                  type="checkbox"
-                  checked={isSelected(col)}
-                  onChange={() => toggle(col)}
-                  className="w-5 h-5 rounded border-slate-500"
+                  type="search"
+                  value={columnSearch}
+                  onChange={(e) => setColumnSearch(e.target.value)}
+                  placeholder="Search columns…"
+                  className="w-40 px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded text-white placeholder-slate-500"
                 />
-                <span className="text-white font-medium">{col.name}</span>
-                {col.type === 'notes' ? (
-                  <span className="text-slate-400 text-xs ml-auto">ROS Notes</span>
-                ) : (
-                  <span className="text-slate-400 text-xs ml-auto">Custom</span>
-                )}
-              </label>
-            ))}
+              ) : null}
+              {selected.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSelected([])}
+                  className="text-xs text-slate-400 hover:text-white underline"
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto content-start rounded-lg border border-slate-700/80 bg-slate-900/30 p-2">
+            {filteredShared.length === 0 ? (
+              <p className="text-slate-500 text-sm px-1 py-2">No columns match.</p>
+            ) : (
+              filteredShared.map((col) => {
+                const on = isSelected(col);
+                return (
+                  <button
+                    key={col.type + col.id}
+                    type="button"
+                    onClick={() => toggle(col)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                      on
+                        ? 'border-blue-500 bg-blue-900/45 text-blue-50'
+                        : 'border-slate-600 bg-slate-700/70 text-slate-300 hover:bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        on ? 'bg-blue-400' : 'bg-slate-500'
+                      }`}
+                    />
+                    <span className="font-medium truncate max-w-[12rem]">{col.name}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                      {col.type === 'notes' ? 'ros' : 'custom'}
+                    </span>
+                  </button>
+                );
+              })
+            )}
           </div>
         </div>
 
         <div className="mb-5">
-          <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">Users&apos; notes</p>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <p className="text-slate-400 text-xs uppercase tracking-wide">
+              Users&apos; notes
+              <span className="normal-case tracking-normal text-slate-500 ml-2">
+                {selectedOperators.length} selected · {savedOperators.length} people
+              </span>
+            </p>
+            {savedOperators.length > 6 ? (
+              <input
+                type="search"
+                value={peopleSearch}
+                onChange={(e) => setPeopleSearch(e.target.value)}
+                placeholder="Search people…"
+                className="w-40 px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded text-white placeholder-slate-500"
+              />
+            ) : null}
+          </div>
           {loadingOperators ? (
             <p className="text-slate-400 text-sm">Loading saved people…</p>
           ) : operatorsError ? (
@@ -214,48 +278,59 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
               yours.
             </p>
           ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {savedOperators.map((op) => {
-                const checked = selectedOperators.some((c) => c.userId === op.user_id);
-                const busy = deletingUserId === op.user_id;
-                return (
-                  <div
-                    key={op.user_id}
-                    className="flex items-center gap-2 px-3 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-                  >
-                    <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleOperator(op)}
-                        className="w-5 h-5 rounded border-slate-500 flex-shrink-0"
-                      />
-                      <span className="text-white font-medium truncate">{operatorLabel(op)}</span>
-                      <span className="text-slate-400 text-xs flex-shrink-0">
-                        {op.note_count} note{op.note_count === 1 ? '' : 's'}
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void deleteOperatorNotes(op)}
-                      disabled={busy}
-                      className="px-2 py-1 text-xs text-red-300 hover:text-white hover:bg-red-700/80 border border-red-800/60 rounded disabled:opacity-50 flex-shrink-0"
-                      title={`Delete all notes for ${operatorLabel(op)}`}
+            <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto content-start rounded-lg border border-slate-700/80 bg-slate-900/30 p-2">
+              {filteredOperators.length === 0 ? (
+                <p className="text-slate-500 text-sm px-1 py-2">No people match.</p>
+              ) : (
+                filteredOperators.map((op) => {
+                  const checked = selectedOperators.some((c) => c.userId === op.user_id);
+                  const busy = deletingUserId === op.user_id;
+                  const label = operatorLabel(op);
+                  return (
+                    <div
+                      key={op.user_id}
+                      className={`inline-flex items-center gap-1 rounded-full border pl-2.5 pr-1 py-1 ${
+                        checked
+                          ? 'border-emerald-500/70 bg-emerald-950/40 text-emerald-50'
+                          : 'border-slate-600 bg-slate-700/70 text-slate-300'
+                      }`}
                     >
-                      {busy ? '…' : 'Delete'}
-                    </button>
-                  </div>
-                );
-              })}
+                      <button
+                        type="button"
+                        onClick={() => toggleOperator(op)}
+                        className="inline-flex items-center gap-1.5 min-w-0"
+                        title={`${label} · ${op.note_count} notes`}
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            checked ? 'bg-emerald-400' : 'bg-slate-500'
+                          }`}
+                        />
+                        <span className="text-sm font-medium truncate max-w-[9rem]">{label}</span>
+                        <span className="text-[10px] text-slate-500 tabular-nums">{op.note_count}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteOperatorNotes(op)}
+                        disabled={busy}
+                        className="ml-0.5 px-1.5 py-0.5 text-[10px] text-red-300 hover:text-white hover:bg-red-700/80 rounded-full disabled:opacity-50"
+                        title={`Delete all notes for ${label}`}
+                      >
+                        {busy ? '…' : '×'}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
           )}
           {manageError ? <p className="text-red-300 text-sm mt-2">{manageError}</p> : null}
           <p className="text-slate-500 text-xs mt-2">
-            Delete removes that person&apos;s saved notes for this event only.
+            × removes that person&apos;s saved notes for this event only.
           </p>
         </div>
 
-        <div className="mb-6 p-4 bg-slate-900/60 border border-slate-600 rounded-lg">
+        <div className="mb-5 p-4 bg-slate-900/60 border border-slate-600 rounded-lg">
           <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
@@ -283,14 +358,14 @@ const PinNotesColumnModal: React.FC<PinNotesColumnModalProps> = ({
               />
               {savedOperators.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {savedOperators.slice(0, 8).map((op) => {
+                  {savedOperators.slice(0, 12).map((op) => {
                     const label = operatorLabel(op);
                     return (
                       <button
                         key={`use-${op.user_id}`}
                         type="button"
                         onClick={() => setMyNotesName(op.user_name?.trim() || label)}
-                        className="px-2 py-1 text-xs bg-slate-700 hover:bg-emerald-800/50 text-slate-200 rounded border border-slate-600"
+                        className="px-2 py-1 text-xs bg-slate-700 hover:bg-emerald-800/50 text-slate-200 rounded-full border border-slate-600"
                       >
                         Use {label}
                       </button>

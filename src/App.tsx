@@ -33,6 +33,7 @@ import CreativeEventPage from './pages/CreativeEventPage';
 import ContentReviewPage from './pages/ContentReviewPage';
 import GreenRoomPage from './pages/GreenRoomPage';
 import PhotoViewPage from './pages/PhotoViewPage';
+import DirectorViewPage from './pages/DirectorViewPage';
 import MicManagerPage from './pages/MicManagerPage';
 import OperatorCueDisplayPage from './pages/OperatorCueDisplayPage';
 import ScriptsFollowPage from './pages/ScriptsFollowPage';
@@ -73,6 +74,7 @@ function AppContent() {
   const isStreamGuide = location.pathname === '/stream-guide';
   const isGreenRoom = location.pathname === '/green-room';
   const isPhotoView = location.pathname === '/photo-view';
+  const isDirectorView = location.pathname === '/director-view';
   const isMicManager = location.pathname === '/mic-manager';
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
@@ -119,6 +121,7 @@ function AppContent() {
     isOperatorTimerPopout ||
     isGreenRoom ||
     isPhotoView ||
+    isDirectorView ||
     isMicManager ||
     isOperatorCueDisplay ||
     isScriptsFollow ||
@@ -144,7 +147,7 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
       
       {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && (
         <AuthGuard>
@@ -174,6 +177,7 @@ function AppContent() {
             <Route path="/extend-event-controls" element={<ExtendEventControlsPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />
+            <Route path="/director-view" element={<DirectorViewPage />} />
             <Route path="/mic-manager" element={<MicManagerPage />} />
             <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />

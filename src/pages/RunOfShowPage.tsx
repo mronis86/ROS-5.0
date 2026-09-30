@@ -13984,7 +13984,7 @@ const RunOfShowPage: React.FC = () => {
                                   ? 'text-slate-500 cursor-not-allowed'
                                   : 'text-white hover:bg-slate-700'
                               }`}
-                              title="Open Op Timer as a modal panel on this page"
+                              title="Open Op Timer (use Pop out in the modal for a small window)"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -13997,23 +13997,19 @@ const RunOfShowPage: React.FC = () => {
                               ) : null}
                             </button>
                             <button
-                              type="button"
                               onClick={() => {
                                 setShowMenuDropdown(false);
                                 setShowOperatorActionsSubmenu(false);
-                                openOperatorTimerPopout();
+                                const directorUrl = `/director-view?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}&eventDate=${encodeURIComponent(event?.date || '')}&eventLocation=${encodeURIComponent(event?.location || '')}`;
+                                window.open(directorUrl, '_blank');
                               }}
-                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
-                                currentUserRole === 'VIEWER'
-                                  ? 'text-slate-500 cursor-not-allowed'
-                                  : 'text-white hover:bg-slate-700'
-                              }`}
-                              title="Open Op Timer in a small external window"
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Director dashboard: notes + guest-style ROS + synced custom columns"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                               </svg>
-                              <span className="flex-1">Op Timer Window</span>
+                              Director View
                             </button>
                             <button
                               onClick={() => {
@@ -19062,10 +19058,10 @@ const RunOfShowPage: React.FC = () => {
         );
       })()}
 
-      {/* Filter View Modal */}
+      {/* Filter View Modal — left-to-right chips (matches column strip) */}
       {showFilterModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+          <div className="bg-slate-800 rounded-lg max-w-4xl w-full max-h-[85vh] flex flex-col">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b border-slate-600">
               <h2 className="text-lg font-bold text-white">Filter Columns</h2>
@@ -19079,12 +19075,58 @@ const RunOfShowPage: React.FC = () => {
             
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-4">
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <p className="text-slate-300 text-sm">
-                  Toggle columns and drag (or use ↑↓) to reorder scrollable columns. # and CUE stay fixed on the left.
+                  Toggle columns left-to-right (same order as the schedule). Drag chips or use ← → to reorder. # and CUE stay fixed on the left.
                 </p>
 
-                <div className="space-y-2">
+                <div className="rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1.5">
+                    Schedule preview
+                  </p>
+                  <div className="flex items-stretch gap-1 overflow-x-auto pb-0.5">
+                    {(() => {
+                      const labels: { label: string; pinned?: boolean }[] = [
+                        { label: '#', pinned: true },
+                        { label: 'CUE', pinned: true },
+                      ];
+                      if (stickyStartColumn && visibleColumns.start) {
+                        labels.push({ label: 'Start', pinned: true });
+                      }
+                      for (const key of columnOrder) {
+                        const customId = parseCustomColumnOrderKey(key);
+                        const customCol = customId
+                          ? customColumns.find((c) => c.id === customId)
+                          : null;
+                        if (customId && !customCol) continue;
+                        const checked = customId
+                          ? visibleCustomColumns[customId] !== false
+                          : Boolean((visibleColumns as Record<string, boolean>)[key]);
+                        if (!checked) continue;
+                        if (key === 'start' && stickyStartColumn) continue;
+                        const label = customCol
+                          ? customCol.name
+                          : BUILTIN_COLUMN_LABELS[key as keyof typeof BUILTIN_COLUMN_LABELS] || key;
+                        labels.push({ label });
+                      }
+                      return labels.map((item, i) => (
+                        <div
+                          key={`${item.label}-${i}`}
+                          className={`flex-shrink-0 rounded px-2.5 py-1.5 text-xs font-semibold border ${
+                            item.pinned
+                              ? 'bg-slate-700 border-slate-500 text-white'
+                              : 'bg-blue-950/40 border-blue-600/50 text-blue-100'
+                          }`}
+                          title={item.label}
+                        >
+                          {item.label}
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 items-stretch content-start">
                   {columnOrder.map((key, index) => {
                     const customId = parseCustomColumnOrderKey(key);
                     const customCol = customId
@@ -19100,102 +19142,105 @@ const RunOfShowPage: React.FC = () => {
                       : Boolean((visibleColumns as Record<string, boolean>)[key]);
 
                     return (
-                      <div key={key} className="space-y-1">
-                        <div
-                          draggable
-                          onDragStart={() => setColumnDragKey(key)}
-                          onDragOver={(e) => e.preventDefault()}
-                          onDrop={() => {
-                            if (!columnDragKey || columnDragKey === key) return;
-                            const from = columnOrder.indexOf(columnDragKey);
-                            const to = columnOrder.indexOf(key);
-                            if (from >= 0 && to >= 0) moveScrollColumn(from, to);
-                            setColumnDragKey(null);
-                          }}
-                          onDragEnd={() => setColumnDragKey(null)}
-                          className={`flex items-center gap-2 rounded border border-slate-600/80 bg-slate-700/40 px-2 py-1.5 ${
-                            columnDragKey === key ? 'opacity-60 ring-1 ring-blue-400' : ''
-                          }`}
+                      <div
+                        key={key}
+                        draggable
+                        onDragStart={() => setColumnDragKey(key)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => {
+                          if (!columnDragKey || columnDragKey === key) return;
+                          const from = columnOrder.indexOf(columnDragKey);
+                          const to = columnOrder.indexOf(key);
+                          if (from >= 0 && to >= 0) moveScrollColumn(from, to);
+                          setColumnDragKey(null);
+                        }}
+                        onDragEnd={() => setColumnDragKey(null)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 max-w-full ${
+                          checked
+                            ? 'border-blue-500/70 bg-blue-950/50 text-blue-50'
+                            : 'border-slate-600 bg-slate-700/50 text-slate-400'
+                        } ${columnDragKey === key ? 'opacity-60 ring-1 ring-blue-400' : ''}`}
+                      >
+                        <span
+                          className="cursor-grab text-slate-500 select-none text-xs"
+                          title="Drag to reorder"
+                          aria-hidden
                         >
-                          <span
-                            className="cursor-grab text-slate-500 select-none px-1"
-                            title="Drag to reorder"
-                            aria-hidden
-                          >
-                            ⋮⋮
+                          ⋮⋮
+                        </span>
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              if (customId) {
+                                setVisibleCustomColumns((prev) => ({
+                                  ...prev,
+                                  [customId]: e.target.checked,
+                                }));
+                              } else {
+                                setVisibleColumns((prev) => ({
+                                  ...prev,
+                                  [key]: e.target.checked,
+                                }));
+                              }
+                            }}
+                            className="rounded flex-shrink-0"
+                          />
+                          <span className="text-sm font-medium truncate max-w-[10rem]" title={label}>
+                            {label}
                           </span>
-                          <label className="flex flex-1 items-center gap-3 min-w-0 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(e) => {
-                                if (customId) {
-                                  setVisibleCustomColumns((prev) => ({
-                                    ...prev,
-                                    [customId]: e.target.checked,
-                                  }));
-                                } else {
-                                  setVisibleColumns((prev) => ({
-                                    ...prev,
-                                    [key]: e.target.checked,
-                                  }));
-                                }
-                              }}
-                              className="rounded"
-                            />
-                            <span className="text-white truncate">
-                              {label}
-                              {customCol && (
-                                <span className="text-slate-400 text-xs ml-2">(Custom)</span>
-                              )}
+                          {customCol ? (
+                            <span className="text-[10px] uppercase tracking-wide text-slate-500 flex-shrink-0">
+                              custom
                             </span>
-                          </label>
-                          <div className="flex items-center gap-0.5 flex-shrink-0">
-                            <button
-                              type="button"
-                              disabled={index === 0}
-                              onClick={() => moveScrollColumn(index, index - 1)}
-                              className="px-1.5 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 text-sm"
-                              title="Move up"
-                            >
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              disabled={index === columnOrder.length - 1}
-                              onClick={() => moveScrollColumn(index, index + 1)}
-                              className="px-1.5 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 text-sm"
-                              title="Move down"
-                            >
-                              ↓
-                            </button>
-                          </div>
-                        </div>
-
-                        {key === 'start' && (
-                          <label
-                            className={`flex items-start gap-3 ml-10 ${!visibleColumns.start ? 'opacity-50' : ''}`}
-                            title="Keep Start fixed next to CUE when scrolling horizontally"
+                          ) : null}
+                        </label>
+                        <div className="inline-flex items-center flex-shrink-0 border-l border-slate-600/80 pl-1 ml-0.5">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => moveScrollColumn(index, index - 1)}
+                            className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
+                            title="Move left"
                           >
-                            <input
-                              type="checkbox"
-                              checked={stickyStartColumn}
-                              disabled={!visibleColumns.start}
-                              onChange={(e) => setStickyStartColumn(e.target.checked)}
-                              className="rounded mt-0.5"
-                            />
-                            <span className="text-slate-200 text-sm">
-                              Pin Start next to CUE
-                              <span className="block text-xs text-slate-400 font-normal">
-                                Stays fixed on the left while other columns scroll
-                              </span>
-                            </span>
-                          </label>
-                        )}
+                            ←
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === columnOrder.length - 1}
+                            onClick={() => moveScrollColumn(index, index + 1)}
+                            className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
+                            title="Move right"
+                          >
+                            →
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
+
+                <label
+                  className={`flex items-start gap-3 rounded-lg border border-slate-600/80 bg-slate-900/40 px-3 py-2.5 ${
+                    !visibleColumns.start ? 'opacity-50' : ''
+                  }`}
+                  title="Keep Start fixed next to CUE when scrolling horizontally"
+                >
+                  <input
+                    type="checkbox"
+                    checked={stickyStartColumn}
+                    disabled={!visibleColumns.start}
+                    onChange={(e) => setStickyStartColumn(e.target.checked)}
+                    className="rounded mt-0.5"
+                  />
+                  <span className="text-slate-200 text-sm">
+                    Pin Start next to CUE
+                    <span className="block text-xs text-slate-400 font-normal">
+                      Stays fixed on the left while other columns scroll
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
             

@@ -95,6 +95,8 @@ const PinNotesPopoutPage: React.FC = () => {
   const [zoomLevel, setZoomLevel] = useState<number>(getStoredZoom);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [manageError, setManageError] = useState<string | null>(null);
+  const [pickerColumnSearch, setPickerColumnSearch] = useState('');
+  const [pickerPeopleSearch, setPickerPeopleSearch] = useState('');
 
   const eventIdRef = useRef<string>(eventIdFromUrl);
   const operatorUserIdRef = useRef<string | null>(
@@ -890,46 +892,98 @@ const PinNotesPopoutPage: React.FC = () => {
           </div>
         )}
 
-        {showColumnPicker && (
+        {showColumnPicker && (() => {
+          const sharedPool = (
+            availableColumns.length > 0
+              ? availableColumns
+              : [{ type: 'notes' as const, id: 'notes', name: 'Notes' }]
+          ).filter((col) => !(col.type === 'cue' && col.id === 'cue'));
+          const colQ = pickerColumnSearch.trim().toLowerCase();
+          const peopleQ = pickerPeopleSearch.trim().toLowerCase();
+          const sharedFiltered = colQ
+            ? sharedPool.filter((c) => c.name.toLowerCase().includes(colQ))
+            : sharedPool;
+          const peopleFiltered = peopleQ
+            ? savedOperators.filter((op) =>
+                operatorDisplayName(op).toLowerCase().includes(peopleQ)
+              )
+            : savedOperators;
+
+          return (
           <div className="mb-6 p-4 bg-slate-800 rounded-xl border border-slate-600">
             <p className="text-slate-300 text-sm mb-3">
-              Cue stays on the left. Uncheck all Shared columns to show only People notes (and your notes, if enabled).
+              Cue stays on the left. Pick chips left-to-right. Clear Shared to show only People notes (and yours, if enabled).
             </p>
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-slate-400 text-xs uppercase tracking-wide">Shared columns</p>
-              {pickerSelected.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setPickerSelected([])}
-                  className="text-xs text-slate-400 hover:text-white underline"
-                >
-                  Clear all shared
-                </button>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {(availableColumns.length > 0
-                ? availableColumns
-                : [{ type: 'notes' as const, id: 'notes', name: 'Notes' }]
-              )
-                .filter((col) => !(col.type === 'cue' && col.id === 'cue'))
-                .map((col) => (
-                  <label
-                    key={col.type + col.id}
-                    className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors"
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <p className="text-slate-400 text-xs uppercase tracking-wide">
+                Shared columns
+                <span className="normal-case tracking-normal text-slate-500 ml-2">
+                  {pickerSelected.length} selected
+                </span>
+              </p>
+              <div className="flex items-center gap-2">
+                {sharedPool.length > 8 ? (
+                  <input
+                    type="search"
+                    value={pickerColumnSearch}
+                    onChange={(e) => setPickerColumnSearch(e.target.value)}
+                    placeholder="Search columns…"
+                    className="w-36 px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded text-white placeholder-slate-500"
+                  />
+                ) : null}
+                {pickerSelected.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setPickerSelected([])}
+                    className="text-xs text-slate-400 hover:text-white underline"
                   >
-                    <input
-                      type="checkbox"
-                      checked={pickerSelected.some((c) => c.id === col.id && c.type === col.type)}
-                      onChange={() => togglePickerColumn(col)}
-                      className="w-4 h-4 rounded border-slate-500"
-                    />
-                    <span className="text-white text-sm">{col.name}</span>
-                  </label>
-                ))}
+                    Clear shared
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-4 max-h-36 overflow-y-auto content-start rounded-lg border border-slate-700/70 bg-slate-900/40 p-2">
+              {sharedFiltered.length === 0 ? (
+                <p className="text-slate-500 text-sm">No columns match.</p>
+              ) : (
+                sharedFiltered.map((col) => {
+                  const on = pickerSelected.some((c) => c.id === col.id && c.type === col.type);
+                  return (
+                    <button
+                      key={col.type + col.id}
+                      type="button"
+                      onClick={() => togglePickerColumn(col)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+                        on
+                          ? 'border-blue-500 bg-blue-900/45 text-blue-50'
+                          : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${on ? 'bg-blue-400' : 'bg-slate-500'}`} />
+                      {col.name}
+                    </button>
+                  );
+                })
+              )}
             </div>
 
-            <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">People</p>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <p className="text-slate-400 text-xs uppercase tracking-wide">
+                People
+                <span className="normal-case tracking-normal text-slate-500 ml-2">
+                  {pickerSelectedOperators.length} selected · {savedOperators.length} people
+                </span>
+              </p>
+              {savedOperators.length > 6 ? (
+                <input
+                  type="search"
+                  value={pickerPeopleSearch}
+                  onChange={(e) => setPickerPeopleSearch(e.target.value)}
+                  placeholder="Search people…"
+                  className="w-36 px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded text-white placeholder-slate-500"
+                />
+              ) : null}
+            </div>
             {operatorsLoadError ? (
               <p className="text-amber-300 text-sm mb-4">{operatorsLoadError}</p>
             ) : savedOperators.length === 0 ? (
@@ -938,38 +992,45 @@ const PinNotesPopoutPage: React.FC = () => {
                 for you and others to load as a column.
               </p>
             ) : (
-              <div className="space-y-2 mb-4 max-h-52 overflow-y-auto">
-                {savedOperators.map((op) => {
-                  const busy = deletingUserId === op.user_id;
-                  return (
-                    <div
-                      key={op.user_id}
-                      className="flex items-center gap-2 px-2 py-1.5 bg-slate-700 rounded-lg"
-                    >
-                      <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer px-1 py-1">
-                        <input
-                          type="checkbox"
-                          checked={pickerSelectedOperators.some((c) => c.userId === op.user_id)}
-                          onChange={() => togglePickerOperator(op)}
-                          className="w-4 h-4 rounded border-slate-500 flex-shrink-0"
-                        />
-                        <span className="text-white text-sm truncate">{operatorDisplayName(op)}</span>
-                        <span className="text-slate-400 text-xs flex-shrink-0">
-                          {op.note_count}
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => void deleteSavedOperatorNotes(op)}
-                        disabled={busy}
-                        className="px-2 py-1 text-xs text-red-300 hover:text-white hover:bg-red-700/80 border border-red-800/60 rounded disabled:opacity-50 flex-shrink-0"
-                        title={`Delete all notes for ${operatorDisplayName(op)}`}
+              <div className="flex flex-wrap gap-2 mb-4 max-h-40 overflow-y-auto content-start rounded-lg border border-slate-700/70 bg-slate-900/40 p-2">
+                {peopleFiltered.length === 0 ? (
+                  <p className="text-slate-500 text-sm">No people match.</p>
+                ) : (
+                  peopleFiltered.map((op) => {
+                    const busy = deletingUserId === op.user_id;
+                    const on = pickerSelectedOperators.some((c) => c.userId === op.user_id);
+                    const label = operatorDisplayName(op);
+                    return (
+                      <div
+                        key={op.user_id}
+                        className={`inline-flex items-center gap-1 rounded-full border pl-2.5 pr-1 py-1 ${
+                          on
+                            ? 'border-emerald-500/70 bg-emerald-950/40 text-emerald-50'
+                            : 'border-slate-600 bg-slate-700 text-slate-300'
+                        }`}
                       >
-                        {busy ? '…' : 'Delete'}
-                      </button>
-                    </div>
-                  );
-                })}
+                        <button
+                          type="button"
+                          onClick={() => togglePickerOperator(op)}
+                          className="inline-flex items-center gap-1.5 min-w-0"
+                        >
+                          <span className={`w-2 h-2 rounded-full ${on ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                          <span className="text-sm truncate max-w-[9rem]">{label}</span>
+                          <span className="text-[10px] text-slate-500">{op.note_count}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteSavedOperatorNotes(op)}
+                          disabled={busy}
+                          className="px-1.5 py-0.5 text-[10px] text-red-300 hover:text-white hover:bg-red-700/80 rounded-full disabled:opacity-50"
+                          title={`Delete all notes for ${label}`}
+                        >
+                          {busy ? '…' : '×'}
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             )}
             {manageError ? <p className="text-red-300 text-sm mb-3">{manageError}</p> : null}
@@ -992,7 +1053,8 @@ const PinNotesPopoutPage: React.FC = () => {
               </button>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {displayRows.length === 0 && schedule.length > 0 && (
           <p className="text-slate-400">No rows in schedule for current day.</p>
