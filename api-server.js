@@ -33,7 +33,7 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
-const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, userCanManageSpeakers, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, userCanManageSpeakers, userCanManageAccess, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const {
@@ -73,6 +73,7 @@ const {
   saveExtendModuleData,
 } = require('./lib/extend-event-controls');
 const { buildCivicsBeeGraphicsCsv } = require('./lib/civics-bee');
+const { splitEventDays } = require('./lib/split-event-days');
 const {
   isMissingShareTableError,
   ensureEventShareSchema,
@@ -3702,6 +3703,57 @@ app.put('/api/calendar-events/:id', async (req, res) => {
   } catch (error) {
     console.error('❌ Error updating calendar event:', error);
     res.status(500).json({ error: 'Failed to update calendar event' });
+  }
+});
+
+// Split multi-day event: keep some days on original, move the rest to a new event
+app.post('/api/calendar-events/:id/split-days', async (req, res) => {
+  try {
+    if (!userCanManageAccess(req.auth)) {
+      return res.status(403).json({
+        error: 'Only Admin, Event Manager, Producer, or Crew can split event days',
+      });
+    }
+    const { id } = req.params;
+    if (!userCanAccessEvent(req.auth, id)) {
+      return res.status(403).json({ error: 'You do not have access to this event' });
+    }
+
+    const keepDays = req.body?.keepDays;
+    const moveDays = req.body?.moveDays;
+    const deleteDays = req.body?.deleteDays;
+    const newEventName =
+      typeof req.body?.newEventName === 'string' ? req.body.newEventName : undefined;
+
+    const result = await splitEventDays(pool, {
+      calendarEventId: id,
+      keepDays,
+      moveDays,
+      deleteDays,
+      newEventName,
+      modifiedBy: {
+        userId: req.auth?.userId || req.auth?.accessId || null,
+        userName: req.auth?.fullName || req.auth?.email || 'Unknown',
+        userRole: req.auth?.isAdmin ? 'ADMIN' : 'EDITOR',
+      },
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 500).json({ error: result.error || 'Split failed' });
+    }
+
+    if (result.created?.calendarEventId) {
+      try {
+        await grantCreatedEventToRestrictedUser(pool, req.auth, result.created.calendarEventId);
+      } catch (grantErr) {
+        console.warn('split-days: grant access warning:', grantErr.message);
+      }
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error splitting event days:', error);
+    res.status(500).json({ error: 'Failed to split event days' });
   }
 });
 

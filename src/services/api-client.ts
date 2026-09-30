@@ -204,6 +204,33 @@ class ApiClient {
     return result;
   }
 
+  async splitCalendarEventDays(
+    id: string,
+    body: {
+      keepDays: number[];
+      moveDays?: number[];
+      deleteDays?: number[];
+      newEventName?: string;
+    }
+  ) {
+    const result = await this.request(`/api/calendar-events/${id}/split-days`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    this.cache.delete('calendarEvents');
+    this.cache.delete(`calendarEvent_${id}`);
+    if (result?.created?.calendarEventId) {
+      this.cache.delete(`calendarEvent_${result.created.calendarEventId}`);
+    }
+    if (result?.original?.rosEventId) {
+      this.invalidateRunOfShowCache(String(result.original.rosEventId));
+    }
+    if (result?.created?.rosEventId) {
+      this.invalidateRunOfShowCache(String(result.created.rosEventId));
+    }
+    return result;
+  }
+
   async deleteCalendarEvent(id: string, options?: { permanent?: boolean }) {
     const qs = options?.permanent ? '?permanent=1' : '';
     const result = await this.request(`/api/calendar-events/${id}${qs}`, {

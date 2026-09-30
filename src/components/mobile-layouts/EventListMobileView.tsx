@@ -36,6 +36,7 @@ type EventListMobileViewProps = {
   onLaunch: (event: Event) => void;
   onEdit: (event: Event) => void;
   onShareAccess?: (event: Event) => void;
+  onSplitDays?: (event: Event) => void;
   onDelete: (event: Event) => void;
   formatDate: (dateString: string) => string;
   getLocationColor: (location: string) => string;
@@ -69,6 +70,7 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   onLaunch,
   onEdit,
   onShareAccess,
+  onSplitDays,
   onDelete,
   formatDate,
   getLocationColor,
@@ -402,6 +404,13 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                           activeTab === 'quickMode' || !onShareAccess
                             ? undefined
                             : () => onShareAccess(event)
+                        }
+                        onSplitDays={
+                          activeTab !== 'quickMode' &&
+                          onSplitDays &&
+                          (event.numberOfDays || 1) > 1
+                            ? () => onSplitDays(event)
+                            : undefined
                         }
                         onDelete={() => onDelete(event)}
                         onOpenQuickMode={() => onOpenQuickModeSession?.(event)}

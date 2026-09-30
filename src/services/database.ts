@@ -103,6 +103,47 @@ export class DatabaseService {
     }
   }
 
+  static async splitCalendarEventDays(
+    id: string,
+    body: {
+      keepDays: number[];
+      moveDays?: number[];
+      deleteDays?: number[];
+      newEventName?: string;
+    }
+  ): Promise<{
+    ok: boolean;
+    original?: {
+      calendarEventId: string;
+      name: string;
+      date: string;
+      numberOfDays: number;
+      keepDays: number[];
+      scheduleItemCount: number;
+    };
+    created?: {
+      calendarEventId: string;
+      name: string;
+      date: string;
+      numberOfDays: number;
+      moveDays: number[];
+      scheduleItemCount: number;
+    } | null;
+    deleted?: {
+      deleteDays: number[];
+      scheduleItemCount: number;
+    };
+    error?: string;
+  } | null> {
+    try {
+      return await apiClient.splitCalendarEventDays(id, body);
+    } catch (error) {
+      console.error('❌ Exception splitting calendar event days:', error);
+      const message = error instanceof Error ? error.message : 'Failed to split event days';
+      return { ok: false, error: message };
+    }
+  }
+
   static async getCalendarEvents(): Promise<CalendarEvent[]> {
     try {
       console.log('🔄 Loading calendar events from API...');

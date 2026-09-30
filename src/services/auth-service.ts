@@ -60,6 +60,11 @@ export function canAccessAccessManager(user: User | null | undefined): boolean {
   );
 }
 
+/** Split multi-day events on Event List: Admin, Event Manager, Producer, or Crew. */
+export function canSplitEventDays(user: User | null | undefined): boolean {
+  return canAccessAccessManager(user);
+}
+
 /** Global Speaker Manager page: Admins and Producers only. */
 export function canAccessSpeakerManager(user: User | null | undefined): boolean {
   if (!user) return false;

@@ -6,6 +6,7 @@ type EventListRowActionsProps = {
   onLaunch?: () => void;
   onEdit?: () => void;
   onShareAccess?: () => void;
+  onSplitDays?: () => void;
   onDelete: () => void;
   onOpenQuickMode?: () => void;
 };
@@ -38,6 +39,13 @@ const ShareIcon = () => (
   </svg>
 );
 
+const SplitIcon = () => (
+  <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+    <path d="M3.5 3.75a.75.75 0 01.75-.75h4.5a.75.75 0 01.53.22l7.5 7.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-7.5-7.5a.75.75 0 01-.22-.53v-4.5zm1.5.75v3.19l6.97 6.97 3.19-3.19L8.19 4.5H5z" />
+    <path d="M12.25 3a.75.75 0 000 1.5h1.69l-2.22 2.22a.75.75 0 101.06 1.06L15 5.56v1.69a.75.75 0 001.5 0v-3.5A.75.75 0 0015.75 3h-3.5z" />
+  </svg>
+);
+
 const iconButtonClass =
   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70';
 
@@ -47,6 +55,7 @@ const EventListRowActions: React.FC<EventListRowActionsProps> = ({
   onLaunch,
   onEdit,
   onShareAccess,
+  onSplitDays,
   onDelete,
   onOpenQuickMode,
 }) => {
@@ -131,6 +140,16 @@ const EventListRowActions: React.FC<EventListRowActionsProps> = ({
             Share
           </button>
         ) : null}
+        {onSplitDays ? (
+          <button
+            type="button"
+            onClick={onSplitDays}
+            className="inline-flex min-h-[36px] w-full items-center justify-center gap-1.5 rounded-md border border-sky-700/50 bg-sky-950/30 px-2 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-900/40"
+          >
+            <SplitIcon />
+            Split days
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -165,6 +184,17 @@ const EventListRowActions: React.FC<EventListRowActionsProps> = ({
             aria-label="Share event"
           >
             <ShareIcon />
+          </button>
+        ) : null}
+        {onSplitDays ? (
+          <button
+            type="button"
+            onClick={onSplitDays}
+            className={`${iconButtonClass} text-sky-300 hover:bg-sky-950/60 hover:text-sky-100`}
+            title="Split days into a new event"
+            aria-label="Split days into a new event"
+          >
+            <SplitIcon />
           </button>
         ) : null}
         <button

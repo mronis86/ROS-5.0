@@ -25,7 +25,7 @@ import {
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { useAuth } from '../contexts/AuthContext';
-import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, canAccessSpeakerManager, isCateringOnlyUser, isCommsOnlyUser, isCreativeOnlyUser } from '../services/auth-service';
+import { canAccessProductionDashboard, canAccessAdmin, canAccessAccessManager, canAccessSpeakerManager, canSplitEventDays, isCateringOnlyUser, isCommsOnlyUser, isCreativeOnlyUser } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import EventListMobileView from '../components/mobile-layouts/EventListMobileView';
 import EventLocationCell from '../components/EventLocationCell';
@@ -39,6 +39,7 @@ import { parseExtendEventControls } from '../lib/extendEventControls';
 import EventDisplaySyncToggle from '../components/EventDisplaySyncToggle';
 import ExtendEventControlsConfigModal from '../components/ExtendEventControlsConfigModal';
 import ShareEventAccessModal from '../components/ShareEventAccessModal';
+import SplitEventDaysModal from '../components/SplitEventDaysModal';
 import EventStreamDetailsFields from '../components/EventStreamDetailsFields';
 import StreamBroadcastStatusMark from '../components/StreamBroadcastStatusMark';
 
@@ -153,7 +154,11 @@ const EventListPage: React.FC = () => {
   const [displaySyncSavingId, setDisplaySyncSavingId] = useState<string | null>(null);
   const [extendControlsEvent, setExtendControlsEvent] = useState<Event | null>(null);
   const [extendControlsSaving, setExtendControlsSaving] = useState(false);
+  const [splitDaysEvent, setSplitDaysEvent] = useState<Event | null>(null);
+  const [splitDaysBusy, setSplitDaysBusy] = useState(false);
+  const [splitDaysError, setSplitDaysError] = useState<string | null>(null);
   const isAdminUser = canAccessAdmin(user);
+  const canSplitDaysUser = canSplitEventDays(user);
 
   const toggleDisplaySync = async (event: Event) => {
     if (!isAdminUser || event.isQuickMode) return;
@@ -794,6 +799,48 @@ const EventListPage: React.FC = () => {
     setShowRoleModal(true);
   };
 
+  const openSplitDaysModal = (event: Event) => {
+    if (!canSplitDaysUser || event.isQuickMode || (event.numberOfDays || 1) <= 1) return;
+    setSplitDaysError(null);
+    setSplitDaysEvent(event);
+  };
+
+  const confirmSplitDays = async (payload: {
+    keepDays: number[];
+    moveDays: number[];
+    deleteDays: number[];
+    newEventName: string;
+  }) => {
+    if (!splitDaysEvent) return;
+    const calendarId = splitDaysEvent.calendarId || splitDaysEvent.id;
+    setSplitDaysBusy(true);
+    setSplitDaysError(null);
+    try {
+      const result = await DatabaseService.splitCalendarEventDays(calendarId, payload);
+      if (!result?.ok) {
+        setSplitDaysError(result?.error || 'Split failed');
+        return;
+      }
+      const keptDays = result.original?.numberOfDays ?? payload.keepDays.length;
+      const lines = [`Kept on original: ${keptDays} day(s).`];
+      if (result.created) {
+        lines.push(
+          `Created: ${result.created.name} (${result.created.numberOfDays} day(s)).`
+        );
+      }
+      if (result.deleted?.deleteDays?.length) {
+        lines.push(`Deleted: ${result.deleted.deleteDays.length} day(s).`);
+      }
+      setSplitDaysEvent(null);
+      await loadEventsFromSupabase();
+      alert(`Split complete.\n\n${lines.join('\n')}`);
+    } catch (e) {
+      setSplitDaysError(e instanceof Error ? e.message : 'Split failed');
+    } finally {
+      setSplitDaysBusy(false);
+    }
+  };
+
   const handleRoleSelected = async (role: string) => {
     if (selectedEvent && user?.id) {
       // Save role to Supabase user_sessions table
@@ -1348,6 +1395,13 @@ const EventListPage: React.FC = () => {
                             onShareAccess={
                               activeTab === 'quickMode' ? undefined : () => setShareAccessEvent(event)
                             }
+                            onSplitDays={
+                              activeTab !== 'quickMode' &&
+                              canSplitDaysUser &&
+                              (event.numberOfDays || 1) > 1
+                                ? () => openSplitDaysModal(event)
+                                : undefined
+                            }
                             onDelete={() => openDeleteConfirmModal(event)}
                             onOpenQuickMode={() => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
                           />
@@ -1383,6 +1437,7 @@ const EventListPage: React.FC = () => {
             onLaunch={launchRunOfShow}
             onEdit={openEditModal}
             onShareAccess={setShareAccessEvent}
+            onSplitDays={canSplitDaysUser ? openSplitDaysModal : undefined}
             onDelete={openDeleteConfirmModal}
             formatDate={formatDate}
             getLocationColor={getLocationColor}
@@ -2009,6 +2064,21 @@ const EventListPage: React.FC = () => {
         event={shareAccessEvent}
         onClose={() => setShareAccessEvent(null)}
       />
+
+      {splitDaysEvent ? (
+        <SplitEventDaysModal
+          event={splitDaysEvent}
+          isOpen
+          busy={splitDaysBusy}
+          error={splitDaysError}
+          onClose={() => {
+            if (splitDaysBusy) return;
+            setSplitDaysEvent(null);
+            setSplitDaysError(null);
+          }}
+          onConfirm={(payload) => void confirmSplitDays(payload)}
+        />
+      ) : null}
 
       <ExtendEventControlsConfigModal
         open={extendControlsEvent != null}
