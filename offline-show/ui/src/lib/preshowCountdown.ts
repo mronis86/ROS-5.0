@@ -1,5 +1,8 @@
 ﻿import { isIndentedScheduleItem, type IndentedCueLookup } from './scheduleStartTime';
 
+export const PRESHOW_COUNTDOWN_MESSAGE = 'Pre Show Countdown';
+export const PRESHOW_MESSAGE_TYPE = 'preshow';
+
 type CueLike = {
   id: number;
   programType?: string;
@@ -11,6 +14,16 @@ type CueLike = {
 export function isPreshowProgramType(programType: string | null | undefined): boolean {
   const t = String(programType || '').trim();
   return t === 'PreShow' || t === 'PreShow/End';
+}
+
+export function isPreshowTimerMessage(msg: {
+  enabled?: boolean;
+  message?: string;
+  message_type?: string;
+} | null | undefined): boolean {
+  if (!msg?.enabled) return false;
+  if (msg.message_type === PRESHOW_MESSAGE_TYPE) return true;
+  return String(msg.message || '').trim() === PRESHOW_COUNTDOWN_MESSAGE;
 }
 
 /**
