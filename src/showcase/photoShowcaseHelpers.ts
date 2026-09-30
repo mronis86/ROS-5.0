@@ -33,7 +33,7 @@ export function formatSpeakerLocation(location?: string): string {
   if (location === 'Seat') return 'Seat';
   if (location === 'Virtual') return 'Virtual';
   if (location === 'Moderator') return 'Moderator';
-  if (location === 'Walking') return 'Walking';
+  if (location === 'Ted-Talk' || location === 'Walking') return 'Ted-Talk';
   return location;
 }
 

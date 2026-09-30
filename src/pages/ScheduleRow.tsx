@@ -605,8 +605,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {/* Segment name column (after Duration) */}
       {visibleColumns.segmentName && (
         <div 
-          className={`px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative ${
-            segmentWrap ? 'items-stretch' : ''
+          className={`px-3 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center flex-shrink-0 relative min-w-0 ${
+            segmentWrap ? 'justify-start' : ''
           }`}
           style={{ width: columnWidths.segmentName, order: flexOrder('segmentName') }}
         >
@@ -614,7 +614,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             <button
               type="button"
               onClick={() => onViewSegmentDetail(item.id)}
-              className={`w-full px-3 py-2 rounded text-base text-left transition-colors hover:ring-2 hover:ring-violet-400/60 ${
+              className={`w-full min-w-0 px-3 py-2 rounded text-base text-left transition-colors hover:ring-2 hover:ring-violet-400/60 ${
+                segmentWrap ? 'h-full self-stretch' : ''
+              } ${
                 item.needsRecording
                   ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
                   : cellFill
@@ -630,16 +632,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 </span>
               ) : null}
               <span
-                className={`block ${
-                  segmentWrap ? 'whitespace-normal break-words leading-snug' : 'truncate'
+                className={`block text-left ${
+                  segmentWrap ? 'whitespace-pre-wrap break-words leading-snug' : 'truncate'
                 }`}
               >
                 {item.segmentName || '—'}
               </span>
-              <span className="block text-[10px] text-slate-400 mt-0.5">View / copy</span>
+              <span className="block text-[10px] text-slate-400 mt-0.5 text-left">View / copy</span>
             </button>
           ) : (
-          <div className="w-full flex flex-col gap-1 min-w-0 h-full">
+          <div className={`w-full min-w-0 flex flex-col gap-1 ${segmentWrap ? 'h-full flex-1' : ''}`}>
             {item.otherRoom ? (
               <span
                 className="self-start inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-500 text-slate-950"
@@ -663,7 +665,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             {segmentWrap ? (
               <textarea
                 value={item.segmentName}
-                rows={2}
+                rows={Math.max(2, String(item.segmentName || '').split(/\r\n|\r|\n/).length)}
                 onFocus={claimRowLock}
                 onChange={(e) => {
                   if (isLockedByOther) return;
@@ -694,7 +696,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   );
                 }}
                 disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-                className={`w-full flex-1 min-h-[3.5rem] px-3 py-2 rounded text-base transition-colors resize-none whitespace-normal break-words leading-snug ${
+                className={`w-full flex-1 min-h-[2.75rem] px-3 py-2 rounded text-base text-left transition-colors resize-none whitespace-pre-wrap break-words leading-snug ${
                   item.needsRecording
                     ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
                     : cellFill
@@ -746,7 +748,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 );
               }}
               disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-              className={`w-full px-3 py-2 rounded text-base transition-colors truncate ${
+              className={`w-full min-w-0 px-3 py-2 rounded text-base text-left transition-colors truncate ${
                 item.needsRecording
                   ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
                   : cellFill

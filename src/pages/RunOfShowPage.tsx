@@ -138,7 +138,7 @@ import {
 interface Speaker {
   id: string;
   slot: number;
-  location: SpeakerLocation;
+  location: SpeakerLocation | string;
   fullName: string;
   title: string;
   org: string;
@@ -5068,9 +5068,16 @@ const RunOfShowPage: React.FC = () => {
     }
     if (segmentNameDisplayMode === 'wrap' && segmentName && String(segmentName).trim()) {
       const colW = Math.max(80, Number(columnWidths.segmentName) || 320);
-      const charsPerLine = Math.max(10, Math.floor((colW - 40) / 8.5));
-      const lines = Math.ceil(String(segmentName).trim().length / charsPerLine);
-      maxHeight = Math.max(maxHeight, Math.min(14, 2.5 + lines * 1.35));
+      const availablePx = Math.max(60, colW - 36);
+      const charsPerLine = Math.max(12, Math.floor(availablePx / 7.8));
+      const raw = String(segmentName);
+      let lines = 0;
+      for (const part of raw.split(/\r\n|\r|\n/)) {
+        const len = part.length || 1;
+        lines += Math.max(1, Math.ceil(len / charsPerLine));
+      }
+      // Match notes-style growth: top padding + line height, capped
+      maxHeight = Math.max(maxHeight, Math.min(16, 1.75 + lines * 1.4));
     }
     
     // Calculate height based on notes content
@@ -14938,13 +14945,13 @@ const RunOfShowPage: React.FC = () => {
                       )}
                       {visibleColumns.segmentName && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
+                          className="px-3 py-2 border-r border-slate-600 flex items-center justify-start flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors min-w-0"
                           style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
                           onClick={toggleSegmentNameDisplayMode}
                           title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                         >
-                          <div className="text-center pointer-events-none">
-                            <div className="text-white font-bold flex items-center justify-center gap-1">
+                          <div className="text-left pointer-events-none min-w-0">
+                            <div className="text-white font-bold flex items-center justify-start gap-1">
                               Segment Name
                               {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                                 <span className="text-yellow-400" title="Read-only for your role">🔒</span>
@@ -16099,13 +16106,13 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.segmentName && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
+                      className="px-3 py-2 border-r border-slate-600 flex items-center justify-start flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors min-w-0"
                       style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
                       onClick={toggleSegmentNameDisplayMode}
                       title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                     >
-                      <div className="text-center pointer-events-none">
-                        <div className="text-white font-bold flex items-center justify-center gap-1">
+                      <div className="text-left pointer-events-none min-w-0">
+                        <div className="text-white font-bold flex items-center justify-start gap-1">
                           Segment Name
                           {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                             <span className="text-yellow-400" title="Read-only for your role">🔒</span>
@@ -18361,9 +18368,14 @@ const RunOfShowPage: React.FC = () => {
                                      {speaker.location === 'Seat' && <span className="noto-emoji" title="Seat">🪑</span>}
                                      {speaker.location === 'Virtual' && <span>📺</span>}
                                      {speaker.location === 'Moderator' && <span>📢</span>}
-                                     {speaker.location === 'Walking' && <span>🚶</span>}
-                                     {!SPEAKER_LOCATIONS.includes(speaker.location) && <span>📍</span>}
-                                     <span>{speaker.location}</span>
+                                     {(speaker.location === 'Ted-Talk' || speaker.location === 'Walking') && <span>🎙️</span>}
+                                     {!SPEAKER_LOCATIONS.includes(speaker.location) &&
+                                       speaker.location !== 'Walking' && <span>📍</span>}
+                                     <span>
+                                       {speaker.location === 'Walking'
+                                         ? 'Ted-Talk'
+                                         : speaker.location}
+                                     </span>
                                    </div>
                                  )}
                                </div>
@@ -19756,8 +19768,8 @@ const RunOfShowPage: React.FC = () => {
                                       {speaker.location === 'Seat' && <span className="noto-emoji">🪑</span>}
                                       {speaker.location === 'Virtual' && '📺'}
                                       {speaker.location === 'Moderator' && '📢'}
-                                      {speaker.location === 'Walking' && '🚶'}
-                                      {speaker.location}
+                                      {(speaker.location === 'Ted-Talk' || speaker.location === 'Walking') && '🎙️'}
+                                      {speaker.location === 'Walking' ? 'Ted-Talk' : speaker.location}
                                     </span>
                                   </div>
                                   {speaker.title && <div className="mt-1">Title: {speaker.title}</div>}

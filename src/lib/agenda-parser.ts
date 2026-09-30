@@ -282,7 +282,8 @@ function parseSpeakerLine(
   if (name.startsWith('*P*')) { location = 'Podium';    name = name.replace(/^\*P\*\s*/, '').trim(); }
   else if (name.startsWith('*M*')) { location = 'Moderator'; name = name.replace(/^\*M\*\s*/, '').trim(); }
   else if (name.startsWith('*V*')) { location = 'Virtual';   name = name.replace(/^\*V\*\s*/, '').trim(); }
-  else if (name.startsWith('*W*')) { location = 'Walking';  name = name.replace(/^\*W\*\s*/, '').trim(); }
+  else if (name.startsWith('*T*')) { location = 'Ted-Talk'; name = name.replace(/^\*T\*\s*/, '').trim(); }
+  else if (name.startsWith('*W*')) { location = 'Ted-Talk'; name = name.replace(/^\*W\*\s*/, '').trim(); }
   return { id: `speaker-${slot}`, slot, location, fullName: name, title, org, photoUrl: '' };
 }
 

@@ -169,8 +169,11 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
       } else if (name.startsWith('*V*')) {
         location = 'Virtual';
         name = name.replace('*V*', '').trim();
+      } else if (name.startsWith('*T*')) {
+        location = 'Ted-Talk';
+        name = name.replace('*T*', '').trim();
       } else if (name.startsWith('*W*')) {
-        location = 'Walking';
+        location = 'Ted-Talk';
         name = name.replace('*W*', '').trim();
       }
       
@@ -677,7 +680,7 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
                 <li>• Shot Type (K): Use Podium, 1-Shot, 2-Shot … 7-Shot, Ted-Talk. Shorthand OK: POD, 1shot, 2shot, 2 shot lav, etc.</li>
                 <li>• "Pod Transition" will be converted to "Podium Transition"</li>
                 <li>• Excel decimal time format (0.002083...) will be converted to HH:MM:SS</li>
-                <li>• Speaker format: Name, Title, [Org], Photo URL (with line breaks). Use *P* (Podium), *M* (Moderator), *V* (Virtual), *W* (Walking) prefixes</li>
+                <li>• Speaker format: Name, Title, [Org], Photo URL (with line breaks). Use *P* (Podium), *M* (Moderator), *V* (Virtual), *T* (Ted-Talk) prefixes</li>
               </ul>
             </div>
           )}
