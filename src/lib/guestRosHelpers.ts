@@ -1,4 +1,5 @@
 import { stripHtmlNotes } from './eventGuestLinks';
+import { speakerLocationPrefix } from './speakerLocations';
 
 export const ROS_PROGRAM_TYPES = [
   'PreShow/End',
@@ -103,14 +104,7 @@ export function displaySpeakersText(speakersTextJson: string): string {
       .sort((a: { slot?: number }, b: { slot?: number }) => (a.slot || 0) - (b.slot || 0))
       .filter((speaker: { fullName?: string }) => speaker.fullName && String(speaker.fullName).trim())
       .map((speaker: { location?: string; slot?: number; fullName?: string }) => {
-        const location =
-          speaker.location === 'Podium'
-            ? 'P'
-            : speaker.location === 'Seat'
-              ? 'S'
-              : speaker.location === 'Virtual'
-                ? 'V'
-                : 'M';
+        const location = speakerLocationPrefix(speaker.location);
         return `${location}${speaker.slot} - ${speaker.fullName || 'Unnamed'}`;
       })
       .join('\n');

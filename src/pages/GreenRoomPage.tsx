@@ -29,6 +29,7 @@ import {
   sumPreStartDelayBlockMinutes,
 } from '../lib/showDelay';
 import { fitEventTitleSize, measureTitleSlotWidth } from '../lib/fitEventTitle';
+import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -169,17 +170,23 @@ const GreenRoomPage: React.FC = () => {
       const cs = getComputedStyle(el);
       const next = fitEventTitleSize({
         text: event?.name || 'Current Event',
-        availableWidthPx: Math.max(40, available - 8),
+        availableWidthPx: Math.max(40, available),
         fontFamily: cs.fontFamily || 'system-ui, sans-serif',
         fontWeight: cs.fontWeight || '700',
-        maxPx: 72,
-        singleLineFloorPx: 40,
-        minPx: 20,
+        maxPx: 64,
+        singleLineFloorPx: 32,
+        minPx: 16,
       });
       applyFit(next.fontPx, next.lines);
     };
 
-    fit();
+    // Double rAF: wait for timer column to finish layout before first measure
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(fit);
+    });
+
     let debounceId = 0;
     const scheduleFit = () => {
       window.clearTimeout(debounceId);
@@ -198,6 +205,8 @@ const GreenRoomPage: React.FC = () => {
     return () => {
       ro?.disconnect();
       window.clearTimeout(debounceId);
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
       window.removeEventListener('resize', scheduleFit);
     };
   }, [event?.name, showPreshowCountdownLabel, timerState, showStartOvertime]);
@@ -313,6 +322,10 @@ const GreenRoomPage: React.FC = () => {
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  const clockOffsetRef = useRef(0);
+  useEffect(() => {
+    clockOffsetRef.current = clockOffset;
+  }, [clockOffset]);
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
   const [disconnectDuration, setDisconnectDuration] = useState('');
@@ -813,30 +826,38 @@ const GreenRoomPage: React.FC = () => {
           scheduleTimerStoppedSync();
         }
         if (data && data.item_id) {
-          setTimerProgress(prev => ({
-            ...prev,
-            [data.item_id]: {
-              elapsed: data.elapsed_seconds || 0,
-              total: data.duration_seconds ?? 300,
-              startedAt: data.started_at ? new Date(data.started_at) : null
-            }
-          }));
+          const itemId = parseInt(data.item_id, 10);
+          setTimerProgress((prev) => {
+            const prevRow = prev[itemId];
+            const nextStartedAt = data.started_at
+              ? new Date(data.started_at)
+              : prevRow?.startedAt ?? null;
+            const nextTotal =
+              data.duration_seconds != null
+                ? Number(data.duration_seconds)
+                : prevRow?.total ?? 300;
+            return {
+              ...prev,
+              [itemId]: {
+                elapsed: Number(data.elapsed_seconds) || 0,
+                total: Number.isFinite(nextTotal) ? nextTotal : 300,
+                // Keep prior startedAt if this tick omits it — dropping it kills the local clock
+                startedAt: nextStartedAt,
+              },
+            };
+          });
           
           // Update timer state based on timer_state from active_timers table (like PhotoViewPage)
           if (data.timer_state === 'running') {
             setTimerState('running');
-            setActiveItemId(parseInt(data.item_id));
-            setLastLoadedCueId(parseInt(data.item_id)); // Track last loaded cue
-            // Clear all loaded items and set only the current active one
-            setLoadedItems({ [parseInt(data.item_id)]: true });
-            // Removed verbose logging to prevent console spam
+            setActiveItemId(itemId);
+            setLastLoadedCueId(itemId);
+            setLoadedItems({ [itemId]: true });
           } else if (data.timer_state === 'loaded') {
             setTimerState('loaded');
-            setActiveItemId(parseInt(data.item_id));
-            setLastLoadedCueId(parseInt(data.item_id)); // Track last loaded cue
-            // Clear all loaded items and set only the current active one
-            setLoadedItems({ [parseInt(data.item_id)]: true });
-            // Removed verbose logging to prevent console spam
+            setActiveItemId(itemId);
+            setLastLoadedCueId(itemId);
+            setLoadedItems({ [itemId]: true });
           }
         }
       },
@@ -879,7 +900,26 @@ const GreenRoomPage: React.FC = () => {
       },
       onTimerStarted: (data: any) => {
         if (data && data.item_id) {
-          setActiveItemId(data.item_id);
+          const itemId = parseInt(data.item_id, 10);
+          setActiveItemId(itemId);
+          setTimerState('running');
+          setLastLoadedCueId(itemId);
+          setLoadedItems({ [itemId]: true });
+          if (data.started_at || data.duration_seconds != null || data.elapsed_seconds != null) {
+            setTimerProgress((prev) => ({
+              ...prev,
+              [itemId]: {
+                elapsed: Number(data.elapsed_seconds) || prev[itemId]?.elapsed || 0,
+                total:
+                  data.duration_seconds != null
+                    ? Number(data.duration_seconds)
+                    : prev[itemId]?.total ?? 300,
+                startedAt: data.started_at
+                  ? new Date(data.started_at)
+                  : prev[itemId]?.startedAt ?? new Date(),
+              },
+            }));
+          }
         }
         scheduleTimerStoppedSync();
       },
@@ -1018,44 +1058,33 @@ const GreenRoomPage: React.FC = () => {
     };
   }, [event?.id, reconnectKey]);
 
-  // Always run local timer for smooth updates when timer is running
+  // Always run local timer for smooth updates when timer is running.
+  // Depend on startedAt ms so the clock starts once progress arrives (not only on state change).
+  const activeStartedAtMs =
+    activeItemId != null && timerProgress[activeItemId]?.startedAt
+      ? timerProgress[activeItemId].startedAt!.getTime()
+      : null;
+
   useEffect(() => {
-    if (!activeItemId || !timerProgress[activeItemId]) return;
+    if (!activeItemId || timerState !== 'running' || activeStartedAtMs == null) return;
 
-    const progress = timerProgress[activeItemId];
-    if (progress.startedAt && timerState === 'running') {
-      const startedAt = progress.startedAt;
-      const duration = progress.total;
-      
-      // Removed verbose logging to prevent console spam
-      
-      const continuousTimer = setInterval(() => {
-        const syncedNow = new Date(Date.now() + clockOffset);
-        const elapsed = Math.floor((syncedNow.getTime() - startedAt.getTime()) / 1000);
-        
-        // Always update timer progress for smooth counting
-        setTimerProgress(prev => ({
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() + clockOffsetRef.current - activeStartedAtMs) / 1000);
+      setTimerProgress((prev) => {
+        const cur = prev[activeItemId];
+        if (!cur) return prev;
+        if (cur.elapsed === elapsed) return prev;
+        return {
           ...prev,
-          [activeItemId]: {
-            ...prev[activeItemId],
-            elapsed: elapsed
-          }
-        }));
-        
-        // Drift detector removed - WebSocket handles all sync
-        
-        // Debug logging for first few seconds
-        if (elapsed <= 10) {
-          // Removed verbose logging to prevent console spam (runs every second)
-        }
-      }, 1000);
+          [activeItemId]: { ...cur, elapsed },
+        };
+      });
+    };
 
-      return () => {
-        // Removed verbose logging to prevent console spam
-        clearInterval(continuousTimer);
-      };
-    }
-  }, [activeItemId, timerState]); // Removed timerProgress to prevent constant restarts
+    tick();
+    const continuousTimer = setInterval(tick, 250);
+    return () => clearInterval(continuousTimer);
+  }, [activeItemId, timerState, activeStartedAtMs]);
 
   // Cleanup on component unmount (drift detector removed)
   useEffect(() => {
@@ -1921,23 +1950,24 @@ const GreenRoomPage: React.FC = () => {
           </div>
         )}
 
-        <div className="p-6 flex items-center gap-12 min-w-0">
+        <div className="p-6 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 min-w-0">
           <div
             ref={eventTitleWrapRef}
-            className="flex-1 min-w-0 max-w-full self-center text-center pr-8 py-1"
+            className="min-w-0 self-center text-center overflow-hidden py-1"
           >
             <div
               ref={eventTitleRef}
               className="text-white font-bold text-center mx-auto max-w-full box-border"
               style={{
                 fontSize: titleFit.fontPx,
-                lineHeight: 1.25,
+                lineHeight: 1.2,
                 whiteSpace: titleFit.lines === 1 ? 'nowrap' : 'normal',
                 width: '100%',
                 maxWidth: '100%',
-                overflowWrap: titleFit.lines === 2 ? 'break-word' : 'normal',
-                wordBreak: 'normal',
-                overflow: 'visible',
+                overflowWrap: titleFit.lines === 2 ? 'anywhere' : 'normal',
+                wordBreak: titleFit.lines === 2 ? 'break-word' : 'normal',
+                overflow: 'hidden',
+                textOverflow: titleFit.lines === 1 ? 'ellipsis' : 'clip',
                 paddingBottom: '0.12em',
               }}
             >
@@ -1945,17 +1975,19 @@ const GreenRoomPage: React.FC = () => {
             </div>
           </div>
           
-          <div className={`rounded-lg p-4 text-center flex-shrink-0 ${
+          <div className={`rounded-lg p-4 text-center shrink-0 min-w-[9.5rem] ${
             isRos
-              ? hasShowDelay
-                ? audienceDelayMinutes > 0
-                  ? 'bg-amber-950 border border-amber-400'
-                  : 'bg-emerald-950 border border-emerald-500'
-                : timerState === 'running'
+              ? timerState === 'running'
                 ? 'bg-slate-800 border border-red-500'
                 : timerState === 'loaded'
                 ? 'bg-slate-800 border border-emerald-500'
+                : hasShowDelay
+                ? audienceDelayMinutes > 0
+                  ? 'bg-amber-950 border border-amber-400'
+                  : 'bg-emerald-950 border border-emerald-500'
                 : 'bg-slate-800 border border-slate-600'
+              : timerState === 'running' || timerState === 'loaded'
+              ? 'bg-red-600'
               : hasShowDelay
               ? audienceDelayMinutes > 0
                 ? 'bg-amber-600'
@@ -1964,7 +1996,7 @@ const GreenRoomPage: React.FC = () => {
           }`}>
           <div
             className={`font-semibold mb-1 text-xl ${
-              hasShowDelay
+              !(timerState === 'running' || timerState === 'loaded') && hasShowDelay
                 ? audienceDelayMinutes > 0
                   ? 'text-amber-200'
                   : 'text-emerald-200'
@@ -1975,15 +2007,18 @@ const GreenRoomPage: React.FC = () => {
           >
             {showPreshowCountdownLabel
               ? 'PRE SHOW COUNTDOWN'
-              : delayStatusLabel
-                ? delayStatusLabel
-                : timerState === 'loaded'
-                  ? 'LOADED'
-                  : timerState === 'running'
-                    ? 'RUNNING'
+              : timerState === 'loaded'
+                ? 'LOADED'
+                : timerState === 'running'
+                  ? 'RUNNING'
+                  : delayStatusLabel
+                    ? delayStatusLabel
                     : 'Stage Timer'}
           </div>
-          {showPreshowCountdownLabel && delayStatusLabel ? (
+          {delayStatusLabel &&
+          (showPreshowCountdownLabel ||
+            timerState === 'running' ||
+            timerState === 'loaded') ? (
             <div
               className={`mb-2 text-sm font-bold uppercase tracking-wide ${
                 audienceDelayMinutes > 0 ? 'text-amber-300' : 'text-emerald-300'
@@ -1997,15 +2032,17 @@ const GreenRoomPage: React.FC = () => {
             className={`font-bold mb-2 tabular-nums text-5xl ${
               usePreshowRainbowColors
                 ? 'ros-rainbow-text'
-                : hasShowDelay && audienceDelayMinutes > 0
-                  ? isRos
-                    ? 'text-amber-200'
-                    : 'text-amber-100'
-                  : isOvertime()
+                : isOvertime()
                   ? isRos
                     ? 'text-red-300'
                     : 'text-red-200'
-                  : 'text-white'
+                  : !(timerState === 'running' || timerState === 'loaded') &&
+                      hasShowDelay &&
+                      audienceDelayMinutes > 0
+                    ? isRos
+                      ? 'text-amber-200'
+                      : 'text-amber-100'
+                    : 'text-white'
             }`}
           >
             {getRemainingTime()}
@@ -2035,6 +2072,9 @@ const GreenRoomPage: React.FC = () => {
             {publicSchedule.slice(0, 8).map((item) => {
               const isLoaded = loadedItems[item.id];
               const isRunning = timerState === 'running' && String(activeItemId) === String(item.id);
+              const programType = String(item.programType || '').trim();
+              const programColor = ROS_PROGRAM_TYPE_COLORS[programType] || '#6B7280';
+              const programTextDark = programType === 'Sub Cue' || programType === 'KILLED';
               
               return (
             <div
@@ -2050,8 +2090,35 @@ const GreenRoomPage: React.FC = () => {
                     ? 'bg-slate-800 border border-slate-600 text-slate-100'
                     : 'bg-gray-300 text-gray-700'
               }`}
+              style={
+                !isRunning && !isLoaded && programType
+                  ? { borderLeft: `4px solid ${programColor}` }
+                  : undefined
+              }
             >
-              <div className="font-bold text-xl mb-2 uppercase">{item.segmentName}</div>
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="font-bold text-xl uppercase min-w-0 flex-1 leading-snug">
+                  {item.segmentName}
+                </div>
+                {programType ? (
+                  <span
+                    className="shrink-0 inline-block px-2.5 py-1 rounded text-[11px] font-semibold uppercase tracking-wide border shadow-sm"
+                    style={{
+                      backgroundColor: programColor,
+                      color: programTextDark ? '#111827' : '#ffffff',
+                      borderColor:
+                        programType === 'Sub Cue'
+                          ? '#111827'
+                          : isRunning || isLoaded
+                            ? 'rgba(255,255,255,0.25)'
+                            : 'transparent',
+                      textDecoration: programType === 'KILLED' ? 'line-through' : 'none',
+                    }}
+                  >
+                    {programType}
+                  </span>
+                ) : null}
+              </div>
               <div className={`text-sm space-y-1 ${isRos && !isRunning && !isLoaded ? 'text-slate-400' : ''}`}>
                 <div>Start: {item.startTime}</div>
                 <div>End: {item.endTime}</div>

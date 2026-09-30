@@ -72,7 +72,7 @@ function displaySpeakersPreview(speakers: SpeakerDraft[]): string {
     .sort((a, b) => a.slot - b.slot)
     .map((s) => {
       const loc =
-        s.location === 'Podium' ? 'P' : s.location === 'Seat' ? 'S' : s.location === 'Virtual' ? 'V' : 'M';
+        s.location === 'Podium' ? 'P' : s.location === 'Seat' ? 'S' : s.location === 'Virtual' ? 'V' : s.location === 'Walking' ? 'W' : 'M';
       return `${loc}${s.slot} - ${s.fullName}`;
     })
     .join('\n');
@@ -539,7 +539,7 @@ export const AddItemShowcaseContent: React.FC = () => {
                           value={speaker.location}
                           className="w-full px-2 py-1.5 bg-slate-600 border border-slate-500 rounded text-white text-sm"
                         >
-                          {['Podium', 'Seat', 'Moderator', 'Virtual'].map((l) => (
+                          {['Podium', 'Seat', 'Moderator', 'Virtual', 'Walking'].map((l) => (
                             <option key={l} value={l}>
                               {l}
                             </option>

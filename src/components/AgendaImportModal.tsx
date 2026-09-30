@@ -10,6 +10,7 @@ import {
   type AgendaParsedItem,
   type ParseHints,
 } from '../lib/agenda-parser';
+import { SPEAKER_LOCATIONS, type SpeakerLocation, isSpeakerLocation } from '../lib/speakerLocations';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -27,7 +28,6 @@ interface AgendaImportModalProps {
 
 type Step = 'select' | 'preview' | 'lines' | 'parse';
 type FieldLabel = 'time' | 'segment' | 'person';
-type SpeakerLocation = 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
 
 interface FieldSample { id: string; text: string; label: FieldLabel; }
 interface SpeakerEdit {
@@ -744,7 +744,7 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
         const raw = JSON.parse(row.speakers);
         list = (Array.isArray(raw) ? raw : [raw]).map((s: any, i: number) => ({
           id: s.id ?? `sp-${Date.now()}-${i}`, slot: typeof s.slot === 'number' ? s.slot : i+1,
-          location: ['Podium','Seat','Virtual','Moderator'].includes(s.location) ? s.location : 'Seat',
+          location: isSpeakerLocation(s.location) ? s.location : 'Seat',
           fullName: String(s.fullName ?? '').trim(), title: String(s.title ?? '').trim(),
           org: String(s.org ?? '').trim(), photoLink: String(s.photoLink ?? s.photoUrl ?? '').trim(),
         }));
@@ -1204,7 +1204,7 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
                     <div>
                       <label className="block text-slate-400 text-xs mb-1">Location</label>
                       <select value={s.location} onChange={e => updateSpeaker(s.id,'location',e.target.value as SpeakerLocation)} className="w-full px-2 py-1.5 bg-slate-600 border border-slate-500 rounded text-white text-sm">
-                        {(['Podium','Seat','Moderator','Virtual'] as SpeakerLocation[]).map(l => <option key={l} value={l}>{l}</option>)}
+                        {SPEAKER_LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
                       </select>
                     </div>
                     <div className="col-span-2 lg:col-span-1">

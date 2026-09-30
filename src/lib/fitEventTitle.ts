@@ -94,7 +94,10 @@ export function fitEventTitleSize(opts: {
   return { fontPx: Math.max(minPx, bestOne), lines: 1 };
 }
 
-/** Width available for the title column beside a flex-shrink timer sibling. */
+/** Extra clearance so glyphs never paint into the timer column. */
+const TITLE_TIMER_SAFETY_PX = 16;
+
+/** Width available for the title column beside a flex-shrink / grid timer sibling. */
 export function measureTitleSlotWidth(wrap: HTMLElement): number {
   const row = wrap.parentElement;
   const timer = wrap.nextElementSibling as HTMLElement | null;
@@ -109,8 +112,12 @@ export function measureTitleSlotWidth(wrap: HTMLElement): number {
       (parseFloat(rowStyle.paddingLeft) || 0) + (parseFloat(rowStyle.paddingRight) || 0);
     const rowInner = row.clientWidth - rowPad;
     const timerW = Math.ceil(timer.getBoundingClientRect().width);
-    return Math.max(40, Math.floor(rowInner - timerW - gap - padX));
+    // Prefer the wrap's own laid-out width when the row uses grid/flex correctly,
+    // but never claim more space than row minus timer.
+    const fromRow = Math.floor(rowInner - timerW - gap - padX - TITLE_TIMER_SAFETY_PX);
+    const fromWrap = Math.floor(wrap.clientWidth - padX - TITLE_TIMER_SAFETY_PX);
+    return Math.max(40, Math.min(fromRow, fromWrap > 0 ? fromWrap : fromRow));
   }
 
-  return Math.max(40, Math.floor(wrap.clientWidth - padX));
+  return Math.max(40, Math.floor(wrap.clientWidth - padX - TITLE_TIMER_SAFETY_PX));
 }

@@ -35,6 +35,11 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import {
+  SPEAKER_LOCATIONS,
+  type SpeakerLocation,
+  normalizeSpeakerLocation,
+} from '../lib/speakerLocations';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import StageDirectionModal from '../components/StageDirectionModal';
@@ -260,7 +265,7 @@ type AssetRow = { id: string; name: string; link: string; linkEnabled: boolean }
 type SpeakerSlotDraft = {
   id: string;
   slot: number;
-  location: 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+  location: SpeakerLocation;
   fullName: string;
   title: string;
   org: string;
@@ -518,7 +523,7 @@ function parseSpeakersDraft(speakersTextJson: string): SpeakerSlotDraft[] {
     for (const s of arr) {
       const slot = Number(s.slot);
       if (!Number.isFinite(slot) || slot < 1 || slot > 7) continue;
-      const location = s.location === 'Seat' || s.location === 'Virtual' || s.location === 'Moderator' ? s.location : 'Podium';
+      const location = normalizeSpeakerLocation(s.location, 'Podium');
       out.push({
         id: (s.id || `speaker-slot-${slot}`).toString(),
         slot,
@@ -4627,10 +4632,9 @@ const ContentReviewPage: React.FC = () => {
                                     }}
                                     className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-violet-400"
                                   >
-                                    <option value="Podium">Podium</option>
-                                    <option value="Seat">Seat</option>
-                                    <option value="Virtual">Virtual</option>
-                                    <option value="Moderator">Moderator</option>
+                                    {SPEAKER_LOCATIONS.map((loc) => (
+                                      <option key={loc} value={loc}>{loc}</option>
+                                    ))}
                                   </select>
                                 </div>
                                 <div className="md:col-span-2 lg:col-span-1">

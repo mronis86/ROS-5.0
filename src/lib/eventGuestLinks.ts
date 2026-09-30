@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from '../services/api-client';
 import { apiJsonHeaders } from './sessionAuth';
+import { speakerLocationPrefix } from './speakerLocations';
 
 export interface GuestEventSummary {
   id: string;
@@ -201,14 +202,7 @@ function formatSpeakerSlots(raw: string): string {
       .sort((a: { slot?: number }, b: { slot?: number }) => (a.slot || 0) - (b.slot || 0))
       .filter((speaker: { fullName?: string }) => speaker.fullName && String(speaker.fullName).trim())
       .map((speaker: { location?: string; slot?: number; fullName?: string; title?: string }) => {
-        const loc =
-          speaker.location === 'Podium'
-            ? 'P'
-            : speaker.location === 'Seat'
-              ? 'S'
-              : speaker.location === 'Virtual'
-                ? 'V'
-                : 'M';
+        const loc = speakerLocationPrefix(speaker.location);
         const title = speaker.title ? ` (${speaker.title})` : '';
         return `${loc}${speaker.slot ?? ''} · ${speaker.fullName}${title}`;
       })

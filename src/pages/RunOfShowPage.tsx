@@ -113,11 +113,17 @@ import {
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
 
+import {
+  SPEAKER_LOCATIONS,
+  type SpeakerLocation,
+  speakerLocationPrefix,
+} from '../lib/speakerLocations';
+
 // Speaker interface/type definition
 interface Speaker {
   id: string;
   slot: number;
-  location: 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+  location: SpeakerLocation;
   fullName: string;
   title: string;
   org: string;
@@ -5865,9 +5871,7 @@ const RunOfShowPage: React.FC = () => {
       return speakers
         .sort((a, b) => a.slot - b.slot)
         .map(speaker => {
-          const location = speaker.location === 'Podium' ? 'P' : 
-                          speaker.location === 'Seat' ? 'S' : 
-                          speaker.location === 'Virtual' ? 'V' : 'M';
+          const location = speakerLocationPrefix(speaker.location);
           return `${location}${speaker.slot} - ${speaker.fullName || 'Unnamed'}`;
         })
         .join('\n');
@@ -5890,9 +5894,7 @@ const RunOfShowPage: React.FC = () => {
         .sort((a, b) => a.slot - b.slot)
         .filter(speaker => speaker.fullName && speaker.fullName.trim() !== '')
         .map(speaker => {
-          const location = speaker.location === 'Podium' ? 'P' : 
-                          speaker.location === 'Seat' ? 'S' : 
-                          speaker.location === 'Virtual' ? 'V' : 'M';
+          const location = speakerLocationPrefix(speaker.location);
           return `${location}${speaker.slot} - ${speaker.fullName || 'Unnamed'}`;
         })
         .join('\n');
@@ -17636,10 +17638,9 @@ const RunOfShowPage: React.FC = () => {
                            onChange={(e) => updateSpeakerText(speaker.id, 'location', e.target.value)}
                            className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                          >
-                           <option value="Podium">Podium</option>
-                           <option value="Seat">Seat</option>
-                           <option value="Moderator">Moderator</option>
-                           <option value="Virtual">Virtual</option>
+                           {SPEAKER_LOCATIONS.map((loc) => (
+                             <option key={loc} value={loc}>{loc}</option>
+                           ))}
                          </select>
                        </div>
                        
@@ -18266,7 +18267,8 @@ const RunOfShowPage: React.FC = () => {
                                      {speaker.location === 'Seat' && <span className="noto-emoji" title="Seat">🪑</span>}
                                      {speaker.location === 'Virtual' && <span>📺</span>}
                                      {speaker.location === 'Moderator' && <span>📢</span>}
-                                     {!['Podium', 'Seat', 'Virtual', 'Moderator'].includes(speaker.location) && <span>📍</span>}
+                                     {speaker.location === 'Walking' && <span>🚶</span>}
+                                     {!SPEAKER_LOCATIONS.includes(speaker.location) && <span>📍</span>}
                                      <span>{speaker.location}</span>
                                    </div>
                                  )}
@@ -18385,10 +18387,9 @@ const RunOfShowPage: React.FC = () => {
                            onChange={(e) => updateSpeaker(speaker.id, 'location', e.target.value)}
                            className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                          >
-                           <option value="Podium">Podium</option>
-                           <option value="Seat">Seat</option>
-                           <option value="Moderator">Moderator</option>
-                           <option value="Virtual">Virtual</option>
+                           {SPEAKER_LOCATIONS.map((loc) => (
+                             <option key={loc} value={loc}>{loc}</option>
+                           ))}
                          </select>
                        </div>
                        
@@ -19661,6 +19662,7 @@ const RunOfShowPage: React.FC = () => {
                                       {speaker.location === 'Seat' && <span className="noto-emoji">🪑</span>}
                                       {speaker.location === 'Virtual' && '📺'}
                                       {speaker.location === 'Moderator' && '📢'}
+                                      {speaker.location === 'Walking' && '🚶'}
                                       {speaker.location}
                                     </span>
                                   </div>
@@ -19728,7 +19730,7 @@ const RunOfShowPage: React.FC = () => {
                               } catch {}
                             }
                             const availableSlots = [1, 2, 3, 4, 5, 6, 7].filter(slot => !existingSlots.includes(slot));
-                            const locationOptions: ('Podium' | 'Seat' | 'Virtual' | 'Moderator')[] = ['Podium', 'Seat', 'Virtual', 'Moderator'];
+                            const locationOptions = [...SPEAKER_LOCATIONS];
 
                             return (
                               <div key={speakerId} className="bg-slate-600 rounded-lg p-3">
@@ -19765,7 +19767,7 @@ const RunOfShowPage: React.FC = () => {
                                     <select
                                       value={speaker.location}
                                       onChange={(e) => {
-                                        const newLocation = e.target.value as 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+                                        const newLocation = e.target.value as SpeakerLocation;
                                         setEditableSpeakers(prev =>
                                           prev.map(s =>
                                             (s.id || `speaker_${editableSpeakers.indexOf(s)}`) === speakerId

@@ -11,6 +11,12 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import {
+  SPEAKER_LOCATIONS,
+  type SpeakerLocation,
+  normalizeSpeakerLocation,
+  speakerLocationPrefix,
+} from '../lib/speakerLocations';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
@@ -58,7 +64,7 @@ type AssetRow = { id: string; name: string; link: string; linkEnabled: boolean }
 type SpeakerSlotDraft = {
   id: string;
   slot: number;
-  location: 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+  location: SpeakerLocation;
   fullName: string;
   title: string;
   org: string;
@@ -107,8 +113,7 @@ function parseSpeakersDraft(speakersTextJson: string): SpeakerSlotDraft[] {
     for (const s of arr) {
       const slot = Number(s.slot);
       if (!Number.isFinite(slot) || slot < 1 || slot > 7) continue;
-      const location =
-        s.location === 'Seat' || s.location === 'Virtual' || s.location === 'Moderator' ? s.location : 'Podium';
+      const location = normalizeSpeakerLocation(s.location, 'Podium');
       out.push({
         id: (s.id || `speaker-slot-${slot}`).toString(),
         slot,
@@ -234,14 +239,7 @@ function parseSpeakersSlots(speakersTextJson: string): string[] {
     for (const s of arr) {
       const slot = Number(s.slot);
       if (!Number.isFinite(slot) || slot < 1 || slot > 7) continue;
-      const loc =
-        s.location === 'Podium'
-          ? 'P'
-          : s.location === 'Seat'
-            ? 'S'
-            : s.location === 'Virtual'
-              ? 'V'
-              : 'M';
+      const loc = speakerLocationPrefix(s.location);
       const name = (s.fullName || '').trim() || '—';
       out[slot - 1] = `${loc}${slot}\n${name}`;
     }
@@ -1248,10 +1246,9 @@ const RunOfShowMobilePage: React.FC = () => {
                                 }}
                                 className="w-full rounded border border-slate-500 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-cyan-400"
                               >
-                                <option value="Podium">Podium</option>
-                                <option value="Seat">Seat</option>
-                                <option value="Virtual">Virtual</option>
-                                <option value="Moderator">Moderator</option>
+                                {SPEAKER_LOCATIONS.map((loc) => (
+                                  <option key={loc} value={loc}>{loc}</option>
+                                ))}
                               </select>
                             </div>
                             <div>

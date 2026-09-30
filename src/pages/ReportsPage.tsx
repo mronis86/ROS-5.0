@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { calculateScheduleStartTime, dayStartFor } from '../lib/scheduleStartTime';
+import { speakerLocationPrefix } from '../lib/speakerLocations';
 
 interface ScheduleItem {
   id: number;
@@ -23,14 +24,6 @@ interface ScheduleItem {
   customFields: Record<string, string>;
   isPublic?: boolean;
   isIndented?: boolean;
-}
-
-/** Print/report participant labels: Podium→P, Seat→S, Virtual→V, Moderator→M (slot e.g. M4). */
-function speakerLocationPrefix(location: string | null | undefined): string {
-  if (location === 'Seat') return 'S';
-  if (location === 'Virtual') return 'V';
-  if (location === 'Moderator') return 'M';
-  return 'P';
 }
 
 const ReportsPage: React.FC = () => {
