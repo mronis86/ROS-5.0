@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessAccessManager, canAccessCatering } from '../services/auth-service';
@@ -51,7 +51,8 @@ const TYPE_COLOR: Record<string, string> = {
   KILLED: '#DC2626',
   Podium: '#8B4513',
   Panel: '#404040',
-  'PreShow/End': '#8B5CF6',
+  'PreShow': '#8B5CF6',
+  'EndShow': '#C026D3',
   'Full-Stage/Ted-Talk': '#EA580C',
 };
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService, RunOfShowData } from '../services/database';
 import { socketClient } from '../services/socket-client';
@@ -524,7 +524,7 @@ const RunOfShowMobilePage: React.FC = () => {
       items.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
       !types.includes(HEAD_TABLE_PROGRAM_TYPE)
     ) {
-      const idx = types.indexOf('PreShow/End');
+      const idx = types.indexOf('PreShow');
       if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
       else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
     }

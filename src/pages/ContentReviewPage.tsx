@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+﻿import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canManageContentReviewTeam, isCreativeOnlyUser } from '../services/auth-service';
@@ -2722,7 +2722,7 @@ const ContentReviewPage: React.FC = () => {
       schedule.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
       !types.includes(HEAD_TABLE_PROGRAM_TYPE)
     ) {
-      const idx = types.indexOf('PreShow/End');
+      const idx = types.indexOf('PreShow');
       if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
       else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
     }

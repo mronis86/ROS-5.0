@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEMO_AGENDA_DOC_LINES,
   DEMO_AGENDA_FILE,
@@ -69,7 +69,8 @@ const STEP_LABELS: Record<Step, string> = {
 };
 
 const PROGRAM_TYPES = [
-  'PreShow/End',
+  'PreShow',
+  'EndShow',
   'Podium Transition',
   'Panel Transition',
   'Full-Stage/Ted-Talk',

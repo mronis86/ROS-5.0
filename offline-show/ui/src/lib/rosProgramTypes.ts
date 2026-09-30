@@ -1,7 +1,8 @@
-/** Program types / colors shared with online ROS (offline-safe subset). */
+﻿/** Program types / colors shared with online ROS (offline-safe subset). */
 
 export const ROS_PROGRAM_TYPES = [
-  'PreShow/End',
+  'PreShow',
+  'EndShow',
   'Podium Transition',
   'Panel Transition',
   'Full-Stage/Ted-Talk',
@@ -25,11 +26,11 @@ export function eventAllowsHeadTableProgramType(eventType?: string | null): bool
   return t === 'General Meeting' || t === 'Hollow Square';
 }
 
-/** Base program types, with Head Table inserted after PreShow/End when allowed. */
+/** Base program types, with Head Table inserted after PreShow when allowed. */
 export function buildRosProgramTypes(eventType?: string | null): string[] {
   const types = [...ROS_PROGRAM_TYPES];
   if (!eventAllowsHeadTableProgramType(eventType)) return types;
-  const idx = types.indexOf('PreShow/End');
+  const idx = types.indexOf('PreShow');
   if (idx < 0) return [HEAD_TABLE_PROGRAM_TYPE, ...types];
   if (types.includes(HEAD_TABLE_PROGRAM_TYPE)) return types;
   types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
@@ -37,7 +38,8 @@ export function buildRosProgramTypes(eventType?: string | null): string[] {
 }
 
 export const ROS_PROGRAM_TYPE_COLORS: Record<string, string> = {
-  'PreShow/End': '#8B5CF6',
+  'PreShow': '#8B5CF6',
+  'EndShow': '#C026D3',
   'Head Table': '#4338CA',
   'Podium Transition': '#8B4513',
   'Panel Transition': '#404040',

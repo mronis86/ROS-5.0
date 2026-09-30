@@ -1,3 +1,4 @@
+import { formatScheduleClock } from './scheduleClockFormat';
 import { resolveTimedMarkerDisplayTime } from './timedMarker';
 
 export interface ScheduleStartItem {
@@ -128,18 +129,13 @@ export function calculateScheduleStartTime(
       }
     }
 
-    const [hours, minutes] = startTime.split(':').map(Number);
+    const parts = startTime.split(':').map(Number);
+    const hours = parts[0];
+    const minutes = parts[1];
+    const startSecs = Number.isFinite(parts[2]) ? parts[2] : 0;
     if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return '';
-    const totalStartSeconds = hours * 3600 + minutes * 60 + totalSeconds;
-    const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
-    const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
-    const date = new Date();
-    date.setHours(finalHours, finalMinutes, 0, 0);
-    return date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
+    const totalStartSeconds = hours * 3600 + minutes * 60 + startSecs + totalSeconds;
+    return formatScheduleClock(totalStartSeconds, 'hm');
   };
 
   return calcAt(index);

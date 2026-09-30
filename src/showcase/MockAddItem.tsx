@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DEMO_EVENT, DEMO_SPEAKER_PHOTOS, SHOWCASE_FULL_CUE_COUNT } from './demoData';
 import { getShowcaseScheduleTrt } from './showcaseFollowMode';
 import { PROGRAM_TYPE_COLORS } from './showcaseConstants';
@@ -17,7 +17,8 @@ type SpeakerDraft = {
 type Phase = 'form' | 'speakers' | 'done';
 
 const PROGRAM_TYPES = [
-  'PreShow/End',
+  'PreShow',
+  'EndShow',
   'Podium Transition',
   'Panel Transition',
   'Full-Stage/Ted-Talk',

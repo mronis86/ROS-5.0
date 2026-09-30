@@ -373,6 +373,16 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
           if (programType.toLowerCase() === 'breakout session' || programType.toLowerCase() === 'breakout') {
             programType = 'Breakout Session';
           }
+          if (
+            programType === 'PreShow/End' ||
+            programType.toLowerCase() === 'preshow/end' ||
+            programType.toLowerCase() === 'preshow'
+          ) {
+            programType = 'PreShow';
+          }
+          if (programType.toLowerCase() === 'endshow' || programType.toLowerCase() === 'end show') {
+            programType = 'EndShow';
+          }
           parsedRow.programType = programType;
         }
         
@@ -523,6 +533,16 @@ const ExcelImportModal: React.FC<ExcelImportModalProps> = ({ isOpen, onClose, on
           // Map "Breakout Session" if explicitly specified
           if (programType.toLowerCase() === 'breakout session' || programType.toLowerCase() === 'breakout') {
             programType = 'Breakout Session';
+          }
+          if (
+            programType === 'PreShow/End' ||
+            programType.toLowerCase() === 'preshow/end' ||
+            programType.toLowerCase() === 'preshow'
+          ) {
+            programType = 'PreShow';
+          }
+          if (programType.toLowerCase() === 'endshow' || programType.toLowerCase() === 'end show') {
+            programType = 'EndShow';
           }
           parsedRow.programType = programType;
         }

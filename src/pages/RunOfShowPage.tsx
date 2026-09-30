@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event, LOCATION_OPTIONS, normalizeDayLocations } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
@@ -10,6 +10,7 @@ import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIE
 import {
   findTopPreshowCue,
   isPreshowArmedForKey,
+  isPreshowProgramType,
   isPreshowTimerMessage,
   parsePreshowShowDay,
   resolvePreshowStartHHMM,
@@ -20,6 +21,7 @@ import {
   PRESHOW_WARN_MINUTES_BEFORE,
 } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
+import { normalizeSchedulePreshowEndTypes } from '../lib/rosProgramTypeSplit';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
@@ -87,9 +89,19 @@ import {
   normalizeMarkerAbsoluteSeconds,
   normalizeMarkerOffsetSeconds,
   normalizeMarkerTimeMode,
+  parseClockToSeconds,
   resolveTimedMarkerDisplayTime,
   timedMarkerPersistFields,
 } from '../lib/timedMarker';
+import {
+  cycleSegmentNameDisplayMode,
+  cycleStartTimeDisplayMode,
+  formatScheduleClock,
+  segmentNameDisplayModeLabel,
+  startTimeDisplayModeLabel,
+  type SegmentNameDisplayMode,
+  type StartTimeDisplayMode,
+} from '../lib/scheduleClockFormat';
 import {
   BUILTIN_COLUMN_LABELS,
   ROS_COLUMN_ORDER_STORAGE_KEY,
@@ -381,7 +393,10 @@ function normalizeScheduleWithTimerIds(
 ): { items: any[]; changed: boolean } {
   if (!Array.isArray(items)) return { items: [], changed: false };
   const withVo = items.map((item) => withNormalizedVoCues(item));
-  return ensureScheduleTimerIds(withVo, { preferExisting, assignMissing });
+  const withProgramTypes = normalizeSchedulePreshowEndTypes(withVo);
+  const programTypesChanged = withProgramTypes !== withVo;
+  const ensured = ensureScheduleTimerIds(withProgramTypes, { preferExisting, assignMissing });
+  return { items: ensured.items, changed: ensured.changed || programTypesChanged };
 }
 
 const RunOfShowPage: React.FC = () => {
@@ -1235,7 +1250,7 @@ const RunOfShowPage: React.FC = () => {
       (Number.isFinite(itemId) ? schedule.find((s) => s.id === itemId) : null) ||
       activeCueForPreshow;
     const isPreshowCue =
-      cue?.programType === 'PreShow/End' ||
+      isPreshowProgramType(cue?.programType) ||
       isPreshowTimerMessage(hybridTimerData?.timerMessage) ||
       rosPreshowRainbow;
     const hybridRunning =
@@ -1600,6 +1615,48 @@ const RunOfShowPage: React.FC = () => {
       return next;
     });
   };
+
+  // Start column: click header to toggle h:mm vs h:mm:ss
+  const [startTimeDisplayMode, setStartTimeDisplayMode] = useState<StartTimeDisplayMode>(() => {
+    try {
+      const saved = localStorage.getItem('rosStartTimeDisplayMode');
+      return saved === 'hms' ? 'hms' : 'hm';
+    } catch {
+      return 'hm';
+    }
+  });
+  const toggleStartTimeDisplayMode = () => {
+    setStartTimeDisplayMode((prev) => {
+      const next = cycleStartTimeDisplayMode(prev);
+      try {
+        localStorage.setItem('rosStartTimeDisplayMode', next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
+  // Segment Name: click header to toggle single-line truncate vs multi-line wrap
+  const [segmentNameDisplayMode, setSegmentNameDisplayMode] = useState<SegmentNameDisplayMode>(() => {
+    try {
+      const saved = localStorage.getItem('rosSegmentNameDisplayMode');
+      return saved === 'wrap' ? 'wrap' : 'single';
+    } catch {
+      return 'single';
+    }
+  });
+  const toggleSegmentNameDisplayMode = () => {
+    setSegmentNameDisplayMode((prev) => {
+      const next = cycleSegmentNameDisplayMode(prev);
+      try {
+        localStorage.setItem('rosSegmentNameDisplayMode', next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
   
   // Follow feature state
   const [isFollowEnabled, setIsFollowEnabled] = useState(false);
@@ -1829,6 +1886,7 @@ const RunOfShowPage: React.FC = () => {
     item: {
       id: number;
       programType?: string;
+      segmentName?: string;
       notes?: string;
       speakersText?: string;
       speakers?: unknown;
@@ -1843,7 +1901,8 @@ const RunOfShowPage: React.FC = () => {
       item.speakers as string | undefined,
       item.customFields,
       customColumns,
-      item.voCues?.length ?? 0
+      item.voCues?.length ?? 0,
+      item.segmentName
     ),
     ...getRowDimStyle(item),
     ...(item.programType === 'Delay Block'
@@ -1873,6 +1932,7 @@ const RunOfShowPage: React.FC = () => {
   const getSideColumnRowStyle = (item: {
     id: number;
     programType?: string;
+    segmentName?: string;
     notes?: string;
     speakersText?: string;
     speakers?: unknown;
@@ -1888,7 +1948,8 @@ const RunOfShowPage: React.FC = () => {
             item.speakers as string | undefined,
             item.customFields,
             customColumns,
-            item.voCues?.length ?? 0
+            item.voCues?.length ?? 0,
+            item.segmentName
           ),
         };
 
@@ -4924,7 +4985,7 @@ const RunOfShowPage: React.FC = () => {
   const [modalForm, setModalForm] = useState({
     cue: '',
     day: 1,
-    programType: 'PreShow/End',
+    programType: 'PreShow',
     shotType: '',
     shotTypeManualOverride: false,
     segmentName: '',
@@ -4957,7 +5018,7 @@ const RunOfShowPage: React.FC = () => {
       schedule.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
       !types.includes(HEAD_TABLE_PROGRAM_TYPE)
     ) {
-      const idx = types.indexOf('PreShow/End');
+      const idx = types.indexOf('PreShow');
       if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
       else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
     }
@@ -4994,12 +5055,19 @@ const RunOfShowPage: React.FC = () => {
     participants?: string,
     customFields?: any,
     customColumns?: any[],
-    voCueCount = 0
+    voCueCount = 0,
+    segmentName?: string
   ) => {
     let maxHeight = 6.5; // Default minimum height in rem
     if (voCueCount > 0) {
       // Notes grow when callout text is appended; slight bump if markers exist
       maxHeight = Math.max(maxHeight, 7);
+    }
+    if (segmentNameDisplayMode === 'wrap' && segmentName && String(segmentName).trim()) {
+      const colW = Math.max(80, Number(columnWidths.segmentName) || 320);
+      const charsPerLine = Math.max(10, Math.floor((colW - 40) / 8.5));
+      const lines = Math.ceil(String(segmentName).trim().length / charsPerLine);
+      maxHeight = Math.max(maxHeight, Math.min(14, 2.5 + lines * 1.35));
     }
     
     // Calculate height based on notes content
@@ -9887,7 +9955,7 @@ const RunOfShowPage: React.FC = () => {
     setModalForm({
       cue: '',
       day: selectedDay,
-      programType: 'PreShow/End',
+      programType: 'PreShow',
       shotType: '',
       segmentName: '',
       durationHours: 0,
@@ -11489,7 +11557,7 @@ const RunOfShowPage: React.FC = () => {
     setActiveRowMenu(null);
   };
 
-  const calculateStartTime = (index: number) => {
+  const calculateStartTime = (index: number): string => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
 
@@ -11497,7 +11565,7 @@ const RunOfShowPage: React.FC = () => {
     if (isTimedMarkerItem(currentItem)) {
       const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
       const parentStart = parentIndex >= 0 ? calculateStartTime(parentIndex) : '';
-      return resolveTimedMarkerDisplayTime(currentItem, parentStart);
+      return resolveTimedMarkerDisplayTime(currentItem, parentStart, startTimeDisplayMode);
     }
 
     // Indented rows (e.g. sub-breakouts) share the parent row's start time
@@ -11524,21 +11592,13 @@ const RunOfShowPage: React.FC = () => {
       }
     }
     
-    const [hours, minutes] = startTime.split(':').map(Number);
-    const startSeconds = hours * 3600 + minutes * 60;
+    const parts = startTime.split(':').map(Number);
+    const hours = parts[0];
+    const minutes = parts[1];
+    const masterSecs = Number.isFinite(parts[2]) ? parts[2] : 0;
+    const startSeconds = hours * 3600 + minutes * 60 + masterSecs;
     const totalStartSeconds = startSeconds + totalSeconds;
-    
-    const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
-    const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
-    
-    // Convert to 12-hour format
-    const date = new Date();
-    date.setHours(finalHours, finalMinutes, 0, 0);
-    return date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    });
+    return formatScheduleClock(totalStartSeconds, startTimeDisplayMode);
   };
 
   // Export current event schedule as CSV (used by menu and Google Sheet modal shortcut)
@@ -11646,7 +11706,7 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Calculate start time with automatic overtime adjustments
-  const calculateStartTimeWithOvertime = (index: number) => {
+  const calculateStartTimeWithOvertime = (index: number): string => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
 
@@ -11660,7 +11720,7 @@ const RunOfShowPage: React.FC = () => {
           : parentIndex >= 0
             ? calculateStartTime(parentIndex)
             : '';
-      return resolveTimedMarkerDisplayTime(currentItem, parentStart);
+      return resolveTimedMarkerDisplayTime(currentItem, parentStart, startTimeDisplayMode);
     }
 
     if (isIndentedScheduleItem(currentItem, indentedCues)) {
@@ -11711,27 +11771,9 @@ const RunOfShowPage: React.FC = () => {
       return baseStartTime;
     }
     
-    // Parse the base start time and add overtime
-    const [timePart, period] = baseStartTime.split(' ');
-    const [hours, minutes] = timePart.split(':').map(Number);
-    
-    let hour24 = hours;
-    if (period === 'PM' && hours !== 12) hour24 += 12;
-    if (period === 'AM' && hours === 12) hour24 = 0;
-    
-    // Add overtime minutes
-    const totalMinutes = hour24 * 60 + minutes + totalOvertimeMinutes;
-    const finalHours = Math.floor(totalMinutes / 60) % 24;
-    const finalMinutes = totalMinutes % 60;
-    
-    // Convert back to 12-hour format
-    const date = new Date();
-    date.setHours(finalHours, finalMinutes, 0, 0);
-    return date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    });
+    const baseSec = parseClockToSeconds(baseStartTime);
+    if (baseSec == null) return baseStartTime;
+    return formatScheduleClock(baseSec + totalOvertimeMinutes * 60, startTimeDisplayMode);
   };
 
   // Precompute cumulative overtime for each row (optimization to avoid passing schedule array)
@@ -14247,7 +14289,7 @@ const RunOfShowPage: React.FC = () => {
                     >
                       <span className="ros-rainbow-text">Pre Show Countdown</span>
                     </span>
-                  ) : activeCueForPreshow?.programType === 'PreShow/End' ? (
+                  ) : isPreshowProgramType(activeCueForPreshow?.programType) ? (
                     <span
                       className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
                       title="This cue is Pre Show / End"
@@ -14335,7 +14377,7 @@ const RunOfShowPage: React.FC = () => {
                       LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields.cue)}
                     </div>
                     {renderOperatorCountdownTopLine()}
-                    {schedule.find((item) => item.id === activeItemId)?.programType === 'PreShow/End' ? (
+                    {isPreshowProgramType(schedule.find((item) => item.id === activeItemId)?.programType) ? (
                       <span
                         className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
                         title="This cue is Pre Show / End"
@@ -14809,13 +14851,21 @@ const RunOfShowPage: React.FC = () => {
                   </div>
                   {startPinnedBesideCue && (
                     <div
-                      className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative"
+                      className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors"
                       style={{ width: columnWidths.start, borderRight: '6px solid #475569' }}
+                      onClick={toggleStartTimeDisplayMode}
+                      title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                     >
-                      <span className="text-white font-bold">Start</span>
+                      <div className="text-center pointer-events-none">
+                        <div className="text-white font-bold">Start</div>
+                        <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                      </div>
                       <div
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                        onMouseDown={(e) => handleResizeStart(e, 'start')}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          handleResizeStart(e, 'start');
+                        }}
                       />
                     </div>
                   )}
@@ -14828,13 +14878,21 @@ const RunOfShowPage: React.FC = () => {
                     <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex">
                       {visibleColumns.start && !startPinnedBesideCue && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
                           style={{ width: columnWidths.start, order: colFlex('start') }}
+                          onClick={toggleStartTimeDisplayMode}
+                          title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                         >
-                          <span className="text-white font-bold">Start</span>
+                          <div className="text-center pointer-events-none">
+                            <div className="text-white font-bold">Start</div>
+                            <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                          </div>
                           <div 
                             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                            onMouseDown={(e) => handleResizeStart(e, 'start')}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              handleResizeStart(e, 'start');
+                            }}
                           />
                         </div>
                       )}
@@ -14877,18 +14935,26 @@ const RunOfShowPage: React.FC = () => {
                       )}
                       {visibleColumns.segmentName && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
                           style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
+                          onClick={toggleSegmentNameDisplayMode}
+                          title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                         >
-                          <span className="text-white font-bold flex items-center gap-1">
-                            Segment Name
-                            {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
-                              <span className="text-yellow-400" title="Read-only for your role">🔒</span>
-                            )}
-                          </span>
+                          <div className="text-center pointer-events-none">
+                            <div className="text-white font-bold flex items-center justify-center gap-1">
+                              Segment Name
+                              {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
+                                <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400">{segmentNameDisplayModeLabel(segmentNameDisplayMode)}</div>
+                          </div>
                           <div 
                             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                            onMouseDown={(e) => handleResizeStart(e, 'segmentName')}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              handleResizeStart(e, 'segmentName');
+                            }}
                           />
                         </div>
                       )}
@@ -15336,7 +15402,7 @@ const RunOfShowPage: React.FC = () => {
                   setModalForm({
                     cue: '',
                     day: selectedDay,
-                    programType: 'PreShow/End',
+                    programType: 'PreShow',
                     shotType: '',
                     segmentName: '',
                     durationHours: 0,
@@ -15899,13 +15965,21 @@ const RunOfShowPage: React.FC = () => {
                 style={{ width: columnWidths.start }}
               >
                 <div
-                  className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative"
+                  className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors"
                   style={{ borderRight: '6px solid #475569' }}
+                  onClick={toggleStartTimeDisplayMode}
+                  title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                 >
-                  <span className="text-white font-bold">Start</span>
+                  <div className="text-center pointer-events-none">
+                    <div className="text-white font-bold">Start</div>
+                    <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                  </div>
                   <div
                     className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                    onMouseDown={(e) => handleResizeStart(e, 'start')}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      handleResizeStart(e, 'start');
+                    }}
                   />
                 </div>
                 {getFilteredSchedule().length === 0 ? (
@@ -15965,13 +16039,21 @@ const RunOfShowPage: React.FC = () => {
                 <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex">
                   {visibleColumns.start && !startPinnedBesideCue && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
                       style={{ width: columnWidths.start, order: colFlex('start') }}
+                      onClick={toggleStartTimeDisplayMode}
+                      title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                     >
-                      <span className="text-white font-bold">Start</span>
+                      <div className="text-center pointer-events-none">
+                        <div className="text-white font-bold">Start</div>
+                        <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                      </div>
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                        onMouseDown={(e) => handleResizeStart(e, 'start')}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          handleResizeStart(e, 'start');
+                        }}
                       />
                     </div>
                   )}
@@ -16014,18 +16096,26 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.segmentName && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
                       style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
+                      onClick={toggleSegmentNameDisplayMode}
+                      title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                     >
-                      <span className="text-white font-bold flex items-center gap-1">
-                        Segment Name
-                        {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
-                          <span className="text-yellow-400" title="Read-only for your role">🔒</span>
-                        )}
-                      </span>
+                      <div className="text-center pointer-events-none">
+                        <div className="text-white font-bold flex items-center justify-center gap-1">
+                          Segment Name
+                          {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
+                            <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400">{segmentNameDisplayModeLabel(segmentNameDisplayMode)}</div>
+                      </div>
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                        onMouseDown={(e) => handleResizeStart(e, 'segmentName')}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          handleResizeStart(e, 'segmentName');
+                        }}
                       />
                     </div>
                   )}
@@ -16306,6 +16396,7 @@ const RunOfShowPage: React.FC = () => {
                         displaySpeakersText={displaySpeakersText}
                         calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                         calculateStartTime={calculateStartTime}
+                        segmentNameDisplayMode={segmentNameDisplayMode}
                         showMode={showMode}
                         originalDuration={originalDurations[item.id]}
                         showWasUnderDuration={showMode === 'in-show' && trackWasDurations}

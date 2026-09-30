@@ -115,7 +115,13 @@ export function sumPreStartDelayBlockMinutes(opts: {
   for (let i = 0; i < endIdx; i++) {
     const item = schedule[i];
     if (!item || isIndented(item.id, item)) continue;
-    if (item.programType === 'PreShow/End') {
+    if (
+      item.programType === 'PreShow' ||
+      item.programType === 'PreShow/End' ||
+      item.programType === 'EndShow'
+    ) {
+      // Only PreShow (or legacy) opens the pre-start delay window; EndShow is ignored here.
+      if (item.programType === 'EndShow') continue;
       startScan = i + 1;
       break;
     }
@@ -132,7 +138,13 @@ export function sumPreStartDelayBlockMinutes(opts: {
         foundDelay = true;
         continue;
       }
-      if (item.programType === 'PreShow/End') continue;
+      if (
+        item.programType === 'PreShow' ||
+        item.programType === 'PreShow/End' ||
+        item.programType === 'EndShow'
+      ) {
+        continue;
+      }
       endIdx = foundDelay ? i : startScan;
       break;
     }

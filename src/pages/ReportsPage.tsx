@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
@@ -493,7 +493,8 @@ const ReportsPage: React.FC = () => {
   // Get color for program type badge (matching RunOfShowPage colors)
   const getProgramTypeColor = (programType: string) => {
     const colors: Record<string, string> = {
-      'PreShow/End': '#8B5CF6',        // Bright Purple
+      'PreShow': '#8B5CF6',
+  'EndShow': '#C026D3',        // Bright Purple
       'Head Table': '#4338CA',         // Indigo — GM / Hollow Square
       'Podium Transition': '#8B4513',  // Dark Brown
       'Panel Transition': '#404040',   // Darker Grey
@@ -548,7 +549,8 @@ const ReportsPage: React.FC = () => {
 
   // Program type labels for condensed report color legend (same order as Run of Show program type dropdown)
   const condensedColorLegend: { label: string; key: string }[] = [
-    { label: 'PreShow/End', key: 'PreShow/End' },
+    { label: 'PreShow', key: 'PreShow' },
+    { label: 'EndShow', key: 'EndShow' },
     { label: 'Head Table', key: 'Head Table' },
     { label: 'Podium Transition', key: 'Podium Transition' },
     { label: 'Panel Transition', key: 'Panel Transition' },

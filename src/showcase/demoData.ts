@@ -1,4 +1,4 @@
-/** Static demo data for marketing mockups — no API, no auth. */
+﻿/** Static demo data for marketing mockups — no API, no auth. */
 
 export const DEMO_EVENT = {
   id: 'demo-summit-2026',
@@ -91,7 +91,7 @@ export const DEMO_SCHEDULE: DemoScheduleRow[] = [
     day: 1,
     cue: 'CUE 1',
     segmentName: 'Welcome & Opening',
-    programType: 'PreShow/End',
+    programType: 'PreShow',
     shotType: 'Wide',
     durationHours: 0,
     durationMinutes: 5,
@@ -250,7 +250,7 @@ export const DEMO_SCHEDULE: DemoScheduleRow[] = [
     day: 1,
     cue: 'CUE 9',
     segmentName: 'Closing Remarks',
-    programType: 'PreShow/End',
+    programType: 'EndShow',
     shotType: 'Wide',
     durationHours: 0,
     durationMinutes: 15,
@@ -268,7 +268,7 @@ export const DEMO_SCHEDULE: DemoScheduleRow[] = [
     day: 1,
     cue: 'CUE 10',
     segmentName: 'Photo Op & End',
-    programType: 'PreShow/End',
+    programType: 'EndShow',
     shotType: 'Wide',
     durationHours: 0,
     durationMinutes: 10,

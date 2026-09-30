@@ -28,7 +28,7 @@ import {
   resolveGreenRoomDelayMinutes,
   sumPreStartDelayBlockMinutes,
 } from '../lib/showDelay';
-import { fitEventTitleSize, measureTitleSlotWidth } from '../lib/fitEventTitle';
+import { fitEventTitleToElement, measureTitleSlotWidth } from '../lib/fitEventTitle';
 import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import {
   DISPLAY_SESSION_MAX_HOURS,
@@ -161,21 +161,19 @@ const GreenRoomPage: React.FC = () => {
 
     const fit = () => {
       const available = measureTitleSlotWidth(wrap);
-      if (available < 40) return;
+      if (available < 8) return;
       if (Math.abs(available - titleFitWidthRef.current) < 2 && titleFitWidthRef.current > 0) {
         return;
       }
       titleFitWidthRef.current = available;
 
-      const cs = getComputedStyle(el);
-      const next = fitEventTitleSize({
+      const next = fitEventTitleToElement({
+        el,
         text: event?.name || 'Current Event',
-        availableWidthPx: Math.max(40, available),
-        fontFamily: cs.fontFamily || 'system-ui, sans-serif',
-        fontWeight: cs.fontWeight || '700',
-        maxPx: 64,
-        singleLineFloorPx: 32,
-        minPx: 16,
+        availableWidthPx: available,
+        maxPx: 72,
+        singleLineFloorPx: 36,
+        minPx: 12,
       });
       applyFit(next.fontPx, next.lines);
     };
@@ -314,6 +312,11 @@ const GreenRoomPage: React.FC = () => {
   
   // Track last loaded cue to keep it visible when timer stops
   const [lastLoadedCueId, setLastLoadedCueId] = useState<number | null>(null);
+  const lastLoadedCueIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    lastLoadedCueIdRef.current = lastLoadedCueId;
+  }, [lastLoadedCueId]);
+  const loadActiveTimerRef = useRef<(() => Promise<void>) | null>(null);
   
   const [masterStartTime, setMasterStartTime] = useState<string>('09:00');
   const [dayStartTimes, setDayStartTimes] = useState<{[key: number]: string}>({});
@@ -326,6 +329,51 @@ const GreenRoomPage: React.FC = () => {
   useEffect(() => {
     clockOffsetRef.current = clockOffset;
   }, [clockOffset]);
+
+  /** Apply active-timer WS/API payload so Green Room never sticks on DELAYED with a blank clock. */
+  const applyActiveTimerPayload = useCallback((data: any) => {
+    if (!data?.item_id) return false;
+    const itemId = parseInt(String(data.item_id), 10);
+    if (!Number.isFinite(itemId)) return false;
+
+    const stateRaw = String(data.timer_state || data.timerState || '').toLowerCase();
+    const nextState =
+      stateRaw === 'running' || stateRaw === 'loaded'
+        ? stateRaw
+        : data.started_at || data.is_running
+          ? 'running'
+          : null;
+    if (!nextState) return false;
+
+    const elapsed = Number(data.elapsed_seconds ?? data.elapsedSeconds ?? 0);
+    const total = Number(data.duration_seconds ?? data.durationSeconds ?? 0);
+    const startedAt = data.started_at
+      ? new Date(data.started_at)
+      : data.startedAt
+        ? new Date(data.startedAt)
+        : nextState === 'running'
+          ? new Date()
+          : null;
+
+    setActiveItemId(itemId);
+    setTimerState(nextState);
+    setLastLoadedCueId(itemId);
+    lastLoadedCueIdRef.current = itemId;
+    setLoadedItems({ [itemId]: true });
+    setTimerProgress({
+      [itemId]: {
+        elapsed: Number.isFinite(elapsed) ? elapsed : 0,
+        total: Number.isFinite(total) && total > 0 ? total : 300,
+        startedAt:
+          startedAt && !Number.isNaN(startedAt.getTime())
+            ? startedAt
+            : nextState === 'running'
+              ? new Date()
+              : null,
+      },
+    });
+    return true;
+  }, []);
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
   const [disconnectDuration, setDisconnectDuration] = useState('');
@@ -756,46 +804,33 @@ const GreenRoomPage: React.FC = () => {
   }, []);
 
   // Load active timer data
-  const loadActiveTimer = async () => {
+  const loadActiveTimer = useCallback(async () => {
     if (!event?.id) return;
 
     try {
       const activeTimer = await DatabaseService.getActiveTimer(event.id);
       
-      if (activeTimer) {
-        setActiveItemId(parseInt(activeTimer.item_id));
-        setTimerState(activeTimer.timer_state); // 'loaded' or 'running'
-        setLastLoadedCueId(parseInt(activeTimer.item_id)); // Track last loaded cue
-        
-        // Mark this item as loaded
-        setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
-        
-        // Use elapsed_seconds from database (already calculated)
-        setTimerProgress({
-          [parseInt(activeTimer.item_id)]: {
-            elapsed: activeTimer.elapsed_seconds || 0,
-            total: activeTimer.duration_seconds || 0,
-            startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
-          }
-        });
-      } else {
-        setActiveItemId(null);
-        setTimerState(null);
-        setLoadedItems({}); // Clear all loaded items
-        setTimerProgress({});
-        
-        // Drift detection removed - WebSocket-only approach
-        
-        // Clear drift sync interval
-        if (localTimerInterval) {
-          clearInterval(localTimerInterval);
-          setLocalTimerInterval(null);
-        }
+      if (activeTimer && applyActiveTimerPayload(activeTimer)) {
+        return;
+      }
+
+      setActiveItemId(null);
+      setTimerState(null);
+      setLoadedItems({});
+      setTimerProgress({});
+      
+      if (localTimerInterval) {
+        clearInterval(localTimerInterval);
+        setLocalTimerInterval(null);
       }
     } catch (error) {
       console.error('❌ Error loading active timer:', error);
     }
-  };
+  }, [event?.id, applyActiveTimerPayload]);
+
+  useEffect(() => {
+    loadActiveTimerRef.current = loadActiveTimer;
+  }, [loadActiveTimer]);
 
   // WebSocket connection for active timer changes
   useEffect(() => {
@@ -807,9 +842,24 @@ const GreenRoomPage: React.FC = () => {
       if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
       timerStoppedSyncTimeoutRef.current = setTimeout(() => {
         timerStoppedSyncTimeoutRef.current = null;
+        // Re-pull active timer so next loaded/running cue replaces DELAYED/idle chrome
+        void loadActiveTimerRef.current?.();
         runDataSyncRef.current?.();
         setSyncCountdown(20);
-      }, 1000);
+      }, 400);
+    };
+
+    const clearLiveTimerChrome = () => {
+      setTimerState(null);
+      setTimerProgress({});
+      const keepId = lastLoadedCueIdRef.current;
+      if (keepId != null) {
+        setActiveItemId(keepId);
+        setLoadedItems({ [keepId]: true });
+      } else {
+        setActiveItemId(null);
+        setLoadedItems({});
+      }
     };
     
     const callbacks = {
@@ -819,140 +869,81 @@ const GreenRoomPage: React.FC = () => {
         const clientTime = new Date().getTime();
         const offset = serverTime - clientTime;
         setClockOffset(offset);
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
       },
       onTimerUpdated: (data: any) => {
         if (data?.timer_state === 'running' && (data.elapsed_seconds ?? 0) <= 1) {
           scheduleTimerStoppedSync();
         }
-        if (data && data.item_id) {
-          const itemId = parseInt(data.item_id, 10);
-          setTimerProgress((prev) => {
-            const prevRow = prev[itemId];
-            const nextStartedAt = data.started_at
-              ? new Date(data.started_at)
-              : prevRow?.startedAt ?? null;
-            const nextTotal =
-              data.duration_seconds != null
-                ? Number(data.duration_seconds)
-                : prevRow?.total ?? 300;
-            return {
-              ...prev,
-              [itemId]: {
-                elapsed: Number(data.elapsed_seconds) || 0,
-                total: Number.isFinite(nextTotal) ? nextTotal : 300,
-                // Keep prior startedAt if this tick omits it — dropping it kills the local clock
-                startedAt: nextStartedAt,
-              },
-            };
-          });
-          
-          // Update timer state based on timer_state from active_timers table (like PhotoViewPage)
-          if (data.timer_state === 'running') {
-            setTimerState('running');
-            setActiveItemId(itemId);
-            setLastLoadedCueId(itemId);
-            setLoadedItems({ [itemId]: true });
-          } else if (data.timer_state === 'loaded') {
-            setTimerState('loaded');
-            setActiveItemId(itemId);
-            setLastLoadedCueId(itemId);
-            setLoadedItems({ [itemId]: true });
-          }
+        if (!data?.item_id) return;
+
+        // Full payload (load/start/switch) — replace clock state
+        if (data.timer_state === 'running' || data.timer_state === 'loaded') {
+          applyActiveTimerPayload(data);
+          return;
         }
+
+        // Tick without explicit state: keep running clock alive, preserve startedAt
+        const itemId = parseInt(String(data.item_id), 10);
+        if (!Number.isFinite(itemId)) return;
+        setTimerProgress((prev) => {
+          const prevRow = prev[itemId];
+          const nextStartedAt = data.started_at
+            ? new Date(data.started_at)
+            : prevRow?.startedAt ?? null;
+          const nextTotal =
+            data.duration_seconds != null
+              ? Number(data.duration_seconds)
+              : prevRow?.total ?? 300;
+          return {
+            ...prev,
+            [itemId]: {
+              elapsed: Number(data.elapsed_seconds ?? 0) || 0,
+              total: Number.isFinite(nextTotal) && nextTotal > 0 ? nextTotal : 300,
+              startedAt: nextStartedAt,
+            },
+          };
+        });
+        setActiveItemId(itemId);
+        setTimerState((prev) => prev || 'running');
+        setLastLoadedCueId(itemId);
+        lastLoadedCueIdRef.current = itemId;
+        setLoadedItems({ [itemId]: true });
       },
       onTimerStopped: (data: any) => {
-        // Removed verbose logging to prevent console spam
-        // Clear timer state when stopped, but keep last loaded cue visible
-        if (data && data.item_id) {
-          setTimerState(null);
-          // Keep the last loaded cue visible instead of clearing activeItemId
-          if (lastLoadedCueId) {
-            setActiveItemId(lastLoadedCueId);
-            setLoadedItems({ [lastLoadedCueId]: true });
-            console.log('📜 Green Room: Keeping last loaded cue visible:', lastLoadedCueId);
-          } else {
-            setActiveItemId(null);
-            setLoadedItems({});
-          }
-          setTimerProgress(prev => {
-            const newProgress = { ...prev };
-            delete newProgress[data.item_id];
-            return newProgress;
-          });
+        if (data?.item_id) {
+          clearLiveTimerChrome();
         }
         scheduleTimerStoppedSync();
       },
-      onTimersStopped: (data: any) => {
-        // Removed verbose logging to prevent console spam
-        // Clear timer state but keep last loaded cue visible
-        setTimerState(null);
-        if (lastLoadedCueId) {
-          setActiveItemId(lastLoadedCueId);
-          setLoadedItems({ [lastLoadedCueId]: true });
-          // Removed verbose logging to prevent console spam
-        } else {
-          setActiveItemId(null);
-          setLoadedItems({});
-        }
-        setTimerProgress({});
+      onTimersStopped: () => {
+        clearLiveTimerChrome();
         scheduleTimerStoppedSync();
       },
       onTimerStarted: (data: any) => {
-        if (data && data.item_id) {
-          const itemId = parseInt(data.item_id, 10);
-          setActiveItemId(itemId);
-          setTimerState('running');
-          setLastLoadedCueId(itemId);
-          setLoadedItems({ [itemId]: true });
-          if (data.started_at || data.duration_seconds != null || data.elapsed_seconds != null) {
-            setTimerProgress((prev) => ({
-              ...prev,
-              [itemId]: {
-                elapsed: Number(data.elapsed_seconds) || prev[itemId]?.elapsed || 0,
-                total:
-                  data.duration_seconds != null
-                    ? Number(data.duration_seconds)
-                    : prev[itemId]?.total ?? 300,
-                startedAt: data.started_at
-                  ? new Date(data.started_at)
-                  : prev[itemId]?.startedAt ?? new Date(),
-              },
-            }));
-          }
+        if (!applyActiveTimerPayload({ ...data, timer_state: data?.timer_state || 'running' })) {
+          scheduleTimerStoppedSync();
+          return;
         }
         scheduleTimerStoppedSync();
       },
       onActiveTimersUpdated: (data: any) => {
-        // Removed verbose logging to prevent console spam (WebSocket callbacks fire frequently)
-        // Handle active timers update from active_timers table
-        if (data && data.item_id) {
-          if (data.timer_state === 'running' || data.timer_state === 'loaded') {
-            setActiveItemId(parseInt(data.item_id));
-            setTimerState(data.timer_state);
-            setLastLoadedCueId(parseInt(data.item_id)); // Track last loaded cue
-            // Clear all loaded items and set only the current active one
-            setLoadedItems({ [data.item_id]: true });
-            // Removed verbose logging to prevent console spam
-          } else {
-            setTimerState(null);
-            if (lastLoadedCueId) {
-              setActiveItemId(lastLoadedCueId);
-              setLoadedItems({ [lastLoadedCueId]: true });
-            } else {
-              setActiveItemId(null);
-              setLoadedItems({});
-            }
-            scheduleTimerStoppedSync();
-          }
+        if (!data?.item_id) return;
+        if (data.timer_state === 'running' || data.timer_state === 'loaded') {
+          applyActiveTimerPayload(data);
+          return;
+        }
+        if (data.timer_state === 'stopped' || data.timer_state == null) {
+          clearLiveTimerChrome();
+          scheduleTimerStoppedSync();
         }
       },
-      onResetAllStates: (data: any) => {
+      onResetAllStates: () => {
         setActiveItemId(null);
         setTimerState(null);
         setLoadedItems({});
         setTimerProgress({});
         setLastLoadedCueId(null);
+        lastLoadedCueIdRef.current = null;
         setOvertimeMinutes({});
         setShowStartOvertime(0);
         runDataSyncRef.current?.();
@@ -983,46 +974,10 @@ const GreenRoomPage: React.FC = () => {
       onRunOfShowDataUpdated: () => {
         // Green Room 20s-only for schedule - ignore WebSocket
       },
-      onConnectionChange: (connected: boolean) => {
-        // Removed verbose logging to prevent console spam
-      },
+      onConnectionChange: (_connected: boolean) => {},
       onInitialSync: async () => {
-        // Removed verbose logging to prevent console spam
-        
-        // Load current active timer
         try {
-          const activeTimerResponse = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`);
-          if (!activeTimerResponse) return;
-          if (activeTimerResponse.ok) {
-            const activeTimers = await activeTimerResponse.json();
-            // Removed verbose logging to prevent console spam
-            
-            if (activeTimers && activeTimers.length > 0) {
-              const activeTimer = activeTimers[0]; // Green Room typically shows one active timer
-              
-              setActiveItemId(parseInt(activeTimer.item_id));
-              setTimerState(activeTimer.timer_state);
-              setLoadedItems({ [parseInt(activeTimer.item_id)]: true });
-              
-              // Update timer progress
-              setTimerProgress({
-                [parseInt(activeTimer.item_id)]: {
-                  elapsed: activeTimer.elapsed_seconds || 0,
-                  total: activeTimer.duration_seconds ?? 300,
-                  startedAt: activeTimer.started_at ? new Date(activeTimer.started_at) : null
-                }
-              });
-              
-              // Removed verbose logging to prevent console spam
-            } else {
-              // No active timer
-              setActiveItemId(null);
-              setTimerState(null);
-              setLoadedItems({});
-              setTimerProgress({});
-              // Removed verbose logging to prevent console spam
-            }
-          }
+          await loadActiveTimerRef.current?.();
         } catch (error) {
           console.error('❌ Green Room: Initial sync failed to load active timer:', error);
         }
@@ -1056,7 +1011,7 @@ const GreenRoomPage: React.FC = () => {
       if (disconnectTimer) clearTimeout(disconnectTimer);
       if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
     };
-  }, [event?.id, reconnectKey]);
+  }, [event?.id, reconnectKey, applyActiveTimerPayload]);
 
   // Always run local timer for smooth updates when timer is running.
   // Depend on startedAt ms so the clock starts once progress arrives (not only on state change).
@@ -1667,26 +1622,21 @@ const GreenRoomPage: React.FC = () => {
     return progress.total - progress.elapsed < 0;
   };
 
-  const activeRemainingSeconds =
-    activeItemId != null && timerProgress[activeItemId] && timerState === 'running'
-      ? timerProgress[activeItemId].total - timerProgress[activeItemId].elapsed
-      : null;
   const scheduleDelayMinutes = sumPreStartDelayBlockMinutes({
     schedule,
     startCueId,
     day: selectedDay,
     indentedIds: indentedCues,
   });
-  // Delay Blocks above ★ are schedule truth — always surface them.
-  // Live Root OT / cue overrun only count in in-show mode.
+  // Delay Blocks / ★ Root OT only — never treat a negative cue clock as "DELAYED"
+  // (that was stealing the live LOADED/RUNNING display after overtime).
   const audienceDelayMinutes = resolveGreenRoomDelayMinutes({
     showStartOvertime: showMode === 'rehearsal' ? 0 : showStartOvertime,
     scheduleDelayMinutes,
-    remainingSeconds: showMode === 'rehearsal' ? null : activeRemainingSeconds,
-    timerRunning: showMode === 'rehearsal' ? false : timerState === 'running',
+    remainingSeconds: null,
+    timerRunning: false,
   });
   const delayStatusLabel = formatShowDelayStatus(audienceDelayMinutes);
-  const hasShowDelay = delayStatusLabel != null;
 
   if (isLoading) {
     return (
@@ -1957,7 +1907,7 @@ const GreenRoomPage: React.FC = () => {
           >
             <div
               ref={eventTitleRef}
-              className="text-white font-bold text-center mx-auto max-w-full box-border"
+              className="text-white font-bold text-center mx-auto box-border"
               style={{
                 fontSize: titleFit.fontPx,
                 lineHeight: 1.2,
@@ -1966,8 +1916,8 @@ const GreenRoomPage: React.FC = () => {
                 maxWidth: '100%',
                 overflowWrap: titleFit.lines === 2 ? 'anywhere' : 'normal',
                 wordBreak: titleFit.lines === 2 ? 'break-word' : 'normal',
-                overflow: 'hidden',
-                textOverflow: titleFit.lines === 1 ? 'ellipsis' : 'clip',
+                overflow: 'visible',
+                textOverflow: 'clip',
                 paddingBottom: '0.12em',
               }}
             >
@@ -1981,28 +1931,14 @@ const GreenRoomPage: React.FC = () => {
                 ? 'bg-slate-800 border border-red-500'
                 : timerState === 'loaded'
                 ? 'bg-slate-800 border border-emerald-500'
-                : hasShowDelay
-                ? audienceDelayMinutes > 0
-                  ? 'bg-amber-950 border border-amber-400'
-                  : 'bg-emerald-950 border border-emerald-500'
                 : 'bg-slate-800 border border-slate-600'
               : timerState === 'running' || timerState === 'loaded'
               ? 'bg-red-600'
-              : hasShowDelay
-              ? audienceDelayMinutes > 0
-                ? 'bg-amber-600'
-                : 'bg-green-700'
-              : 'bg-red-600'
+              : 'bg-slate-700'
           }`}>
           <div
             className={`font-semibold mb-1 text-xl ${
-              !(timerState === 'running' || timerState === 'loaded') && hasShowDelay
-                ? audienceDelayMinutes > 0
-                  ? 'text-amber-200'
-                  : 'text-emerald-200'
-                : isRos
-                  ? 'text-slate-300'
-                  : 'text-white'
+              isRos ? 'text-slate-300' : 'text-white'
             }`}
           >
             {showPreshowCountdownLabel
@@ -2010,20 +1946,17 @@ const GreenRoomPage: React.FC = () => {
               : timerState === 'loaded'
                 ? 'LOADED'
                 : timerState === 'running'
-                  ? 'RUNNING'
-                  : delayStatusLabel
-                    ? delayStatusLabel
-                    : 'Stage Timer'}
+                  ? isOvertime()
+                    ? 'OVER TIME'
+                    : 'RUNNING'
+                  : 'Stage Timer'}
           </div>
-          {delayStatusLabel &&
-          (showPreshowCountdownLabel ||
-            timerState === 'running' ||
-            timerState === 'loaded') ? (
+          {delayStatusLabel ? (
             <div
               className={`mb-2 text-sm font-bold uppercase tracking-wide ${
                 audienceDelayMinutes > 0 ? 'text-amber-300' : 'text-emerald-300'
               }`}
-              title="Delay Block(s) above ★ START on the Run of Show"
+              title="Delay Block(s) / show-start offset on the Run of Show"
             >
               {delayStatusLabel}
             </div>
@@ -2036,13 +1969,7 @@ const GreenRoomPage: React.FC = () => {
                   ? isRos
                     ? 'text-red-300'
                     : 'text-red-200'
-                  : !(timerState === 'running' || timerState === 'loaded') &&
-                      hasShowDelay &&
-                      audienceDelayMinutes > 0
-                    ? isRos
-                      ? 'text-amber-200'
-                      : 'text-amber-100'
-                    : 'text-white'
+                  : 'text-white'
             }`}
           >
             {getRemainingTime()}

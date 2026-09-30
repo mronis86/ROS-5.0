@@ -1,10 +1,13 @@
 import { isIndentedScheduleItem, type IndentedCueLookup } from './scheduleStartTime';
 import { normalizeCalloutTimeToHHMM } from './eventLocalClock';
 import { getEventDayNumberForDate } from './preflightChecklist';
+import { isPreshowProgramType as isPreshowType } from './rosProgramTypeSplit';
 
 export const PRESHOW_COUNTDOWN_MESSAGE = 'Pre Show Countdown';
 export const PRESHOW_MESSAGE_TYPE = 'preshow';
 export const PRESHOW_WARN_MINUTES_BEFORE = 5;
+
+export { isPreshowProgramType } from './rosProgramTypeSplit';
 
 type CueLike = {
   id: number;
@@ -14,15 +17,10 @@ type CueLike = {
   isTimedMarker?: boolean;
 };
 
-/** Program types that participate in PreShow countdown branding. */
-export function isPreshowProgramType(programType: string | null | undefined): boolean {
-  return String(programType || '').trim() === 'PreShow/End';
-}
-
 /**
- * First non-indented cue for a day (or the whole schedule), only if it is PreShow/End.
- * Pass `day` for multi-day events so Day 2+ PreShow gets warn/confirm/auto-start.
- * Timed markers / indented rows are skipped (they never count as the top cue).
+ * First non-indented cue for a day (or the whole schedule), only if it is PreShow
+ * (or legacy PreShow/End). Pass `day` for multi-day events so Day 2+ PreShow gets
+ * warn/confirm/auto-start. Timed markers / indented rows are skipped.
  */
 export function findTopPreshowCue<T extends CueLike>(
   schedule: T[],
@@ -36,7 +34,7 @@ export function findTopPreshowCue<T extends CueLike>(
     if (wantDay != null && (item.day || 1) !== wantDay) continue;
     // Prefer item flags so Clock/Full Screen work without indented_cues loaded
     if (item.isTimedMarker || isIndentedScheduleItem(item, indentedLookup || {})) continue;
-    if (isPreshowProgramType(item.programType)) return item;
+    if (isPreshowType(item.programType)) return item;
     return null;
   }
   return null;

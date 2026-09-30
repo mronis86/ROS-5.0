@@ -1,7 +1,8 @@
-/** Visual constants copied from production pages (showcase-only). */
+﻿/** Visual constants copied from production pages (showcase-only). */
 
 export const PROGRAM_TYPE_COLORS: Record<string, string> = {
-  'PreShow/End': '#8B5CF6',
+  'PreShow': '#8B5CF6',
+  'EndShow': '#C026D3',
   'Podium Transition': '#8B4513',
   'Panel Transition': '#404040',
   'Sub Cue': '#F3F4F6',

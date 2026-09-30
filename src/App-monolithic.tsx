@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import './App.css';
 
 interface ScheduleItem {
@@ -37,7 +37,7 @@ function App() {
   const [timerProgress, setTimerProgress] = useState<Record<number, { elapsed: number; total: number }>>({});
   const [modalForm, setModalForm] = useState({
     cue: '',
-    programType: 'PreShow/End',
+    programType: 'PreShow',
     shotType: '',
     segmentName: '',
     durationHours: 0,
@@ -51,7 +51,7 @@ function App() {
   });
 
   const programTypes = [
-    'PreShow/End', 'Podium Transition', 'Panel Transition', 'Sub Cue',
+    'PreShow', 'EndShow', 'Podium Transition', 'Panel Transition', 'Sub Cue',
     'No Transition', 'Video', 'Panel+Remote', 'Remote Only', 'Break', 'TBD', 'KILLED'
   ];
 
@@ -155,7 +155,7 @@ function App() {
     // Reset form
     setModalForm({
       cue: '',
-      programType: 'PreShow/End',
+      programType: 'PreShow',
       shotType: '',
       segmentName: '',
       durationHours: 0,
@@ -356,7 +356,7 @@ function App() {
               // Reset form to defaults
               setModalForm({
                 cue: '',
-                programType: 'PreShow/End',
+                programType: 'PreShow',
                 shotType: '',
                 segmentName: '',
                 durationHours: 0,
@@ -885,7 +885,7 @@ function App() {
                   setShowAddModal(false);
                   setModalForm({
                     cue: '',
-                    programType: 'PreShow/End',
+                    programType: 'PreShow',
                     shotType: '',
                     segmentName: '',
                     durationHours: 0,
@@ -922,7 +922,7 @@ function App() {
                   setShowAddModal(false);
                   setModalForm({
                     cue: '',
-                    programType: 'PreShow/End',
+                    programType: 'PreShow',
                     shotType: '',
                     segmentName: '',
                     durationHours: 0,

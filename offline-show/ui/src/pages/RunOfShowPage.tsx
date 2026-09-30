@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event, LOCATION_OPTIONS, normalizeDayLocations } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
@@ -4082,7 +4082,7 @@ const RunOfShowPage: React.FC = () => {
   const [modalForm, setModalForm] = useState({
     cue: '',
     day: 1,
-    programType: 'PreShow/End',
+    programType: 'PreShow',
     shotType: '',
     segmentName: '',
     durationHours: 0,
@@ -4113,7 +4113,7 @@ const RunOfShowPage: React.FC = () => {
       schedule.some((item) => item.programType === HEAD_TABLE_PROGRAM_TYPE) &&
       !types.includes(HEAD_TABLE_PROGRAM_TYPE)
     ) {
-      const idx = types.indexOf('PreShow/End');
+      const idx = types.indexOf('PreShow');
       if (idx >= 0) types.splice(idx + 1, 0, HEAD_TABLE_PROGRAM_TYPE);
       else types.unshift(HEAD_TABLE_PROGRAM_TYPE);
     }
@@ -8132,7 +8132,7 @@ const RunOfShowPage: React.FC = () => {
     setModalForm({
       cue: '',
       day: selectedDay,
-      programType: 'PreShow/End',
+      programType: 'PreShow',
       shotType: '',
       segmentName: '',
       durationHours: 0,
@@ -12612,7 +12612,7 @@ const RunOfShowPage: React.FC = () => {
                   setModalForm({
                     cue: '',
                     day: selectedDay,
-                    programType: 'PreShow/End',
+                    programType: 'PreShow',
                     shotType: '',
                     segmentName: '',
                     durationHours: 0,

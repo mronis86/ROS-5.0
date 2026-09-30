@@ -85,6 +85,8 @@ export interface ScheduleRowProps {
   confirmRecordingMark?: boolean;
   /** When true, marks made on this ROS use the Comms source (COMMS badge). */
   isCommsUser?: boolean;
+  /** Segment Name: single-line truncate vs multi-line wrap (header click toggles). */
+  segmentNameDisplayMode?: 'single' | 'wrap';
 }
 
 const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
@@ -153,7 +155,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   onRowEditEnd,
   confirmRecordingMark = false,
   isCommsUser = false,
+  segmentNameDisplayMode = 'single',
 }) => {
+  const segmentWrap = segmentNameDisplayMode === 'wrap';
   const isLockedByOther = Boolean(rowLock && currentUserId && rowLock.userId !== currentUserId);
   const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
   const [lockBadgePos, setLockBadgePos] = React.useState({ scrollLeft: 0, viewWidth: 0 });
@@ -600,7 +604,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {/* Segment name column (after Duration) */}
       {visibleColumns.segmentName && (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+          className={`px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative ${
+            segmentWrap ? 'items-stretch' : ''
+          }`}
           style={{ width: columnWidths.segmentName, order: flexOrder('segmentName') }}
         >
           {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && onViewSegmentDetail ? (
@@ -622,11 +628,17 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   {item.otherRoom}
                 </span>
               ) : null}
-              <span className="block truncate">{item.segmentName || '—'}</span>
+              <span
+                className={`block ${
+                  segmentWrap ? 'whitespace-normal break-words leading-snug' : 'truncate'
+                }`}
+              >
+                {item.segmentName || '—'}
+              </span>
               <span className="block text-[10px] text-slate-400 mt-0.5">View / copy</span>
             </button>
           ) : (
-          <div className="w-full flex flex-col gap-1 min-w-0">
+          <div className="w-full flex flex-col gap-1 min-w-0 h-full">
             {item.otherRoom ? (
               <span
                 className="self-start inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-500 text-slate-950"
@@ -647,6 +659,59 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 ↳ {item.markerTimeMode === 'absolute' ? 'Abs marker' : 'Offset marker'}
               </span>
             ) : null}
+            {segmentWrap ? (
+              <textarea
+                value={item.segmentName}
+                rows={2}
+                onFocus={claimRowLock}
+                onChange={(e) => {
+                  if (isLockedByOther) return;
+                  handleUserEditing();
+                  if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
+                    return;
+                  }
+                  const oldValue = item.segmentName;
+                  setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                    scheduleItem.id === item.id 
+                      ? { ...scheduleItem, segmentName: e.target.value }
+                      : scheduleItem
+                  ));
+                  logChangeDebounced(
+                    `segmentName_${item.id}`,
+                    'FIELD_UPDATE',
+                    `Updated segment name for "${oldValue}" to "${e.target.value}"`,
+                    {
+                      changeType: 'FIELD_CHANGE',
+                      itemId: item.id,
+                      itemName: e.target.value,
+                      fieldName: 'segmentName',
+                      oldValue: oldValue,
+                      newValue: e.target.value,
+                      details: { fieldType: 'text', characterChange: e.target.value.length - oldValue.length }
+                    }
+                  );
+                }}
+                disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+                className={`w-full flex-1 min-h-[3.5rem] px-3 py-2 rounded text-base transition-colors resize-none whitespace-normal break-words leading-snug ${
+                  item.needsRecording
+                    ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
+                    : cellFill
+                }`}
+                placeholder={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
+                title={
+                  item.otherRoom
+                    ? `${item.segmentName || 'Segment'} · ${item.otherRoom}`
+                    : item.needsRecording
+                    ? 'Marked for recording'
+                    : isLockedByOther
+                      ? lockLabel
+                      : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                        ? 'Only EDITORs can edit segment names'
+                        : 'Edit segment name'
+                }
+              />
+            ) : (
             <input
               type="text"
               value={item.segmentName}
@@ -680,7 +745,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 );
               }}
               disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
-              className={`w-full px-3 py-2 rounded text-base transition-colors ${
+              className={`w-full px-3 py-2 rounded text-base transition-colors truncate ${
                 item.needsRecording
                   ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
                   : cellFill
@@ -698,6 +763,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                       : 'Edit segment name'
               }
             />
+            )}
           </div>
           )}
         </div>
@@ -1438,6 +1504,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
 
   if (prevProps.confirmRecordingMark !== nextProps.confirmRecordingMark) return false;
   if (prevProps.isCommsUser !== nextProps.isCommsUser) return false;
+  if (prevProps.segmentNameDisplayMode !== nextProps.segmentNameDisplayMode) return false;
 
   // Role changes can affect disabled states and styling
   if (prevProps.currentUserRole !== nextProps.currentUserRole) return false;

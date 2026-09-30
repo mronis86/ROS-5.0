@@ -7,6 +7,8 @@
  * - offset: seconds after parent start; DOES slide with parent over/under
  */
 
+import { formatScheduleClock, type StartTimeDisplayMode } from './scheduleClockFormat';
+
 export type TimedMarkerMode = 'absolute' | 'offset';
 
 export type TimedMarkerFields = {
@@ -66,17 +68,11 @@ export function displayTimeToSeconds(display: string): number | null {
   return parseClockToSeconds(display);
 }
 
-export function secondsToDisplayTime(totalSeconds: number): string {
-  const daySec = ((Math.floor(totalSeconds) % 86400) + 86400) % 86400;
-  const h = Math.floor(daySec / 3600);
-  const m = Math.floor((daySec % 3600) / 60);
-  const date = new Date();
-  date.setHours(h, m, 0, 0);
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
+export function secondsToDisplayTime(
+  totalSeconds: number,
+  displayMode: StartTimeDisplayMode = 'hm'
+): string {
+  return formatScheduleClock(totalSeconds, displayMode);
 }
 
 export function secondsToHHMM(totalSeconds: number): string {
@@ -105,11 +101,12 @@ export function absoluteTimeToOffsetSeconds(
 
 export function applyOffsetToDisplayTime(
   parentStartDisplay: string,
-  offsetSeconds: number
+  offsetSeconds: number,
+  displayMode: StartTimeDisplayMode = 'hm'
 ): string {
   const parentSec = displayTimeToSeconds(parentStartDisplay);
   if (parentSec == null) return '';
-  return secondsToDisplayTime(parentSec + (Number(offsetSeconds) || 0));
+  return secondsToDisplayTime(parentSec + (Number(offsetSeconds) || 0), displayMode);
 }
 
 export function normalizeMarkerOffsetSeconds(raw: unknown): number {
@@ -131,19 +128,24 @@ export function normalizeMarkerAbsoluteSeconds(raw: unknown): number {
  */
 export function resolveTimedMarkerDisplayTime(
   item: TimedMarkerFields,
-  parentStartDisplay: string
+  parentStartDisplay: string,
+  displayMode: StartTimeDisplayMode = 'hm'
 ): string {
   const mode = normalizeMarkerTimeMode(item.markerTimeMode);
   if (mode === 'absolute') {
     // Prefer stored absolute seconds; fall back to parsing a legacy offset display
     if (item.markerAbsoluteSeconds != null && Number.isFinite(Number(item.markerAbsoluteSeconds))) {
-      return secondsToDisplayTime(normalizeMarkerAbsoluteSeconds(item.markerAbsoluteSeconds));
+      return secondsToDisplayTime(
+        normalizeMarkerAbsoluteSeconds(item.markerAbsoluteSeconds),
+        displayMode
+      );
     }
     // Legacy rows only had offset — show against parent once, but treat as absolute if mode set
     if (parentStartDisplay) {
       return applyOffsetToDisplayTime(
         parentStartDisplay,
-        normalizeMarkerOffsetSeconds(item.markerOffsetSeconds)
+        normalizeMarkerOffsetSeconds(item.markerOffsetSeconds),
+        displayMode
       );
     }
     return '';
@@ -151,7 +153,8 @@ export function resolveTimedMarkerDisplayTime(
   if (!parentStartDisplay) return '';
   return applyOffsetToDisplayTime(
     parentStartDisplay,
-    normalizeMarkerOffsetSeconds(item.markerOffsetSeconds)
+    normalizeMarkerOffsetSeconds(item.markerOffsetSeconds),
+    displayMode
   );
 }
 

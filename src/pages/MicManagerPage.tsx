@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
@@ -64,7 +64,8 @@ const TYPE_COLOR: Record<string, string> = {
   'Delay Block': '#7C3AED',
   Podium: '#8B4513',
   Panel: '#404040',
-  'PreShow/End': '#8B5CF6',
+  'PreShow': '#8B5CF6',
+  'EndShow': '#C026D3',
   KILLED: '#DC2626',
 };
 

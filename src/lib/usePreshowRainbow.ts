@@ -36,11 +36,10 @@ export function isActiveTimerRunning(timer: ActiveTimerLike): boolean {
 
 /**
  * True when Pre Show Countdown branding should apply (Clock / Photo / Op Large / etc.).
- * Only while a timer is running on the *first* (top) PreShow/End cue — never the
- * end-of-show PreShow/End stack, which shares the same program type.
+ * Only while a timer is running on the top PreShow cue — never EndShow.
  *
  * The sticky "Pre Show Countdown" timer message is only activated when the top
- * PreShow starts (and cleared when leaving it), so message + PreShow/End program
+ * PreShow starts (and cleared when leaving it), so message + PreShow program
  * type is a reliable signal even if schedule top-cue lookup failed on the display.
  */
 export function shouldUsePreshowRainbow(
@@ -51,7 +50,7 @@ export function shouldUsePreshowRainbow(
     programType?: string | null;
     /** Active cue id (preferred over timer.item_id when both exist). */
     itemId?: number | string | null;
-    /** First schedule PreShow/End cue id — preferred match; end-of-show PreShow is excluded. */
+    /** First schedule PreShow cue id — preferred match; EndShow is excluded. */
     topPreshowItemId?: number | string | null;
   }
 ): boolean {

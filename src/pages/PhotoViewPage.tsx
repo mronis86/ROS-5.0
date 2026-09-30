@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
@@ -2051,7 +2051,7 @@ const PhotoViewPage: React.FC = () => {
             {
               id: 1,
               day: 1,
-              programType: 'PreShow/End',
+              programType: 'PreShow',
               shotType: 'Wide',
               segmentName: 'Welcome & Opening',
               durationHours: 0,
@@ -2215,7 +2215,8 @@ const PhotoViewPage: React.FC = () => {
     'KILLED': '#DC2626',             // Bright Red
     'Podium': '#8B4513',             // Brown
     'Panel': '#404040',              // Dark Grey
-    'PreShow/End': '#8B5CF6',        // Purple
+    'PreShow': '#8B5CF6',
+  'EndShow': '#C026D3',        // Purple
   };
 
   if (isLoading) {
