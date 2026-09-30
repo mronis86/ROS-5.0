@@ -832,6 +832,8 @@ const EventListPage: React.FC = () => {
         lines.push(`Deleted: ${result.deleted.deleteDays.length} day(s).`);
       }
       setSplitDaysEvent(null);
+      setEditingEvent(null);
+      setEditFormData({ ...EMPTY_EVENT_FORM });
       await loadEventsFromSupabase();
       alert(`Split complete.\n\n${lines.join('\n')}`);
     } catch (e) {
@@ -1395,13 +1397,6 @@ const EventListPage: React.FC = () => {
                             onShareAccess={
                               activeTab === 'quickMode' ? undefined : () => setShareAccessEvent(event)
                             }
-                            onSplitDays={
-                              activeTab !== 'quickMode' &&
-                              canSplitDaysUser &&
-                              (event.numberOfDays || 1) > 1
-                                ? () => openSplitDaysModal(event)
-                                : undefined
-                            }
                             onDelete={() => openDeleteConfirmModal(event)}
                             onOpenQuickMode={() => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
                           />
@@ -1437,7 +1432,6 @@ const EventListPage: React.FC = () => {
             onLaunch={launchRunOfShow}
             onEdit={openEditModal}
             onShareAccess={setShareAccessEvent}
-            onSplitDays={canSplitDaysUser ? openSplitDaysModal : undefined}
             onDelete={openDeleteConfirmModal}
             formatDate={formatDate}
             getLocationColor={getLocationColor}
@@ -1966,6 +1960,21 @@ const EventListPage: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {canSplitDaysUser && editingEvent && (editingEvent.numberOfDays || 1) > 1 ? (
+                <div className="col-span-2 rounded-lg border border-sky-700/40 bg-sky-950/20 px-3 py-3">
+                  <p className="text-sm font-semibold text-sky-100">Split / move / delete days</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Keep days on this event, move some into a new event, or delete days. Updates Neon schedule data.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => openSplitDaysModal(editingEvent)}
+                    className="mt-2 rounded-md border border-sky-600/70 bg-sky-900/40 px-3 py-1.5 text-xs font-semibold text-sky-100 hover:bg-sky-800/50"
+                  >
+                    Open day split…
+                  </button>
+                </div>
+              ) : null}
               {editFormData.numberOfDays > 1 ? (
                 <div className="col-span-2 rounded-lg border border-slate-600/80 bg-slate-900/40 p-3">
                   <p className="text-xs text-slate-400 mb-2">
