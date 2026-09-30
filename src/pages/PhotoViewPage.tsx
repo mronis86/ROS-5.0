@@ -25,6 +25,7 @@ import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIE
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 
 interface ScheduleItem {
   id: number;
@@ -2216,7 +2217,7 @@ const PhotoViewPage: React.FC = () => {
     'Podium': '#8B4513',             // Brown
     'Panel': '#404040',              // Dark Grey
     'PreShow': '#8B5CF6',
-  'EndShow': '#C026D3',        // Purple
+  'EndShow': '#8B5CF6',        // Purple
   };
 
   if (isLoading) {
@@ -2411,9 +2412,11 @@ const PhotoViewPage: React.FC = () => {
                   {currentItem?.programType ? (
                     <span
                       className="px-2 py-0.5 rounded text-[clamp(0.7rem,1.25vw,1rem)] font-semibold text-white"
-                      style={{
-                        backgroundColor: programTypeColors[currentItem.programType] || '#475569',
-                      }}
+                      style={programTypeSurfaceStyle(
+                        currentItem.programType,
+                        programTypeColors,
+                        '#475569'
+                      )}
                     >
                       {currentItem.programType}
                     </span>
@@ -3111,7 +3114,11 @@ const PhotoViewPage: React.FC = () => {
                       <div 
                         className="inline-block px-2 py-1 rounded text-xs font-medium text-white border shadow-lg"
                         style={{ 
-                          backgroundColor: programTypeColors[item.programType] || '#6B7280',
+                          ...programTypeSurfaceStyle(
+                            item.programType,
+                            programTypeColors,
+                            '#6B7280'
+                          ),
                           color: item.programType === 'Sub Cue' || item.programType === 'KILLED' ? 'black' : 'white',
                           borderColor: item.programType === 'Sub Cue' ? 'black' : 'transparent',
                           textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none'

@@ -30,6 +30,7 @@ import {
 } from '../lib/showDelay';
 import { fitEventTitleToElement, measureTitleSlotWidth } from '../lib/fitEventTitle';
 import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -2000,7 +2001,7 @@ const GreenRoomPage: React.FC = () => {
               const isLoaded = loadedItems[item.id];
               const isRunning = timerState === 'running' && String(activeItemId) === String(item.id);
               const programType = String(item.programType || '').trim();
-              const programColor = ROS_PROGRAM_TYPE_COLORS[programType] || '#6B7280';
+              const programFill = programTypeSurfaceStyle(programType, ROS_PROGRAM_TYPE_COLORS, '#6B7280');
               const programTextDark = programType === 'Sub Cue' || programType === 'KILLED';
               
               return (
@@ -2019,7 +2020,7 @@ const GreenRoomPage: React.FC = () => {
               }`}
               style={
                 !isRunning && !isLoaded && programType
-                  ? { borderLeft: `4px solid ${programColor}` }
+                  ? { borderLeft: `4px solid ${programFill.backgroundColor}` }
                   : undefined
               }
             >
@@ -2031,7 +2032,7 @@ const GreenRoomPage: React.FC = () => {
                   <span
                     className="shrink-0 inline-block px-2.5 py-1 rounded text-[11px] font-semibold uppercase tracking-wide border shadow-sm"
                     style={{
-                      backgroundColor: programColor,
+                      ...programFill,
                       color: programTextDark ? '#111827' : '#ffffff',
                       borderColor:
                         programType === 'Sub Cue'

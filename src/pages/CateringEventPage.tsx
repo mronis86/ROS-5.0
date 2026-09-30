@@ -20,6 +20,7 @@ import {
 import { countdownColorForRemaining } from '../lib/countdownColor';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 
 type ScheduleItem = {
   id: number;
@@ -52,7 +53,7 @@ const TYPE_COLOR: Record<string, string> = {
   Podium: '#8B4513',
   Panel: '#404040',
   'PreShow': '#8B5CF6',
-  'EndShow': '#C026D3',
+  'EndShow': '#8B5CF6',
   'Full-Stage/Ted-Talk': '#EA580C',
 };
 
@@ -1006,7 +1007,7 @@ const CateringEventPage: React.FC = () => {
                           {item.programType ? (
                             <span
                               className="mt-1.5 inline-flex px-2 py-0.5 rounded text-[10px] font-semibold text-white"
-                              style={{ backgroundColor: TYPE_COLOR[item.programType] || '#475569' }}
+                              style={programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#475569')}
                             >
                               {item.programType}
                             </span>
@@ -1145,7 +1146,7 @@ const CateringEventPage: React.FC = () => {
                               {item.programType ? (
                                 <span
                                   className="inline-flex max-w-full truncate px-2 py-0.5 rounded text-[11px] font-semibold text-white"
-                                  style={{ backgroundColor: TYPE_COLOR[item.programType] || '#475569' }}
+                                  style={programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#475569')}
                                   title={item.programType}
                                 >
                                   {item.programType}

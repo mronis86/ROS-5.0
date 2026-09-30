@@ -22,6 +22,7 @@ import {
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
 import { itemMarkedByComms, itemNeedsRecording } from '../lib/cueRecording';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 
 type ScheduleItem = {
   id: number;
@@ -126,7 +127,7 @@ const TYPE_COLOR: Record<string, string> = {
   Podium: '#8B4513',
   Panel: '#404040',
   'PreShow': '#8B5CF6',
-  'EndShow': '#C026D3',
+  'EndShow': '#8B5CF6',
 };
 
 function loadVisibleFields(): Set<FieldId> {
@@ -831,7 +832,7 @@ const OperatorCueDisplayPage: React.FC = () => {
         node: current.programType ? (
           <span
             className="inline-block px-2 py-1 rounded text-xs font-semibold text-white"
-            style={{ backgroundColor: TYPE_COLOR[current.programType] || '#475569' }}
+            style={programTypeSurfaceStyle(current.programType, TYPE_COLOR, '#475569')}
           >
             {current.programType}
           </span>
@@ -1002,7 +1003,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       return item.programType ? (
         <span
           className="inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold text-white truncate max-w-full"
-          style={{ backgroundColor: TYPE_COLOR[item.programType] || '#475569' }}
+          style={programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#475569')}
         >
           {item.programType}
         </span>

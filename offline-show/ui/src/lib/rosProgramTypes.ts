@@ -39,7 +39,7 @@ export function buildRosProgramTypes(eventType?: string | null): string[] {
 
 export const ROS_PROGRAM_TYPE_COLORS: Record<string, string> = {
   'PreShow': '#8B5CF6',
-  'EndShow': '#C026D3',
+  'EndShow': '#8B5CF6',
   'Head Table': '#4338CA',
   'Podium Transition': '#8B4513',
   'Panel Transition': '#404040',

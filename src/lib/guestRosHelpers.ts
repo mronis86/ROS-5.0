@@ -46,7 +46,8 @@ export function buildRosProgramTypes(eventType?: string | null): string[] {
 
 export const ROS_PROGRAM_TYPE_COLORS: Record<string, string> = {
   [PRESHOW_PROGRAM_TYPE]: '#8B5CF6',
-  [ENDSHOW_PROGRAM_TYPE]: '#C026D3',
+  // Same purple as PreShow — use programTypeSurfaceStyle() stripes to tell them apart
+  [ENDSHOW_PROGRAM_TYPE]: '#8B5CF6',
   // Legacy alias so old rows still tint correctly until normalized
   [LEGACY_PRESHOW_END_PROGRAM_TYPE]: '#8B5CF6',
   'Head Table': '#4338CA',

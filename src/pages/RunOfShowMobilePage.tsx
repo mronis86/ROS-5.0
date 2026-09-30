@@ -11,6 +11,7 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import {
   SPEAKER_LOCATIONS,
   type SpeakerLocation,
@@ -941,7 +942,7 @@ const RunOfShowMobilePage: React.FC = () => {
               <span
                 className="truncate rounded px-2 py-1 text-xs font-semibold shadow-sm ring-1 ring-white/10 max-w-[65%]"
                 style={{
-                  backgroundColor: programTypeBg(programDraft),
+                  ...programTypeSurfaceStyle(programDraft, ROS_PROGRAM_TYPE_COLORS),
                   color: programTypeFg(programDraft)
                 }}
                 title={programDraft || 'No Transition'}
@@ -1067,7 +1068,7 @@ const RunOfShowMobilePage: React.FC = () => {
                     title={!canEditEditorOnlyFields ? 'Only Editors can edit program type (desktop ROS)' : undefined}
                     className="mt-1 w-full rounded-md border border-slate-500 px-2.5 py-2 text-sm font-semibold outline-none ring-2 ring-transparent transition focus:border-cyan-400 focus:ring-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-60"
                     style={{
-                      backgroundColor: programTypeBg(programDraft || 'No Transition'),
+                      ...programTypeSurfaceStyle(programDraft || 'No Transition', ROS_PROGRAM_TYPE_COLORS),
                       color: programTypeFg(programDraft || 'No Transition')
                     }}
                   >

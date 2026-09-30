@@ -6,6 +6,27 @@ export const ENDSHOW_PROGRAM_TYPE = 'EndShow';
 /** Legacy combined type — still accepted on read and rewritten on normalize. */
 export const LEGACY_PRESHOW_END_PROGRAM_TYPE = 'PreShow/End';
 
+/** Diagonal hash so EndShow matches PreShow purple but reads as a different cue. */
+export const ENDSHOW_STRIPE_BACKGROUND_IMAGE =
+  'repeating-linear-gradient(135deg, rgba(255,255,255,0.22) 0 5px, rgba(0,0,0,0.14) 5px 10px)';
+
+/** Fill style for program-type chips/selects — EndShow gets stripes on PreShow purple. */
+export function programTypeSurfaceStyle(
+  programType: string | null | undefined,
+  colors: Record<string, string>,
+  fallback = '#374151'
+): { backgroundColor: string; backgroundImage?: string } {
+  const type = String(programType || '').trim();
+  const backgroundColor = colors[type] || fallback;
+  if (type === ENDSHOW_PROGRAM_TYPE) {
+    return {
+      backgroundColor,
+      backgroundImage: ENDSHOW_STRIPE_BACKGROUND_IMAGE,
+    };
+  }
+  return { backgroundColor };
+}
+
 export function isPreshowProgramType(programType: string | null | undefined): boolean {
   const t = String(programType || '').trim();
   return t === PRESHOW_PROGRAM_TYPE || t === LEGACY_PRESHOW_END_PROGRAM_TYPE;

@@ -11,6 +11,7 @@ import {
   type ParseHints,
 } from '../lib/agenda-parser';
 import { SPEAKER_LOCATIONS, type SpeakerLocation, isSpeakerLocation } from '../lib/speakerLocations';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -83,7 +84,7 @@ const PROGRAM_TYPES = [
   'No Transition','Video','Panel+Remote','Remote Only','Break F&B/B2B','Breakout Session','TBD','KILLED',
 ];
 const PROGRAM_TYPE_COLORS: Record<string, string> = {
-  'PreShow':'#8B5CF6','EndShow':'#C026D3','Head Table':'#4338CA','Podium Transition':'#8B4513','Panel Transition':'#404040',
+  'PreShow':'#8B5CF6','EndShow':'#8B5CF6','Head Table':'#4338CA','Podium Transition':'#8B4513','Panel Transition':'#404040',
   'Sub Cue':'#F3F4F6','No Transition':'#059669','Video':'#F59E0B','Panel+Remote':'#1E40AF',
   'Remote Only':'#60A5FA','Break F&B/B2B':'#EC4899','Breakout Session':'#20B2AA',
   'TBD':'#6B7280','KILLED':'#DC2626','Full-Stage/Ted-Talk':'#EA580C',
@@ -1133,7 +1134,10 @@ const AgendaImportModal: React.FC<AgendaImportModalProps> = ({
                           <select value={r.programType||''} onChange={e => updateRow(idx,'programType',e.target.value)}
                             className="w-full px-1.5 py-0.5 bg-slate-800 text-white text-xs border border-slate-700 rounded"
                             style={r.programType && PROGRAM_TYPE_COLORS[r.programType]
-                              ? { backgroundColor: PROGRAM_TYPE_COLORS[r.programType], color: r.programType === 'Sub Cue' ? '#000' : '#fff' }
+                              ? {
+                                  ...programTypeSurfaceStyle(r.programType, PROGRAM_TYPE_COLORS),
+                                  color: r.programType === 'Sub Cue' ? '#000' : '#fff',
+                                }
                               : undefined}>
                             <option value="">—</option>
                             {PROGRAM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}

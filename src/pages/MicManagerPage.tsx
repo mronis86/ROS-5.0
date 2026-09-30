@@ -17,6 +17,7 @@ import {
 import { countdownColorForRemaining } from '../lib/countdownColor';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import {
   getMicAssignment,
   MIC_TYPE_OPTIONS,
@@ -65,7 +66,7 @@ const TYPE_COLOR: Record<string, string> = {
   Podium: '#8B4513',
   Panel: '#404040',
   'PreShow': '#8B5CF6',
-  'EndShow': '#C026D3',
+  'EndShow': '#8B5CF6',
   KILLED: '#DC2626',
 };
 
@@ -787,7 +788,7 @@ const MicManagerPage: React.FC = () => {
           dayItems.map((item) => {
             const isDelayBlock = item.programType === 'Delay Block';
             const cue = String(item.customFields?.cue || (isDelayBlock ? 'DELAY' : `CUE ${item.id}`));
-            const ptColor = TYPE_COLOR[item.programType || ''] || '#6B7280';
+            const ptStyle = programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#6B7280');
             const highlight = rowHighlight(item.id);
             const rowPickerOpen = Boolean(
               openMicPicker && String(openMicPicker).startsWith(`${item.id}:`)
@@ -819,7 +820,7 @@ const MicManagerPage: React.FC = () => {
                       <div className="text-sm font-bold text-violet-100">{cue}</div>
                       <div
                         className="mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold text-white border border-violet-300/50"
-                        style={{ backgroundColor: ptColor }}
+                        style={ptStyle}
                       >
                         Delay Block
                       </div>
@@ -870,7 +871,7 @@ const MicManagerPage: React.FC = () => {
                         className={`inline-block px-2 py-1 rounded text-xs font-medium text-white border shadow-lg ${
                           compactView ? 'text-[10px] px-1.5 py-0.5' : ''
                         }`}
-                        style={{ backgroundColor: ptColor }}
+                        style={ptStyle}
                       >
                         {item.programType || 'Cue'}
                       </div>

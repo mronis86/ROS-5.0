@@ -21,7 +21,10 @@ import {
   PRESHOW_WARN_MINUTES_BEFORE,
 } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
-import { normalizeSchedulePreshowEndTypes } from '../lib/rosProgramTypeSplit';
+import {
+  normalizeSchedulePreshowEndTypes,
+  programTypeSurfaceStyle,
+} from '../lib/rosProgramTypeSplit';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
@@ -16733,7 +16736,7 @@ const RunOfShowPage: React.FC = () => {
                     }}
                     className="w-full px-3 py-2 bg-slate-700 border-2 border-slate-500 rounded text-white focus:outline-none focus:border-blue-500 text-sm"
                     style={{ 
-                      backgroundColor: programTypeColors[modalForm.programType] || '#374151',
+                      ...programTypeSurfaceStyle(modalForm.programType, programTypeColors),
                       color: modalForm.programType === 'Sub Cue' ? '#000000' : '#ffffff'
                     }}
                   >

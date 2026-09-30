@@ -6,6 +6,7 @@ import { apiClient } from '../services/api-client';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { itemNeedsRecording } from '../lib/cueRecording';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 
 type ScheduleItem = {
   id: number;
@@ -37,7 +38,7 @@ const TYPE_COLOR: Record<string, string> = {
   Podium: '#8B4513',
   Panel: '#404040',
   'PreShow': '#8B5CF6',
-  'EndShow': '#C026D3',
+  'EndShow': '#8B5CF6',
   'Full-Stage/Ted-Talk': '#EA580C',
 };
 
@@ -295,7 +296,7 @@ const CommsEventPage: React.FC = () => {
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
                             <span
                               className="inline-flex rounded px-1.5 py-0.5 text-white"
-                              style={{ backgroundColor: TYPE_COLOR[item.programType || ''] || '#475569' }}
+                              style={programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#475569')}
                             >
                               {item.programType || '—'}
                             </span>
@@ -346,7 +347,7 @@ const CommsEventPage: React.FC = () => {
                           <td className="px-3 py-2">
                             <span
                               className="inline-flex rounded px-2 py-0.5 text-xs font-medium text-white"
-                              style={{ backgroundColor: TYPE_COLOR[item.programType || ''] || '#475569' }}
+                              style={programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#475569')}
                             >
                               {item.programType || '—'}
                             </span>

@@ -7,6 +7,7 @@ import {
   prependStageDirectionNote,
 } from '../lib/audioCallouts';
 import { shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import StageDirectionModal from '../components/StageDirectionModal';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
 
@@ -391,11 +392,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
             className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}`}
             style={{ 
-              backgroundColor: isRowDimmed
-                ? 'rgba(59, 20, 96, 0.65)'
-                : (!item.programType
-                    ? '#1e293b'
-                    : (programTypeColors[item.programType] || '#374151')),
+              ...(isRowDimmed
+                ? { backgroundColor: 'rgba(59, 20, 96, 0.65)' }
+                : !item.programType
+                  ? { backgroundColor: '#1e293b' }
+                  : programTypeSurfaceStyle(item.programType, programTypeColors)),
               color: isRowDimmed
                 ? '#ada3bf'
                 : (!item.programType

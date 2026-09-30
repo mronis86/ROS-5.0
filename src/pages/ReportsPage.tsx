@@ -4,6 +4,7 @@ import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { calculateScheduleStartTime, dayStartFor } from '../lib/scheduleStartTime';
 import { speakerLocationPrefix } from '../lib/speakerLocations';
+import { ENDSHOW_PROGRAM_TYPE, ENDSHOW_STRIPE_BACKGROUND_IMAGE } from '../lib/rosProgramTypeSplit';
 
 interface ScheduleItem {
   id: number;
@@ -494,7 +495,7 @@ const ReportsPage: React.FC = () => {
   const getProgramTypeColor = (programType: string) => {
     const colors: Record<string, string> = {
       'PreShow': '#8B5CF6',
-  'EndShow': '#C026D3',        // Bright Purple
+  'EndShow': '#8B5CF6',        // Bright Purple
       'Head Table': '#4338CA',         // Indigo — GM / Hollow Square
       'Podium Transition': '#8B4513',  // Dark Brown
       'Panel Transition': '#404040',   // Darker Grey
@@ -620,6 +621,11 @@ const ReportsPage: React.FC = () => {
     return '';
   };
 
+  const endShowStripeCss = (programType: string) =>
+    programType === ENDSHOW_PROGRAM_TYPE
+      ? `background-image: ${ENDSHOW_STRIPE_BACKGROUND_IMAGE};`
+      : '';
+
   const renderCueChip = (programType: string, cueDisplay: string) => {
     const bg = getLegendOrBadgeColor(programType || '');
     const fg = getChipTextColor(programType || '');
@@ -627,7 +633,7 @@ const ReportsPage: React.FC = () => {
       programType === 'Sub Cue' || bg === '#FFFFFF' || bg === '#F3F4F6'
         ? 'border: 1px solid #111;'
         : 'border: 1px solid transparent;';
-    return `<span class="cue-chip" style="background-color: ${bg}; color: ${fg}; ${border}">${cueDisplay}</span>`;
+    return `<span class="cue-chip" style="background-color: ${bg}; ${endShowStripeCss(programType || '')} color: ${fg}; ${border}">${cueDisplay}</span>`;
   };
 
   // Extract top-level <li>...</li> only (so nested lists don't break numbering/order)
@@ -1322,7 +1328,7 @@ const ReportsPage: React.FC = () => {
                 <tr>
                   <td>
                     <div style="margin-bottom: 4px;">${formatCueDisplay(item.customFields?.cue) || `CUE ${index + 1}`}</div>
-                    <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; width: fit-content; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${formatProgramTypeLabel(item.programType) || 'Unknown'}</div>
+                    <div style="background-color: ${programColor}; ${endShowStripeCss(item.programType || '')} color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; width: fit-content; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${formatProgramTypeLabel(item.programType) || 'Unknown'}</div>
                   </td>
                   <td class="times-cell">
                     <div class="times-content">
@@ -1924,7 +1930,7 @@ const ReportsPage: React.FC = () => {
                 <tr>
                   <td class="times-cell">
                     <div style="margin-bottom: 4px; font-weight: bold;">${formatCueDisplay(item.customFields?.cue) || `CUE ${index + 1}`}</div>
-                    <div style="background-color: ${programColor}; color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; width: fit-content; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${formatProgramTypeLabel(item.programType) || 'Unknown'}</div>
+                    <div style="background-color: ${programColor}; ${endShowStripeCss(item.programType || '')} color: ${item.programType === 'Sub Cue' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: normal; display: inline-block; width: fit-content; ${item.programType === 'Sub Cue' ? 'border: 1px solid #000000;' : ''}">${formatProgramTypeLabel(item.programType) || 'Unknown'}</div>
                     <div class="times-content" style="margin-top: 6px;">
                       <div class="start-time">
                         <span class="time-label">Start:</span> ${startTime}

@@ -35,6 +35,7 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import {
   SPEAKER_LOCATIONS,
   type SpeakerLocation,
@@ -4112,7 +4113,9 @@ const ContentReviewPage: React.FC = () => {
                               }}
                               className="w-full rounded border border-slate-500 px-2 py-1 text-xs font-semibold outline-none focus:border-violet-400"
                               style={{
-                                backgroundColor: programTypeDraft ? programColor(programTypeDraft) : '#0f172a',
+                                ...(programTypeDraft
+                                  ? programTypeSurfaceStyle(programTypeDraft, PROGRAM_TYPE_COLORS, '#6B7280')
+                                  : { backgroundColor: '#0f172a' }),
                                 color: programTypeDraft ? (programTextClass(programTypeDraft) === 'text-black' ? '#000000' : '#ffffff') : '#ffffff'
                               }}
                             >
@@ -4181,7 +4184,7 @@ const ContentReviewPage: React.FC = () => {
                             <span
                               className="mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold"
                               style={{
-                                backgroundColor: programColor(displayItem.programType),
+                                ...programTypeSurfaceStyle(displayItem.programType, PROGRAM_TYPE_COLORS, '#6B7280'),
                                 color: programTextClass(displayItem.programType),
                                 borderColor: displayItem.programType === 'Sub Cue' ? '#000' : 'transparent'
                               }}
