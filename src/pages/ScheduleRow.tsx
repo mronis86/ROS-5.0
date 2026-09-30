@@ -159,6 +159,21 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   segmentNameDisplayMode = 'single',
 }) => {
   const segmentWrap = segmentNameDisplayMode === 'wrap';
+  // One height measure per row render (shared by all custom-column cells)
+  const measuredRowHeight = getRowHeight
+    ? getRowHeight(
+        item.notes,
+        item.speakersText,
+        item.speakers,
+        item.customFields,
+        customColumns,
+        item.voCues?.length ?? 0,
+        item.segmentName
+      )
+    : undefined;
+  const customFieldCellHeight = measuredRowHeight
+    ? (`calc(${measuredRowHeight} - 2rem)` as any)
+    : undefined;
   const isLockedByOther = Boolean(rowLock && currentUserId && rowLock.userId !== currentUserId);
   const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
   const [lockBadgePos, setLockBadgePos] = React.useState({ scrollLeft: 0, viewWidth: 0 });
@@ -1397,7 +1412,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
             style={{ 
               width: (customColumnWidths && customColumnWidths[column.id]) || 256,
-              height: getRowHeight ? getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0) : undefined,
+              height: measuredRowHeight,
               order: flexOrder(`custom:${column.id}`),
             }}
           >
@@ -1437,8 +1452,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               disabled={isLockedByOther}
               className={`w-full px-3 py-2 border rounded text-base resize-none ${cellFill}`}
               style={{
-                height: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0)} - 2rem)` as any : undefined,
-                maxHeight: getRowHeight ? `calc(${getRowHeight(item.notes, item.speakersText, item.speakers, item.customFields, customColumns, item.voCues?.length ?? 0)} - 2rem)` as any : undefined,
+                height: customFieldCellHeight,
+                maxHeight: customFieldCellHeight,
                 overflow: 'hidden',
                 lineHeight: '1.6',
                 wordWrap: 'break-word',
@@ -1491,11 +1506,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'programType', 'shotType', 'segmentName',
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'assets', 'speakers', 'speakersText',
-    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic'
+    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
+    'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
   ] as const;
   for (const field of fieldsToCheck) {
     if ((prevItem as any)?.[field] !== (nextItem as any)?.[field]) return false;
   }
+  // Custom fields / VO chips drive row height growth — must invalidate memo
+  if (prevItem?.customFields !== nextItem?.customFields) return false;
+  if ((prevItem?.voCues?.length ?? 0) !== (nextItem?.voCues?.length ?? 0)) return false;
+  if (prevItem?.voCues !== nextItem?.voCues) return false;
 
   // Re-render when visibility/width maps or theme/colors change (ref compare)
   if (prevProps.visibleColumns !== nextProps.visibleColumns) return false;

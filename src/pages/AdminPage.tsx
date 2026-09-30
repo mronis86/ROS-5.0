@@ -4449,6 +4449,26 @@ export default function AdminPage() {
           <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 space-y-3 text-sm text-slate-200">
             <div>
               <h3 className="text-base font-semibold text-amber-100">
+                Run of Show performance — row virtualization (parked 2026-09-30)
+              </h3>
+              <p className="mt-1 text-slate-300 leading-relaxed">
+                Long schedules with many custom columns still mount every row. We shipped safer wins first
+                (hide unused columns, cached/stable <code className="text-amber-200/90 text-xs">getRowHeight</code>,
+                skip elapsed-only hybrid ticks for row colors). Next big speedup:{' '}
+                <strong className="text-white">row virtualization</strong> — only render cues near the viewport.
+              </p>
+              <ul className="mt-2 list-disc pl-5 space-y-1 text-slate-300">
+                <li>Biggest win for long shows; higher risk than height/timer tweaks.</li>
+                <li>
+                  Must preserve sticky # / CUE / Start, header↔body horizontal scroll sync, follow-cue scroll,
+                  and dynamic row height (notes / custom columns / segment wrap).
+                </li>
+                <li>Do on a calm week with a large-event A/B — not mid-show.</li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-base font-semibold text-amber-100">
                 App versioning (from 2026-09-23)
               </h3>
               <p className="mt-1 text-slate-300 leading-relaxed">

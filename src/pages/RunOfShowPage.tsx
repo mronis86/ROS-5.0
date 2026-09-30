@@ -1810,6 +1810,46 @@ const RunOfShowPage: React.FC = () => {
     );
   };
 
+  /** Fields that change schedule row colors (not per-second elapsed). */
+  const timerRowHighlightSignature = (timer: any) => {
+    if (!timer) return '';
+    return [
+      timer.item_id,
+      timer.is_running ? 1 : 0,
+      timer.timer_state ?? '',
+      timer.is_active === false ? 0 : 1,
+      timer.resolume_state ?? '',
+      timer.mitti_state ?? '',
+      timer.time_source ?? '',
+    ].join('|');
+  };
+
+  /**
+   * True when hybrid activeTimer/secondaryTimer must update for load/run/stop/align.
+   * Elapsed-only ticks return false — countdown reads timerProgress instead.
+   */
+  const timerNeedsHybridStateUpdate = (prev: any, next: any) => {
+    if (!prev && next) return true;
+    if (prev && !next) return true;
+    if (!prev || !next) return false;
+    if (timerRowHighlightSignature(prev) !== timerRowHighlightSignature(next)) return true;
+    if (prev.started_at !== next.started_at) return true;
+    if (prev.duration_seconds !== next.duration_seconds) return true;
+    if (
+      next.resolume_align_seq != null &&
+      next.resolume_align_seq !== prev.resolume_align_seq
+    ) {
+      return true;
+    }
+    if (
+      next.mitti_align_seq != null &&
+      next.mitti_align_seq !== prev.mitti_align_seq
+    ) {
+      return true;
+    }
+    return false;
+  };
+
   const normalizeScheduleItemId = (id: unknown): number | null => {
     if (id == null || id === '') return null;
     const n = typeof id === 'number' ? id : parseInt(String(id), 10);
@@ -1923,12 +1963,15 @@ const RunOfShowPage: React.FC = () => {
       ? DELAY_BLOCK_ROW_CLASS
       : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
 
-  /** CUE + Timer columns: neutral unless the row is completed/stopped. */
+  /** CUE + Timer columns: neutral unless completed/stopped, or timed marker linked to loaded parent. */
   const getSideColumnRowClass = (itemId: number, index: number) => {
     if (isItemDimmed(itemId)) return COMPLETED_ROW_CLASS;
     if (isDelayBlock(itemId)) return DELAY_BLOCK_ROW_CLASS;
     const row = schedule.find((s) => s.id === itemId);
-    if (row?.isTimedMarker) return 'bg-sky-950/50 border-l-4 border-l-sky-500';
+    if (row?.isTimedMarker) {
+      if (loadedCueDependents.has(itemId)) return 'bg-amber-950 border-amber-600';
+      return 'bg-sky-950/50 border-l-4 border-l-sky-500';
+    }
     return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
   };
 
@@ -3305,7 +3348,7 @@ const RunOfShowPage: React.FC = () => {
             const dependentIds = new Set<number>();
             if (currentIndex !== -1) {
               for (let i = currentIndex + 1; i < schedule.length; i++) {
-                if (schedule[i].isIndented) {
+                if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                   dependentIds.add(schedule[i].id);
                 } else {
                   break;
@@ -3323,7 +3366,7 @@ const RunOfShowPage: React.FC = () => {
             const dependentIds = new Set<number>();
             if (currentIndex !== -1) {
               for (let i = currentIndex + 1; i < schedule.length; i++) {
-                if (schedule[i].isIndented) {
+                if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                   dependentIds.add(schedule[i].id);
                 } else {
                   break;
@@ -3990,7 +4033,7 @@ const RunOfShowPage: React.FC = () => {
           const dependentIds = new Set<number>();
           if (currentIndex !== -1) {
             for (let i = currentIndex + 1; i < schedule.length; i++) {
-              if (schedule[i].isIndented) {
+              if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                 dependentIds.add(schedule[i].id);
               } else {
                 break;
@@ -4060,7 +4103,7 @@ const RunOfShowPage: React.FC = () => {
                   if (currentIndex !== -1) {
                     // Find all indented items that follow this CUE until the next non-indented item
                     for (let i = currentIndex + 1; i < schedule.length; i++) {
-                      if (schedule[i].isIndented) {
+                      if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                         setCompletedCues(prev => ({ ...prev, [schedule[i].id]: true }));
                         setStoppedItems(prev => new Set([...prev, schedule[i].id]));
                       } else {
@@ -5051,16 +5094,50 @@ const RunOfShowPage: React.FC = () => {
     return `rgba(${r}, ${g}, ${b}, 0.3)`;
   };
 
+  // Cache row heights by content inputs so Notes DOM measure isn't repeated every paint.
+  // Key includes widths + display mode so resize/wrap still grow rows correctly.
+  const rowHeightCacheRef = useRef<Map<string, string>>(new Map());
+  const rowHeightCacheEpochRef = useRef('');
+
   // Enhanced function to calculate dynamic row height based on ALL content
-  const getRowHeight = (
+  const getRowHeight = useCallback((
     notes: string,
     speakersText?: string,
     participants?: string,
     customFields?: any,
-    customColumns?: any[],
+    customColumnsArg?: any[],
     voCueCount = 0,
     segmentName?: string
   ) => {
+    const epoch = `${columnWidths.notes}|${columnWidths.segmentName}|${segmentNameDisplayMode}`;
+    if (rowHeightCacheEpochRef.current !== epoch) {
+      rowHeightCacheEpochRef.current = epoch;
+      rowHeightCacheRef.current.clear();
+    }
+
+    const cols = Array.isArray(customColumnsArg) ? customColumnsArg : [];
+    let customKey = '';
+    for (let c = 0; c < cols.length; c++) {
+      const name = cols[c]?.name;
+      if (!name) continue;
+      const raw = customFields?.[name];
+      if (raw == null) continue;
+      const text = String(raw);
+      if (!text.trim()) continue;
+      customKey += `\u0001${name}=${text}`;
+    }
+    const cacheKey = [
+      epoch,
+      voCueCount,
+      notes || '',
+      speakersText || '',
+      participants || '',
+      segmentName || '',
+      customKey,
+    ].join('\u0000');
+    const cached = rowHeightCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+
     let maxHeight = 6.5; // Default minimum height in rem
     if (voCueCount > 0) {
       // Notes grow when callout text is appended; slight bump if markers exist
@@ -5165,11 +5242,11 @@ const RunOfShowPage: React.FC = () => {
     }
     
     // Calculate height based on custom columns
-    if (customFields && customColumns && customColumns.length > 0) {
-      customColumns.forEach(column => {
-        const customValue = customFields[column.name];
-        if (customValue && customValue.trim() !== '') {
-          const lines = customValue.split('\n');
+    if (customFields && cols.length > 0) {
+      cols.forEach((column: { name?: string }) => {
+        const customValue = column.name ? customFields[column.name] : null;
+        if (customValue && String(customValue).trim() !== '') {
+          const lines = String(customValue).split('\n');
           const lineCount = Math.max(2, lines.length);
           
           const baseCustomHeight = 3; // Increased from 2.5
@@ -5182,8 +5259,12 @@ const RunOfShowPage: React.FC = () => {
       });
     }
     
-    return `${maxHeight}rem`;
-  };
+    const result = `${maxHeight}rem`;
+    const cache = rowHeightCacheRef.current;
+    if (cache.size > 400) cache.clear();
+    cache.set(cacheKey, result);
+    return result;
+  }, [columnWidths.notes, columnWidths.segmentName, segmentNameDisplayMode]);
 
   // Function to measure actual rendered notes content and position container 15px below last line
   const getCompactNotesHeight = (notes: string) => {
@@ -5252,7 +5333,7 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Function to calculate speakers field height with better spacing
-  const getSpeakersHeight = (speakersText: string) => {
+  const getSpeakersHeight = useCallback((speakersText: string) => {
     if (!speakersText || speakersText.trim() === '') return '3.5rem';
     
     let lineCount = 1;
@@ -5274,7 +5355,7 @@ const RunOfShowPage: React.FC = () => {
     const totalHeight = baseHeight + ((lineCount - 1) * heightPerLine);
     
     return `${Math.max(3.5, totalHeight)}rem`; // Same minimum as participants
-  };
+  }, []);
 
   // Enhanced function to calculate custom field height with no scrollbars and full expansion
   const getCustomFieldHeight = (value: string) => {
@@ -6550,7 +6631,7 @@ const RunOfShowPage: React.FC = () => {
       if (interruptedIndex !== -1) {
         // Find all indented items that follow the interrupted CUE until the next non-indented item
         for (let i = interruptedIndex + 1; i < schedule.length; i++) {
-          if (schedule[i].isIndented) {
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             setCompletedCues(prev => ({ ...prev, [schedule[i].id]: true }));
             setStoppedItems(prev => new Set([...prev, schedule[i].id]));
             // Mark indented items as completed in database too
@@ -6579,7 +6660,7 @@ const RunOfShowPage: React.FC = () => {
       const currentIndex = schedule.findIndex(item => item.id === itemId);
       if (currentIndex !== -1) {
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          if (schedule[i].isIndented) {
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             delete newCompleted[schedule[i].id];
           } else {
             // Stop when we hit a non-indented item (next CUE group)
@@ -6597,7 +6678,7 @@ const RunOfShowPage: React.FC = () => {
       const currentIndex = schedule.findIndex(item => item.id === itemId);
       if (currentIndex !== -1) {
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          if (schedule[i].isIndented) idsToUnmark.push(schedule[i].id);
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) idsToUnmark.push(schedule[i].id);
           else break;
         }
       }
@@ -6615,7 +6696,7 @@ const RunOfShowPage: React.FC = () => {
       const currentIndex = schedule.findIndex(item => item.id === itemId);
       if (currentIndex !== -1) {
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          if (schedule[i].isIndented) {
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             newStopped.delete(schedule[i].id);
           } else {
             // Stop when we hit a non-indented item (next CUE group)
@@ -6737,7 +6818,7 @@ const RunOfShowPage: React.FC = () => {
     if (currentIndex !== -1) {
       // Find all indented items that follow this CUE until the next non-indented item
       for (let i = currentIndex + 1; i < schedule.length; i++) {
-        if (schedule[i].isIndented) {
+        if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
           dependentIds.add(schedule[i].id);
         } else {
           // Stop when we hit a non-indented item (next CUE group)
@@ -8440,15 +8521,19 @@ const RunOfShowPage: React.FC = () => {
       onTimerUpdated: (data: any) => {
         console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
         if (data && data.event_id === event?.id) {
-          // Update hybrid timer data directly from WebSocket (ClockPage style)
+          // Hybrid state (row colors / load-run-stop): skip elapsed-only ticks.
+          // Countdown uses timerProgress below so it stays live.
           setHybridTimerData(prev => {
-            if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, data)) {
-              queueMicrotask(() => triggerResolumeSyncPulse());
-            }
             let activeTimer = data;
             if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
               activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
               console.log('🎬 Ignoring Resolume sync that reset countdown to full clip time');
+            }
+            if (!timerNeedsHybridStateUpdate(prev?.activeTimer, activeTimer)) {
+              return prev;
+            }
+            if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, activeTimer)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
             }
             return {
               ...prev,
@@ -8458,47 +8543,63 @@ const RunOfShowPage: React.FC = () => {
           
           // Update timer progress for smooth UI updates
           if (data.item_id) {
-            setTimerProgress(prev => ({
-              ...prev,
-              [data.item_id]: {
-                elapsed: data.elapsed_seconds || 0,
-                total: data.duration_seconds ?? 300,
-                startedAt: data.started_at ? new Date(data.started_at) : null
+            const nextElapsed = data.elapsed_seconds || 0;
+            const nextTotal = data.duration_seconds ?? 300;
+            const nextStartedMs = data.started_at ? new Date(data.started_at).getTime() : null;
+            setTimerProgress(prev => {
+              const cur = prev[data.item_id];
+              const curStartedMs = cur?.startedAt ? new Date(cur.startedAt).getTime() : null;
+              if (
+                cur &&
+                cur.elapsed === nextElapsed &&
+                cur.total === nextTotal &&
+                curStartedMs === nextStartedMs
+              ) {
+                return prev;
               }
-            }));
+              return {
+                ...prev,
+                [data.item_id]: {
+                  elapsed: nextElapsed,
+                  total: nextTotal,
+                  startedAt: data.started_at ? new Date(data.started_at) : null
+                }
+              };
+            });
             
             // Update button states based on timer_state (like PhotoViewPage and GreenRoomPage)
             // Convert item_id to number to ensure proper comparison with schedule item IDs
             const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id) : data.item_id;
             
             if (data.timer_state === 'running') {
-              setActiveTimers(prev => ({ ...prev, [numericItemId]: true }));
-              setActiveItemId(numericItemId);
-              setLoadedItems(prev => ({ ...prev, [numericItemId]: true }));
+              setActiveTimers(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
+              setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
+              setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
               console.log('✅ RunOfShow: Timer RUNNING - button states updated:', numericItemId);
             } else if (data.timer_state === 'loaded') {
               setActiveTimers(prev => {
+                if (!(numericItemId in prev)) return prev;
                 const newTimers = { ...prev };
                 delete newTimers[numericItemId]; // Remove from running timers
                 return newTimers;
               });
-              setActiveItemId(numericItemId);
-              setLoadedItems(prev => ({ ...prev, [numericItemId]: true }));
+              setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
+              setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
               console.log('✅ RunOfShow: Timer LOADED - button states updated:', numericItemId);
             } else if (data.timer_state === 'stopped') {
               setActiveTimers(prev => {
+                if (!(numericItemId in prev)) return prev;
                 const newTimers = { ...prev };
                 delete newTimers[numericItemId];
                 return newTimers;
               });
               setLoadedItems(prev => {
+                if (!(numericItemId in prev)) return prev;
                 const newLoaded = { ...prev };
                 delete newLoaded[numericItemId];
                 return newLoaded;
               });
-              if (activeItemId === numericItemId) {
-                setActiveItemId(null);
-              }
+              setActiveItemId((prev) => (prev === numericItemId ? null : prev));
               console.log('✅ RunOfShow: Timer STOPPED - button states updated:', numericItemId);
             }
           }
@@ -8557,13 +8658,16 @@ const RunOfShowPage: React.FC = () => {
         if (data && data.event_id === event?.id) {
           setHybridTimerData(prev => {
             const enrichedIncoming = enrichSubCueTimer(data);
-            if (shouldTriggerResolumeSyncPulse(prev?.secondaryTimer, enrichedIncoming)) {
-              queueMicrotask(() => triggerResolumeSyncPulse());
-            }
             let secondaryTimer = enrichedIncoming;
             if (shouldRejectResolumeAlignReset(prev?.secondaryTimer, enrichedIncoming, clockOffset)) {
               secondaryTimer = { ...enrichedIncoming, started_at: prev!.secondaryTimer!.started_at };
               console.log('🎬 Ignoring Resolume sub-cue align that reset countdown to full clip');
+            }
+            if (!timerNeedsHybridStateUpdate(prev?.secondaryTimer, secondaryTimer)) {
+              return prev;
+            }
+            if (shouldTriggerResolumeSyncPulse(prev?.secondaryTimer, secondaryTimer)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
             }
             return {
               ...prev,
@@ -8573,17 +8677,32 @@ const RunOfShowPage: React.FC = () => {
           const numericItemId =
             typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           if (numericItemId != null) {
-            setSecondaryTimer({
-              itemId: numericItemId,
-              remaining: Math.max(0, (data.duration_seconds || 0) - (data.elapsed_seconds || 0)),
-              duration: data.duration_seconds || 0,
-              isActive: true,
-              isRunning: true,
-              startedAt: data.started_at ? new Date(data.started_at) : new Date(),
-              timerState: 'running',
-              rowNumber: data.row_number,
-              cueDisplay: data.cue_display,
-              timerId: data.timer_id,
+            const nextRemaining = Math.max(0, (data.duration_seconds || 0) - (data.elapsed_seconds || 0));
+            const nextDuration = data.duration_seconds || 0;
+            setSecondaryTimer((prev) => {
+              if (
+                prev &&
+                prev.itemId === numericItemId &&
+                prev.isRunning &&
+                prev.isActive &&
+                prev.duration === nextDuration &&
+                prev.remaining === nextRemaining &&
+                prev.timerState === 'running'
+              ) {
+                return prev;
+              }
+              return {
+                itemId: numericItemId,
+                remaining: nextRemaining,
+                duration: nextDuration,
+                isActive: true,
+                isRunning: true,
+                startedAt: data.started_at ? new Date(data.started_at) : new Date(),
+                timerState: 'running',
+                rowNumber: data.row_number,
+                cueDisplay: data.cue_display,
+                timerId: data.timer_id,
+              };
             });
           }
           console.log('✅ RunOfShow: Sub-cue timer started via WebSocket:', data);
@@ -8630,41 +8749,32 @@ const RunOfShowPage: React.FC = () => {
         
         console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: timerData?.event_id === event?.id });
         if (timerData && timerData.event_id === event?.id) {
-          // Debounce: Only update if timer data has actually changed
-          const currentTimer = hybridTimerData?.activeTimer;
-          if (currentTimer && currentTimer.id === timerData.id && 
-              currentTimer.timer_state === timerData.timer_state &&
-              currentTimer.is_active === timerData.is_active &&
-              currentTimer.is_running === timerData.is_running) {
-            console.log('⏭️ RunOfShow: Ignoring duplicate timer update:', timerData.id);
-            return;
-          }
-          
           // Clear only when truly stopped — loaded cues are is_active + !is_running
           const isStopped =
             timerData.timer_state === 'stopped' || timerData.is_active === false;
           if (isStopped) {
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: null
-            }));
+            setHybridTimerData(prev => (
+              prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }
+            ));
             setActiveItemId(null);
             setActiveTimers({});
             console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
           } else if (timerData.is_active === true) {
-            // Additional check: if this is the same timer that was previously stopped, ignore it
-            const currentHybridTimer = hybridTimerData?.activeTimer;
-            if (currentHybridTimer && currentHybridTimer.id === timerData.id && 
-                (currentHybridTimer.timer_state === 'stopped' || !currentHybridTimer.is_active)) {
-              console.log('⏭️ RunOfShow: Ignoring stale timer data for stopped timer:', timerData.id);
-              return;
-            }
-            
-            // Update timer data directly from WebSocket
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: timerData
-            }));
+            setHybridTimerData(prev => {
+              const currentHybridTimer = prev?.activeTimer;
+              if (currentHybridTimer && currentHybridTimer.id === timerData.id &&
+                  (currentHybridTimer.timer_state === 'stopped' || !currentHybridTimer.is_active)) {
+                console.log('⏭️ RunOfShow: Ignoring stale timer data for stopped timer:', timerData.id);
+                return prev;
+              }
+              if (!timerNeedsHybridStateUpdate(currentHybridTimer, timerData)) {
+                return prev;
+              }
+              return {
+                ...prev,
+                activeTimer: timerData
+              };
+            });
             console.log('✅ RunOfShow: Active timer updated via WebSocket:', timerData);
           }
         } else {
@@ -10430,8 +10540,8 @@ const RunOfShowPage: React.FC = () => {
         console.log('🔄 ToggleTimer: Looking for indented items after index', currentIndex);
         // Find all indented items that follow this CUE until the next non-indented item
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', schedule[i].isIndented);
-          if (schedule[i].isIndented) {
+          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', isIndentedScheduleItem(schedule[i], indentedCuesRef.current));
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             console.log('🔄 ToggleTimer: Marking indented item as completed:', schedule[i].id, schedule[i].segmentName);
             setCompletedCues(prev => {
               const newCompleted = { ...prev, [schedule[i].id]: true };
@@ -10778,7 +10888,7 @@ const RunOfShowPage: React.FC = () => {
           const currentIndex = schedule.findIndex(item => item.id === itemId);
           if (currentIndex !== -1) {
             for (let i = currentIndex + 1; i < schedule.length; i++) {
-              if (schedule[i].isIndented) {
+              if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                 newStopped.delete(schedule[i].id);
               } else {
                 // Stop when we hit a non-indented item (next CUE group)
@@ -11944,22 +12054,45 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, 'bg-purple-950/60 ring-1 ring-inset ring-purple-400');
         return;
       }
-      // Timed markers stay sky-tinted — never amber Play/loaded styling from parent
+      // Indented sub-cues + timed markers: amber while parent is loaded/running
+      if (loadedCueDependents.has(item.id)) {
+        classNames.set(item.id, 'bg-amber-950 border-amber-600');
+        return;
+      }
+      if (indentedCues[item.id] || item.isTimedMarker) {
+        const parentId =
+          indentedCues[item.id]?.parentId ??
+          (() => {
+            const idx = filteredSchedule.findIndex((s) => s.id === item.id);
+            if (idx < 0) return null;
+            const pIdx = findParentScheduleIndex(filteredSchedule, idx, indentedCues);
+            return pIdx >= 0 ? filteredSchedule[pIdx].id : null;
+          })();
+        if (parentId != null) {
+          const currentlyLoadedItemId: any = hybridTimerData?.activeTimer?.item_id || activeItemId;
+          const parentIsLoaded = Boolean(currentlyLoadedItemId && (
+            parseInt(String(currentlyLoadedItemId)) === parentId ||
+            currentlyLoadedItemId === parentId ||
+            String(currentlyLoadedItemId) === String(parentId)
+          ));
+          const parentIsRunning =
+            activeTimers[parentId] !== undefined ||
+            Boolean(
+              hybridTimerData?.activeTimer &&
+              itemMatchesTimerRow(parentId, hybridTimerData.activeTimer) &&
+              (hybridTimerData.activeTimer.is_running ||
+                hybridTimerData.activeTimer.timer_state === 'running')
+            );
+          if (parentIsLoaded || parentIsRunning) {
+            classNames.set(item.id, 'bg-amber-950 border-amber-600');
+            return;
+          }
+        }
+      }
+      // Idle timed markers keep sky tint (distinct from normal rows)
       if (item.isTimedMarker) {
         classNames.set(item.id, 'bg-sky-950/50 border-l-4 border-l-sky-500');
         return;
-      }
-      if (loadedCueDependents.has(item.id)) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
-      if (indentedCues[item.id]) {
-        const parentId = indentedCues[item.id].parentId;
-        const currentlyLoadedItemId: any = hybridTimerData?.activeTimer?.item_id || activeItemId;
-        const parentIsLoaded = Boolean(currentlyLoadedItemId && (
-          parseInt(String(currentlyLoadedItemId)) === parentId ||
-          currentlyLoadedItemId === parentId ||
-          String(currentlyLoadedItemId) === String(parentId)
-        ));
-        const parentIsRunning = activeTimers[parentId] !== undefined;
-        if (parentIsLoaded || parentIsRunning) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
       }
       if (lastLoadedCueId === item.id) { classNames.set(item.id, 'bg-purple-950 border-purple-400'); return; }
       classNames.set(item.id, index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
@@ -11967,8 +12100,21 @@ const RunOfShowPage: React.FC = () => {
     return classNames;
   }, [
     filteredSchedule,
-    hybridTimerData?.activeTimer,
-    hybridTimerData?.secondaryTimer,
+    // Color-relevant timer slices only — elapsed ticks must not rebuild row classes
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    hybridTimerData?.activeTimer?.timer_state,
+    hybridTimerData?.activeTimer?.is_active,
+    hybridTimerData?.activeTimer?.resolume_state,
+    hybridTimerData?.activeTimer?.mitti_state,
+    hybridTimerData?.activeTimer?.time_source,
+    hybridTimerData?.secondaryTimer?.item_id,
+    hybridTimerData?.secondaryTimer?.is_running,
+    hybridTimerData?.secondaryTimer?.timer_state,
+    hybridTimerData?.secondaryTimer?.is_active,
+    hybridTimerData?.secondaryTimer?.resolume_state,
+    hybridTimerData?.secondaryTimer?.mitti_state,
+    hybridTimerData?.secondaryTimer?.time_source,
     completedCues,
     stoppedItems,
     loadedCueDependents,
@@ -14883,7 +15029,7 @@ const RunOfShowPage: React.FC = () => {
 
 
                 {/* Center Scrollable Section Headers */}
-                <div className="flex-1 overflow-x-auto sticky-header-scroll-container" style={{ scrollbarWidth: 'thin' }}>
+                <div className="flex-1 overflow-x-auto overflow-y-hidden sticky-header-scroll-container" style={{ scrollbarWidth: 'thin' }}>
                   <div className="min-w-max">
                     <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex">
                       {visibleColumns.start && !startPinnedBesideCue && (
@@ -16043,10 +16189,10 @@ const RunOfShowPage: React.FC = () => {
             )}
 
             {/* Center Scrollable Section - Main Schedule Data */}
-            <div id="main-scroll-container" className="flex-1 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
+            <div id="main-scroll-container" className="flex-1 overflow-x-auto overflow-y-hidden" style={{ scrollbarWidth: 'thin' }}>
               <div className="min-w-max">
                 {/* Header Row */}
-                <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex">
+                <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex overflow-hidden">
                   {visibleColumns.start && !startPinnedBesideCue && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
