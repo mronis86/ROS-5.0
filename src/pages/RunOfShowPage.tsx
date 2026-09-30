@@ -1970,7 +1970,7 @@ const RunOfShowPage: React.FC = () => {
     const row = schedule.find((s) => s.id === itemId);
     if (row?.isTimedMarker) {
       if (loadedCueDependents.has(itemId)) return 'bg-amber-950 border-amber-600';
-      return 'bg-sky-950/50 border-l-4 border-l-sky-500';
+      return 'bg-sky-950/50';
     }
     return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
   };
@@ -12089,9 +12089,9 @@ const RunOfShowPage: React.FC = () => {
           }
         }
       }
-      // Idle timed markers keep sky tint (distinct from normal rows)
+      // Idle timed markers keep sky tint (no left border — that shifted columns vs header)
       if (item.isTimedMarker) {
-        classNames.set(item.id, 'bg-sky-950/50 border-l-4 border-l-sky-500');
+        classNames.set(item.id, 'bg-sky-950/50');
         return;
       }
       if (lastLoadedCueId === item.id) { classNames.set(item.id, 'bg-purple-950 border-purple-400'); return; }
@@ -12141,49 +12141,64 @@ const RunOfShowPage: React.FC = () => {
     if (!mainScrollContainer) return;
 
     let isSyncing = false;
+    let stickyHeaderContainer: HTMLElement | null = null;
 
-    const syncScroll = (source: HTMLElement, target: HTMLElement) => {
-      if (isSyncing) return;
+    const syncScroll = (source: HTMLElement, target: HTMLElement | null) => {
+      if (!target || isSyncing) return;
+      if (target.scrollLeft === source.scrollLeft) return;
       isSyncing = true;
       target.scrollLeft = source.scrollLeft;
-      // Use requestAnimationFrame to reset the flag after the scroll event has been processed
+      // Hold lock through the browser's follow-up scroll event from the assignment
       requestAnimationFrame(() => {
-        isSyncing = false;
+        requestAnimationFrame(() => {
+          isSyncing = false;
+        });
       });
     };
 
     const handleMainScroll = () => {
-      // Sync with sticky header if it exists
-      const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container');
+      syncScroll(mainScrollContainer, stickyHeaderContainer);
+    };
+
+    const handleStickyHeaderScroll = (e: Event) => {
+      syncScroll(e.currentTarget as HTMLElement, mainScrollContainer);
+    };
+
+    const bindStickyHeader = () => {
+      const next = document.querySelector(
+        '.sticky-header-scroll-container'
+      ) as HTMLElement | null;
+      if (next === stickyHeaderContainer) return;
       if (stickyHeaderContainer) {
-        syncScroll(mainScrollContainer, stickyHeaderContainer as HTMLElement);
+        stickyHeaderContainer.removeEventListener('scroll', handleStickyHeaderScroll);
+      }
+      stickyHeaderContainer = next;
+      if (stickyHeaderContainer) {
+        stickyHeaderContainer.addEventListener('scroll', handleStickyHeaderScroll, {
+          passive: true,
+        });
+        // Align once when the floating header mounts
+        if (stickyHeaderContainer.scrollLeft !== mainScrollContainer.scrollLeft) {
+          stickyHeaderContainer.scrollLeft = mainScrollContainer.scrollLeft;
+        }
       }
     };
 
-    const handleStickyHeaderScroll = () => {
-      const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container');
-      if (stickyHeaderContainer) {
-        syncScroll(stickyHeaderContainer as HTMLElement, mainScrollContainer);
-      }
-    };
+    mainScrollContainer.addEventListener('scroll', handleMainScroll, { passive: true });
+    bindStickyHeader();
 
-    mainScrollContainer.addEventListener('scroll', handleMainScroll);
-
-    // Add listener for sticky header when it appears
-    const observer = new MutationObserver(() => {
-      const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container');
-      if (stickyHeaderContainer) {
-        stickyHeaderContainer.addEventListener('scroll', handleStickyHeaderScroll);
-      }
-    });
-
+    // Re-bind only when the sticky header node appears/disappears (no stacked listeners)
+    const observer = new MutationObserver(bindStickyHeader);
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
     });
 
     return () => {
       mainScrollContainer.removeEventListener('scroll', handleMainScroll);
+      if (stickyHeaderContainer) {
+        stickyHeaderContainer.removeEventListener('scroll', handleStickyHeaderScroll);
+      }
       observer.disconnect();
     };
   }, []);
