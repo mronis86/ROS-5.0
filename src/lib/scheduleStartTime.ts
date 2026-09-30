@@ -1,7 +1,14 @@
+import { resolveTimedMarkerDisplayTime } from './timedMarker';
+
 export interface ScheduleStartItem {
   id: number;
   day?: number;
   isIndented?: boolean;
+  /** Timed marker under a parent: start time only, no duration. */
+  isTimedMarker?: boolean;
+  markerTimeMode?: 'absolute' | 'offset';
+  markerOffsetSeconds?: number;
+  markerAbsoluteSeconds?: number;
   durationHours?: number;
   durationMinutes?: number;
   durationSeconds?: number;
@@ -16,6 +23,8 @@ export function isIndentedScheduleItem(
   indentedLookup: IndentedCueLookup
 ): boolean {
   if (!item) return false;
+  // Timed markers are always grouped under a parent (do not advance the timeline).
+  if (item.isTimedMarker) return true;
   if (item.isIndented) return true;
   if (typeof indentedLookup === 'function') return indentedLookup(item.id);
   return Boolean(indentedLookup[item.id]);
@@ -90,6 +99,13 @@ export function calculateScheduleStartTime(
   const calcAt = (idx: number): string => {
     const current = schedule[idx];
     if (!current) return '';
+
+    if (current.isTimedMarker) {
+      const parentIndex = findParentScheduleIndex(schedule, idx, indentedLookup);
+      // Absolute markers don't need parent start; offset markers do.
+      const parentStart = parentIndex >= 0 ? calcAt(parentIndex) : '';
+      return resolveTimedMarkerDisplayTime(current, parentStart);
+    }
 
     if (isIndentedScheduleItem(current, indentedLookup)) {
       const parentIndex = findParentScheduleIndex(schedule, idx, indentedLookup);

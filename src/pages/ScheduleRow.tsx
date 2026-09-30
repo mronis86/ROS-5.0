@@ -40,6 +40,7 @@ export interface ScheduleRowProps {
   persistCueRecording?: (itemId: number, needsRecording: boolean, source: 'comms' | 'ros') => void | Promise<void>;
   calculateStartTimeWithOvertime?: (index: number) => string | number;
   calculateStartTime?: (index: number) => string | number;
+  onEditTimedMarker?: (itemId: number) => void;
   setEditingNotesItem?: Function;
   setShowNotesModal?: Function;
   setEditingVoItemId?: Function;
@@ -114,6 +115,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   persistCueRecording,
   calculateStartTimeWithOvertime,
   calculateStartTime,
+  onEditTimedMarker,
   setEditingNotesItem,
   setShowNotesModal,
   setEditingVoItemId,
@@ -324,7 +326,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           itemId={item.id}
           index={index}
           width={columnWidths.start}
-          isIndented={Boolean(indentedCues[item.id] || item.isIndented)}
+          isIndented={Boolean(indentedCues[item.id] || item.isIndented || item.isTimedMarker)}
           showMode={showMode}
           overtimeMinutes={overtimeMinutes}
           startCueId={startCueId}
@@ -333,6 +335,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           lockedStartTime={lockedStartTime}
           calculateStartTime={calculateStartTime}
           calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+          isTimedMarker={item.isTimedMarker === true}
+          markerTimeMode={item.markerTimeMode === 'absolute' ? 'absolute' : 'offset'}
+          onEditTimedMarker={
+            item.isTimedMarker && onEditTimedMarker
+              ? () => onEditTimedMarker(item.id)
+              : undefined
+          }
           style={{ order: flexOrder('start') }}
         />
       )}
@@ -418,7 +427,17 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         </div>
       )}
       {/* Duration column (after Program Type) */}
-      {visibleColumns.duration && (() => {
+      {visibleColumns.duration && item.isTimedMarker ? (
+        <div
+          className="px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0"
+          style={{ width: columnWidths.duration, order: flexOrder('duration') }}
+          title="Timed markers have no duration — they mark a time inside the parent cue"
+        >
+          <span className="text-sky-300/90 font-mono text-lg font-bold">—</span>
+          <span className="text-[10px] uppercase tracking-wide text-sky-500">no dur</span>
+        </div>
+      ) : null}
+      {visibleColumns.duration && !item.isTimedMarker && (() => {
         const durationChanged = showWasUnderDuration && originalDuration &&
           (item.durationHours !== originalDuration.durationHours ||
            item.durationMinutes !== originalDuration.durationMinutes ||
@@ -614,6 +633,18 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 title={`Happens in ${item.otherRoom} (not main program room)`}
               >
                 {item.otherRoom}
+              </span>
+            ) : null}
+            {item.isTimedMarker ? (
+              <span
+                className="self-start inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-sky-700/80 text-sky-100"
+                title={
+                  item.markerTimeMode === 'absolute'
+                    ? 'Absolute timed marker — fixed clock time; grouped under the cue above'
+                    : 'Offset timed marker — slides with parent overtime; grouped under the cue above'
+                }
+              >
+                ↳ {item.markerTimeMode === 'absolute' ? 'Abs marker' : 'Offset marker'}
               </span>
             ) : null}
             <input

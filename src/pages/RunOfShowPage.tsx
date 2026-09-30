@@ -69,6 +69,7 @@ import ImportCSVModal from '../components/ImportCSVModal';
 import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
 import OperatorCountdownModal from '../components/OperatorCountdownModal';
+import TimedMarkerModal, { TimedMarkerModalResult } from '../components/TimedMarkerModal';
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
@@ -81,6 +82,14 @@ import {
   isIndentedScheduleItem,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
+import {
+  isTimedMarkerItem,
+  normalizeMarkerAbsoluteSeconds,
+  normalizeMarkerOffsetSeconds,
+  normalizeMarkerTimeMode,
+  resolveTimedMarkerDisplayTime,
+  timedMarkerPersistFields,
+} from '../lib/timedMarker';
 import {
   BUILTIN_COLUMN_LABELS,
   ROS_COLUMN_ORDER_STORAGE_KEY,
@@ -239,6 +248,17 @@ interface ScheduleItem {
   customFields: Record<string, string>;
   isPublic: boolean;
   isIndented: boolean;
+  /**
+   * Grouped timed marker under a parent cue (like indented timers):
+   * start time only, no duration, does not advance the show clock.
+   */
+  isTimedMarker?: boolean;
+  /** absolute = fixed wall clock; offset = relative to parent (follows OT). */
+  markerTimeMode?: 'absolute' | 'offset';
+  /** Seconds after parent start (offset mode). */
+  markerOffsetSeconds?: number;
+  /** Seconds since midnight (absolute mode). */
+  markerAbsoluteSeconds?: number;
   /** Clock page display: 'countdown' | 'countUp' | 'timeOfDay' (swap + progress bar) | 'todOnly' (time of day only) */
   timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
   /** Optional VO / BGM chips in Notes (prototype) — metadata only, not timeline rows */
@@ -949,6 +969,14 @@ const RunOfShowPage: React.FC = () => {
   const [showInsertRowModal, setShowInsertRowModal] = useState(false);
   const [insertRowPosition, setInsertRowPosition] = useState<number | null>(null);
   const [showDelayBlockModal, setShowDelayBlockModal] = useState(false);
+  const [timedMarkerModal, setTimedMarkerModal] = useState<{
+    mode: 'add' | 'edit';
+    parentId: number;
+    itemId?: number;
+    /** When adding from an existing marker, insert after this row id. */
+    insertAfterId?: number;
+  } | null>(null);
+  const timedMarkerIdSeqRef = useRef(0);
   const [delayBlockDay, setDelayBlockDay] = useState(1);
   const [delayDuration, setDelayDuration] = useState({ hours: 0, minutes: 5, seconds: 0 });
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
@@ -1828,14 +1856,13 @@ const RunOfShowPage: React.FC = () => {
       : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
 
   /** CUE + Timer columns: neutral unless the row is completed/stopped. */
-  const getSideColumnRowClass = (itemId: number, index: number) =>
-    isItemDimmed(itemId)
-      ? COMPLETED_ROW_CLASS
-      : isDelayBlock(itemId)
-        ? DELAY_BLOCK_ROW_CLASS
-      : index % 2 === 0
-        ? 'bg-slate-800'
-        : 'bg-slate-900';
+  const getSideColumnRowClass = (itemId: number, index: number) => {
+    if (isItemDimmed(itemId)) return COMPLETED_ROW_CLASS;
+    if (isDelayBlock(itemId)) return DELAY_BLOCK_ROW_CLASS;
+    const row = schedule.find((s) => s.id === itemId);
+    if (row?.isTimedMarker) return 'bg-sky-950/50 border-l-4 border-l-sky-500';
+    return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
+  };
 
   const getSideColumnRowStyle = (item: {
     id: number;
@@ -2223,11 +2250,18 @@ const RunOfShowPage: React.FC = () => {
       }
     }
     const localById = new Map((localItems || []).map((item: any) => [Number(item.id), item]));
+    const remoteById = new Map((remoteItems || []).map((item: any) => [Number(item.id), item]));
+    // Keep brand-new local rows (e.g. timed markers) that remote has not caught up with yet
+    for (const [id, local] of localById.entries()) {
+      if (!remoteById.has(id) && (local?.isTimedMarker || protectIds.has(id))) {
+        protectIds.add(id);
+      }
+    }
     if (protectIds.size === 0 && localById.size === 0) return remoteItems;
     if (protectIds.size > 0) {
       console.log('🔒 Sync merge: preserving local rows', Array.from(protectIds));
     }
-    return remoteItems.map((remote: any) => {
+    const merged = (remoteItems || []).map((remote: any) => {
       const id = Number(remote.id);
       if (protectIds.has(id) && localById.has(id)) {
         return localById.get(id);
@@ -2239,8 +2273,49 @@ const RunOfShowPage: React.FC = () => {
       if (!remoteTid && localTid) {
         return { ...remote, timerId: localTid };
       }
+      // Prefer local timed-marker fields if remote is stale/missing them
+      if (local?.isTimedMarker && !remote?.isTimedMarker) {
+        return local;
+      }
+      if (local?.isTimedMarker && remote?.isTimedMarker) {
+        return {
+          ...remote,
+          ...timedMarkerPersistFields({
+            isTimedMarker: true,
+            markerTimeMode: local.markerTimeMode ?? remote.markerTimeMode,
+            markerOffsetSeconds: local.markerOffsetSeconds ?? remote.markerOffsetSeconds,
+            markerAbsoluteSeconds: local.markerAbsoluteSeconds ?? remote.markerAbsoluteSeconds,
+          }),
+          isIndented: true,
+          durationHours: 0,
+          durationMinutes: 0,
+          durationSeconds: 0,
+        };
+      }
       return remote;
     });
+    // Append local-only markers / protected rows in their local order
+    const remoteIds = new Set(merged.map((item: any) => Number(item.id)));
+    const localOnly = (localItems || []).filter(
+      (item: any) => !remoteIds.has(Number(item.id)) && protectIds.has(Number(item.id))
+    );
+    if (!localOnly.length) return merged;
+    // Insert each local-only row after its nearest prior local neighbor that exists in merged
+    let next = [...merged];
+    for (const local of localOnly) {
+      const localIdx = (localItems || []).findIndex((i: any) => Number(i.id) === Number(local.id));
+      let insertAt = next.length;
+      for (let i = localIdx - 1; i >= 0; i--) {
+        const prevId = Number(localItems[i].id);
+        const at = next.findIndex((row: any) => Number(row.id) === prevId);
+        if (at >= 0) {
+          insertAt = at + 1;
+          break;
+        }
+      }
+      next.splice(insertAt, 0, local);
+    }
+    return next;
   }, [user?.id]);
   
   // Countdown timer for sync check
@@ -2779,6 +2854,7 @@ const RunOfShowPage: React.FC = () => {
       showBreakoutRoomModal ||
       showOtherRoomModal ||
       showDelayBlockModal ||
+      !!timedMarkerModal ||
       showCustomColumnModal ||
       showPublicBulkModal;
     const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
@@ -2797,7 +2873,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -3315,35 +3391,44 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Load indented cues from API
+  // Load indented cues from API (merge — never wipe local timed-marker groups still saving)
   const loadIndentedCuesFromAPI = async () => {
     if (!event?.id) return;
 
     try {
       console.log('🟠 Loading indented cues from API for event:', event.id);
       const indentedCuesData = await DatabaseService.getIndentedCues(event.id);
-      
+
+      const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
       if (indentedCuesData && indentedCuesData.length > 0) {
         console.log('🟠 Found indented cues:', indentedCuesData);
-        
-        // Convert the database data to indentedCues state format
-        const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
         indentedCuesData.forEach((cue: any) => {
           if (cue.item_id && cue.parent_item_id) {
             indentedCuesMap[cue.item_id] = {
               parentId: cue.parent_item_id,
               userId: cue.user_id || '',
-              userName: cue.user_name || ''
+              userName: cue.user_name || '',
             };
           }
         });
-        
-        setIndentedCues(indentedCuesMap);
-        console.log('🟠 Set indentedCues state:', indentedCuesMap);
       } else {
         console.log('🟠 No indented cues found');
-        setIndentedCues({});
       }
+
+      setIndentedCues((prev) => {
+        const merged = { ...indentedCuesMap };
+        // Keep local timed-marker / brand-new indent entries not yet in API
+        for (const [idStr, entry] of Object.entries(prev)) {
+          const id = Number(idStr);
+          if (merged[id]) continue;
+          const row = scheduleRef.current?.find((s) => s.id === id);
+          if (row?.isTimedMarker || entry) {
+            merged[id] = entry;
+          }
+        }
+        return merged;
+      });
+      console.log('🟠 Set indentedCues state (merged):', indentedCuesMap);
     } catch (error) {
       console.error('❌ Error loading indented cues from API:', error);
       console.log('💡 This means the indented_cues table or functions need to be created first');
@@ -3366,6 +3451,187 @@ const RunOfShowPage: React.FC = () => {
     
     return null; // No parent found
   };
+  /**
+   * Open modal to add a timed marker under a parent cue.
+   * Pass either the parent cue id, or an existing marker/indented child —
+   * we resolve the parent and insert after that row (or after the last child).
+   */
+  const addTimedMarkerAfter = (fromItemId: number) => {
+    if (currentUserRole === 'VIEWER') {
+      alert('Viewers cannot add timed markers.');
+      return;
+    }
+    const fromIndex = schedule.findIndex((item) => item.id === fromItemId);
+    if (fromIndex < 0) return;
+    const fromItem = schedule[fromIndex];
+
+    let parentId = fromItemId;
+    let insertAfterId: number | undefined;
+    if (isTimedMarkerItem(fromItem) || isIndentedScheduleItem(fromItem, indentedCues)) {
+      const parentIndex = findParentScheduleIndex(schedule, fromIndex, indentedCues);
+      if (parentIndex < 0) {
+        alert('Could not find the parent cue for this timed marker.');
+        return;
+      }
+      parentId = schedule[parentIndex].id;
+      insertAfterId = fromItemId;
+    }
+
+    handleModalEditing();
+    setTimedMarkerModal({ mode: 'add', parentId, insertAfterId });
+  };
+
+  const editTimedMarkerTime = (itemId: number) => {
+    if (currentUserRole === 'VIEWER') return;
+    const index = schedule.findIndex((item) => item.id === itemId);
+    if (index < 0) return;
+    const item = schedule[index];
+    if (!isTimedMarkerItem(item)) return;
+    const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+    if (parentIndex < 0) return;
+    handleModalEditing();
+    setTimedMarkerModal({
+      mode: 'edit',
+      parentId: schedule[parentIndex].id,
+      itemId,
+    });
+  };
+
+  const applyTimedMarkerModal = async (result: TimedMarkerModalResult) => {
+    if (!timedMarkerModal) return;
+    const { parentId, mode, itemId, insertAfterId } = timedMarkerModal;
+    const parentIndex = schedule.findIndex((item) => item.id === parentId);
+    if (parentIndex < 0) return;
+    const parent = schedule[parentIndex];
+    const markerFields = timedMarkerPersistFields({
+      isTimedMarker: true,
+      markerTimeMode: result.mode,
+      markerOffsetSeconds: result.markerOffsetSeconds,
+      markerAbsoluteSeconds: result.markerAbsoluteSeconds,
+    });
+    const userId = user?.id || 'local';
+    const userName = user?.full_name || user?.email || 'Local User';
+
+    if (mode === 'edit' && itemId != null) {
+      handleUserEditing();
+      setSchedule((prev) =>
+        prev.map((row) =>
+          row.id === itemId
+            ? {
+                ...row,
+                segmentName: result.label || row.segmentName,
+                isIndented: true,
+                durationHours: 0,
+                durationMinutes: 0,
+                durationSeconds: 0,
+                ...markerFields,
+              }
+            : row
+        )
+      );
+      setIndentedCues((prev) => ({
+        ...prev,
+        [itemId]: prev[itemId] || {
+          parentId,
+          userId,
+          userName,
+        },
+      }));
+      setTimedMarkerModal(null);
+      handleModalClosed();
+      return;
+    }
+
+    timedMarkerIdSeqRef.current += 1;
+    const newId = Date.now() * 1000 + (timedMarkerIdSeqRef.current % 1000);
+    const marker: ScheduleItem = {
+      id: newId,
+      day: parent.day || selectedDay || 1,
+      programType: '',
+      shotType: '',
+      segmentName: result.label || 'Timed marker',
+      durationHours: 0,
+      durationMinutes: 0,
+      durationSeconds: 0,
+      notes: '',
+      assets: '',
+      speakers: '',
+      speakersText: '',
+      hasPPT: false,
+      hasQA: false,
+      timerId: generateRandomTimerId(),
+      customFields: { cue: '' },
+      isPublic: false,
+      isIndented: true,
+      ...markerFields,
+    };
+
+    // Mark indented locally FIRST so save/sync cannot wipe grouping
+    setIndentedCues((prev) => ({
+      ...prev,
+      [newId]: {
+        parentId,
+        userId,
+        userName,
+      },
+    }));
+    // Insert using latest schedule: after a specific sibling, else after last child of parent
+    setSchedule((prev) => {
+      const pIdx = prev.findIndex((item) => item.id === parentId);
+      if (pIdx < 0) return prev;
+      let insertAt = pIdx;
+      if (insertAfterId != null) {
+        const afterIdx = prev.findIndex((item) => item.id === insertAfterId);
+        if (afterIdx >= 0) {
+          insertAt = afterIdx;
+        }
+      } else {
+        for (let i = pIdx + 1; i < prev.length; i++) {
+          if (
+            isTimedMarkerItem(prev[i]) ||
+            isIndentedScheduleItem(prev[i], indentedCuesRef.current)
+          ) {
+            insertAt = i;
+          } else {
+            break;
+          }
+        }
+      }
+      const next = [...prev];
+      next.splice(insertAt + 1, 0, marker);
+      return next;
+    });
+    handleUserEditing();
+    setTimedMarkerModal(null);
+    handleModalClosed();
+
+    if (event?.id && user?.id) {
+      try {
+        await DatabaseService.markCueIndented(
+          event.id,
+          newId,
+          parentId,
+          user.id,
+          userName,
+          currentUserRole || 'EDITOR'
+        );
+      } catch (e) {
+        console.warn('Timed marker indent mark failed (row still grouped locally):', e);
+      }
+    }
+
+    logChange('ADD_ITEM', `Added timed marker under "${parent.segmentName}"`, {
+      changeType: 'ADD',
+      itemId: newId,
+      itemName: marker.segmentName,
+      details: {
+        ...markerFields,
+        parentId,
+        parentName: parent.segmentName,
+      },
+    });
+  };
+
   // Toggle indented status for a cue
   const toggleIndentedCue = async (itemId: number) => {
     if (!event?.id || !user?.id) return;
@@ -4300,6 +4566,7 @@ const RunOfShowPage: React.FC = () => {
       showBreakoutRoomModal ||
       showOtherRoomModal ||
       showDelayBlockModal ||
+      timedMarkerModal ||
       showCustomColumnModal ||
       showPublicBulkModal
     ) {
@@ -6605,8 +6872,20 @@ const RunOfShowPage: React.FC = () => {
       if (event?.id && user?.id) {
         const scheduleWithDurationSeconds = restoredSchedule.map((item: ScheduleItem) => ({
           ...item,
-          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
-          isIndented: indentedCues[item.id] ? true : false
+          duration_seconds: isTimedMarkerItem(item)
+            ? 0
+            : (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+          isIndented: Boolean(
+            indentedCues[item.id] || item.isTimedMarker || item.isIndented
+          ),
+          ...(isTimedMarkerItem(item)
+            ? {
+                ...timedMarkerPersistFields(item),
+                durationHours: 0,
+                durationMinutes: 0,
+                durationSeconds: 0,
+              }
+            : {}),
         }));
         DatabaseService.saveRunOfShowData({
           event_id: event.id,
@@ -7264,8 +7543,21 @@ const RunOfShowPage: React.FC = () => {
       const indentedNow = indentedCuesRef.current;
       let scheduleWithDurationSeconds = scheduleNow.map(item => ({
         ...item,
-        duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
-        isIndented: indentedNow[item.id] ? true : false
+        duration_seconds: isTimedMarkerItem(item)
+          ? 0
+          : (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+        // Timed markers always stay indented; don't wipe isIndented if indented_cues hasn't caught up yet
+        isIndented: Boolean(
+          indentedNow[item.id] || item.isTimedMarker || item.isIndented
+        ),
+        ...(isTimedMarkerItem(item)
+          ? {
+              ...timedMarkerPersistFields(item),
+              durationHours: 0,
+              durationMinutes: 0,
+              durationSeconds: 0,
+            }
+          : {}),
       }));
 
       // Skip overwriting rows currently locked by someone else — keep last synced copy
@@ -8000,7 +8292,16 @@ const RunOfShowPage: React.FC = () => {
               };
             }
           });
-          setIndentedCues(map);
+          setIndentedCues((prev) => {
+            const merged = { ...map };
+            for (const [idStr, entry] of Object.entries(prev)) {
+              const id = Number(idStr);
+              if (merged[id]) continue;
+              const row = scheduleRef.current?.find((s) => s.id === id);
+              if (row?.isTimedMarker || entry) merged[id] = entry;
+            }
+            return merged;
+          });
           return;
         }
         if (data && data.item_id != null && data.parent_item_id != null) {
@@ -11175,6 +11476,13 @@ const RunOfShowPage: React.FC = () => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
 
+    // Timed markers: absolute = fixed clock; offset = parent scheduled + offset
+    if (isTimedMarkerItem(currentItem)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      const parentStart = parentIndex >= 0 ? calculateStartTime(parentIndex) : '';
+      return resolveTimedMarkerDisplayTime(currentItem, parentStart);
+    }
+
     // Indented rows (e.g. sub-breakouts) share the parent row's start time
     if (isIndentedScheduleItem(currentItem, indentedCues)) {
       const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
@@ -11324,6 +11632,19 @@ const RunOfShowPage: React.FC = () => {
   const calculateStartTimeWithOvertime = (index: number) => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
+
+    // Absolute markers keep wall-clock time; offset markers follow parent OT
+    if (isTimedMarkerItem(currentItem)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      const parentStart =
+        parentIndex >= 0 &&
+        normalizeMarkerTimeMode(currentItem.markerTimeMode) !== 'absolute'
+          ? calculateStartTimeWithOvertime(parentIndex)
+          : parentIndex >= 0
+            ? calculateStartTime(parentIndex)
+            : '';
+      return resolveTimedMarkerDisplayTime(currentItem, parentStart);
+    }
 
     if (isIndentedScheduleItem(currentItem, indentedCues)) {
       const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
@@ -11552,6 +11873,11 @@ const RunOfShowPage: React.FC = () => {
       }
       if (item.isIndented && isSubCueResolumeArmedRow(item.id)) {
         classNames.set(item.id, 'bg-purple-950/60 ring-1 ring-inset ring-purple-400');
+        return;
+      }
+      // Timed markers stay sky-tinted — never amber Play/loaded styling from parent
+      if (item.isTimedMarker) {
+        classNames.set(item.id, 'bg-sky-950/50 border-l-4 border-l-sky-500');
         return;
       }
       if (loadedCueDependents.has(item.id)) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
@@ -15188,6 +15514,27 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              handleUserEditing();
+                              setActiveJumpMenu(null);
+                              addTimedMarkerAfter(item.id);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sky-100 hover:bg-slate-600 flex items-center gap-2 border-t border-slate-600"
+                            title={
+                              isTimedMarkerItem(item) || isIndentedScheduleItem(item, indentedCues)
+                                ? 'Add another timed marker after this row (same parent)'
+                                : 'Add a timed marker under this cue (start time, no duration)'
+                            }
+                          >
+                            <span>◇</span>
+                            <span>
+                              {isTimedMarkerItem(item)
+                                ? 'Add Timed Marker After'
+                                : 'Add Timed Marker'}
+                            </span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                                 alert('Only EDITORs can set other room. Please change your role to EDITOR.');
                                 return;
@@ -15430,6 +15777,10 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot indent/unindent items. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
+                          if (isTimedMarkerItem(item)) {
+                            alert('Timed markers stay grouped under their parent. Delete the marker to remove it.');
+                            return;
+                          }
                           
                           // Use new database-backed indent logic
                           toggleIndentedCue(item.id);
@@ -15438,14 +15789,22 @@ const RunOfShowPage: React.FC = () => {
                         className={`w-7 h-7 text-white flex items-center justify-center text-lg rounded font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
                             ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                            : indentedCues[item.id] 
-                              ? 'bg-orange-600 hover:bg-orange-500' 
+                            : isTimedMarkerItem(item) || indentedCues[item.id]
+                              ? 'bg-orange-600 hover:bg-orange-500'
                               : 'bg-slate-600 hover:bg-slate-500'
-                        }`}
-                        disabled={currentUserRole === 'VIEWER'}
-                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot indent/unindent items' : (indentedCues[item.id] ? "Unindent (group with row above)" : "Indent (group with row above)")}
+                        } ${isTimedMarkerItem(item) ? 'cursor-not-allowed' : ''}`}
+                        disabled={currentUserRole === 'VIEWER' || isTimedMarkerItem(item)}
+                        title={
+                          isTimedMarkerItem(item)
+                            ? 'Timed marker (grouped under parent)'
+                            : currentUserRole === 'VIEWER'
+                              ? 'Viewers cannot indent/unindent items'
+                              : indentedCues[item.id]
+                                ? 'Unindent (group with row above)'
+                                : 'Indent (group with row above)'
+                        }
                       >
-                        {indentedCues[item.id] ? '↗' : '↘'}
+                        {indentedCues[item.id] || isTimedMarkerItem(item) ? '↗' : '↘'}
                       </button>
                       <button
                         onClick={() => {
@@ -15555,7 +15914,9 @@ const RunOfShowPage: React.FC = () => {
                           itemId={item.id}
                           index={originalIndex >= 0 ? originalIndex : index}
                           width={columnWidths.start}
-                          isIndented={Boolean(indentedCues[item.id] || item.isIndented)}
+                          isIndented={Boolean(
+                            indentedCues[item.id] || item.isIndented || item.isTimedMarker
+                          )}
                           showMode={showMode}
                           overtimeMinutes={overtimeMinutes}
                           startCueId={startCueId}
@@ -15564,6 +15925,13 @@ const RunOfShowPage: React.FC = () => {
                           lockedStartTime={lockedStartTimes[item.id] || null}
                           calculateStartTime={calculateStartTime}
                           calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+                          isTimedMarker={item.isTimedMarker === true}
+                          markerTimeMode={
+                            item.markerTimeMode === 'absolute' ? 'absolute' : 'offset'
+                          }
+                          onEditTimedMarker={
+                            item.isTimedMarker ? () => editTimedMarkerTime(item.id) : undefined
+                          }
                           className="border-r-0 h-full"
                         />
                       </div>
@@ -15900,6 +16268,7 @@ const RunOfShowPage: React.FC = () => {
                         saveToAPI={saveToAPI}
                         onNotesChipUpdated={applyNotesChipToOpenEditor}
                         persistCueRecording={persistCueRecording}
+                        onEditTimedMarker={editTimedMarkerTime}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
                         setEditingVoItemId={setEditingVoItemId}
@@ -15992,7 +16361,27 @@ const RunOfShowPage: React.FC = () => {
                         {item.programType === 'Delay Block' ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
                       </div>
                       <div className="flex flex-col gap-1">
-                        {!indentedCues[item.id] ? (
+                        {isTimedMarkerItem(item) ? (
+                          <>
+                            {/* Timed markers never run timers — no Play/Stop even if parent is loaded/running */}
+                            <button
+                              type="button"
+                              disabled
+                              className="px-3 py-1 rounded text-sm font-bold bg-gray-500 text-gray-300 cursor-not-allowed"
+                              title="Timed markers have no timer — they only mark a time under the parent cue"
+                            >
+                              MARKER
+                            </button>
+                            <button
+                              type="button"
+                              disabled
+                              className="px-3 py-1 rounded text-sm font-bold bg-slate-700 text-slate-500 cursor-not-allowed"
+                              title="Timed markers cannot play or stop"
+                            >
+                              —
+                            </button>
+                          </>
+                        ) : !indentedCues[item.id] ? (
                           <>
                             <button
                               onClick={async () => {
@@ -16105,7 +16494,7 @@ const RunOfShowPage: React.FC = () => {
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : !isParentCueRunning(item.id)
                                     ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                    : subPlaying
+                                      : subPlaying
                                       ? isSubResolumePlayingRow
                                         ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900'
                                         : 'bg-red-600 hover:bg-red-500 text-white'
@@ -18277,6 +18666,47 @@ const RunOfShowPage: React.FC = () => {
           }}
         />
       )}
+
+      {timedMarkerModal && (() => {
+        const parentIndex = schedule.findIndex((s) => s.id === timedMarkerModal.parentId);
+        const parent = parentIndex >= 0 ? schedule[parentIndex] : null;
+        const parentStart =
+          parentIndex >= 0 ? calculateStartTime(parentIndex) || '' : '';
+        const editing =
+          timedMarkerModal.mode === 'edit' && timedMarkerModal.itemId != null
+            ? schedule.find((s) => s.id === timedMarkerModal.itemId)
+            : null;
+        return (
+          <TimedMarkerModal
+            isOpen
+            parentSegmentName={parent?.segmentName || 'cue'}
+            parentStartDisplay={parentStart}
+            initialMode={
+              editing ? normalizeMarkerTimeMode(editing.markerTimeMode) : 'absolute'
+            }
+            initialOffsetSeconds={
+              editing
+                ? normalizeMarkerOffsetSeconds(editing.markerOffsetSeconds)
+                : 0
+            }
+            initialAbsoluteSeconds={
+              editing?.markerAbsoluteSeconds != null
+                ? normalizeMarkerAbsoluteSeconds(editing.markerAbsoluteSeconds)
+                : undefined
+            }
+            initialLabel={editing?.segmentName || 'Timed marker'}
+            title={timedMarkerModal.mode === 'edit' ? 'Edit Timed Marker' : 'Add Timed Marker'}
+            confirmLabel={timedMarkerModal.mode === 'edit' ? 'Save marker' : 'Add marker'}
+            onClose={() => {
+              setTimedMarkerModal(null);
+              handleModalClosed();
+            }}
+            onConfirm={(result) => {
+              void applyTimedMarkerModal(result);
+            }}
+          />
+        );
+      })()}
 
       {/* Filter View Modal */}
       {showFilterModal && (

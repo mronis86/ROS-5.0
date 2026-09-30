@@ -16,6 +16,11 @@ export type StartTimeColumnCellProps = {
   /** Extra class on the outer cell (e.g. side-column row bg). */
   className?: string;
   style?: React.CSSProperties;
+  /** Timed marker: click Start to edit time / mode. */
+  isTimedMarker?: boolean;
+  /** absolute = fixed clock; offset = follows parent OT */
+  markerTimeMode?: 'absolute' | 'offset';
+  onEditTimedMarker?: () => void;
 };
 
 /**
@@ -36,6 +41,9 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
   calculateStartTimeWithOvertime,
   className = '',
   style,
+  isTimedMarker = false,
+  markerTimeMode = 'offset',
+  onEditTimedMarker,
 }) => {
   const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
   const displayedStart = calculateStartTimeWithOvertime
@@ -74,11 +82,32 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
 
   return (
     <div
-      className={`px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 ${className}`}
+      className={`px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 ${className} ${
+        isTimedMarker && onEditTimedMarker ? 'cursor-pointer hover:bg-sky-950/40' : ''
+      }`}
       style={{ width, ...style }}
+      onClick={isTimedMarker && onEditTimedMarker ? onEditTimedMarker : undefined}
+      title={
+        isTimedMarker
+          ? markerTimeMode === 'absolute'
+            ? 'Absolute timed marker — fixed clock time (does not move with parent overtime). Click to edit.'
+            : 'Offset timed marker — relative to parent (slides with parent overtime). Click to edit.'
+          : undefined
+      }
     >
       <div className="flex flex-col items-center gap-1">
-        <span className="text-white font-mono text-base font-bold">{primaryLabel}</span>
+        <span
+          className={`font-mono text-base font-bold ${
+            isTimedMarker ? 'text-sky-300' : 'text-white'
+          }`}
+        >
+          {primaryLabel}
+        </span>
+        {isTimedMarker ? (
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-400/90">
+            {markerTimeMode === 'absolute' ? 'abs' : 'offset'}
+          </span>
+        ) : null}
         {startTimeRolled && wasStart && (
           <span className="text-xs text-slate-400">was {wasStart}</span>
         )}
