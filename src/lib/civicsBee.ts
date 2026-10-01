@@ -325,6 +325,34 @@ export function splitStudentNameForGraphics(studentName: string): {
   };
 }
 
+/** Split "First … Last" into first name(s) + full last name (award CSVs). */
+export function splitStudentNameFull(studentName: string): {
+  firstName: string;
+  lastName: string;
+} {
+  const trimmed = String(studentName || '').trim().replace(/\s+/g, ' ');
+  if (!trimmed) return { firstName: '', lastName: '' };
+  const parts = trimmed.split(' ');
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: '' };
+  }
+  return {
+    firstName: parts.slice(0, -1).join(' '),
+    lastName: parts[parts.length - 1],
+  };
+}
+
+export function isCivicsBeeAwardCsvFilter(
+  filter: CivicsBeeCsvFilter
+): filter is CivicsBeePlace | 'peoplesChoice' {
+  return (
+    filter === '1st' ||
+    filter === '2nd' ||
+    filter === '3rd' ||
+    filter === 'peoplesChoice'
+  );
+}
+
 function escapeCivicsCsvField(value: string): string {
   const s = String(value ?? '');
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
@@ -332,18 +360,13 @@ function escapeCivicsCsvField(value: string): string {
 }
 
 /** CSV / live-URL filter: roster tiers plus award slices. */
-export type CivicsBeeCsvFilter =
-  | CivicsBeeFilter
-  | CivicsBeePlace
-  | 'peoplesChoice'
-  | 'awards';
+export type CivicsBeeCsvFilter = CivicsBeeFilter | CivicsBeePlace | 'peoplesChoice';
 
 export const CIVICS_BEE_AWARD_CSV_OPTIONS: Array<{
-  value: CivicsBeeCsvFilter;
+  value: CivicsBeePlace | 'peoplesChoice';
   label: string;
   fileSlug: string;
 }> = [
-  { value: 'awards', label: 'All awards', fileSlug: 'awards' },
   { value: '1st', label: '1st Place', fileSlug: '1st' },
   { value: '2nd', label: '2nd Place', fileSlug: '2nd' },
   { value: '3rd', label: '3rd Place', fileSlug: '3rd' },
@@ -352,7 +375,6 @@ export const CIVICS_BEE_AWARD_CSV_OPTIONS: Array<{
 
 export const CIVICS_BEE_CSV_FILTER_LABELS: Record<string, string> = {
   ...CIVICS_BEE_FILTER_LABELS,
-  awards: 'All awards',
   '1st': '1st Place',
   '2nd': '2nd Place',
   '3rd': '3rd Place',
@@ -370,13 +392,14 @@ export function normalizeCivicsBeeCsvFilter(raw: unknown): CivicsBeeCsvFilter {
     f === '1st' ||
     f === '2nd' ||
     f === '3rd' ||
-    f === 'peoplesChoice' ||
-    f === 'awards'
+    f === 'peoplesChoice'
   ) {
     return f;
   }
   // common aliases
   if (f === 'peoples' || f === 'peoples-choice' || f === 'people') return 'peoplesChoice';
+  // legacy combined awards feed → top5 roster slice
+  if (f === 'awards') return 'top5';
   return 'participating';
 }
 
@@ -387,22 +410,7 @@ export function entryMeetsCsvFilter(entry: CivicsBeeEntry, filter: CivicsBeeCsvF
   if (filter === 'peoplesChoice') {
     return entry.participating && entry.peoplesChoice === true;
   }
-  if (filter === 'awards') {
-    return entry.participating && (!!entry.place || entry.peoplesChoice === true);
-  }
   return entryMeetsFilter(entry, filter);
-}
-
-const AWARD_SORT_RANK: Record<string, number> = {
-  '1st': 1,
-  '2nd': 2,
-  '3rd': 3,
-};
-
-function awardSortKey(entry: CivicsBeeEntry): number {
-  if (entry.place && AWARD_SORT_RANK[entry.place] != null) return AWARD_SORT_RANK[entry.place];
-  if (entry.peoplesChoice) return 4;
-  return 99;
 }
 
 export type CivicsBeeGraphicsRow = {
@@ -410,9 +418,13 @@ export type CivicsBeeGraphicsRow = {
   lastInitial: string;
   state: string;
   code: string;
-  place: string;
-  peoplesChoice: string;
-  award: string;
+};
+
+export type CivicsBeeAwardCsvRow = {
+  firstName: string;
+  lastName: string;
+  state: string;
+  code: string;
 };
 
 /** Graphics-oriented rows: First Name, Last initial, State (full name). */
@@ -420,52 +432,71 @@ export function buildCivicsBeeGraphicsRows(
   entries: CivicsBeeEntry[],
   filter: CivicsBeeCsvFilter = 'participating'
 ): CivicsBeeGraphicsRow[] {
-  const filtered = entries
+  return entries
     .filter((e) => entryMeetsCsvFilter(e, filter))
-    .filter((e) => e.studentName.trim().length > 0);
-
-  const ordered =
-    filter === 'awards' ||
-    filter === '1st' ||
-    filter === '2nd' ||
-    filter === '3rd' ||
-    filter === 'peoplesChoice'
-      ? [...filtered].sort((a, b) => awardSortKey(a) - awardSortKey(b) || a.name.localeCompare(b.name))
-      : filtered;
-
-  return ordered.map((e) => {
-    const { firstName, lastInitial } = splitStudentNameForGraphics(e.studentName);
-    const awardParts: string[] = [];
-    if (e.place) awardParts.push(e.place);
-    if (e.peoplesChoice) awardParts.push("People's Choice");
-    return {
-      firstName,
-      lastInitial,
-      state: e.name,
-      code: e.code,
-      place: e.place || '',
-      peoplesChoice: e.peoplesChoice ? 'Yes' : '',
-      award: awardParts.join(' + '),
-    };
-  });
+    .filter((e) => e.studentName.trim().length > 0)
+    .map((e) => {
+      const { firstName, lastInitial } = splitStudentNameForGraphics(e.studentName);
+      return {
+        firstName,
+        lastInitial,
+        state: e.name,
+        code: e.code,
+      };
+    });
 }
 
-/** CSV for custom graphics: First Name, Last Initial, State, Place, People's Choice, Award */
+/** Award rows: First Name, full Last Name, State. */
+export function buildCivicsBeeAwardCsvRows(
+  entries: CivicsBeeEntry[],
+  filter: CivicsBeePlace | 'peoplesChoice'
+): CivicsBeeAwardCsvRow[] {
+  return entries
+    .filter((e) => entryMeetsCsvFilter(e, filter))
+    .filter((e) => e.studentName.trim().length > 0)
+    .map((e) => {
+      const { firstName, lastName } = splitStudentNameFull(e.studentName);
+      return {
+        firstName,
+        lastName,
+        state: e.name,
+        code: e.code,
+      };
+    });
+}
+
+/**
+ * CSV for custom graphics.
+ * Tier/roster: First Name, Last Initial, State
+ * Award feeds (1st/2nd/3rd/People's): First Name, Last Name, State
+ */
 export function buildCivicsBeeGraphicsCsv(
   entries: CivicsBeeEntry[],
   filter: CivicsBeeCsvFilter = 'participating'
 ): string {
+  if (isCivicsBeeAwardCsvFilter(filter)) {
+    const rows = buildCivicsBeeAwardCsvRows(entries, filter);
+    const lines = ['First Name,Last Name,State'];
+    for (const row of rows) {
+      lines.push(
+        [
+          escapeCivicsCsvField(row.firstName),
+          escapeCivicsCsvField(row.lastName),
+          escapeCivicsCsvField(row.state),
+        ].join(',')
+      );
+    }
+    return `${lines.join('\n')}\n`;
+  }
+
   const rows = buildCivicsBeeGraphicsRows(entries, filter);
-  const lines = ["First Name,Last Initial,State,Place,People's Choice,Award"];
+  const lines = ['First Name,Last Initial,State'];
   for (const row of rows) {
     lines.push(
       [
         escapeCivicsCsvField(row.firstName),
         escapeCivicsCsvField(row.lastInitial),
         escapeCivicsCsvField(row.state),
-        escapeCivicsCsvField(row.place),
-        escapeCivicsCsvField(row.peoplesChoice),
-        escapeCivicsCsvField(row.award),
       ].join(',')
     );
   }

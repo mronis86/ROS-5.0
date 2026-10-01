@@ -205,8 +205,8 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           <div>
             <h3 className="text-sm font-semibold text-white">Graphics CSV</h3>
             <p className="text-xs text-slate-400">
-              Columns: First Name, Last Initial, State, Place, People&apos;s Choice, Award — filtered
-              to {CIVICS_BEE_CSV_FILTER_LABELS[graphicsFilter] || graphicsFilter}
+              Columns: First Name, Last Initial, State — filtered to{' '}
+              {CIVICS_BEE_CSV_FILTER_LABELS[graphicsFilter] || graphicsFilter}
               {filter === 'all' ? ' (All view uses Participating for the feed)' : ''}.
             </p>
           </div>
@@ -243,8 +243,8 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
         <div>
           <h3 className="text-sm font-semibold text-amber-100">Award CSVs</h3>
           <p className="text-xs text-slate-400">
-            Dedicated feeds for podium + People&apos;s Choice (download or copy a live URL for
-            graphics). Save the roster after marking awards so live URLs stay current.
+            1st / 2nd / 3rd / People&apos;s Choice — columns: First Name, Last Name, State. Save the
+            roster after marking awards so live URLs stay current.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
