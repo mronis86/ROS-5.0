@@ -48,6 +48,7 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
   const [importOpen, setImportOpen] = useState(false);
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [graphicsNotice, setGraphicsNotice] = useState<string | null>(null);
+  const [awardCsvOpen, setAwardCsvOpen] = useState(false);
 
   const graphicsFilter: CivicsBeeCsvFilter = filter === 'all' ? 'participating' : filter;
 
@@ -239,50 +240,6 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
         {graphicsNotice && <p className="text-xs text-emerald-300">{graphicsNotice}</p>}
       </div>
 
-      <div className="rounded-lg border border-amber-800/50 bg-amber-950/20 px-4 py-3 space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-amber-100">Award CSVs</h3>
-          <p className="text-xs text-slate-400">
-            1st / 2nd / 3rd / People&apos;s Choice — columns: First Name, Last Name, State. Save the
-            roster after marking awards so live URLs stay current.
-          </p>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {CIVICS_BEE_AWARD_CSV_OPTIONS.map((opt) => {
-            const url = graphicsCsvUrlFor(opt.value);
-            return (
-              <div
-                key={opt.value}
-                className="rounded-md border border-slate-700 bg-slate-950/70 px-3 py-2 space-y-2"
-              >
-                <div className="text-xs font-semibold text-slate-100">{opt.label}</div>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => downloadCsv(opt.value, opt.fileSlug)}
-                    className="rounded border border-slate-600 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
-                  >
-                    Download
-                  </button>
-                  {url ? (
-                    <button
-                      type="button"
-                      onClick={() => void copyCsvUrl(opt.value, opt.label)}
-                      className="rounded border border-violet-600/70 bg-violet-950/40 px-2 py-1 text-[11px] font-semibold text-violet-100 hover:bg-violet-900/50"
-                    >
-                      Copy URL
-                    </button>
-                  ) : null}
-                </div>
-                {url ? (
-                  <code className="block break-all text-[10px] text-slate-500">{url}</code>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
       <div className="flex flex-wrap gap-2">
         {FILTERS.map((f) => {
           const count = countCivicsBeeByFilter(roster.entries, f);
@@ -331,6 +288,56 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           </div>
         )}
       </div>
+
+      {showAwards ? (
+        <div className="rounded-md border border-slate-700 bg-slate-900/40">
+          <button
+            type="button"
+            onClick={() => setAwardCsvOpen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-300 hover:bg-slate-800/60"
+            aria-expanded={awardCsvOpen}
+          >
+            <span>Award CSV links (1st / 2nd / 3rd / People&apos;s)</span>
+            <span className="text-slate-500">{awardCsvOpen ? '▾' : '▸'}</span>
+          </button>
+          {awardCsvOpen ? (
+            <div className="space-y-2 border-t border-slate-700 px-3 py-2">
+              <p className="text-[11px] text-slate-500">
+                First Name, Last Name, State — save roster after marking awards for live URLs.
+              </p>
+              <div className="divide-y divide-slate-800 rounded border border-slate-700 bg-slate-950/50">
+                {CIVICS_BEE_AWARD_CSV_OPTIONS.map((opt) => (
+                  <div
+                    key={opt.value}
+                    className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5"
+                  >
+                    <span className="text-xs font-medium text-slate-200">{opt.label}</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => downloadCsv(opt.value, opt.fileSlug)}
+                        className="rounded border border-slate-600 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
+                      >
+                        Download
+                      </button>
+                      {eventId ? (
+                        <button
+                          type="button"
+                          onClick={() => void copyCsvUrl(opt.value, opt.label)}
+                          className="rounded border border-violet-600/60 px-2 py-0.5 text-[11px] font-semibold text-violet-200 hover:bg-violet-950/40"
+                        >
+                          Copy URL
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {graphicsNotice && <p className="text-[11px] text-emerald-300">{graphicsNotice}</p>}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="overflow-hidden rounded-lg border border-slate-700">
         <div className="max-h-[min(70vh,720px)] overflow-auto">
