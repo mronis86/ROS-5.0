@@ -1,4 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  normalizeSpeechToken,
+  tokenizeScriptForSpeech,
+} from '../lib/teleprompter-voice-alignment';
 
 export type TeleprompterClockComment = {
   id: string;
@@ -19,6 +23,14 @@ export type TeleprompterClockSettings = {
   readingGuideColor?: string;
 };
 
+export type TeleprompterVoiceHighlight = {
+  enabled: boolean;
+  wordIndex: number | null;
+  lineIndex: number | null;
+  style: 'off' | 'words' | 'band';
+  color: string;
+};
+
 export type TeleprompterClockFeed = {
   enabled: boolean;
   scriptText: string;
@@ -27,6 +39,7 @@ export type TeleprompterClockFeed = {
   guideLinePosition?: number;
   comments?: TeleprompterClockComment[];
   scriptName?: string;
+  voiceHighlight?: TeleprompterVoiceHighlight | null;
 };
 
 /** Match TeleprompterPage COMMENT_TYPES styling */
@@ -44,15 +57,29 @@ const COMMENT_META: Record<string, { label: string; color: string; bgColor: stri
 const DESIGN_W = 1920;
 const DESIGN_H = 1080;
 
+function hexWithAlpha(hex: string, alpha: string): string {
+  const raw = hex.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return `${raw}${alpha}`;
+  if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+    const r = raw[1];
+    const g = raw[2];
+    const b = raw[3];
+    return `#${r}${r}${g}${g}${b}${b}${alpha}`;
+  }
+  return raw;
+}
+
 /**
- * 16:9 teleprompter for Clock / Fullscreen Timer.
+ * 16:9 teleprompter for Clock / Fullscreen Timer / Director View.
  * Same 1920×1080 design canvas as Viewer; scaled via a sized wrapper so it stays centered
  * (transform-only scale leaves a 1920×1080 layout box that browsers clip off-center).
  */
 export const TeleprompterClockOverlay: React.FC<{
   feed: TeleprompterClockFeed;
   className?: string;
-}> = ({ feed, className = '' }) => {
+  /** When false, leave scroll to the user (Director View free-scroll). Default true. */
+  followScroll?: boolean;
+}> = ({ feed, className = '', followScroll = true }) => {
   const outerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -66,6 +93,19 @@ export const TeleprompterClockOverlay: React.FC<{
   const fontSize = settings.fontSize || 48;
   const lineHeight = settings.lineHeight || 1.4;
   const mirrored = !!settings.isMirroredHorizontal;
+  const voice = feed.voiceHighlight;
+  // Show speaker mark whenever the scroller is broadcasting an active highlight
+  const voiceOn = !!(
+    voice &&
+    voice.style !== 'off' &&
+    (voice.enabled ||
+      voice.wordIndex != null ||
+      voice.lineIndex != null)
+  );
+  const speechTokens = useMemo(
+    () => (voiceOn ? tokenizeScriptForSpeech(feed.scriptText || '') : []),
+    [voiceOn, feed.scriptText]
+  );
 
   useLayoutEffect(() => {
     const el = outerRef.current;
@@ -81,15 +121,82 @@ export const TeleprompterClockOverlay: React.FC<{
     return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
+  // Apply scroll before paint so Director Follow stays locked to the scroller
+  // (voice highlight reflow can shift content — re-apply after that too).
+  useLayoutEffect(() => {
+    if (!followScroll) return;
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = feed.scrollPosition || 0;
-  }, [feed.scrollPosition, scale, feed.scriptText]);
+    const target = feed.scrollPosition || 0;
+    if (Math.abs(el.scrollTop - target) > 0.5) {
+      el.scrollTop = target;
+    }
+  }, [
+    feed.scrollPosition,
+    scale,
+    feed.scriptText,
+    followScroll,
+    feed.voiceHighlight?.wordIndex,
+    feed.voiceHighlight?.lineIndex,
+    feed.voiceHighlight?.enabled,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.showComments,
+  ]);
 
   const commentsForPrevLine = (lineIndex: number) => {
     if (!settings.showComments || lineIndex <= 0) return [];
     return comments.filter((c) => c.lineNumber === lineIndex - 1);
+  };
+
+  const renderVoiceLineText = (line: string, lineIndex: number) => {
+    if (!line) return '\u00A0';
+    if (!voiceOn || !voice) return line;
+
+    const parts = line.split(/(\s+)/);
+    let tokenIdx = speechTokens.findIndex((t) => t.lineIndex === lineIndex);
+    if (tokenIdx < 0) return line;
+
+    const useUnderline = voice.style === 'words' && voice.wordIndex != null;
+    const color = voice.color || '#FBBF24';
+
+    return parts.map((part, i) => {
+      if (!part || /^\s+$/.test(part)) {
+        return <React.Fragment key={i}>{part}</React.Fragment>;
+      }
+      if (/^\[[^\]]*\]$/.test(part.trim())) {
+        return <React.Fragment key={i}>{part}</React.Fragment>;
+      }
+      const norm = normalizeSpeechToken(part);
+      const expected = tokenIdx >= 0 ? speechTokens[tokenIdx] : null;
+      if (!norm || !expected || expected.lineIndex !== lineIndex || expected.word !== norm) {
+        return <React.Fragment key={i}>{part}</React.Fragment>;
+      }
+      const thisWordIdx = tokenIdx;
+      tokenIdx += 1;
+      const spoken =
+        useUnderline && voice.wordIndex != null && thisWordIdx <= voice.wordIndex;
+      const current = useUnderline && thisWordIdx === voice.wordIndex;
+      return (
+        <span
+          key={i}
+          data-voice-word={thisWordIdx}
+          style={
+            spoken
+              ? {
+                  textDecoration: 'underline',
+                  textDecorationColor: color,
+                  textDecorationThickness: current ? '3px' : '2px',
+                  textUnderlineOffset: '6px',
+                  color: current ? color : undefined,
+                }
+              : undefined
+          }
+        >
+          {part}
+        </span>
+      );
+    });
   };
 
   const stageW = DESIGN_W * scale;
@@ -136,7 +243,8 @@ export const TeleprompterClockOverlay: React.FC<{
                 paddingBottom: 540,
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'flex-start',
+                // Match Teleprompter 16:9 preview / viewer (was flex-start — caused vertical drift)
+                justifyContent: 'center',
               }}
             >
               <div
@@ -149,13 +257,30 @@ export const TeleprompterClockOverlay: React.FC<{
                   fontWeight: 500,
                   width: '95%',
                   margin: '0 auto',
-                  boxSizing: 'border-box',
                 }}
               >
                 {lines.map((line, index) => {
                   const lineComments = commentsForPrevLine(index);
+                  const voiceLineActive =
+                    voiceOn &&
+                    voice?.style === 'band' &&
+                    voice.lineIndex === index;
+                  const voiceHighlightCss: React.CSSProperties = voiceLineActive
+                    ? {
+                        backgroundColor: hexWithAlpha(voice?.color || '#FBBF24', '40'),
+                        borderRadius: 4,
+                        boxShadow: `inset 0 0 0 1px ${hexWithAlpha(voice?.color || '#FBBF24', '88')}`,
+                        paddingLeft: '0.5rem',
+                        paddingRight: '0.5rem',
+                      }
+                    : {};
                   return (
-                    <div key={index} className="mb-2" data-line-number={index}>
+                    <div
+                      key={index}
+                      className="mb-2 transition-[background-color,box-shadow] duration-200"
+                      style={voiceHighlightCss}
+                      data-line-number={index}
+                    >
                       {lineComments.length > 0 ? (
                         <div className="mb-2 space-y-2">
                           {lineComments.map((c) => {
@@ -183,7 +308,7 @@ export const TeleprompterClockOverlay: React.FC<{
                           })}
                         </div>
                       ) : null}
-                      <div>{line || '\u00A0'}</div>
+                      <div>{renderVoiceLineText(line, index)}</div>
                     </div>
                   );
                 })}

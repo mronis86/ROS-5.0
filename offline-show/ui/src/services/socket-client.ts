@@ -367,13 +367,31 @@ class SocketClient {
     }
   }
 
-  emitScriptScroll(scrollPosition: number, lineNumber: number, fontSize: number) {
+  emitScriptScroll(
+    scrollPosition: number,
+    lineNumber: number,
+    fontSize: number,
+    extras?: {
+      voiceHighlight?: {
+        enabled: boolean;
+        wordIndex: number | null;
+        lineIndex: number | null;
+        style: 'off' | 'words' | 'band';
+        color: string;
+      } | null;
+      guideLinePosition?: number;
+      settings?: Record<string, unknown>;
+    } | null
+  ) {
     if (this.socket && this.eventId) {
       this.socket.emit('scriptScrollUpdate', {
         eventId: this.eventId,
         scrollPosition,
         lineNumber,
         fontSize,
+        voiceHighlight: extras?.voiceHighlight ?? null,
+        guideLinePosition: extras?.guideLinePosition,
+        settings: extras?.settings,
       });
     }
   }
@@ -415,6 +433,13 @@ class SocketClient {
     guideLinePosition?: number;
     comments?: any[];
     scriptName?: string;
+    voiceHighlight?: {
+      enabled: boolean;
+      wordIndex: number | null;
+      lineIndex: number | null;
+      style: 'off' | 'words' | 'band';
+      color: string;
+    } | null;
   }) {
     if (this.socket && this.eventId) {
       this.socket.emit('teleprompterClockUpdate', {
@@ -426,6 +451,7 @@ class SocketClient {
         guideLinePosition: payload.guideLinePosition,
         comments: payload.comments,
         scriptName: payload.scriptName,
+        voiceHighlight: payload.voiceHighlight ?? null,
         timestamp: Date.now(),
       });
     }

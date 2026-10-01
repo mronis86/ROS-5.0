@@ -178,6 +178,11 @@ const TeleprompterPage: React.FC = () => {
 
   const voiceListenEnabledRef = useRef(false);
   const voiceMicCheckOnlyRef = useRef(false);
+  const voiceHighlightStyleRef = useRef(voiceHighlightStyle);
+  const voiceHighlightColorRef = useRef(voiceHighlightColor);
+  const voiceHighlightLineRef = useRef(voiceHighlightLine);
+  const voiceHighlightWordIndexRef = useRef(voiceHighlightWordIndex);
+  const lastVoiceBroadcastRef = useRef(0);
   /** Script word index — VoicePrompt-style matcher advances from here (final + interim). */
   const voiceCommittedAnchorRef = useRef(0);
   const voiceRecentTranscriptWordsRef = useRef<string[]>([]);
@@ -211,6 +216,19 @@ const TeleprompterPage: React.FC = () => {
   useEffect(() => {
     userRoleRef.current = userRole;
   }, [userRole]);
+
+  useEffect(() => {
+    voiceHighlightStyleRef.current = voiceHighlightStyle;
+  }, [voiceHighlightStyle]);
+  useEffect(() => {
+    voiceHighlightColorRef.current = voiceHighlightColor;
+  }, [voiceHighlightColor]);
+  useEffect(() => {
+    voiceHighlightLineRef.current = voiceHighlightLine;
+  }, [voiceHighlightLine]);
+  useEffect(() => {
+    voiceHighlightWordIndexRef.current = voiceHighlightWordIndex;
+  }, [voiceHighlightWordIndex]);
 
   // Handle disconnect timer confirmation
   const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
@@ -444,7 +462,22 @@ const TeleprompterPage: React.FC = () => {
     
     console.log('👁️ Viewer: Setting up teleprompter scroll sync listener');
     
-    const handleScrollSync = (data: { scrollPosition: number; lineNumber: number; fontSize: number; timestamp: number; eventId?: string }) => {
+    const handleScrollSync = (data: {
+      scrollPosition: number;
+      lineNumber: number;
+      fontSize: number;
+      timestamp: number;
+      eventId?: string;
+      guideLinePosition?: number;
+      voiceHighlight?: {
+        enabled?: boolean;
+        wordIndex?: number | null;
+        lineIndex?: number | null;
+        style?: 'off' | 'words' | 'band';
+        color?: string;
+      } | null;
+      settings?: Partial<TeleprompterSettings>;
+    }) => {
       console.log('📜 Teleprompter: Received scroll sync - line:', data.lineNumber, 'position:', data.scrollPosition);
       
       // Only process scroll sync if it's for the current event
@@ -453,9 +486,62 @@ const TeleprompterPage: React.FC = () => {
         return;
       }
       
-      // Sync font size first
-      if (data.fontSize && data.fontSize !== settings.fontSize) {
+      // Sync font / teleprompter settings from scroller (only when something changed)
+      if (data.settings && typeof data.settings === 'object') {
+        setSettings((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          const s = data.settings!;
+          const assign = <K extends keyof TeleprompterSettings>(key: K, value: TeleprompterSettings[K]) => {
+            if (value !== undefined && next[key] !== value) {
+              next[key] = value;
+              changed = true;
+            }
+          };
+          if (typeof s.fontSize === 'number') assign('fontSize', s.fontSize);
+          if (typeof s.lineHeight === 'number') assign('lineHeight', s.lineHeight);
+          if (s.textAlign) assign('textAlign', s.textAlign);
+          if (typeof s.textColor === 'string') assign('textColor', s.textColor);
+          if (typeof s.backgroundColor === 'string') assign('backgroundColor', s.backgroundColor);
+          if (typeof s.isMirroredHorizontal === 'boolean') {
+            assign('isMirroredHorizontal', s.isMirroredHorizontal);
+          }
+          if (typeof s.showComments === 'boolean') assign('showComments', s.showComments);
+          if (s.readingGuideMode) assign('readingGuideMode', s.readingGuideMode);
+          if (typeof s.readingGuideColor === 'string') assign('readingGuideColor', s.readingGuideColor);
+          return changed ? next : prev;
+        });
+      } else if (data.fontSize && data.fontSize !== settings.fontSize) {
         updateSettings({ fontSize: data.fontSize });
+      }
+
+      // Speaker highlight (words / band) from scroller → VIEWER
+      if ('voiceHighlight' in data) {
+        const vh = data.voiceHighlight;
+        if (!vh || vh.enabled === false || vh.style === 'off') {
+          setVoiceHighlightLine(null);
+          setVoiceHighlightWordIndex(null);
+          if (vh?.style === 'off' || vh?.style === 'words' || vh?.style === 'band') {
+            setVoiceHighlightStyle(vh.style);
+          }
+        } else {
+          if (vh.style === 'words' || vh.style === 'band' || vh.style === 'off') {
+            setVoiceHighlightStyle(vh.style);
+          }
+          if (typeof vh.color === 'string' && vh.color) {
+            setVoiceHighlightColor(vh.color);
+          }
+          setVoiceHighlightLine(
+            typeof vh.lineIndex === 'number' ? vh.lineIndex : null
+          );
+          setVoiceHighlightWordIndex(
+            typeof vh.wordIndex === 'number' ? vh.wordIndex : null
+          );
+        }
+      }
+
+      if (typeof data.guideLinePosition === 'number') {
+        setGuideLinePosition(data.guideLinePosition);
       }
       
       // Only handle scroll sync for VIEWER mode
@@ -629,14 +715,7 @@ const TeleprompterPage: React.FC = () => {
         if (eventId && previewScrollRef.current) {
           const now = Date.now();
           if (now - lastScrollBroadcastRef.current >= 50) { // 20 updates per second
-            const lineHeight = settings.fontSize * settings.lineHeight;
-            const currentLine = Math.floor(previewScrollRef.current.scrollTop / lineHeight);
-            
-            socketClient.emitScriptScroll(
-              previewScrollRef.current.scrollTop,
-              currentLine,
-              settings.fontSize
-            );
+            broadcastScriptScroll(previewScrollRef.current.scrollTop, settings.fontSize);
             pushClockFeedIfLive(true);
             lastScrollBroadcastRef.current = now;
           }
@@ -662,12 +741,48 @@ const TeleprompterPage: React.FC = () => {
   const getTeleprompterScrollTop = () =>
     previewScrollRef.current?.scrollTop ?? scriptRef.current?.scrollTop ?? 0;
 
+  const buildVoiceHighlightPayload = () => {
+    const style = voiceHighlightStyleRef.current;
+    const listening = voiceListenEnabledRef.current && !voiceMicCheckOnlyRef.current;
+    return {
+      enabled: listening && style !== 'off',
+      wordIndex: voiceHighlightWordIndexRef.current,
+      lineIndex: voiceHighlightLineRef.current,
+      style,
+      color: voiceHighlightColorRef.current || '#FBBF24',
+    };
+  };
+
+  const broadcastScriptScroll = (scrollPosition: number, fontSize: number) => {
+    const lineHeight = Math.max(1, fontSize * settings.lineHeight);
+    const currentLine = Math.floor(scrollPosition / lineHeight);
+    // Director Script Follow needs the same 16:9 viewport (guide + settings + voice)
+    // on the scroll feed — not only when "Send to Clock" is active.
+    socketClient.emitScriptScroll(scrollPosition, currentLine, fontSize, {
+      voiceHighlight: buildVoiceHighlightPayload(),
+      guideLinePosition,
+      settings: {
+        fontSize: settings.fontSize,
+        lineHeight: settings.lineHeight,
+        textAlign: settings.textAlign,
+        textColor: settings.textColor,
+        backgroundColor: settings.backgroundColor,
+        isMirroredHorizontal: settings.isMirroredHorizontal,
+        showComments: settings.showComments,
+        readingGuideMode: settings.readingGuideMode,
+        readingGuideColor: settings.readingGuideColor,
+      },
+    });
+  };
+
   const buildTeleprompterClockPayload = (overrides?: { scrollOnly?: boolean }) => {
     const scrollPosition = getTeleprompterScrollTop();
+    const voiceHighlight = buildVoiceHighlightPayload();
     if (overrides?.scrollOnly) {
       return {
         enabled: true as const,
         scrollPosition,
+        voiceHighlight,
       };
     }
     return {
@@ -693,6 +808,7 @@ const TeleprompterPage: React.FC = () => {
         type: c.type,
       })),
       scriptName: currentScriptName || undefined,
+      voiceHighlight,
     };
   };
 
@@ -773,6 +889,7 @@ const TeleprompterPage: React.FC = () => {
           enabled: true,
           scrollPosition: getTeleprompterScrollTop(),
           guideLinePosition: position,
+          voiceHighlight: buildVoiceHighlightPayload(),
         });
       }
     }
@@ -806,14 +923,7 @@ const TeleprompterPage: React.FC = () => {
       
       // Throttle to 20 updates per second for smoother sync
       if (timeSinceLastBroadcast >= 50) {
-        const lineHeight = settings.fontSize * settings.lineHeight;
-        const currentLine = Math.floor(scriptRef.current.scrollTop / lineHeight);
-        
-        socketClient.emitScriptScroll(
-          scriptRef.current.scrollTop,
-          currentLine,
-          settings.fontSize
-        );
+        broadcastScriptScroll(getTeleprompterScrollTop(), settings.fontSize);
         pushClockFeedIfLive(true);
         lastScrollBroadcastRef.current = now;
       }
@@ -958,8 +1068,7 @@ const TeleprompterPage: React.FC = () => {
           if (eventId) {
             const now = Date.now();
             if (now - lastScrollBroadcastRef.current >= 100) {
-              const currentLine = Math.floor(el.scrollTop / Math.max(1, lineHeightPx));
-              socketClient.emitScriptScroll(el.scrollTop, currentLine, settings.fontSize);
+              broadcastScriptScroll(el.scrollTop, settings.fontSize);
               pushClockFeedIfLive(true);
               lastScrollBroadcastRef.current = now;
             }
@@ -987,7 +1096,35 @@ const TeleprompterPage: React.FC = () => {
     settings.scrollSpeed,
     guideLinePosition,
   ]);
-  const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);  const clearVoiceHighlight = useCallback(() => {
+  const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);
+
+  /** Push speaker highlight to Director / clock followers even when scroll barely moves. */
+  useEffect(() => {
+    if (userRole !== 'SCROLLER' || !eventId) return;
+    const now = Date.now();
+    if (now - lastVoiceBroadcastRef.current < 50) return;
+    lastVoiceBroadcastRef.current = now;
+    broadcastScriptScroll(getTeleprompterScrollTop(), settings.fontSize);
+    pushClockFeedIfLive(true);
+    // Trailing flush so a throttled tick still lands the latest word
+    const t = window.setTimeout(() => {
+      lastVoiceBroadcastRef.current = Date.now();
+      broadcastScriptScroll(getTeleprompterScrollTop(), settings.fontSize);
+      pushClockFeedIfLive(true);
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [
+    voiceHighlightWordIndex,
+    voiceHighlightLine,
+    voiceHighlightStyle,
+    voiceHighlightColor,
+    voiceListenEnabled,
+    userRole,
+    eventId,
+    settings.fontSize,
+  ]);
+
+  const clearVoiceHighlight = useCallback(() => {
     setVoiceHighlightLine(null);
     setVoiceHighlightWordIndex(null);
   }, []);
@@ -1004,13 +1141,21 @@ const TeleprompterPage: React.FC = () => {
     return raw;
   }, []);
 
+  /** Local mic listen (scroller) or remote highlight feed (viewer). */
+  const showVoiceHighlight =
+    voiceHighlightStyle !== 'off' &&
+    (voiceListenEnabled ||
+      (userRole === 'VIEWER' &&
+        (voiceHighlightWordIndex != null || voiceHighlightLine != null)));
+
   /** Spoken words underlined up to the match cursor (Words highlight mode). */
   const renderVoiceLineText = useCallback(
     (line: string, lineIndex: number) => {
       if (!line) return '\u00A0';
 
-      // Always tag words while listening so scroll can measure highlight vs guide
-      if (!voiceListenEnabled) return line;
+      // Scroller: tag words while listening (measure + paint).
+      // Viewer: paint from scroller-synced highlight indices.
+      if (!showVoiceHighlight) return line;
 
       const parts = line.split(/(\s+)/);
       let tokenIdx = scriptSpeechTokens.findIndex((t) => t.lineIndex === lineIndex);
@@ -1058,7 +1203,7 @@ const TeleprompterPage: React.FC = () => {
       });
     },
     [
-      voiceListenEnabled,
+      showVoiceHighlight,
       voiceHighlightStyle,
       voiceHighlightWordIndex,
       voiceHighlightColor,
@@ -2501,16 +2646,8 @@ const TeleprompterPage: React.FC = () => {
                     
                     // Throttle to 20 updates per second for smoother sync
                     if (timeSinceLastBroadcast >= 50) {
-                      const lineHeight = settings.fontSize * settings.lineHeight;
-                      const currentLine = Math.floor(e.currentTarget.scrollTop / lineHeight);
-                      
-                      socketClient.emitScriptScroll(
-                        e.currentTarget.scrollTop,
-                        currentLine,
-                        settings.fontSize
-                      );
+                      broadcastScriptScroll(e.currentTarget.scrollTop, settings.fontSize);
                       pushClockFeedIfLive(true);
-                      
                       lastScrollBroadcastRef.current = now;
                     }
                   }
@@ -2758,11 +2895,25 @@ const TeleprompterPage: React.FC = () => {
             // Get comments from PREVIOUS line (index - 1) to show after it
             // Comment on line 39 (stored as lineNumber: 38) appears before line 40 (index 39)
             const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
+            const voiceLineActive =
+              showVoiceHighlight &&
+              voiceHighlightStyle === 'band' &&
+              voiceHighlightLine === index;
+            const voiceHighlightCss: React.CSSProperties = voiceLineActive
+              ? {
+                  backgroundColor: hexWithAlpha(voiceHighlightColor, '40'),
+                  borderRadius: 4,
+                  boxShadow: `inset 0 0 0 1px ${hexWithAlpha(voiceHighlightColor, '88')}`,
+                  paddingLeft: '0.5rem',
+                  paddingRight: '0.5rem',
+                }
+              : {};
             
             return (
               <div 
                 key={index} 
-                className="mb-2"
+                className="mb-2 transition-[background-color,box-shadow] duration-200"
+                style={voiceHighlightCss}
                 data-line-number={index}
                 ref={(el) => {
                   if (el) lineRefsMap.current.set(index, el);
@@ -2802,8 +2953,8 @@ const TeleprompterPage: React.FC = () => {
                   </div>
                 )}
                 
-                {/* Current line text */}
-                <div>{line || '\u00A0'}</div>
+                {/* Current line text — same voice highlight as scroller */}
+                <div>{renderVoiceLineText(line, index)}</div>
               </div>
             );
           })}

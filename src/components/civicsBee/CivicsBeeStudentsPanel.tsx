@@ -1,11 +1,18 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  applyCivicsBeePeoplesChoice,
+  applyCivicsBeePlace,
   buildCivicsBeeGraphicsCsv,
+  CIVICS_BEE_AWARD_CSV_OPTIONS,
+  CIVICS_BEE_CSV_FILTER_LABELS,
   CIVICS_BEE_FILTER_LABELS,
+  CIVICS_BEE_PLACE_OPTIONS,
   CIVICS_BEE_TIER_OPTIONS,
+  CivicsBeeCsvFilter,
   CivicsBeeEntry,
   CivicsBeeFilter,
   CivicsBeeImportResult,
+  CivicsBeePlace,
   CivicsBeeRoster,
   CivicsBeeTier,
   countCivicsBeeByFilter,
@@ -42,31 +49,42 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [graphicsNotice, setGraphicsNotice] = useState<string | null>(null);
 
-  const graphicsFilter: CivicsBeeFilter = filter === 'all' ? 'participating' : filter;
+  const graphicsFilter: CivicsBeeCsvFilter = filter === 'all' ? 'participating' : filter;
 
-  const graphicsCsvUrl = useMemo(() => {
-    if (!eventId) return '';
-    return `${GRAPHICS_API_BASE}/api/civics-bee.csv?eventId=${encodeURIComponent(eventId)}&filter=${graphicsFilter}`;
-  }, [eventId, graphicsFilter]);
+  const graphicsCsvUrlFor = useCallback(
+    (csvFilter: CivicsBeeCsvFilter) => {
+      if (!eventId) return '';
+      return `${GRAPHICS_API_BASE}/api/civics-bee.csv?eventId=${encodeURIComponent(eventId)}&filter=${encodeURIComponent(csvFilter)}`;
+    },
+    [eventId]
+  );
 
-  const copyGraphicsCsvUrl = async () => {
-    if (!graphicsCsvUrl) return;
+  const graphicsCsvUrl = useMemo(
+    () => graphicsCsvUrlFor(graphicsFilter),
+    [graphicsCsvUrlFor, graphicsFilter]
+  );
+
+  const copyCsvUrl = async (csvFilter: CivicsBeeCsvFilter, label?: string) => {
+    const url = graphicsCsvUrlFor(csvFilter);
+    if (!url) return;
     try {
-      await navigator.clipboard.writeText(graphicsCsvUrl);
-      setGraphicsNotice('Graphics CSV URL copied.');
+      await navigator.clipboard.writeText(url);
+      setGraphicsNotice(
+        `${label || CIVICS_BEE_CSV_FILTER_LABELS[csvFilter] || 'CSV'} live URL copied.`
+      );
     } catch {
       setGraphicsNotice('Could not copy URL — select it manually.');
     }
     setTimeout(() => setGraphicsNotice(null), 3000);
   };
 
-  const downloadGraphicsCsv = () => {
-    const csv = buildCivicsBeeGraphicsCsv(roster.entries, graphicsFilter);
+  const downloadCsv = (csvFilter: CivicsBeeCsvFilter, fileSlug?: string) => {
+    const csv = buildCivicsBeeGraphicsCsv(roster.entries, csvFilter);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `civics-bee-${graphicsFilter}.csv`;
+    a.download = `civics-bee-${fileSlug || csvFilter}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -79,9 +97,15 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
         const next = { ...e, ...patch };
         if (patch.participating === false) {
           next.tier = null;
+          next.place = null;
+          next.peoplesChoice = false;
         }
         if (patch.tier && !next.participating) {
           next.participating = true;
+        }
+        if (next.tier !== 'top5') {
+          next.place = null;
+          next.peoplesChoice = false;
         }
         return next;
       });
@@ -89,6 +113,20 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
     },
     [onChange, readOnly, roster]
   );
+
+  const togglePlace = (code: string, place: CivicsBeePlace) => {
+    if (readOnly) return;
+    onChange(applyCivicsBeePlace(roster, code, place));
+  };
+
+  const togglePeoplesChoice = (code: string) => {
+    if (readOnly) return;
+    const entry = roster.entries.find((e) => e.code === code);
+    if (!entry) return;
+    onChange(applyCivicsBeePeoplesChoice(roster, code, !entry.peoplesChoice));
+  };
+
+  const showAwards = filter === 'top5';
 
   const visible = useMemo(() => {
     const filtered = filterCivicsBeeEntries(roster.entries, filter);
@@ -131,7 +169,8 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
         <div>
           <h2 className="text-lg font-semibold text-white">Civics Bee Students</h2>
           <p className="text-sm text-slate-400">
-            Assign a student per state/territory, mark who is playing, and advance Top 25 / 10 / 5.
+            Assign a student per state/territory, mark who is playing, advance Top 25 / 10 / 5, and
+            on the Top 5 tab set 3rd / 2nd / 1st and People&apos;s Choice.
           </p>
         </div>
         {!readOnly && (
@@ -166,15 +205,15 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           <div>
             <h3 className="text-sm font-semibold text-white">Graphics CSV</h3>
             <p className="text-xs text-slate-400">
-              Columns: First Name, Last Initial, State — filtered to{' '}
-              {CIVICS_BEE_FILTER_LABELS[graphicsFilter]}
+              Columns: First Name, Last Initial, State, Place, People&apos;s Choice, Award — filtered
+              to {CIVICS_BEE_CSV_FILTER_LABELS[graphicsFilter] || graphicsFilter}
               {filter === 'all' ? ' (All view uses Participating for the feed)' : ''}.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={downloadGraphicsCsv}
+              onClick={() => downloadCsv(graphicsFilter)}
               className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800"
             >
               Download CSV
@@ -182,7 +221,7 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
             {graphicsCsvUrl ? (
               <button
                 type="button"
-                onClick={() => void copyGraphicsCsvUrl()}
+                onClick={() => void copyCsvUrl(graphicsFilter)}
                 className="rounded-md border border-violet-600/70 bg-violet-950/40 px-3 py-1.5 text-xs font-semibold text-violet-100 hover:bg-violet-900/50"
               >
                 Copy live URL
@@ -198,6 +237,50 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           <p className="text-xs text-slate-500">Open this page with an eventId to get a live graphics URL.</p>
         )}
         {graphicsNotice && <p className="text-xs text-emerald-300">{graphicsNotice}</p>}
+      </div>
+
+      <div className="rounded-lg border border-amber-800/50 bg-amber-950/20 px-4 py-3 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-amber-100">Award CSVs</h3>
+          <p className="text-xs text-slate-400">
+            Dedicated feeds for podium + People&apos;s Choice (download or copy a live URL for
+            graphics). Save the roster after marking awards so live URLs stay current.
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {CIVICS_BEE_AWARD_CSV_OPTIONS.map((opt) => {
+            const url = graphicsCsvUrlFor(opt.value);
+            return (
+              <div
+                key={opt.value}
+                className="rounded-md border border-slate-700 bg-slate-950/70 px-3 py-2 space-y-2"
+              >
+                <div className="text-xs font-semibold text-slate-100">{opt.label}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => downloadCsv(opt.value, opt.fileSlug)}
+                    className="rounded border border-slate-600 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
+                  >
+                    Download
+                  </button>
+                  {url ? (
+                    <button
+                      type="button"
+                      onClick={() => void copyCsvUrl(opt.value, opt.label)}
+                      className="rounded border border-violet-600/70 bg-violet-950/40 px-2 py-1 text-[11px] font-semibold text-violet-100 hover:bg-violet-900/50"
+                    >
+                      Copy URL
+                    </button>
+                  ) : null}
+                </div>
+                {url ? (
+                  <code className="block break-all text-[10px] text-slate-500">{url}</code>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -259,6 +342,9 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
                 <th className="px-3 py-2 font-semibold">Student</th>
                 <th className="px-3 py-2 font-semibold text-center">In game</th>
                 <th className="px-3 py-2 font-semibold">Advancement</th>
+                {showAwards ? (
+                  <th className="px-3 py-2 font-semibold">Awards</th>
+                ) : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 bg-slate-900/80">
@@ -303,11 +389,64 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
                       ))}
                     </select>
                   </td>
+                  {showAwards ? (
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {CIVICS_BEE_PLACE_OPTIONS.map((opt) => {
+                          const active = entry.place === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              disabled={readOnly || entry.tier !== 'top5'}
+                              onClick={() => togglePlace(entry.code, opt.value)}
+                              className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+                                active
+                                  ? opt.value === '1st'
+                                    ? 'border-amber-400 bg-amber-500/30 text-amber-100'
+                                    : opt.value === '2nd'
+                                      ? 'border-slate-300 bg-slate-400/30 text-slate-50'
+                                      : 'border-orange-700 bg-orange-800/40 text-orange-100'
+                                  : 'border-slate-600 bg-slate-950 text-slate-400 hover:bg-slate-800'
+                              }`}
+                              title={
+                                active
+                                  ? `Clear ${opt.label} Place`
+                                  : `Mark ${opt.label} Place (only one student)`
+                              }
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          disabled={readOnly || entry.tier !== 'top5'}
+                          onClick={() => togglePeoplesChoice(entry.code)}
+                          className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+                            entry.peoplesChoice
+                              ? 'border-fuchsia-400 bg-fuchsia-600/30 text-fuchsia-100'
+                              : 'border-slate-600 bg-slate-950 text-slate-400 hover:bg-slate-800'
+                          }`}
+                          title={
+                            entry.peoplesChoice
+                              ? "Clear People's Choice"
+                              : "Mark People's Choice (only one student)"
+                          }
+                        >
+                          People&apos;s
+                        </button>
+                      </div>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
               {visible.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-slate-400">
+                  <td
+                    colSpan={showAwards ? 6 : 5}
+                    className="px-3 py-8 text-center text-slate-400"
+                  >
                     No rows match this view.
                   </td>
                 </tr>

@@ -714,6 +714,10 @@ const Clock: React.FC<ClockProps> = ({
             typeof data.scriptName === 'string'
               ? data.scriptName
               : prev?.scriptName,
+          voiceHighlight:
+            data.voiceHighlight !== undefined
+              ? data.voiceHighlight
+              : prev?.voiceHighlight ?? null,
         };
       });
     };

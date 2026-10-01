@@ -13,6 +13,12 @@ import {
 import { stripHtmlNotes, type GuestScheduleItem } from '../lib/eventGuestLinks';
 import GuestRunOfShowGrid from '../components/guest/GuestRunOfShowGrid';
 import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
+import TeleprompterClockOverlay, {
+  type TeleprompterClockComment,
+  type TeleprompterClockFeed,
+  type TeleprompterClockSettings,
+  type TeleprompterVoiceHighlight,
+} from '../components/TeleprompterClockOverlay';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import { GUEST_VISIBLE_COLUMNS } from '../lib/guestRosHelpers';
@@ -38,7 +44,6 @@ const COLUMN_ORDER_KEY = 'director-view-column-order';
 const ROS_ZOOM_KEY = 'director-view-zoom';
 const NOTES_ZOOM_KEY = 'director-view-notes-zoom';
 const SYNC_ZOOM_KEY = 'director-view-sync-zoom';
-const SCRIPT_ZOOM_KEY = 'director-view-script-zoom';
 const SYNC_HEIGHT_KEY = 'director-view-sync-height';
 const CHROME_KEY = 'director-view-chrome';
 const DOCK_CLOCK_KEY = 'director-view-dock-clock';
@@ -54,6 +59,16 @@ const ZOOM_STEP = 0.1;
 const ZOOM_DEFAULT = 0.85;
 const NOTES_ZOOM_DEFAULT = 1;
 const SYNC_ZOOM_DEFAULT = 1;
+const DEFAULT_SCRIPT_TELE_SETTINGS: TeleprompterClockSettings = {
+  fontSize: 48,
+  lineHeight: 1.4,
+  textAlign: 'center',
+  textColor: '#FFFFFF',
+  backgroundColor: '#000000',
+  showComments: true,
+  readingGuideMode: 'arrows-with-lines',
+  readingGuideColor: '#FF0000',
+};
 const SYNC_HEIGHT_MIN = 12;
 const SYNC_HEIGHT_MAX = 48;
 const SYNC_HEIGHT_DEFAULT = 24;
@@ -387,9 +402,14 @@ const DirectorViewPage: React.FC = () => {
   const [scriptText, setScriptText] = useState('');
   const [scriptName, setScriptName] = useState('');
   const [scriptLoading, setScriptLoading] = useState(false);
-  const [scriptZoom, setScriptZoom] = useState(() =>
-    getStoredZoom(SCRIPT_ZOOM_KEY, NOTES_ZOOM_DEFAULT)
+  const [scriptScrollPosition, setScriptScrollPosition] = useState(0);
+  const [scriptGuideLinePosition, setScriptGuideLinePosition] = useState(50);
+  const [scriptTeleSettings, setScriptTeleSettings] = useState<TeleprompterClockSettings>(
+    DEFAULT_SCRIPT_TELE_SETTINGS
   );
+  const [scriptComments, setScriptComments] = useState<TeleprompterClockComment[]>([]);
+  const [scriptVoiceHighlight, setScriptVoiceHighlight] =
+    useState<TeleprompterVoiceHighlight | null>(null);
 
   const [notesSource, setNotesSource] = useState<NotesSource>(() => {
     const saved = localStorage.getItem(NOTES_SOURCE_KEY);
@@ -430,9 +450,6 @@ const DirectorViewPage: React.FC = () => {
 
   const notesListRef = useRef<HTMLDivElement>(null);
   const activeNoteRef = useRef<HTMLDivElement>(null);
-  const scriptScrollRef = useRef<HTMLDivElement>(null);
-  const scriptFollowTargetRef = useRef<number | null>(null);
-  const scriptFollowRafRef = useRef<number | null>(null);
   const splitRowRef = useRef<HTMLDivElement>(null);
   const panesStackRef = useRef<HTMLDivElement>(null);
   const resizingPanesRef = useRef(false);
@@ -715,11 +732,6 @@ const DirectorViewPage: React.FC = () => {
     (value: number) => persistZoom(SYNC_ZOOM_KEY, setSyncZoom, value),
     [persistZoom]
   );
-  const setScriptZoomPersisted = useCallback(
-    (value: number) => persistZoom(SCRIPT_ZOOM_KEY, setScriptZoom, value),
-    [persistZoom]
-  );
-
   const loadScript = useCallback(async () => {
     if (!eventId) return;
     setScriptLoading(true);
@@ -774,11 +786,22 @@ const DirectorViewPage: React.FC = () => {
       eventId?: string;
       scriptText?: string;
       scriptName?: string;
+      comments?: any[];
     }) => {
       if (data.eventId && data.eventId !== eventId) return;
       if (typeof data.scriptText !== 'string') return;
       setScriptText(data.scriptText);
       if (typeof data.scriptName === 'string') setScriptName(data.scriptName);
+      if (Array.isArray(data.comments)) {
+        setScriptComments(
+          data.comments.map((c: any) => ({
+            id: String(c.id || `${c.lineNumber ?? c.line_number}-${c.text ?? c.comment_text}`),
+            lineNumber: Number(c.lineNumber ?? c.line_number) || 0,
+            text: String(c.text ?? c.comment_text ?? ''),
+            type: String(c.type ?? c.comment_type ?? 'GENERAL'),
+          }))
+        );
+      }
       setScriptLoading(false);
     };
 
@@ -806,49 +829,57 @@ const DirectorViewPage: React.FC = () => {
     };
   }, [eventId]);
 
-  const applyScriptScrollFollow = useCallback((scrollPosition: number) => {
-    if (!Number.isFinite(scrollPosition)) return;
-    scriptFollowTargetRef.current = Math.max(0, scrollPosition);
-    if (scriptFollowRafRef.current != null) return;
-    const step = () => {
-      const el = scriptScrollRef.current;
-      const target = scriptFollowTargetRef.current;
-      if (!el || target == null) {
-        scriptFollowRafRef.current = null;
-        return;
-      }
-      const current = el.scrollTop;
-      const diff = target - current;
-      if (Math.abs(diff) > 2) {
-        el.scrollTop = current + diff * 0.55;
-        scriptFollowRafRef.current = requestAnimationFrame(step);
-      } else {
-        el.scrollTop = target;
-        scriptFollowTargetRef.current = null;
-        scriptFollowRafRef.current = null;
-      }
-    };
-    scriptFollowRafRef.current = requestAnimationFrame(step);
-  }, []);
-
-  // Follow teleprompter scroller / clock feed when Script · Follow is on
+  // Teleprompter 16:9 feed: scroll, guides, settings (same canvas as Clock output)
   useEffect(() => {
-    if (leftPaneMode !== 'script' || scriptViewMode !== 'follow' || !eventId) return;
+    if (leftPaneMode !== 'script' || !eventId) return;
     let cancelled = false;
     let attachedSock: ReturnType<typeof socketClient.getSocket> = null;
 
+    const applyVoiceHighlight = (raw: any) => {
+      if (raw == null) {
+        setScriptVoiceHighlight(null);
+        return;
+      }
+      if (typeof raw !== 'object') return;
+      setScriptVoiceHighlight({
+        enabled: !!raw.enabled,
+        wordIndex: typeof raw.wordIndex === 'number' ? raw.wordIndex : null,
+        lineIndex: typeof raw.lineIndex === 'number' ? raw.lineIndex : null,
+        style:
+          raw.style === 'band' || raw.style === 'words' || raw.style === 'off'
+            ? raw.style
+            : 'words',
+        color: typeof raw.color === 'string' && raw.color ? raw.color : '#FBBF24',
+      });
+    };
+
     const onScrollSync = (data: {
       scrollPosition?: number;
+      fontSize?: number;
       eventId?: string;
       scriptText?: string;
+      voiceHighlight?: TeleprompterVoiceHighlight | null;
+      guideLinePosition?: number;
+      settings?: Partial<TeleprompterClockSettings>;
     }) => {
       if (data.eventId && data.eventId !== eventId) return;
       if (typeof data.scriptText === 'string' && data.scriptText.trim()) {
         setScriptText(data.scriptText);
       }
-      if (typeof data.scrollPosition === 'number') {
-        applyScriptScrollFollow(data.scrollPosition);
+      if (data.settings && typeof data.settings === 'object') {
+        setScriptTeleSettings((prev) => ({ ...prev, ...data.settings }));
+      } else if (typeof data.fontSize === 'number' && data.fontSize > 0) {
+        setScriptTeleSettings((prev) =>
+          prev.fontSize === data.fontSize ? prev : { ...prev, fontSize: data.fontSize! }
+        );
       }
+      if (typeof data.guideLinePosition === 'number') {
+        setScriptGuideLinePosition(data.guideLinePosition);
+      }
+      if (typeof data.scrollPosition === 'number' && scriptViewMode === 'follow') {
+        setScriptScrollPosition(Math.max(0, data.scrollPosition));
+      }
+      if ('voiceHighlight' in data) applyVoiceHighlight(data.voiceHighlight);
     };
 
     const onClockSync = (data: any) => {
@@ -860,8 +891,42 @@ const DirectorViewPage: React.FC = () => {
       if (typeof data.scriptName === 'string' && data.scriptName.trim()) {
         setScriptName(data.scriptName);
       }
-      if (typeof data.scrollPosition === 'number') {
-        applyScriptScrollFollow(data.scrollPosition);
+      if (typeof data.scrollPosition === 'number' && scriptViewMode === 'follow') {
+        setScriptScrollPosition(Math.max(0, data.scrollPosition));
+      }
+      if (typeof data.guideLinePosition === 'number') {
+        setScriptGuideLinePosition(data.guideLinePosition);
+      }
+      if (data.settings && typeof data.settings === 'object') {
+        setScriptTeleSettings((prev) => ({
+          ...prev,
+          ...data.settings,
+        }));
+      }
+      if (Array.isArray(data.comments)) {
+        setScriptComments(
+          data.comments.map((c: any) => ({
+            id: String(c.id),
+            lineNumber: Number(c.lineNumber) || 0,
+            text: String(c.text || ''),
+            type: String(c.type || 'GENERAL'),
+          }))
+        );
+      }
+      if ('voiceHighlight' in data) applyVoiceHighlight(data.voiceHighlight);
+    };
+
+    const onGuideLine = (data: { guideLinePosition?: number; eventId?: string }) => {
+      if (data.eventId && data.eventId !== eventId) return;
+      if (typeof data.guideLinePosition === 'number') {
+        setScriptGuideLinePosition(data.guideLinePosition);
+      }
+    };
+
+    const onSettings = (data: { settings?: Partial<TeleprompterClockSettings>; eventId?: string }) => {
+      if (data.eventId && data.eventId !== eventId) return;
+      if (data.settings && typeof data.settings === 'object') {
+        setScriptTeleSettings((prev) => ({ ...prev, ...data.settings }));
       }
     };
 
@@ -873,10 +938,14 @@ const DirectorViewPage: React.FC = () => {
       if (attachedSock) {
         attachedSock.off('scriptScrollSync', onScrollSync);
         attachedSock.off('teleprompterClockSync', onClockSync);
+        attachedSock.off('teleprompterGuideLineUpdated', onGuideLine);
+        attachedSock.off('teleprompterSettingsUpdated', onSettings);
       }
       attachedSock = sock;
       sock.on('scriptScrollSync', onScrollSync);
       sock.on('teleprompterClockSync', onClockSync);
+      sock.on('teleprompterGuideLineUpdated', onGuideLine);
+      sock.on('teleprompterSettingsUpdated', onSettings);
       return true;
     };
 
@@ -890,12 +959,10 @@ const DirectorViewPage: React.FC = () => {
       window.clearInterval(poll);
       attachedSock?.off('scriptScrollSync', onScrollSync);
       attachedSock?.off('teleprompterClockSync', onClockSync);
-      if (scriptFollowRafRef.current != null) {
-        cancelAnimationFrame(scriptFollowRafRef.current);
-        scriptFollowRafRef.current = null;
-      }
+      attachedSock?.off('teleprompterGuideLineUpdated', onGuideLine);
+      attachedSock?.off('teleprompterSettingsUpdated', onSettings);
     };
-  }, [leftPaneMode, scriptViewMode, eventId, applyScriptScrollFollow]);
+  }, [leftPaneMode, scriptViewMode, eventId]);
 
   const endPaneResize = useCallback((target?: EventTarget | null, pointerId?: number) => {
     if (!resizingPanesRef.current) return;
@@ -1471,7 +1538,16 @@ const DirectorViewPage: React.FC = () => {
     </div>
   );
 
-  const scriptLines = scriptText ? scriptText.split('\n') : [];
+  const scriptTeleFeed: TeleprompterClockFeed = {
+    enabled: true,
+    scriptText,
+    scrollPosition: scriptScrollPosition,
+    settings: scriptTeleSettings,
+    guideLinePosition: scriptGuideLinePosition,
+    comments: scriptComments,
+    scriptName: scriptName || undefined,
+    voiceHighlight: scriptVoiceHighlight,
+  };
 
   return (
     <div className="fixed inset-0 z-40 bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
@@ -1771,10 +1847,14 @@ const DirectorViewPage: React.FC = () => {
                 <>
                   <div className="flex-shrink-0 px-3 py-1.5 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <h2 className="text-sm font-semibold text-violet-300">Script</h2>
-                      {scriptName ? (
-                        <p className="text-[10px] text-slate-500 truncate">{scriptName}</p>
-                      ) : null}
+                      <h2 className="text-sm font-semibold text-violet-300">Script · 16:9</h2>
+                      <p className="text-[10px] text-slate-500 truncate">
+                        {scriptName || 'Same canvas as teleprompter / clock output'}
+                        {scriptTeleSettings.readingGuideMode &&
+                        scriptTeleSettings.readingGuideMode !== 'off'
+                          ? ' · guides on'
+                          : ''}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
                       <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
@@ -1786,7 +1866,7 @@ const DirectorViewPage: React.FC = () => {
                               ? 'bg-cyan-600 text-white'
                               : 'text-slate-400 hover:text-white'
                           }`}
-                          title="Free-scroll the script"
+                          title="Free-scroll inside the 16:9 frame"
                         >
                           Scroll
                         </button>
@@ -1798,47 +1878,26 @@ const DirectorViewPage: React.FC = () => {
                               ? 'bg-purple-600 text-white'
                               : 'text-slate-400 hover:text-white'
                           }`}
-                          title="Follow teleprompter scroller / clock feed"
+                          title="Lock scroll, reading guide, and speaker highlight to the teleprompter scroller"
                         >
                           Follow
                         </button>
                       </div>
-                      <ScaleStepper
-                        label="Scale"
-                        value={scriptZoom}
-                        onChange={setScriptZoomPersisted}
-                        title="Scale script text"
-                      />
                     </div>
                   </div>
-                  <div
-                    ref={scriptScrollRef}
-                    className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 bg-black/40 ${
-                      scriptViewMode === 'follow' ? 'scroll-smooth' : ''
-                    }`}
-                    style={
-                      scriptZoom !== 1
-                        ? ({ zoom: scriptZoom } as React.CSSProperties)
-                        : undefined
-                    }
-                  >
-                    {scriptLoading ? (
-                      <p className="text-sm text-slate-500">Loading script…</p>
-                    ) : scriptLines.length === 0 ? (
-                      <p className="text-sm text-slate-500">
+                  <div className="flex-1 min-h-0 overflow-hidden bg-black">
+                    {scriptLoading && !scriptText ? (
+                      <p className="text-sm text-slate-500 p-3">Loading script…</p>
+                    ) : !scriptText.trim() ? (
+                      <p className="text-sm text-slate-500 p-3">
                         No script for this event. Load one in Scripts Follow / Teleprompter first.
                       </p>
                     ) : (
-                      <div className="font-mono text-[13px] leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
-                        {scriptLines.map((line, idx) => (
-                          <div
-                            key={`script-line-${idx}`}
-                            className="min-h-[1.35em] border-b border-slate-900/60 px-0.5"
-                          >
-                            {line || '\u00a0'}
-                          </div>
-                        ))}
-                      </div>
+                      <TeleprompterClockOverlay
+                        feed={scriptTeleFeed}
+                        followScroll={scriptViewMode === 'follow'}
+                        className="h-full w-full"
+                      />
                     )}
                   </div>
                 </>

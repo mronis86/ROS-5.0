@@ -4,6 +4,9 @@ export type CivicsBeeTier = 'top25' | 'top10' | 'top5';
 
 export type CivicsBeeFilter = 'all' | 'participating' | CivicsBeeTier;
 
+/** Final podium places (exclusive across the roster). */
+export type CivicsBeePlace = '1st' | '2nd' | '3rd';
+
 export type CivicsBeeEntry = {
   code: string;
   name: string;
@@ -11,6 +14,10 @@ export type CivicsBeeEntry = {
   participating: boolean;
   /** Furthest advancement; null = not in a Top N cut. */
   tier: CivicsBeeTier | null;
+  /** Podium place — only one student per place. */
+  place: CivicsBeePlace | null;
+  /** People's Choice — at most one student. Can stack with a podium place. */
+  peoplesChoice: boolean;
 };
 
 export type CivicsBeeRoster = {
@@ -92,6 +99,8 @@ export function createDefaultCivicsBeeRoster(): CivicsBeeRoster {
       studentName: '',
       participating: false,
       tier: null,
+      place: null,
+      peoplesChoice: false,
     })),
     updatedAt: undefined,
   };
@@ -101,6 +110,17 @@ function normalizeTier(raw: unknown): CivicsBeeTier | null {
   if (raw === 'top25' || raw === 'top10' || raw === 'top5') return raw;
   return null;
 }
+
+function normalizePlace(raw: unknown): CivicsBeePlace | null {
+  if (raw === '1st' || raw === '2nd' || raw === '3rd') return raw;
+  return null;
+}
+
+export const CIVICS_BEE_PLACE_OPTIONS: Array<{ value: CivicsBeePlace; label: string }> = [
+  { value: '3rd', label: '3rd' },
+  { value: '2nd', label: '2nd' },
+  { value: '1st', label: '1st' },
+];
 
 export function parseCivicsBeeRoster(raw: unknown): CivicsBeeRoster {
   const defaults = createDefaultCivicsBeeRoster();
@@ -118,6 +138,8 @@ export function parseCivicsBeeRoster(raw: unknown): CivicsBeeRoster {
       studentName: typeof e.studentName === 'string' ? e.studentName : '',
       participating: e.participating === true,
       tier: normalizeTier(e.tier),
+      place: normalizePlace(e.place),
+      peoplesChoice: e.peoplesChoice === true,
     });
   }
 
@@ -126,14 +148,66 @@ export function parseCivicsBeeRoster(raw: unknown): CivicsBeeRoster {
       const overlay = byCode.get(base.code);
       if (!overlay) return base;
       const participating = overlay.participating === true;
+      const tier = participating ? overlay.tier ?? null : null;
+      const inTop5 = participating && tier === 'top5';
       return {
         ...base,
         studentName: overlay.studentName ?? '',
         participating,
-        tier: participating ? overlay.tier ?? null : null,
+        tier,
+        place: inTop5 ? overlay.place ?? null : null,
+        peoplesChoice: inTop5 ? overlay.peoplesChoice === true : false,
       };
     }),
     updatedAt: typeof src.updatedAt === 'string' ? src.updatedAt : undefined,
+  };
+}
+
+/**
+ * Toggle a podium place on one entry. Clears that place from everyone else.
+ * Toggle off if the same place is already set on this entry.
+ */
+export function applyCivicsBeePlace(
+  roster: CivicsBeeRoster,
+  code: string,
+  place: CivicsBeePlace
+): CivicsBeeRoster {
+  const target = roster.entries.find((e) => e.code === code);
+  if (!target || !target.participating || target.tier !== 'top5') return roster;
+  const clearing = target.place === place;
+  return {
+    ...roster,
+    entries: roster.entries.map((e) => {
+      if (e.code === code) {
+        return { ...e, place: clearing ? null : place, participating: true };
+      }
+      if (!clearing && e.place === place) {
+        return { ...e, place: null };
+      }
+      return e;
+    }),
+  };
+}
+
+/** Toggle People's Choice on one entry (exclusive). */
+export function applyCivicsBeePeoplesChoice(
+  roster: CivicsBeeRoster,
+  code: string,
+  enabled: boolean
+): CivicsBeeRoster {
+  const target = roster.entries.find((e) => e.code === code);
+  if (!target || !target.participating || target.tier !== 'top5') return roster;
+  return {
+    ...roster,
+    entries: roster.entries.map((e) => {
+      if (e.code === code) {
+        return { ...e, peoplesChoice: enabled, participating: true };
+      }
+      if (enabled && e.peoplesChoice) {
+        return { ...e, peoplesChoice: false };
+      }
+      return e;
+    }),
   };
 }
 
@@ -257,44 +331,141 @@ function escapeCivicsCsvField(value: string): string {
   return s;
 }
 
+/** CSV / live-URL filter: roster tiers plus award slices. */
+export type CivicsBeeCsvFilter =
+  | CivicsBeeFilter
+  | CivicsBeePlace
+  | 'peoplesChoice'
+  | 'awards';
+
+export const CIVICS_BEE_AWARD_CSV_OPTIONS: Array<{
+  value: CivicsBeeCsvFilter;
+  label: string;
+  fileSlug: string;
+}> = [
+  { value: 'awards', label: 'All awards', fileSlug: 'awards' },
+  { value: '1st', label: '1st Place', fileSlug: '1st' },
+  { value: '2nd', label: '2nd Place', fileSlug: '2nd' },
+  { value: '3rd', label: '3rd Place', fileSlug: '3rd' },
+  { value: 'peoplesChoice', label: "People's Choice", fileSlug: 'peoples-choice' },
+];
+
+export const CIVICS_BEE_CSV_FILTER_LABELS: Record<string, string> = {
+  ...CIVICS_BEE_FILTER_LABELS,
+  awards: 'All awards',
+  '1st': '1st Place',
+  '2nd': '2nd Place',
+  '3rd': '3rd Place',
+  peoplesChoice: "People's Choice",
+};
+
+export function normalizeCivicsBeeCsvFilter(raw: unknown): CivicsBeeCsvFilter {
+  const f = String(raw || 'participating').trim();
+  if (
+    f === 'all' ||
+    f === 'participating' ||
+    f === 'top25' ||
+    f === 'top10' ||
+    f === 'top5' ||
+    f === '1st' ||
+    f === '2nd' ||
+    f === '3rd' ||
+    f === 'peoplesChoice' ||
+    f === 'awards'
+  ) {
+    return f;
+  }
+  // common aliases
+  if (f === 'peoples' || f === 'peoples-choice' || f === 'people') return 'peoplesChoice';
+  return 'participating';
+}
+
+export function entryMeetsCsvFilter(entry: CivicsBeeEntry, filter: CivicsBeeCsvFilter): boolean {
+  if (filter === '1st' || filter === '2nd' || filter === '3rd') {
+    return entry.participating && entry.place === filter;
+  }
+  if (filter === 'peoplesChoice') {
+    return entry.participating && entry.peoplesChoice === true;
+  }
+  if (filter === 'awards') {
+    return entry.participating && (!!entry.place || entry.peoplesChoice === true);
+  }
+  return entryMeetsFilter(entry, filter);
+}
+
+const AWARD_SORT_RANK: Record<string, number> = {
+  '1st': 1,
+  '2nd': 2,
+  '3rd': 3,
+};
+
+function awardSortKey(entry: CivicsBeeEntry): number {
+  if (entry.place && AWARD_SORT_RANK[entry.place] != null) return AWARD_SORT_RANK[entry.place];
+  if (entry.peoplesChoice) return 4;
+  return 99;
+}
+
 export type CivicsBeeGraphicsRow = {
   firstName: string;
   lastInitial: string;
   state: string;
   code: string;
+  place: string;
+  peoplesChoice: string;
+  award: string;
 };
 
 /** Graphics-oriented rows: First Name, Last initial, State (full name). */
 export function buildCivicsBeeGraphicsRows(
   entries: CivicsBeeEntry[],
-  filter: CivicsBeeFilter = 'participating'
+  filter: CivicsBeeCsvFilter = 'participating'
 ): CivicsBeeGraphicsRow[] {
-  return filterCivicsBeeEntries(entries, filter)
-    .filter((e) => e.studentName.trim().length > 0)
-    .map((e) => {
-      const { firstName, lastInitial } = splitStudentNameForGraphics(e.studentName);
-      return {
-        firstName,
-        lastInitial,
-        state: e.name,
-        code: e.code,
-      };
-    });
+  const filtered = entries
+    .filter((e) => entryMeetsCsvFilter(e, filter))
+    .filter((e) => e.studentName.trim().length > 0);
+
+  const ordered =
+    filter === 'awards' ||
+    filter === '1st' ||
+    filter === '2nd' ||
+    filter === '3rd' ||
+    filter === 'peoplesChoice'
+      ? [...filtered].sort((a, b) => awardSortKey(a) - awardSortKey(b) || a.name.localeCompare(b.name))
+      : filtered;
+
+  return ordered.map((e) => {
+    const { firstName, lastInitial } = splitStudentNameForGraphics(e.studentName);
+    const awardParts: string[] = [];
+    if (e.place) awardParts.push(e.place);
+    if (e.peoplesChoice) awardParts.push("People's Choice");
+    return {
+      firstName,
+      lastInitial,
+      state: e.name,
+      code: e.code,
+      place: e.place || '',
+      peoplesChoice: e.peoplesChoice ? 'Yes' : '',
+      award: awardParts.join(' + '),
+    };
+  });
 }
 
-/** CSV for custom graphics: First Name, Last Initial, State */
+/** CSV for custom graphics: First Name, Last Initial, State, Place, People's Choice, Award */
 export function buildCivicsBeeGraphicsCsv(
   entries: CivicsBeeEntry[],
-  filter: CivicsBeeFilter = 'participating'
+  filter: CivicsBeeCsvFilter = 'participating'
 ): string {
   const rows = buildCivicsBeeGraphicsRows(entries, filter);
-  const lines = ['First Name,Last Initial,State'];
+  const lines = ["First Name,Last Initial,State,Place,People's Choice,Award"];
   for (const row of rows) {
     lines.push(
       [
         escapeCivicsCsvField(row.firstName),
         escapeCivicsCsvField(row.lastInitial),
         escapeCivicsCsvField(row.state),
+        escapeCivicsCsvField(row.place),
+        escapeCivicsCsvField(row.peoplesChoice),
+        escapeCivicsCsvField(row.award),
       ].join(',')
     );
   }
@@ -356,6 +527,7 @@ export function applyCivicsBeeImportRows(
       ...entry,
       studentName: hit.studentName,
       participating: true,
+      // Keep existing tier / awards; import only fills names + In game
     };
   });
 

@@ -333,6 +333,10 @@ const FullScreenTimerPage: React.FC = () => {
           comments: Array.isArray(data.comments) ? data.comments : prev?.comments || [],
           scriptName:
             typeof data.scriptName === 'string' ? data.scriptName : prev?.scriptName,
+          voiceHighlight:
+            data.voiceHighlight !== undefined
+              ? data.voiceHighlight
+              : prev?.voiceHighlight ?? null,
         };
       });
     };

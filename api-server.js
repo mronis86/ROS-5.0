@@ -9155,9 +9155,17 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle script scroll position updates
+  // Handle script scroll position updates (+ optional teleprompter viewport for Director Follow)
   socket.on('scriptScrollUpdate', (data) => {
-    const { eventId, scrollPosition, lineNumber, fontSize } = data;
+    const {
+      eventId,
+      scrollPosition,
+      lineNumber,
+      fontSize,
+      voiceHighlight,
+      guideLinePosition,
+      settings,
+    } = data || {};
     console.log(`📜 Script scroll update for event:${eventId} - position: ${scrollPosition}, line: ${lineNumber}, fontSize: ${fontSize}`);
     
     // Broadcast to all other clients in the event room (except sender)
@@ -9166,6 +9174,10 @@ io.on('connection', (socket) => {
       scrollPosition,
       lineNumber,
       fontSize,
+      voiceHighlight: voiceHighlight ?? null,
+      guideLinePosition:
+        typeof guideLinePosition === 'number' ? guideLinePosition : undefined,
+      settings: settings && typeof settings === 'object' ? settings : undefined,
       timestamp: Date.now()
     });
   });
@@ -9279,6 +9291,7 @@ io.on('connection', (socket) => {
       guideLinePosition,
       comments,
       scriptName,
+      voiceHighlight,
     } = data || {};
     if (!eventId) return;
     io.to(`event:${eventId}`).emit('teleprompterClockSync', {
@@ -9290,6 +9303,7 @@ io.on('connection', (socket) => {
       guideLinePosition: guideLinePosition ?? null,
       comments: comments || null,
       scriptName: scriptName || null,
+      voiceHighlight: voiceHighlight ?? null,
       timestamp: Date.now(),
     });
   });
