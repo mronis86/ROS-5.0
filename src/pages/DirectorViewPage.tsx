@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService } from '../services/database';
-import { apiClient, type UserEventNoteOperator } from '../services/api-client';
+import { apiClient, getApiBaseUrl, type UserEventNoteOperator } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import {
   getStoredOperatorName,
   operatorUserId,
@@ -37,10 +38,14 @@ const COLUMN_ORDER_KEY = 'director-view-column-order';
 const ROS_ZOOM_KEY = 'director-view-zoom';
 const NOTES_ZOOM_KEY = 'director-view-notes-zoom';
 const SYNC_ZOOM_KEY = 'director-view-sync-zoom';
+const SCRIPT_ZOOM_KEY = 'director-view-script-zoom';
 const SYNC_HEIGHT_KEY = 'director-view-sync-height';
 const CHROME_KEY = 'director-view-chrome';
 const DOCK_CLOCK_KEY = 'director-view-dock-clock';
+const SYNC_STRIP_KEY = 'director-view-sync-strip';
 const SYNC_CUE_VIEW_KEY = 'director-view-sync-cue-view';
+const LEFT_PANE_MODE_KEY = 'director-view-left-pane';
+const SCRIPT_VIEW_MODE_KEY = 'director-view-script-view';
 /** Bottom Current/Next strip supports six custom columns inline (especially in Maximize). */
 const MAX_SYNC_COLUMNS = 6;
 const ZOOM_MIN = 0.5;
@@ -52,6 +57,52 @@ const SYNC_ZOOM_DEFAULT = 1;
 const SYNC_HEIGHT_MIN = 12;
 const SYNC_HEIGHT_MAX = 48;
 const SYNC_HEIGHT_DEFAULT = 24;
+
+/** Normalize API / socket active-timer payloads to a single active row. */
+function pickActiveTimer(raw: any): any | null {
+  if (!raw) return null;
+  let t: any = raw;
+  if (Array.isArray(raw)) {
+    t =
+      raw.find((x: any) => x?.is_running && x?.is_active !== false) ||
+      raw.find((x: any) => x?.is_active) ||
+      raw[0] ||
+      null;
+  } else if (raw?.activeTimer) {
+    t = raw.activeTimer;
+  } else if (Array.isArray(raw?.timers)) {
+    const list = raw.timers;
+    t =
+      list.find((x: any) => x?.is_running && x?.is_active !== false) ||
+      list.find((x: any) => x?.is_active) ||
+      list[0] ||
+      null;
+  } else if (Array.isArray(raw?.activeTimers)) {
+    const list = raw.activeTimers;
+    t =
+      list.find((x: any) => x?.is_running && x?.is_active !== false) ||
+      list.find((x: any) => x?.is_active) ||
+      list[0] ||
+      null;
+  } else if (Array.isArray(raw?.value)) {
+    const list = raw.value;
+    t =
+      list.find((x: any) => x?.is_running && x?.is_active !== false) ||
+      list.find((x: any) => x?.is_active) ||
+      list[0] ||
+      null;
+  }
+
+  if (
+    !t ||
+    t.is_active === false ||
+    t.cleared === true ||
+    (t.item_id == null && t.itemId == null)
+  ) {
+    return null;
+  }
+  return t;
+}
 
 function formatClock(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(Math.abs(totalSeconds)));
@@ -156,6 +207,9 @@ function ScaleStepper({
 
 type NotesSource = 'mine' | string; // operator user_id
 type NotesViewMode = 'plan' | 'follow';
+/** Left pane: personal notes (default) or event script / teleprompter follow. */
+type LeftPaneMode = 'notes' | 'script';
+type ScriptViewMode = 'plan' | 'follow';
 /** What the synced custom-column cards show. */
 type SyncCueView = 'both' | 'current' | 'next';
 
@@ -305,7 +359,37 @@ const DirectorViewPage: React.FC = () => {
       return true;
     }
   });
+  /** Bottom synced custom-column strip (Current/Next cards). Off = notes + ROS only. */
+  const [syncStripVisible, setSyncStripVisible] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SYNC_STRIP_KEY);
+      if (raw === null) return true;
+      return raw !== 'false';
+    } catch {
+      return true;
+    }
+  });
   const [syncCueView, setSyncCueView] = useState<SyncCueView>(loadSyncCueView);
+  const [leftPaneMode, setLeftPaneMode] = useState<LeftPaneMode>(() => {
+    try {
+      return localStorage.getItem(LEFT_PANE_MODE_KEY) === 'script' ? 'script' : 'notes';
+    } catch {
+      return 'notes';
+    }
+  });
+  const [scriptViewMode, setScriptViewMode] = useState<ScriptViewMode>(() => {
+    try {
+      return localStorage.getItem(SCRIPT_VIEW_MODE_KEY) === 'follow' ? 'follow' : 'plan';
+    } catch {
+      return 'plan';
+    }
+  });
+  const [scriptText, setScriptText] = useState('');
+  const [scriptName, setScriptName] = useState('');
+  const [scriptLoading, setScriptLoading] = useState(false);
+  const [scriptZoom, setScriptZoom] = useState(() =>
+    getStoredZoom(SCRIPT_ZOOM_KEY, NOTES_ZOOM_DEFAULT)
+  );
 
   const [notesSource, setNotesSource] = useState<NotesSource>(() => {
     const saved = localStorage.getItem(NOTES_SOURCE_KEY);
@@ -346,6 +430,9 @@ const DirectorViewPage: React.FC = () => {
 
   const notesListRef = useRef<HTMLDivElement>(null);
   const activeNoteRef = useRef<HTMLDivElement>(null);
+  const scriptScrollRef = useRef<HTMLDivElement>(null);
+  const scriptFollowTargetRef = useRef<number | null>(null);
+  const scriptFollowRafRef = useRef<number | null>(null);
   const splitRowRef = useRef<HTMLDivElement>(null);
   const panesStackRef = useRef<HTMLDivElement>(null);
   const resizingPanesRef = useRef(false);
@@ -576,11 +663,35 @@ const DirectorViewPage: React.FC = () => {
 
   useEffect(() => {
     try {
+      localStorage.setItem(SYNC_STRIP_KEY, syncStripVisible ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [syncStripVisible]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem(SYNC_CUE_VIEW_KEY, syncCueView);
     } catch {
       /* ignore */
     }
   }, [syncCueView]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LEFT_PANE_MODE_KEY, leftPaneMode);
+    } catch {
+      /* ignore */
+    }
+  }, [leftPaneMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCRIPT_VIEW_MODE_KEY, scriptViewMode);
+    } catch {
+      /* ignore */
+    }
+  }, [scriptViewMode]);
 
   const persistZoom = useCallback((key: string, setter: (v: number) => void, value: number) => {
     const next = clampZoom(value);
@@ -604,6 +715,187 @@ const DirectorViewPage: React.FC = () => {
     (value: number) => persistZoom(SYNC_ZOOM_KEY, setSyncZoom, value),
     [persistZoom]
   );
+  const setScriptZoomPersisted = useCallback(
+    (value: number) => persistZoom(SCRIPT_ZOOM_KEY, setScriptZoom, value),
+    [persistZoom]
+  );
+
+  const loadScript = useCallback(async () => {
+    if (!eventId) return;
+    setScriptLoading(true);
+    try {
+      // Prefer live active script for this event (socket catch-up)
+      socketClient.emitScriptContentRequest();
+      // Fallback: try fetching by eventId only if API still serves that shape
+      const response = await fetch(`${getApiBaseUrl()}/api/scripts/${eventId}`, {
+        headers: apiJsonHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const text =
+        typeof data.script_text === 'string'
+          ? data.script_text
+          : typeof data.script?.script_text === 'string'
+            ? data.script.script_text
+            : '';
+      if (!text.trim()) return;
+      setScriptText(text);
+      setScriptName(
+        typeof data.script_name === 'string'
+          ? data.script_name
+          : typeof data.script?.script_name === 'string'
+            ? data.script.script_name
+            : typeof data.name === 'string'
+              ? data.name
+              : ''
+      );
+    } catch {
+      /* socket catch-up may still fill script */
+    } finally {
+      setScriptLoading(false);
+    }
+  }, [eventId]);
+
+  useEffect(() => {
+    if (leftPaneMode === 'script') {
+      void loadScript();
+      setSyncStripVisible(true);
+      setShowSyncPicker(false);
+    }
+  }, [leftPaneMode, loadScript]);
+
+  // Live script load/save from Scripts Follow → Director View
+  useEffect(() => {
+    if (!eventId) return;
+    let cancelled = false;
+    let attachedSock: ReturnType<typeof socketClient.getSocket> = null;
+
+    const onScriptContent = (data: {
+      eventId?: string;
+      scriptText?: string;
+      scriptName?: string;
+    }) => {
+      if (data.eventId && data.eventId !== eventId) return;
+      if (typeof data.scriptText !== 'string') return;
+      setScriptText(data.scriptText);
+      if (typeof data.scriptName === 'string') setScriptName(data.scriptName);
+      setScriptLoading(false);
+    };
+
+    const attach = () => {
+      if (cancelled) return true;
+      const sock = socketClient.getSocket();
+      if (!sock) return false;
+      if (attachedSock === sock) return true;
+      if (attachedSock) attachedSock.off('scriptContentSync', onScriptContent);
+      attachedSock = sock;
+      sock.on('scriptContentSync', onScriptContent);
+      socketClient.emitScriptContentRequest();
+      return true;
+    };
+
+    attach();
+    const poll = window.setInterval(() => {
+      if (attach()) window.clearInterval(poll);
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      attachedSock?.off('scriptContentSync', onScriptContent);
+    };
+  }, [eventId]);
+
+  const applyScriptScrollFollow = useCallback((scrollPosition: number) => {
+    if (!Number.isFinite(scrollPosition)) return;
+    scriptFollowTargetRef.current = Math.max(0, scrollPosition);
+    if (scriptFollowRafRef.current != null) return;
+    const step = () => {
+      const el = scriptScrollRef.current;
+      const target = scriptFollowTargetRef.current;
+      if (!el || target == null) {
+        scriptFollowRafRef.current = null;
+        return;
+      }
+      const current = el.scrollTop;
+      const diff = target - current;
+      if (Math.abs(diff) > 2) {
+        el.scrollTop = current + diff * 0.55;
+        scriptFollowRafRef.current = requestAnimationFrame(step);
+      } else {
+        el.scrollTop = target;
+        scriptFollowTargetRef.current = null;
+        scriptFollowRafRef.current = null;
+      }
+    };
+    scriptFollowRafRef.current = requestAnimationFrame(step);
+  }, []);
+
+  // Follow teleprompter scroller / clock feed when Script · Follow is on
+  useEffect(() => {
+    if (leftPaneMode !== 'script' || scriptViewMode !== 'follow' || !eventId) return;
+    let cancelled = false;
+    let attachedSock: ReturnType<typeof socketClient.getSocket> = null;
+
+    const onScrollSync = (data: {
+      scrollPosition?: number;
+      eventId?: string;
+      scriptText?: string;
+    }) => {
+      if (data.eventId && data.eventId !== eventId) return;
+      if (typeof data.scriptText === 'string' && data.scriptText.trim()) {
+        setScriptText(data.scriptText);
+      }
+      if (typeof data.scrollPosition === 'number') {
+        applyScriptScrollFollow(data.scrollPosition);
+      }
+    };
+
+    const onClockSync = (data: any) => {
+      if (!data || data.enabled === false) return;
+      if (data.eventId && data.eventId !== eventId) return;
+      if (typeof data.scriptText === 'string' && data.scriptText.trim()) {
+        setScriptText(data.scriptText);
+      }
+      if (typeof data.scriptName === 'string' && data.scriptName.trim()) {
+        setScriptName(data.scriptName);
+      }
+      if (typeof data.scrollPosition === 'number') {
+        applyScriptScrollFollow(data.scrollPosition);
+      }
+    };
+
+    const attach = () => {
+      if (cancelled) return true;
+      const sock = socketClient.getSocket();
+      if (!sock) return false;
+      if (attachedSock === sock) return true;
+      if (attachedSock) {
+        attachedSock.off('scriptScrollSync', onScrollSync);
+        attachedSock.off('teleprompterClockSync', onClockSync);
+      }
+      attachedSock = sock;
+      sock.on('scriptScrollSync', onScrollSync);
+      sock.on('teleprompterClockSync', onClockSync);
+      return true;
+    };
+
+    attach();
+    const poll = window.setInterval(() => {
+      if (attach()) window.clearInterval(poll);
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      attachedSock?.off('scriptScrollSync', onScrollSync);
+      attachedSock?.off('teleprompterClockSync', onClockSync);
+      if (scriptFollowRafRef.current != null) {
+        cancelAnimationFrame(scriptFollowRafRef.current);
+        scriptFollowRafRef.current = null;
+      }
+    };
+  }, [leftPaneMode, scriptViewMode, eventId, applyScriptScrollFollow]);
 
   const endPaneResize = useCallback((target?: EventTarget | null, pointerId?: number) => {
     if (!resizingPanesRef.current) return;
@@ -688,65 +980,103 @@ const DirectorViewPage: React.FC = () => {
     [endSyncHeightResize]
   );
 
-  const clearTimerUi = () => {
+  const clearTimerUi = useCallback(() => {
     setActiveItemId(null);
     setTimerRunning(false);
     setTimerLoaded(false);
     setTimerStartedAt(null);
     setTimerDurationSeconds(0);
     setTimerElapsedHint(0);
-  };
+  }, []);
 
-  // Live timer sync
-  useEffect(() => {
-    if (!eventId) return;
-    const applyTimer = (timer: any) => {
+  const applyTimer = useCallback(
+    (timer: any) => {
       if (!timer) {
         clearTimerUi();
         return;
       }
-      const id = timer.item_id != null ? Number(timer.item_id) : null;
+      const rawId = timer.item_id != null ? timer.item_id : timer.itemId;
+      const id = rawId != null ? Number(rawId) : null;
       setActiveItemId(Number.isFinite(id as number) ? (id as number) : null);
-      const running = !!(timer.is_running && timer.is_active) || timer.timer_state === 'running';
+      const running =
+        timer.timer_state === 'running' ||
+        (!!(timer.is_running && timer.is_active !== false) && timer.timer_state !== 'loaded');
       const loaded =
         !running &&
-        (!!timer.is_active || timer.timer_state === 'loaded' || timer.timer_state === 'armed');
+        (timer.timer_state === 'loaded' ||
+          timer.timer_state === 'armed' ||
+          (!!timer.is_active && !timer.is_running));
       setTimerRunning(running);
       setTimerLoaded(loaded);
-      setTimerDurationSeconds(
+      const duration =
         Number(timer.duration_seconds) ||
-          Number(timer.durationSeconds) ||
-          0
-      );
-      setTimerStartedAt(timer.started_at || timer.startedAt || null);
-      if (typeof timer.elapsed_seconds === 'number') {
-        setTimerElapsedHint(timer.elapsed_seconds);
-      } else if (typeof timer.elapsedSeconds === 'number') {
-        setTimerElapsedHint(timer.elapsedSeconds);
+        Number(timer.durationSeconds) ||
+        0;
+      setTimerDurationSeconds(Number.isFinite(duration) ? duration : 0);
+      const started = timer.started_at || timer.startedAt || null;
+      // Placeholder / non-running started_at values from API — ignore for countdown math
+      const startedMs = started ? new Date(started).getTime() : NaN;
+      const startedLooksReal =
+        Number.isFinite(startedMs) &&
+        startedMs > 0 &&
+        startedMs < new Date('2090-01-01').getTime();
+      setTimerStartedAt(running && startedLooksReal ? String(started) : null);
+      const elapsedHint =
+        typeof timer.elapsed_seconds === 'number'
+          ? timer.elapsed_seconds
+          : typeof timer.elapsedSeconds === 'number'
+            ? timer.elapsedSeconds
+            : 0;
+      setTimerElapsedHint(Number.isFinite(elapsedHint) ? elapsedHint : 0);
+    },
+    [clearTimerUi]
+  );
+
+  const loadActiveTimer = useCallback(async () => {
+    if (!eventId) return;
+    try {
+      // Prefer DatabaseService (no apiClient GET cache) so Director View boots with live state
+      const timer = await DatabaseService.getActiveTimer(eventId);
+      applyTimer(timer ? pickActiveTimer(timer) || timer : null);
+    } catch {
+      try {
+        const data = await apiClient.getActiveTimers(eventId);
+        applyTimer(pickActiveTimer(data));
+      } catch {
+        /* keep last known UI; socket may still update */
       }
-    };
+    }
+  }, [eventId, applyTimer]);
+
+  // Live timer sync — fetch current state on connect; keep listening for updates
+  useEffect(() => {
+    if (!eventId) return;
+    void loadActiveTimer();
 
     socketClient.connect(
       eventId,
       {
+        onInitialSync: async () => {
+          await loadActiveTimer();
+        },
         onTimerUpdated: (data: any) => {
-          if (data?.item_id != null) applyTimer(data);
-          else if (data?.activeTimer) applyTimer(data.activeTimer);
+          applyTimer(pickActiveTimer(data) || (data?.item_id != null || data?.itemId != null ? data : null));
         },
         onTimerStarted: (data: any) => {
-          if (data?.item_id != null) applyTimer({ ...data, is_running: true, is_active: true });
+          const t = pickActiveTimer(data) || data;
+          if (t) applyTimer({ ...t, is_running: true, is_active: true, timer_state: 'running' });
         },
         onTimerStopped: () => {
           setTimerRunning(false);
           setTimerLoaded(false);
           setTimerStartedAt(null);
+          void loadActiveTimer();
         },
         onTimersStopped: () => clearTimerUi(),
         onActiveTimersUpdated: (data: any) => {
-          const list = Array.isArray(data) ? data : data?.timers || data?.activeTimers;
-          if (Array.isArray(list) && list.length > 0) applyTimer(list[0]);
-          else clearTimerUi();
+          applyTimer(pickActiveTimer(data));
         },
+        onResetAllStates: () => clearTimerUi(),
         onRunOfShowDataUpdated: () => {
           void loadSchedule();
         },
@@ -767,7 +1097,7 @@ const DirectorViewPage: React.FC = () => {
         /* ignore */
       }
     };
-  }, [eventId, loadSchedule]);
+  }, [eventId, loadSchedule, loadActiveTimer, applyTimer, clearTimerUi]);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 250);
@@ -1056,6 +1386,93 @@ const DirectorViewPage: React.FC = () => {
     );
   };
 
+  const notesBody = (
+    <>
+      {notesSource === 'mine' && !myOperatorId ? (
+        <p className="text-sm text-slate-500 p-2">
+          Set an operator name in Notes popout first, or sign in, to load My notes.
+        </p>
+      ) : notesRows.length === 0 ? (
+        <p className="text-sm text-slate-500 p-2">
+          {notesViewMode === 'follow'
+            ? 'No cues for this day.'
+            : 'No personal notes for this day.'}
+        </p>
+      ) : (
+        notesRows.map(({ item, note, isCurrent, followLabel }) => (
+          <div
+            key={item.id}
+            ref={isCurrent ? activeNoteRef : undefined}
+            className={`rounded-lg border px-3 py-2 ${
+              isCurrent
+                ? 'border-emerald-500 bg-emerald-950/40'
+                : 'border-slate-700 bg-slate-900/80'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-1 min-w-0">
+              {followLabel ? (
+                <span
+                  className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    isCurrent
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-600 text-slate-200'
+                  }`}
+                >
+                  {followLabel}
+                </span>
+              ) : null}
+              <div className="text-xs font-semibold text-slate-300 truncate min-w-0">
+                {cueLabel(item)}
+              </div>
+            </div>
+            <div className="text-sm text-slate-100 whitespace-pre-wrap break-words">
+              {note || <span className="text-slate-600">—</span>}
+            </div>
+          </div>
+        ))
+      )}
+    </>
+  );
+
+  const notesChrome = (
+    <div className="flex items-center gap-2 flex-wrap justify-end">
+      <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
+        <button
+          type="button"
+          onClick={() => setNotesViewMode('plan')}
+          className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+            notesViewMode === 'plan'
+              ? 'bg-cyan-600 text-white'
+              : 'text-slate-400 hover:text-white'
+          }`}
+          title="Free scroll — all notes with content"
+        >
+          Scroll
+        </button>
+        <button
+          type="button"
+          onClick={() => setNotesViewMode('follow')}
+          className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+            notesViewMode === 'follow'
+              ? 'bg-purple-600 text-white'
+              : 'text-slate-400 hover:text-white'
+          }`}
+          title="Follow live cue plus the next three"
+        >
+          Follow
+        </button>
+      </div>
+      <ScaleStepper
+        label="Scale"
+        value={notesZoom}
+        onChange={setNotesZoomPersisted}
+        title="Scale personal notes"
+      />
+    </div>
+  );
+
+  const scriptLines = scriptText ? scriptText.split('\n') : [];
+
   return (
     <div className="fixed inset-0 z-40 bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
       {chromeExpanded ? (
@@ -1089,16 +1506,66 @@ const DirectorViewPage: React.FC = () => {
               </label>
               <button
                 type="button"
-                onClick={() => setShowSyncPicker((v) => !v)}
-                className="px-2.5 py-1 text-sm rounded border border-slate-600 bg-slate-800 hover:bg-slate-700 whitespace-nowrap"
+                onClick={() => {
+                  setLeftPaneMode((m) => (m === 'script' ? 'notes' : 'script'));
+                }}
+                className={`px-2.5 py-1 text-sm rounded border whitespace-nowrap ${
+                  leftPaneMode === 'script'
+                    ? 'border-violet-500/70 bg-violet-950/50 text-violet-100 hover:bg-violet-900/50'
+                    : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+                title="Script mode: event script on the left (Scroll/Follow teleprompter), personal notes in the bottom strip"
               >
-                Sync ({syncColumnIds.length}/{MAX_SYNC_COLUMNS})
+                Script {leftPaneMode === 'script' ? 'on' : 'off'}
+              </button>
+              {leftPaneMode === 'notes' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSyncPicker((v) => {
+                      const next = !v;
+                      if (next) setSyncStripVisible(true);
+                      return next;
+                    });
+                  }}
+                  className="px-2.5 py-1 text-sm rounded border border-slate-600 bg-slate-800 hover:bg-slate-700 whitespace-nowrap"
+                >
+                  Sync ({syncColumnIds.length}/{MAX_SYNC_COLUMNS})
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setSyncStripVisible((v) => !v)}
+                className={`px-2.5 py-1 text-sm rounded border whitespace-nowrap ${
+                  syncStripVisible
+                    ? 'border-amber-600/70 bg-amber-950/40 text-amber-100 hover:bg-amber-900/50'
+                    : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+                title={
+                  leftPaneMode === 'script'
+                    ? syncStripVisible
+                      ? 'Hide bottom notes strip'
+                      : 'Show bottom notes strip'
+                    : syncStripVisible
+                      ? 'Hide bottom custom-column strip — notes + Run of Show only'
+                      : 'Show bottom custom-column strip'
+                }
+              >
+                {leftPaneMode === 'script'
+                  ? syncStripVisible
+                    ? 'Hide notes'
+                    : 'Show notes'
+                  : syncStripVisible
+                    ? 'Hide custom'
+                    : 'Show custom'}
               </button>
               <button
                 type="button"
                 onClick={() => {
                   void loadSchedule();
                   void loadNotes();
+                  void loadActiveTimer();
+                  if (leftPaneMode === 'script') void loadScript();
                 }}
                 className="px-2.5 py-1 text-sm rounded border border-slate-600 bg-slate-800 hover:bg-slate-700"
               >
@@ -1155,7 +1622,7 @@ const DirectorViewPage: React.FC = () => {
             ) : null}
           </div>
 
-          {showSyncPicker ? (
+          {showSyncPicker && leftPaneMode === 'notes' ? (
             <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900 px-3 py-2 max-h-[18vh] overflow-y-auto">
               <p className="text-xs text-slate-400 mb-2">
                 Choose up to {MAX_SYNC_COLUMNS} custom columns for the bottom Current / Next strip.
@@ -1219,6 +1686,46 @@ const DirectorViewPage: React.FC = () => {
                 </label>
                 <button
                   type="button"
+                  onClick={() => {
+                    setLeftPaneMode((m) => (m === 'script' ? 'notes' : 'script'));
+                  }}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded border whitespace-nowrap ${
+                    leftPaneMode === 'script'
+                      ? 'border-violet-500/70 bg-violet-950/50 text-violet-100'
+                      : 'border-slate-600 bg-slate-800 text-slate-300'
+                  }`}
+                  title="Script on left; notes in bottom strip"
+                >
+                  Script {leftPaneMode === 'script' ? 'on' : 'off'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSyncStripVisible((v) => !v)}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded border whitespace-nowrap ${
+                    syncStripVisible
+                      ? 'border-amber-600/70 bg-amber-950/40 text-amber-100'
+                      : 'border-slate-600 bg-slate-800 text-slate-300'
+                  }`}
+                  title={
+                    leftPaneMode === 'script'
+                      ? syncStripVisible
+                        ? 'Hide bottom notes strip'
+                        : 'Show bottom notes strip'
+                      : syncStripVisible
+                        ? 'Hide bottom custom-column strip'
+                        : 'Show bottom custom-column strip'
+                  }
+                >
+                  {leftPaneMode === 'script'
+                    ? syncStripVisible
+                      ? 'Hide notes'
+                      : 'Show notes'
+                    : syncStripVisible
+                      ? 'Hide custom'
+                      : 'Show custom'}
+                </button>
+                <button
+                  type="button"
                   onClick={() => setDockClockVisible((v) => !v)}
                   className={`px-2.5 py-1 text-xs font-semibold rounded border whitespace-nowrap ${
                     dockClockVisible
@@ -1234,6 +1741,8 @@ const DirectorViewPage: React.FC = () => {
                   onClick={() => {
                     void loadSchedule();
                     void loadNotes();
+                    void loadActiveTimer();
+                    if (leftPaneMode === 'script') void loadScript();
                   }}
                   className="px-2.5 py-1 text-xs rounded border border-slate-600 bg-slate-800 hover:bg-slate-700"
                 >
@@ -1258,96 +1767,100 @@ const DirectorViewPage: React.FC = () => {
               className="min-h-0 min-w-0 flex flex-col overflow-hidden"
               style={{ flex: `0 0 ${leftWidthPct}%`, width: `${leftWidthPct}%` }}
             >
-              <div className="flex-shrink-0 px-3 py-1.5 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-sky-300">Personal notes</h2>
-                <div className="flex items-center gap-2 flex-wrap justify-end">
-                  <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
-                    <button
-                      type="button"
-                      onClick={() => setNotesViewMode('plan')}
-                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
-                        notesViewMode === 'plan'
-                          ? 'bg-cyan-600 text-white'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                      title="Free scroll — all notes with content"
-                    >
-                      Scroll
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setNotesViewMode('follow')}
-                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
-                        notesViewMode === 'follow'
-                          ? 'bg-purple-600 text-white'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                      title="Follow live cue plus the next three"
-                    >
-                      Follow
-                    </button>
-                  </div>
-                  <ScaleStepper
-                    label="Scale"
-                    value={notesZoom}
-                    onChange={setNotesZoomPersisted}
-                    title="Scale personal notes"
-                  />
-                </div>
-              </div>
-              <div
-                ref={notesListRef}
-                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 space-y-2"
-                style={
-                  notesZoom !== 1
-                    ? ({ zoom: notesZoom } as React.CSSProperties)
-                    : undefined
-                }
-              >
-                {notesSource === 'mine' && !myOperatorId ? (
-                  <p className="text-sm text-slate-500 p-2">
-                    Set an operator name in Notes popout first, or sign in, to load My notes.
-                  </p>
-                ) : notesRows.length === 0 ? (
-                  <p className="text-sm text-slate-500 p-2">
-                    {notesViewMode === 'follow'
-                      ? 'No cues for this day.'
-                      : 'No personal notes for this day.'}
-                  </p>
-                ) : (
-                  notesRows.map(({ item, note, isCurrent, followLabel }) => (
-                    <div
-                      key={item.id}
-                      ref={isCurrent ? activeNoteRef : undefined}
-                      className={`rounded-lg border px-3 py-2 ${
-                        isCurrent
-                          ? 'border-emerald-500 bg-emerald-950/40'
-                          : 'border-slate-700 bg-slate-900/80'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1 min-w-0">
-                        {followLabel ? (
-                          <span
-                            className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
-                              isCurrent
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-slate-600 text-slate-200'
-                            }`}
-                          >
-                            {followLabel}
-                          </span>
-                        ) : null}
-                        <div className="text-xs font-semibold text-slate-300 truncate min-w-0">
-                          {cueLabel(item)}
-                        </div>
-                      </div>
-                      <div className="text-sm text-slate-100 whitespace-pre-wrap break-words">
-                        {note || <span className="text-slate-600">—</span>}
-                      </div>
+              {leftPaneMode === 'script' ? (
+                <>
+                  <div className="flex-shrink-0 px-3 py-1.5 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-semibold text-violet-300">Script</h2>
+                      {scriptName ? (
+                        <p className="text-[10px] text-slate-500 truncate">{scriptName}</p>
+                      ) : null}
                     </div>
-                  ))
-                )}
-              </div>
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
+                        <button
+                          type="button"
+                          onClick={() => setScriptViewMode('plan')}
+                          className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+                            scriptViewMode === 'plan'
+                              ? 'bg-cyan-600 text-white'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                          title="Free-scroll the script"
+                        >
+                          Scroll
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScriptViewMode('follow')}
+                          className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+                            scriptViewMode === 'follow'
+                              ? 'bg-purple-600 text-white'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                          title="Follow teleprompter scroller / clock feed"
+                        >
+                          Follow
+                        </button>
+                      </div>
+                      <ScaleStepper
+                        label="Scale"
+                        value={scriptZoom}
+                        onChange={setScriptZoomPersisted}
+                        title="Scale script text"
+                      />
+                    </div>
+                  </div>
+                  <div
+                    ref={scriptScrollRef}
+                    className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 bg-black/40 ${
+                      scriptViewMode === 'follow' ? 'scroll-smooth' : ''
+                    }`}
+                    style={
+                      scriptZoom !== 1
+                        ? ({ zoom: scriptZoom } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                    {scriptLoading ? (
+                      <p className="text-sm text-slate-500">Loading script…</p>
+                    ) : scriptLines.length === 0 ? (
+                      <p className="text-sm text-slate-500">
+                        No script for this event. Load one in Scripts Follow / Teleprompter first.
+                      </p>
+                    ) : (
+                      <div className="font-mono text-[13px] leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
+                        {scriptLines.map((line, idx) => (
+                          <div
+                            key={`script-line-${idx}`}
+                            className="min-h-[1.35em] border-b border-slate-900/60 px-0.5"
+                          >
+                            {line || '\u00a0'}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex-shrink-0 px-3 py-1.5 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold text-sky-300">Personal notes</h2>
+                    {notesChrome}
+                  </div>
+                  <div
+                    ref={notesListRef}
+                    className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 space-y-2"
+                    style={
+                      notesZoom !== 1
+                        ? ({ zoom: notesZoom } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                    {notesBody}
+                  </div>
+                </>
+              )}
             </aside>
 
             <div
@@ -1609,6 +2122,7 @@ const DirectorViewPage: React.FC = () => {
             </main>
           </div>
 
+          {syncStripVisible ? (
           <div
             role="separator"
             aria-orientation="horizontal"
@@ -1649,12 +2163,76 @@ const DirectorViewPage: React.FC = () => {
               }`}
             />
           </div>
+          ) : null}
 
-          {/* Bottom strip — height from drag handle above */}
+          {/* Bottom strip — height from drag handle above (hidden via Hide custom) */}
+          {syncStripVisible ? (
           <section
             className="min-h-0 flex flex-col overflow-hidden border-t border-slate-700 bg-slate-900/95 px-3 py-2"
             style={{ flex: `0 0 ${syncHeightPct}%`, height: `${syncHeightPct}%` }}
           >
+            {leftPaneMode === 'script' ? (
+              <>
+                <div className="flex-shrink-0 flex items-center justify-between gap-2 mb-1.5 min-w-0 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                    <h2 className="text-sm font-semibold text-sky-300 whitespace-nowrap">
+                      Personal notes
+                    </h2>
+                    <span className="text-[10px] tabular-nums text-slate-500">
+                      {syncHeightPct}% tall
+                    </span>
+                    {notesChrome}
+                  </div>
+                </div>
+                <div className="flex-1 min-h-0 flex gap-2 overflow-hidden">
+                  <div
+                    ref={notesListRef}
+                    className="flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden p-1 space-y-2"
+                    style={
+                      notesZoom !== 1
+                        ? ({ zoom: notesZoom } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                    <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {notesBody}
+                    </div>
+                  </div>
+                  {dockClockVisible ? (
+                    <div className="flex-shrink-0 w-[12.5rem] min-h-0 rounded-lg border border-slate-600 bg-slate-950/90 px-2.5 py-2 text-right flex flex-col overflow-hidden">
+                      <p className={`text-[10px] font-bold uppercase tracking-wide ${statusClass}`}>
+                        {statusLabel}
+                      </p>
+                      <p
+                        className="text-2xl font-mono font-bold tabular-nums leading-none mt-0.5"
+                        style={{ color: timerColor }}
+                      >
+                        {timerDisplay}
+                      </p>
+                      <p
+                        className="text-[11px] text-white font-semibold truncate mt-1.5"
+                        title={liveCue?.segmentName || ''}
+                      >
+                        {liveCue?.segmentName || 'No cue loaded'}
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-mono truncate">
+                        {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
+                        {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
+                      </p>
+                      {hasTimer ? (
+                        <div className="mt-auto pt-1.5 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-1.5">
+                          <div
+                            className="h-full transition-all duration-300 absolute top-0 right-0"
+                            style={{ width: `${remainingPct}%`, background: timerColor }}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <>
             <div className="flex-shrink-0 flex items-center justify-between gap-2 mb-1.5 min-w-0 flex-wrap">
               <div className="flex items-center gap-2 min-w-0 flex-wrap">
                 <h2 className="text-sm font-semibold text-amber-300 whitespace-nowrap">
@@ -1754,7 +2332,33 @@ const DirectorViewPage: React.FC = () => {
                 {syncColumns.map((col) => renderSyncColumnCard(col))}
               </div>
             )}
+              </>
+            )}
           </section>
+          ) : !chromeExpanded && dockClockVisible ? (
+            <div className="flex-shrink-0 border-t border-slate-700 bg-slate-900/95 px-3 py-2 flex items-center justify-end gap-3">
+              <div className="min-w-0 text-right">
+                <p className="text-[11px] text-white font-semibold truncate">
+                  {liveCue?.segmentName || 'No cue loaded'}
+                </p>
+                <p className="text-[10px] text-slate-400 font-mono truncate">
+                  {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
+                  {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className={`text-[10px] font-bold uppercase tracking-wide ${statusClass}`}>
+                  {statusLabel}
+                </p>
+                <p
+                  className="text-2xl font-mono font-bold tabular-nums leading-none"
+                  style={{ color: timerColor }}
+                >
+                  {timerDisplay}
+                </p>
+              </div>
+            </div>
+          ) : null}
           </div>
         </div>
       )}

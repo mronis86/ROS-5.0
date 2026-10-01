@@ -200,6 +200,7 @@ const ScriptsFollowPage: React.FC = () => {
   const scriptRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastScrollBroadcastRef = useRef<number>(0);
+  const isEditingScriptRef = useRef(false);
 
 
   // Handle disconnect timer confirmation
@@ -334,6 +335,7 @@ const ScriptsFollowPage: React.FC = () => {
     const handleConnect = () => {
       console.log('🔌 Scripts Follow WebSocket connected');
       setIsWebSocketConnected(true);
+      socketClient.emitScriptContentRequest();
     };
 
     const handleDisconnect = () => {
@@ -341,8 +343,42 @@ const ScriptsFollowPage: React.FC = () => {
       setIsWebSocketConnected(false);
     };
 
+    const handleScriptContentSync = (data: {
+      eventId?: string;
+      scriptId?: string | null;
+      scriptName?: string;
+      scriptText?: string;
+      comments?: any[];
+      fromUserId?: string;
+      catchUp?: boolean;
+    }) => {
+      if (data.eventId && data.eventId !== eventId) return;
+      // Don't clobber local edits while editing
+      if (isEditingScriptRef.current) return;
+      if (typeof data.scriptText !== 'string') return;
+      setScriptText(data.scriptText);
+      if (typeof data.scriptName === 'string') setCurrentScriptName(data.scriptName);
+      if (data.scriptId != null) setCurrentScriptId(String(data.scriptId));
+      if (Array.isArray(data.comments)) {
+        setComments(
+          data.comments.map((c: any) => ({
+            id: String(c.id || c.commentId || `${c.lineNumber || c.line_number}-${c.text || c.comment_text}`),
+            lineNumber: Number(c.lineNumber ?? c.line_number) || 0,
+            text: String(c.text ?? c.comment_text ?? ''),
+            author: String(c.author || 'User'),
+            timestamp: c.timestamp ? new Date(c.timestamp) : new Date(c.created_at || Date.now()),
+            type: (c.type || c.comment_type || 'GENERAL') as CommentType,
+          }))
+        );
+      }
+    };
+
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
+    socket.on('scriptContentSync', handleScriptContentSync);
+    if (socket.connected) {
+      socketClient.emitScriptContentRequest();
+    }
 
     // Set initial connection status
     setIsWebSocketConnected(socket.connected);
@@ -508,6 +544,7 @@ const ScriptsFollowPage: React.FC = () => {
       if (socket) {
         socket.off('scriptScrollSync');
         socket.off('scriptCommentSync');
+        socket.off('scriptContentSync', handleScriptContentSync);
         socket.off('connect', handleConnect);
         socket.off('disconnect', handleDisconnect);
         console.log('✅ Removed Scripts Follow socket listeners');
@@ -515,6 +552,10 @@ const ScriptsFollowPage: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [eventId, userRole, reconnectKey]);
+
+  useEffect(() => {
+    isEditingScriptRef.current = isEditingScript;
+  }, [isEditingScript]);
 
   // Handle scroll events (Scroller only)
   const handleScroll = () => {
@@ -583,13 +624,9 @@ const ScriptsFollowPage: React.FC = () => {
       const text = await extractImportedScript(file);
       if (!text) throw new Error('No readable text was found in this file.');
       setScriptText(text);
+      setComments([]);
       console.log('✅ Script imported successfully');
-      
-      // Save to database
-      if (eventId) {
-        // TODO: Implement DatabaseService.saveScriptData
-        console.log('💾 Saving script to database...');
-      }
+      broadcastScriptContent(text, currentScriptName || file.name || 'Imported script', currentScriptId, []);
     } catch (error) {
       console.error('❌ Error importing script:', error);
       setImportError(error instanceof Error ? error.message : 'Could not read this script file.');
@@ -809,6 +846,7 @@ const ScriptsFollowPage: React.FC = () => {
     
     setScriptText(editScriptText);
     setIsEditingScript(false);
+    broadcastScriptContent(editScriptText, currentScriptName, currentScriptId, adjustedComments);
     
     // Save to database if we have a current script
     if (currentScriptId) {
@@ -919,6 +957,12 @@ const ScriptsFollowPage: React.FC = () => {
       const savedScript = await response.json();
       setCurrentScriptId(savedScript.id);
       setCurrentScriptName(savedScript.script_name);
+      broadcastScriptContent(
+        scriptText,
+        savedScript.script_name || scriptName,
+        savedScript.id || null,
+        comments
+      );
       
       // Save comments - delete all existing comments first, then add current ones
       console.log('💾 Saving comments for script:', savedScript.id, '- Total comments:', comments.length);
@@ -956,6 +1000,23 @@ const ScriptsFollowPage: React.FC = () => {
     }
   };
 
+  const broadcastScriptContent = (
+    nextText: string,
+    nextName: string,
+    nextId: string | null,
+    nextComments: Comment[]
+  ) => {
+    if (!eventId) return;
+    socketClient.emitScriptContent({
+      scriptText: nextText,
+      scriptName: nextName,
+      scriptId: nextId,
+      comments: nextComments,
+      fromUserId: user?.id || '',
+      fromUserName: userName,
+    });
+  };
+
   // Load a script from database
   const loadScriptFromDatabase = async (scriptId: string) => {
     try {
@@ -980,6 +1041,12 @@ const ScriptsFollowPage: React.FC = () => {
       setComments(loadedComments);
       
       setShowScriptManager(false);
+      broadcastScriptContent(
+        data.script.script_text || '',
+        data.script.script_name || '',
+        data.script.id || null,
+        loadedComments
+      );
       alert(`Script "${data.script.script_name}" loaded!`);
     } catch (error) {
       console.error('Error loading script:', error);

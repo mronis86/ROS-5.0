@@ -8838,6 +8838,8 @@ app.post('/api/timers/mitti-end', async (req, res) => {
 const presenceByEvent = new Map(); // eventId -> Map(socketId -> { userId, userName, userEmail, userRole, joinedAt })
 /** Latest Content Review cue selection per event (master/slave follow). */
 const contentReviewLastSelection = new Map(); // eventId -> { itemId, fromUserId, fromUserName }
+/** Last loaded/shared script per event (catch-up for late joiners / Director View). */
+const eventActiveScripts = new Map(); // eventId -> { scriptId, scriptName, scriptText, comments, updatedAt }
 const socketToEvent = new Map();   // socketId -> eventId (for cleanup on disconnect)
 
 /** Per-row edit locks: eventId -> Map(rowId -> { userId, userName, socketId, timestamp }) */
@@ -8939,6 +8941,19 @@ io.on('connection', (socket) => {
     const snapshot = locksSnapshot(eventId);
     if (snapshot.length > 0) {
       socket.emit('update', { type: 'rowLocksSnapshot', data: { eventId: String(eventId), locks: snapshot } });
+    }
+    // Catch up with active script for this event (Scripts Follow / Director View)
+    const activeScript = eventActiveScripts.get(String(eventId));
+    if (activeScript && activeScript.scriptText) {
+      socket.emit('scriptContentSync', {
+        eventId: String(eventId),
+        scriptId: activeScript.scriptId || null,
+        scriptName: activeScript.scriptName || '',
+        scriptText: activeScript.scriptText,
+        comments: activeScript.comments || [],
+        catchUp: true,
+        timestamp: activeScript.updatedAt || Date.now(),
+      });
     }
   });
   
@@ -9152,6 +9167,50 @@ io.on('connection', (socket) => {
       lineNumber,
       fontSize,
       timestamp: Date.now()
+    });
+  });
+
+  // Active script for an event — load/save/import broadcasts to everyone on the event
+  socket.on('scriptContentUpdate', (data) => {
+    const eventId = data?.eventId != null ? String(data.eventId) : '';
+    if (!eventId) return;
+    const scriptText = typeof data.scriptText === 'string' ? data.scriptText : '';
+    const payload = {
+      eventId,
+      scriptId: data.scriptId != null ? String(data.scriptId) : null,
+      scriptName: typeof data.scriptName === 'string' ? data.scriptName : '',
+      scriptText,
+      comments: Array.isArray(data.comments) ? data.comments : [],
+      fromUserId: data.fromUserId != null ? String(data.fromUserId) : '',
+      fromUserName: data.fromUserName != null ? String(data.fromUserName) : '',
+      timestamp: Date.now(),
+    };
+    eventActiveScripts.set(eventId, {
+      scriptId: payload.scriptId,
+      scriptName: payload.scriptName,
+      scriptText: payload.scriptText,
+      comments: payload.comments,
+      updatedAt: payload.timestamp,
+    });
+    console.log(
+      `📜 Script content sync for event:${eventId} (${payload.scriptName || 'untitled'}, ${payload.scriptText.length} chars)`
+    );
+    io.to(`event:${eventId}`).emit('scriptContentSync', payload);
+  });
+
+  socket.on('scriptContentRequest', (data) => {
+    const eventId = data?.eventId != null ? String(data.eventId) : '';
+    if (!eventId) return;
+    const activeScript = eventActiveScripts.get(eventId);
+    if (!activeScript || !activeScript.scriptText) return;
+    socket.emit('scriptContentSync', {
+      eventId,
+      scriptId: activeScript.scriptId || null,
+      scriptName: activeScript.scriptName || '',
+      scriptText: activeScript.scriptText,
+      comments: activeScript.comments || [],
+      catchUp: true,
+      timestamp: activeScript.updatedAt || Date.now(),
     });
   });
 

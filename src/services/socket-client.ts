@@ -544,6 +544,35 @@ class SocketClient {
     }
   }
 
+  /** Broadcast loaded/edited script text so Director View / other clients stay in sync. */
+  emitScriptContent(payload: {
+    scriptText: string;
+    scriptName?: string;
+    scriptId?: string | null;
+    comments?: any[];
+    fromUserId?: string;
+    fromUserName?: string;
+  }) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('scriptContentUpdate', {
+        eventId: this.eventId,
+        scriptText: payload.scriptText ?? '',
+        scriptName: payload.scriptName ?? '',
+        scriptId: payload.scriptId ?? null,
+        comments: payload.comments ?? [],
+        fromUserId: payload.fromUserId ?? '',
+        fromUserName: payload.fromUserName ?? '',
+      });
+    }
+  }
+
+  /** Request the event's current active script (catch-up after open / reconnect). */
+  emitScriptContentRequest() {
+    if (this.socket && this.eventId) {
+      this.socket.emit('scriptContentRequest', { eventId: this.eventId });
+    }
+  }
+
   // Emit comment updates for Scripts Follow page
   emitScriptComment(action: 'add' | 'edit' | 'delete', comment?: any, commentId?: string) {
     if (this.socket && this.eventId) {

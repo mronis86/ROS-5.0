@@ -409,6 +409,32 @@ const TeleprompterPage: React.FC = () => {
     };
   }, [eventId, reconnectKey]);
   
+  // When Scripts Follow loads a script for this event, update local script text
+  useEffect(() => {
+    if (!eventId || !isWebSocketConnected) return;
+    const socket = socketClient.getSocket();
+    if (!socket) return;
+
+    const onScriptContent = (data: {
+      eventId?: string;
+      scriptText?: string;
+      scriptName?: string;
+      scriptId?: string | null;
+    }) => {
+      if (data.eventId && data.eventId !== eventId) return;
+      if (typeof data.scriptText !== 'string') return;
+      setScriptText(data.scriptText);
+      if (typeof data.scriptName === 'string') setCurrentScriptName(data.scriptName);
+      if (data.scriptId != null) setCurrentScriptId(String(data.scriptId));
+    };
+
+    socket.on('scriptContentSync', onScriptContent);
+    socketClient.emitScriptContentRequest();
+    return () => {
+      socket.off('scriptContentSync', onScriptContent);
+    };
+  }, [eventId, isWebSocketConnected]);
+
   // Listen for scroll sync events (Viewers only) using raw socket
   useEffect(() => {
     if (userRole !== 'VIEWER' || !eventId) return;
