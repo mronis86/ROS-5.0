@@ -32,6 +32,112 @@ export const BUILTIN_COLUMN_LABELS: Record<BuiltinScrollColumn, string> = {
 };
 
 export const ROS_COLUMN_ORDER_STORAGE_KEY = 'rosColumnOrder';
+/** Built-in column show/hide — global per browser (all events). */
+export const ROS_VISIBLE_COLUMNS_STORAGE_KEY = 'rosVisibleColumns';
+/** Custom column show/hide keyed by column name — applies across events with same names. */
+export const ROS_VISIBLE_CUSTOM_BY_NAME_STORAGE_KEY = 'rosVisibleCustomColumnsByName';
+
+export type RosVisibleColumns = {
+  start: boolean;
+  programType: boolean;
+  duration: boolean;
+  segmentName: boolean;
+  shotType: boolean;
+  pptQA: boolean;
+  recording: boolean;
+  notes: boolean;
+  assets: boolean;
+  participants: boolean;
+  speakers: boolean;
+  public: boolean;
+  timer: boolean;
+  custom: boolean;
+};
+
+export const DEFAULT_ROS_VISIBLE_COLUMNS: RosVisibleColumns = {
+  start: true,
+  programType: true,
+  duration: true,
+  segmentName: true,
+  shotType: true,
+  pptQA: true,
+  recording: true,
+  notes: true,
+  assets: true,
+  participants: false,
+  speakers: true,
+  public: true,
+  timer: true,
+  custom: true,
+};
+
+export function loadRosVisibleColumns(): RosVisibleColumns {
+  try {
+    const raw = localStorage.getItem(ROS_VISIBLE_COLUMNS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_ROS_VISIBLE_COLUMNS };
+    const parsed = JSON.parse(raw) as Partial<RosVisibleColumns>;
+    return { ...DEFAULT_ROS_VISIBLE_COLUMNS, ...parsed };
+  } catch {
+    return { ...DEFAULT_ROS_VISIBLE_COLUMNS };
+  }
+}
+
+export function saveRosVisibleColumns(cols: RosVisibleColumns): void {
+  try {
+    localStorage.setItem(ROS_VISIBLE_COLUMNS_STORAGE_KEY, JSON.stringify(cols));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadRosVisibleCustomByName(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(ROS_VISIBLE_CUSTOM_BY_NAME_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, boolean>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveRosVisibleCustomByName(byName: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(ROS_VISIBLE_CUSTOM_BY_NAME_STORAGE_KEY, JSON.stringify(byName));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Map custom column ids → visibility using saved name preferences. */
+export function visibleCustomColumnsFromNames(
+  columns: { id: string; name?: string }[],
+  byName: Record<string, boolean> = loadRosVisibleCustomByName()
+): Record<string, boolean> {
+  const next: Record<string, boolean> = {};
+  for (const col of columns) {
+    const name = (col.name || '').trim();
+    if (name && Object.prototype.hasOwnProperty.call(byName, name)) {
+      next[col.id] = Boolean(byName[name]);
+    } else {
+      next[col.id] = true;
+    }
+  }
+  return next;
+}
+
+export function customColumnVisibilityToNames(
+  columns: { id: string; name?: string }[],
+  byId: Record<string, boolean>
+): Record<string, boolean> {
+  const byName = loadRosVisibleCustomByName();
+  for (const col of columns) {
+    const name = (col.name || '').trim();
+    if (!name) continue;
+    byName[name] = byId[col.id] !== false;
+  }
+  return byName;
+}
 
 export function customColumnOrderKey(id: string): string {
   return `custom:${id}`;

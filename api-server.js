@@ -5365,6 +5365,68 @@ async function listUserEventNoteOperators(eventId) {
   return result.rows;
 }
 
+async function ensureUserUiPreferencesTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.user_ui_preferences (
+      user_id TEXT PRIMARY KEY,
+      preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+}
+
+// Account-level UI preferences (ROS column filter/order, etc.)
+app.get('/api/user-ui-preferences', async (req, res) => {
+  try {
+    const userId = String(req.query.user_id || '').trim();
+    if (!userId) {
+      return res.status(400).json({ error: 'user_id is required' });
+    }
+    await ensureUserUiPreferencesTable();
+    const result = await pool.query(
+      `SELECT user_id, preferences, updated_at
+       FROM user_ui_preferences
+       WHERE user_id = $1
+       LIMIT 1`,
+      [userId]
+    );
+    if (!result.rows.length) {
+      return res.json({ user_id: userId, preferences: {}, updated_at: null });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching user UI preferences:', error);
+    res.status(500).json({ error: 'Failed to fetch user UI preferences' });
+  }
+});
+
+app.put('/api/user-ui-preferences', async (req, res) => {
+  try {
+    const userId = String(req.body?.user_id || '').trim();
+    const preferences = req.body?.preferences;
+    if (!userId) {
+      return res.status(400).json({ error: 'user_id is required' });
+    }
+    if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) {
+      return res.status(400).json({ error: 'preferences object is required' });
+    }
+    await ensureUserUiPreferencesTable();
+    const result = await pool.query(
+      `INSERT INTO user_ui_preferences (user_id, preferences, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         preferences = EXCLUDED.preferences,
+         updated_at = NOW()
+       RETURNING user_id, preferences, updated_at`,
+      [userId, JSON.stringify(preferences)]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error saving user UI preferences:', error);
+    res.status(500).json({ error: 'Failed to save user UI preferences' });
+  }
+});
+
 app.get('/api/user-event-notes/:eventId/operators', async (req, res) => {
   try {
     const { eventId } = req.params;
@@ -9688,9 +9750,47 @@ app.delete('/api/auto-backup-lease/:eventId', async (req, res) => {
   }
 });
 
+async function ensureRunOfShowBackupsTable(queryable = pool) {
+  await queryable.query(`
+    CREATE TABLE IF NOT EXISTS public.run_of_show_backups (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      event_id VARCHAR(255) NOT NULL,
+      event_name VARCHAR(255) NOT NULL,
+      event_date DATE NOT NULL,
+      event_location VARCHAR(255),
+      backup_name VARCHAR(255) NOT NULL,
+      backup_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      backup_type VARCHAR(20) NOT NULL CHECK (backup_type IN ('auto', 'manual')),
+      schedule_data JSONB NOT NULL DEFAULT '[]',
+      custom_columns_data JSONB NOT NULL DEFAULT '[]',
+      event_data JSONB NOT NULL DEFAULT '{}',
+      schedule_items_count INTEGER DEFAULT 0,
+      custom_columns_count INTEGER DEFAULT 0,
+      created_by VARCHAR(255) NOT NULL,
+      created_by_name VARCHAR(255),
+      created_by_role VARCHAR(50) DEFAULT 'VIEWER'
+    )
+  `);
+  await queryable.query(
+    `CREATE INDEX IF NOT EXISTS idx_run_of_show_backups_event_id ON public.run_of_show_backups(event_id)`
+  );
+  await queryable.query(
+    `CREATE INDEX IF NOT EXISTS idx_run_of_show_backups_backup_timestamp ON public.run_of_show_backups(backup_timestamp)`
+  );
+  try {
+    await queryable.query('DROP INDEX IF EXISTS idx_run_of_show_backups_unique_event_date');
+    await queryable.query('DROP INDEX IF EXISTS idx_run_of_show_backups_event_date_unique');
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 // Test backup table access
 app.get('/api/backups/test', async (req, res) => {
   try {
+    await ensureRunOfShowBackupsTable();
     const result = await pool.query('SELECT 1 FROM run_of_show_backups LIMIT 1');
     res.json({ status: 'success', message: 'Backup table accessible' });
   } catch (error) {
@@ -9728,6 +9828,8 @@ app.post('/api/backups', async (req, res) => {
 
     const type = backup_type === 'manual' ? 'manual' : 'auto';
     console.log(`🔄 Creating ${type} backup for event: ${event_id}`);
+
+    await ensureRunOfShowBackupsTable(client);
 
     // Allow multiple backups per event/day (legacy unique indexes blocked this)
     try {
@@ -9836,6 +9938,7 @@ app.get('/api/backups/event/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
     console.log(`🔄 Fetching backups for event: ${eventId}`);
+    await ensureRunOfShowBackupsTable();
 
     const result = await pool.query(`
       SELECT * FROM run_of_show_backups 

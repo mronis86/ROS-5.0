@@ -5,6 +5,7 @@ import { DatabaseService, TimerMessage } from '../services/database';
 import { apiClient, getApiBaseUrl, EventCueFile, type SpeakerDirectoryRow } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
 import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon-backup-service';
+import { getBackupPreviewStats } from '../lib/backupPreview';
 import { apiJsonHeaders } from '../lib/sessionAuth';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
 import {
@@ -36,7 +37,7 @@ import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
-import { canAccessAccessManager, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
+import { canAccessAccessManager, canAccessAdmin, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
 import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
 import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
 import {
@@ -107,13 +108,29 @@ import {
 } from '../lib/scheduleClockFormat';
 import {
   BUILTIN_COLUMN_LABELS,
+  DEFAULT_ROS_VISIBLE_COLUMNS,
   ROS_COLUMN_ORDER_STORAGE_KEY,
   columnFlexOrderMap,
   customColumnOrderKey,
+  customColumnVisibilityToNames,
+  loadRosVisibleColumns,
   moveColumnInOrder,
   normalizeColumnOrder,
   parseCustomColumnOrderKey,
+  saveRosVisibleColumns,
+  saveRosVisibleCustomByName,
+  visibleCustomColumnsFromNames,
+  type RosVisibleColumns,
 } from '../lib/rosColumnOrder';
+import {
+  applyRosUiPreferencesToLocal,
+  fetchUserUiPreferences,
+  fromPortableColumnOrder,
+  readLocalRosUiPreferences,
+  saveUserUiPreferences,
+  toPortableColumnOrder,
+  type RosUiPreferences,
+} from '../lib/userUiPreferences';
 import { verifyClearLogPassword } from '../lib/adminAuth';
 import {
   baselineToOriginalDurations,
@@ -1390,7 +1407,19 @@ const RunOfShowPage: React.FC = () => {
   const [showDisplayModal, setShowDisplayModal] = useState(false);
   const [showViewersModal, setShowViewersModal] = useState(false);
   const [showDisconnectedByAdminModal, setShowDisconnectedByAdminModal] = useState(false);
+  /** null = still connecting / unknown */
+  const [socketLiveConnected, setSocketLiveConnected] = useState<boolean | null>(null);
+  const [showSocketPresenceAlert, setShowSocketPresenceAlert] = useState(false);
+  const [socketPresenceAlertDismissed, setSocketPresenceAlertDismissed] = useState(false);
+  /** Admin-only: force-show alert UI without dropping the real socket */
+  const [socketPresenceAlertTestPreview, setSocketPresenceAlertTestPreview] = useState(false);
+  const [socketReconnectNonce, setSocketReconnectNonce] = useState(0);
+  const socketConnectedAtRef = useRef<number | null>(null);
+  const socketWatchStartedAtRef = useRef<number>(Date.now());
   const [showBackupModal, setShowBackupModal] = useState(false);
+  const [showNameBackupModal, setShowNameBackupModal] = useState(false);
+  const [manualBackupName, setManualBackupName] = useState('');
+  const [manualBackupSaving, setManualBackupSaving] = useState(false);
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   const [showAgendaImportModal, setShowAgendaImportModal] = useState(false);
   const [showCSVImportModal, setShowCSVImportModal] = useState(false);
@@ -1500,22 +1529,13 @@ const RunOfShowPage: React.FC = () => {
   const [isPageVisible, setIsPageVisible] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [isForcingClockSync, setIsForcingClockSync] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState({
-    start: true,
-    programType: true,
-    duration: true,
-    segmentName: true,
-    shotType: true,
-    pptQA: true,
-    recording: true,
-    notes: true,
-    assets: true,
-    participants: false, // 👈 hidden now,
-    speakers: true,
-    public: true,
-    timer: true,
-    custom: true
-  });
+  const [visibleColumns, setVisibleColumns] = useState<RosVisibleColumns>(() => loadRosVisibleColumns());
+  const [accountPrefsReady, setAccountPrefsReady] = useState(false);
+  const skipAccountPrefsSaveRef = useRef(false);
+  const portableColumnOrderRef = useRef<string[] | null>(null);
+  useEffect(() => {
+    saveRosVisibleColumns(visibleColumns);
+  }, [visibleColumns]);
   /** When true, Start sits fixed beside CUE (outside horizontal scroll). */
   const [stickyStartColumn, setStickyStartColumn] = useState(() => {
     try {
@@ -1584,7 +1604,37 @@ const RunOfShowPage: React.FC = () => {
   }, [customColumns]);
 
   const [visibleCustomColumns, setVisibleCustomColumns] = useState<Record<string, boolean>>({});
-  
+
+  // Apply saved custom-column visibility (by name) when columns load; persist toggles for all events.
+  useEffect(() => {
+    if (!customColumns.length) return;
+    setVisibleCustomColumns((prev) => {
+      const fromPrefs = visibleCustomColumnsFromNames(customColumns);
+      const next: Record<string, boolean> = {};
+      let changed = false;
+      for (const col of customColumns) {
+        if (Object.prototype.hasOwnProperty.call(prev, col.id)) {
+          next[col.id] = prev[col.id] !== false;
+        } else {
+          next[col.id] = fromPrefs[col.id] !== false;
+          changed = true;
+        }
+        if (prev[col.id] !== next[col.id]) changed = true;
+      }
+      for (const id of Object.keys(prev)) {
+        if (!customColumns.some((c) => c.id === id)) changed = true;
+      }
+      return changed || Object.keys(prev).length !== Object.keys(next).length ? next : prev;
+    });
+  }, [customColumns]);
+
+  useEffect(() => {
+    if (!customColumns.length) return;
+    saveRosVisibleCustomByName(
+      customColumnVisibilityToNames(customColumns, visibleCustomColumns)
+    );
+  }, [visibleCustomColumns, customColumns]);
+
   // Column widths state
   const [columnWidths, setColumnWidths] = useState({
     start: 128, // w-32 = 128px
@@ -2323,6 +2373,90 @@ const RunOfShowPage: React.FC = () => {
 
   useEffect(() => { scheduleRef.current = schedule; }, [schedule]);
   useEffect(() => { customColumnsRef.current = customColumns; }, [customColumns]);
+
+  // Load account-level filter prefs from Neon (falls back to localStorage).
+  useEffect(() => {
+    const userId = user?.id;
+    if (!userId) {
+      setAccountPrefsReady(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const prefs = await fetchUserUiPreferences(userId);
+        if (cancelled) return;
+        if (prefs && Object.keys(prefs).length > 0) {
+          skipAccountPrefsSaveRef.current = true;
+          applyRosUiPreferencesToLocal(prefs);
+          if (prefs.visibleColumns) {
+            setVisibleColumns({ ...DEFAULT_ROS_VISIBLE_COLUMNS, ...prefs.visibleColumns });
+          }
+          if (typeof prefs.stickyStartColumn === 'boolean') {
+            setStickyStartColumn(prefs.stickyStartColumn);
+          }
+          if (Array.isArray(prefs.columnOrder)) {
+            portableColumnOrderRef.current = prefs.columnOrder;
+            setColumnOrder(
+              fromPortableColumnOrder(prefs.columnOrder, customColumnsRef.current || [])
+            );
+          }
+          if (prefs.visibleCustomByName) {
+            saveRosVisibleCustomByName(prefs.visibleCustomByName);
+            setVisibleCustomColumns(
+              visibleCustomColumnsFromNames(customColumnsRef.current || [], prefs.visibleCustomByName)
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load account UI preferences from Neon:', err);
+      } finally {
+        if (!cancelled) setAccountPrefsReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // When custom columns arrive, re-apply portable order from account prefs.
+  useEffect(() => {
+    const portable = portableColumnOrderRef.current;
+    if (portable?.length) {
+      setColumnOrder(fromPortableColumnOrder(portable, customColumns));
+    }
+  }, [customColumns]);
+
+  // Debounced save of filter prefs to Neon (+ local mirror already via other effects).
+  useEffect(() => {
+    if (!accountPrefsReady || !user?.id) return;
+    if (skipAccountPrefsSaveRef.current) {
+      skipAccountPrefsSaveRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const prefs: RosUiPreferences = {
+        ...readLocalRosUiPreferences(columnOrder, customColumns, stickyStartColumn),
+        visibleColumns,
+        visibleCustomByName: customColumnVisibilityToNames(customColumns, visibleCustomColumns),
+        stickyStartColumn,
+        columnOrder: toPortableColumnOrder(columnOrder, customColumns),
+      };
+      portableColumnOrderRef.current = prefs.columnOrder || null;
+      void saveUserUiPreferences(user.id, prefs).catch((err) => {
+        console.warn('Could not save account UI preferences to Neon:', err);
+      });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [
+    accountPrefsReady,
+    user?.id,
+    visibleColumns,
+    visibleCustomColumns,
+    stickyStartColumn,
+    columnOrder,
+    customColumns,
+  ]);
   useEffect(() => { eventNameRef.current = eventName; }, [eventName]);
   useEffect(() => { masterStartTimeRef.current = masterStartTime; }, [masterStartTime]);
   useEffect(() => { dayStartTimesRef.current = dayStartTimes; }, [dayStartTimes]);
@@ -8818,7 +8952,10 @@ const RunOfShowPage: React.FC = () => {
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+        setSocketLiveConnected(connected);
         if (connected) {
+          socketConnectedAtRef.current = Date.now();
+          setSocketPresenceAlertDismissed(false);
           if (user && event?.id) {
             const role = currentUserRoleRef.current || 'VIEWER';
             const { userName, userEmail } = getPresenceUserFields(user);
@@ -8839,6 +8976,7 @@ const RunOfShowPage: React.FC = () => {
             console.log(`👁️ Presence: skipped (no user or event: user=${!!user}, eventId=${event?.id})`);
           }
         } else {
+          socketConnectedAtRef.current = null;
           setViewers([]);
           setRowLocks({});
           stopRowLockHeartbeat();
@@ -9103,8 +9241,10 @@ const RunOfShowPage: React.FC = () => {
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       setViewers([]);
+      setSocketLiveConnected(null);
+      socketConnectedAtRef.current = null;
     };
-  }, [event?.id, user, loadFromAPI, applyAutoBackupLease]);
+  }, [event?.id, user, loadFromAPI, applyAutoBackupLease, socketReconnectNonce]);
 
   // Re-send presence when currentUserRole changes (so Viewers modal shows correct role)
   useEffect(() => {
@@ -9119,6 +9259,70 @@ const RunOfShowPage: React.FC = () => {
       userRole: role,
     });
   }, [currentUserRole, event?.id, user]);
+
+  // Reset watch clock when event/user/reconnect changes
+  useEffect(() => {
+    socketWatchStartedAtRef.current = Date.now();
+    setSocketLiveConnected(null);
+    setShowSocketPresenceAlert(false);
+    setSocketPresenceAlertDismissed(false);
+    setSocketPresenceAlertTestPreview(false);
+  }, [event?.id, user?.id, socketReconnectNonce]);
+
+  // Warn when Socket.IO / presence is not healthy (e.g. firewall blocking websockets).
+  useEffect(() => {
+    if (!event?.id || !user?.id || showDisconnectedByAdminModal) {
+      setShowSocketPresenceAlert(false);
+      return;
+    }
+
+    const tick = () => {
+      if (socketPresenceAlertTestPreview) return;
+
+      if (typeof document !== 'undefined' && document.hidden) {
+        setShowSocketPresenceAlert(false);
+        return;
+      }
+
+      const connected = socketClient.isConnected();
+      setSocketLiveConnected(connected);
+
+      const selfInPresence = viewers.some(
+        (v) => String(v.userId) === String(user.id)
+      );
+      const watchMs = Date.now() - socketWatchStartedAtRef.current;
+      const connectedForMs = socketConnectedAtRef.current
+        ? Date.now() - socketConnectedAtRef.current
+        : 0;
+
+      // Give the first connect attempt time before alarming
+      if (watchMs < 10_000) return;
+
+      const socketBad = !connected;
+      // Connected but never appeared in Admin presence after a grace period
+      const presenceBad = connected && connectedForMs > 12_000 && !selfInPresence;
+
+      if (socketBad || presenceBad) {
+        if (!socketPresenceAlertDismissed) {
+          setShowSocketPresenceAlert(true);
+        }
+      } else if (connected && selfInPresence) {
+        setShowSocketPresenceAlert(false);
+        setSocketPresenceAlertDismissed(false);
+      }
+    };
+
+    tick();
+    const id = window.setInterval(tick, 3000);
+    return () => window.clearInterval(id);
+  }, [
+    event?.id,
+    user?.id,
+    viewers,
+    socketPresenceAlertDismissed,
+    showDisconnectedByAdminModal,
+    socketPresenceAlertTestPreview,
+  ]);
 
   // Real-time countdown timer for running timers (ClockPage style)
   // Uses clock offset to sync with server time
@@ -9281,24 +9485,32 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  const openNameBackupModal = () => {
+    if (!event?.id) return;
+    const timestamp = new Date().toLocaleString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+    setManualBackupName(`${event.name} • ${timestamp}`);
+    setShowNameBackupModal(true);
+  };
+
   const createManualBackup = async () => {
     if (!event?.id) return;
-    
+    const backupName = manualBackupName.trim();
+    if (!backupName) {
+      alert('Please enter a backup name.');
+      return;
+    }
+
+    setManualBackupSaving(true);
     try {
-      console.log('🔄 Creating manual backup for event:', event.id);
-      
-      const timestamp = new Date().toLocaleString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true
-      });
-      
-      const backupName = `${event.name} • ${timestamp}`;
-      
+      console.log('🔄 Creating manual backup for event:', event.id, backupName);
+
       await NeonBackupService.createBackup(
         event.id,
         schedule,
@@ -9308,21 +9520,28 @@ const RunOfShowPage: React.FC = () => {
         backupName,
         user?.id,
         user?.full_name || user?.email,
-        user?.role
+        currentUserRole || user?.role
       );
-      
+
       console.log('✅ Manual backup created:', backupName);
-      
-      // Refresh backup stats
+
       const stats = await NeonBackupService.getBackupStats(event.id);
       setBackupStats(stats);
-      
-      // Show success message
-      alert(`✅ Manual backup created successfully!\n\nBackup: ${backupName}\nSchedule Items: ${schedule.length}\nCustom Columns: ${customColumns.length}`);
-      
+      if (showBackupModal) {
+        await loadBackups();
+      }
+
+      setShowNameBackupModal(false);
+      const preview = getBackupPreviewStats(schedule);
+      alert(
+        `✅ Backup saved: ${backupName}\n\n` +
+          `${preview.itemCount} items · ${preview.rowsWithNotes} with notes · ${preview.rowsWithSpeakers} with speakers`
+      );
     } catch (error) {
       console.error('❌ Error creating manual backup:', error);
       alert(`❌ Error creating manual backup: ${error.message}`);
+    } finally {
+      setManualBackupSaving(false);
     }
   };
 
@@ -13149,6 +13368,57 @@ const RunOfShowPage: React.FC = () => {
         </div>
       )}
 
+      {/* Live sync / presence not connected (Socket.IO) */}
+      {showSocketPresenceAlert && !showDisconnectedByAdminModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
+          <div className="bg-slate-800 rounded-lg p-6 max-w-lg w-full border-2 border-amber-500 shadow-xl">
+            {socketPresenceAlertTestPreview && (
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-amber-200/90 bg-amber-900/40 border border-amber-600/50 rounded px-2 py-1 inline-block">
+                Admin test preview — socket still connected
+              </div>
+            )}
+            <h2 className="text-amber-300 text-xl font-bold mb-2">
+              Live connection issue
+            </h2>
+            <p className="text-slate-200 text-sm mb-3">
+              {socketPresenceAlertTestPreview || !socketLiveConnected
+                ? 'This browser is not connected to live sync (Socket.IO). You may not appear in Admin presence, and real-time updates (timers, viewers, collaborative edits) can fail.'
+                : 'Connected to the server, but you are not listed in event presence yet. Admin may not see you on this event.'}
+            </p>
+            <ul className="text-slate-300 text-sm list-disc pl-5 mb-4 space-y-1">
+              <li>Try <strong className="text-white">Retry connection</strong> below</li>
+              <li>Disable VPN, or try a phone hotspot (rules out work/home firewall)</li>
+              <li>Confirm you are signed in and on the correct event</li>
+            </ul>
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setSocketPresenceAlertTestPreview(false);
+                  setSocketPresenceAlertDismissed(true);
+                  setShowSocketPresenceAlert(false);
+                }}
+                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors text-sm"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSocketPresenceAlertTestPreview(false);
+                  setSocketPresenceAlertDismissed(false);
+                  setShowSocketPresenceAlert(false);
+                  setSocketReconnectNonce((n) => n + 1);
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors text-sm font-medium"
+              >
+                Retry connection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Presence reminder: lightbox over everything; card stays at bottom */}
       {showInactivityReminder && (
         <div
@@ -14399,6 +14669,48 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Viewers ({viewers.length})
                       </button>
+                      {canAccessAdmin(user) && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMenuDropdown(false);
+                              setSocketPresenceAlertTestPreview(true);
+                              setSocketPresenceAlertDismissed(false);
+                              setShowSocketPresenceAlert(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-amber-200 hover:bg-slate-700 transition-colors flex items-center gap-3"
+                            title="Preview the Live connection issue popup (does not drop your socket)"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            Test sync alert
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMenuDropdown(false);
+                              setSocketPresenceAlertTestPreview(false);
+                              setSocketPresenceAlertDismissed(false);
+                              socketWatchStartedAtRef.current = 0;
+                              if (event?.id) {
+                                socketClient.disconnect(event.id);
+                              }
+                              setSocketLiveConnected(false);
+                              setShowSocketPresenceAlert(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-amber-200 hover:bg-slate-700 transition-colors flex items-center gap-3"
+                            title="Actually disconnect Socket.IO so you can verify detection + Retry"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636l-12.728 12.728M5.636 5.636l12.728 12.728" />
+                            </svg>
+                            Simulate sync drop
+                          </button>
+                        </>
+                      )}
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -14681,10 +14993,57 @@ const RunOfShowPage: React.FC = () => {
                 >
                   Change Role
                 </button>
+                {(() => {
+                  const selfInPresence = Boolean(
+                    user?.id && viewers.some((v) => String(v.userId) === String(user.id))
+                  );
+                  const liveOk = socketLiveConnected === true && selfInPresence;
+                  const liveBad =
+                    socketLiveConnected === false ||
+                    (socketLiveConnected === true && !selfInPresence);
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (liveBad) {
+                          setSocketPresenceAlertDismissed(false);
+                          setShowSocketPresenceAlert(true);
+                        } else {
+                          setShowViewersModal(true);
+                        }
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1 text-sm rounded border transition-colors ${
+                        liveOk
+                          ? 'bg-emerald-800/80 border-emerald-600 text-emerald-50 hover:bg-emerald-700'
+                          : liveBad
+                            ? 'bg-amber-800/90 border-amber-500 text-amber-50 hover:bg-amber-700'
+                            : 'bg-slate-600 border-slate-500 text-slate-200'
+                      }`}
+                      title={
+                        liveOk
+                          ? 'Live sync connected — you appear in event presence'
+                          : liveBad
+                            ? 'Live sync / presence issue — click for help'
+                            : 'Connecting to live sync…'
+                      }
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          liveOk
+                            ? 'bg-emerald-300'
+                            : liveBad
+                              ? 'bg-amber-300 animate-pulse'
+                              : 'bg-slate-400 animate-pulse'
+                        }`}
+                      />
+                      {liveOk ? 'Live' : liveBad ? 'Sync issue' : 'Connecting'}
+                    </button>
+                  );
+                })()}
                 <button
-                  onClick={createManualBackup}
+                  onClick={openNameBackupModal}
                   className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
-                  title="Create a manual backup of current data"
+                  title="Create a named manual backup of current data"
                 >
                   💾 Create Backup
                 </button>
@@ -19078,6 +19437,7 @@ const RunOfShowPage: React.FC = () => {
               <div className="space-y-4">
                 <p className="text-slate-300 text-sm">
                   Toggle columns left-to-right (same order as the schedule). Drag chips or use ← → to reorder. # and CUE stay fixed on the left.
+                  Column show/hide and order are saved to your account (Neon) and this browser, so they follow you across events and devices when signed in.
                 </p>
 
                 <div className="rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2.5">
@@ -19249,22 +19609,7 @@ const RunOfShowPage: React.FC = () => {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => {
-                    setVisibleColumns({
-                      start: true,
-                      programType: true,
-                      duration: true,
-                      segmentName: true,
-                      shotType: true,
-                      pptQA: true,
-                      recording: true,
-                      notes: true,
-                      assets: true,
-                      participants: false, // 👈 hidden now,
-                      speakers: true,
-                      public: true,
-                      timer: true,
-                      custom: true
-                    });
+                    setVisibleColumns({ ...DEFAULT_ROS_VISIBLE_COLUMNS, participants: true, custom: true });
                     // Show all custom columns
                     const allCustomVisible: Record<string, boolean> = {};
                     customColumns.forEach(column => {
@@ -19279,6 +19624,7 @@ const RunOfShowPage: React.FC = () => {
                 <button
                   onClick={() => {
                     setVisibleColumns({
+                      ...DEFAULT_ROS_VISIBLE_COLUMNS,
                       start: false,
                       programType: false,
                       duration: false,
@@ -19600,14 +19946,25 @@ const RunOfShowPage: React.FC = () => {
       {showBackupModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-lg p-5 w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col min-h-0">
-            <div className="flex justify-between items-center mb-3 shrink-0">
+            <div className="flex justify-between items-center mb-3 shrink-0 gap-3">
               <h2 className="text-xl font-bold text-white">Backup Management</h2>
-              <button
-                onClick={() => setShowBackupModal(false)}
-                className="text-slate-400 hover:text-white text-2xl font-bold leading-none"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                {currentUserRole !== 'VIEWER' && (
+                  <button
+                    type="button"
+                    onClick={openNameBackupModal}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded"
+                  >
+                    Named backup
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowBackupModal(false)}
+                  className="text-slate-400 hover:text-white text-2xl font-bold leading-none"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Auto backup + filters (compact) */}
@@ -19707,8 +20064,10 @@ const RunOfShowPage: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {filteredBackups.map((backup) => (
-                      <div key={backup.id} className="bg-slate-600 px-3 py-2.5 rounded-lg flex justify-between items-center gap-3 hover:bg-slate-500 transition-colors">
+                    {filteredBackups.map((backup) => {
+                      const preview = getBackupPreviewStats(backup.schedule_data, 3);
+                      return (
+                      <div key={backup.id} className="bg-slate-600 px-3 py-2.5 rounded-lg flex justify-between items-start gap-3 hover:bg-slate-500 transition-colors">
                         <div className="flex-1 min-w-0">
                           <div className="text-white font-medium text-sm flex items-center gap-2 flex-wrap">
                             <span className="truncate">{backup.backup_name}</span>
@@ -19722,11 +20081,26 @@ const RunOfShowPage: React.FC = () => {
                           </div>
                           <div className="text-slate-400 text-xs mt-0.5">
                             {new Date(backup.backup_timestamp || backup.created_at).toLocaleString()}
+                            {backup.created_by_name ? ` · ${backup.created_by_name}` : ''}
                             {' · '}
-                            {backup.schedule_data?.length || backup.schedule_items_count || 0} items
+                            {preview.itemCount || backup.schedule_items_count || 0} items
                             {' · '}
-                            {backup.custom_columns_data?.length || backup.custom_columns_count || 0} columns
+                            {preview.rowsWithNotes} notes
+                            {' · '}
+                            {preview.rowsWithSpeakers} speakers
                           </div>
+                          {preview.samples.length > 0 && (
+                            <div className="text-slate-300 text-xs mt-1 space-y-0.5">
+                              {preview.samples.map((s, i) => (
+                                <div key={i} className="truncate">
+                                  <span className="text-slate-400">Cue {s.cue}</span>
+                                  {s.segment ? ` · ${s.segment}` : ''}
+                                  {s.notesPreview ? ` — ${s.notesPreview}` : ''}
+                                  {!s.notesPreview && s.speakersPreview ? ` — ${s.speakersPreview}` : ''}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div className="flex space-x-2 shrink-0">
                           <button
@@ -19734,7 +20108,7 @@ const RunOfShowPage: React.FC = () => {
                             className="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded transition-colors"
                             title="Preview and load this backup"
                           >
-                            Restore
+                            Preview
                           </button>
                           <button
                             onClick={() => deleteBackup(String(backup.id))}
@@ -19745,7 +20119,8 @@ const RunOfShowPage: React.FC = () => {
                           </button>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -19795,12 +20170,70 @@ const RunOfShowPage: React.FC = () => {
         </div>
       )}
 
+      {/* Name manual backup modal */}
+      {showNameBackupModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-slate-800 rounded-lg p-6 w-full max-w-lg border border-slate-600">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-white">Name this backup</h2>
+              <button
+                type="button"
+                onClick={() => !manualBackupSaving && setShowNameBackupModal(false)}
+                className="text-slate-400 hover:text-white text-2xl font-bold leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-slate-300 text-sm mb-3">
+              Use a clear name so you can find it later (e.g. “Japan — end of day notes”).
+            </p>
+            <input
+              type="text"
+              value={manualBackupName}
+              onChange={(e) => setManualBackupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !manualBackupSaving) void createManualBackup();
+              }}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500 mb-2"
+              placeholder="Backup name"
+              autoFocus
+              maxLength={255}
+            />
+            <p className="text-slate-400 text-xs mb-4">
+              Snapshot: {schedule.length} items ·{' '}
+              {getBackupPreviewStats(schedule).rowsWithNotes} with notes ·{' '}
+              {getBackupPreviewStats(schedule).rowsWithSpeakers} with speakers
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={manualBackupSaving}
+                onClick={() => setShowNameBackupModal(false)}
+                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={manualBackupSaving || !manualBackupName.trim()}
+                onClick={() => void createManualBackup()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded disabled:opacity-50"
+              >
+                {manualBackupSaving ? 'Saving…' : 'Save backup'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Restore Preview Confirmation Modal */}
-      {showRestorePreview && selectedBackup && (
+      {showRestorePreview && selectedBackup && (() => {
+        const restorePreview = getBackupPreviewStats(selectedBackup.schedule_data, 12);
+        return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-8 w-full max-w-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-white">Confirm Backup Restore</h2>
+          <div className="bg-slate-800 rounded-lg p-6 w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center mb-4 shrink-0">
+              <h2 className="text-2xl font-bold text-white">Backup preview</h2>
               <button
                 onClick={() => setShowRestorePreview(false)}
                 className="text-slate-400 hover:text-white text-2xl font-bold"
@@ -19809,56 +20242,67 @@ const RunOfShowPage: React.FC = () => {
               </button>
             </div>
 
-            <div className="bg-slate-700 rounded-lg p-6 mb-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Backup Details</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Backup Name:</span>
-                  <span className="text-white font-medium">{selectedBackup.backup_name}</span>
+            <div className="overflow-y-auto flex-1 min-h-0 space-y-4 mb-4">
+              <div className="bg-slate-700 rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-white mb-3">Details</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">Name</span>
+                    <span className="text-white font-medium text-right">{selectedBackup.backup_name}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">When</span>
+                    <span className="text-white font-medium">
+                      {new Date(selectedBackup.backup_timestamp || selectedBackup.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">Type / by</span>
+                    <span className="text-white font-medium">
+                      {selectedBackup.backup_type}
+                      {selectedBackup.created_by_name ? ` · ${selectedBackup.created_by_name}` : ''}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">Contents</span>
+                    <span className="text-white font-medium text-right">
+                      {restorePreview.itemCount} items · {restorePreview.rowsWithNotes} notes
+                      ({restorePreview.notesChars.toLocaleString()} chars) · {restorePreview.rowsWithSpeakers} speakers
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Event:</span>
-                  <span className="text-white font-medium">{selectedBackup.event_data?.name || 'Unknown'}</span>
+              </div>
+
+              {restorePreview.samples.length > 0 && (
+                <div className="bg-slate-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold text-white mb-3">Data preview</h3>
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {restorePreview.samples.map((s, i) => (
+                      <div key={i} className="bg-slate-600/80 rounded px-3 py-2 text-xs">
+                        <div className="text-white font-medium">
+                          Cue {s.cue}{s.segment ? ` · ${s.segment}` : ''}
+                        </div>
+                        {s.speakersPreview ? (
+                          <div className="text-emerald-200/90 mt-0.5">Speakers: {s.speakersPreview}</div>
+                        ) : null}
+                        {s.notesPreview ? (
+                          <div className="text-slate-300 mt-0.5 line-clamp-2">Notes: {s.notesPreview}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Date:</span>
-                  <span className="text-white font-medium">{new Date(selectedBackup.backup_timestamp).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Type:</span>
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    selectedBackup.backup_type === 'auto' 
-                      ? 'bg-blue-600 text-blue-100' 
-                      : 'bg-green-600 text-green-100'
-                  }`}>
-                    {selectedBackup.backup_type}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Schedule Items:</span>
-                  <span className="text-white font-medium">{selectedBackup.schedule_data?.length || 0}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Custom Columns:</span>
-                  <span className="text-white font-medium">{selectedBackup.custom_columns_data?.length || 0}</span>
-                </div>
+              )}
+
+              <div className="bg-yellow-900 border border-yellow-600 rounded-lg p-4">
+                <h4 className="text-yellow-200 font-semibold mb-1">Warning</h4>
+                <p className="text-yellow-100 text-sm">
+                  Restore overwrites your current run of show with this backup. Create a named backup first if you might need what you have now.
+                </p>
               </div>
             </div>
 
-            <div className="bg-yellow-900 border border-yellow-600 rounded-lg p-4 mb-6">
-              <div className="flex items-start">
-                <div className="text-yellow-400 text-xl mr-3">⚠️</div>
-                <div>
-                  <h4 className="text-yellow-200 font-semibold mb-2">Warning</h4>
-                  <p className="text-yellow-100 text-sm">
-                    This will completely overwrite your current run of show data with the backup data. 
-                    This action cannot be undone. Make sure you want to proceed.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-4">
+            <div className="flex justify-end space-x-4 shrink-0">
               <button
                 onClick={() => setShowRestorePreview(false)}
                 className="px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white text-base font-medium rounded-lg transition-colors"
@@ -19869,12 +20313,13 @@ const RunOfShowPage: React.FC = () => {
                 onClick={confirmRestoreFromBackup}
                 className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white text-base font-medium rounded-lg transition-colors"
               >
-                🔄 Confirm Restore
+                Restore this backup
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Speaker Manager Modal */}
       {showSpeakerManagerModal && (
