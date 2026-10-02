@@ -11,6 +11,7 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
+import { normalizeVoiceIgnoreLineIndexes } from '../lib/teleprompter-voice-alignment';
 
 type CommentType = 'GENERAL' | 'CUE' | 'AUDIO' | 'GFX' | 'VIDEO' | 'LIGHTING';
 
@@ -157,10 +158,15 @@ const ScriptsFollowPage: React.FC = () => {
   const commentsFromState = location.state?.comments || [];
   const scriptIdFromState = location.state?.scriptId || null;
   const scriptNameFromState = location.state?.scriptName || '';
+  const voiceIgnoreFromState = normalizeVoiceIgnoreLineIndexes(
+    location.state?.voiceIgnoreLines
+  );
 
   // State
   const [scriptText, setScriptText] = useState<string>(scriptTextFromState);
   const [comments, setComments] = useState<Comment[]>(commentsFromState);
+  const [voiceIgnoreLines, setVoiceIgnoreLines] = useState<number[]>(voiceIgnoreFromState);
+  const [previewVoiceIgnoreLines, setPreviewVoiceIgnoreLines] = useState<number[]>([]);
   const [userRole, setUserRole] = useState<UserRole>('VIEWER');
   const [scrollerPosition, setScrollerPosition] = useState<number>(0);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -349,6 +355,7 @@ const ScriptsFollowPage: React.FC = () => {
       scriptName?: string;
       scriptText?: string;
       comments?: any[];
+      voiceIgnoreLines?: number[];
       fromUserId?: string;
       catchUp?: boolean;
     }) => {
@@ -370,6 +377,9 @@ const ScriptsFollowPage: React.FC = () => {
             type: (c.type || c.comment_type || 'GENERAL') as CommentType,
           }))
         );
+      }
+      if (Array.isArray(data.voiceIgnoreLines)) {
+        setVoiceIgnoreLines(normalizeVoiceIgnoreLineIndexes(data.voiceIgnoreLines));
       }
     };
 
@@ -626,7 +636,14 @@ const ScriptsFollowPage: React.FC = () => {
       setScriptText(text);
       setComments([]);
       console.log('✅ Script imported successfully');
-      broadcastScriptContent(text, currentScriptName || file.name || 'Imported script', currentScriptId, []);
+      setVoiceIgnoreLines([]);
+      broadcastScriptContent(
+        text,
+        currentScriptName || file.name || 'Imported script',
+        currentScriptId,
+        [],
+        []
+      );
     } catch (error) {
       console.error('❌ Error importing script:', error);
       setImportError(error instanceof Error ? error.message : 'Could not read this script file.');
@@ -734,6 +751,7 @@ const ScriptsFollowPage: React.FC = () => {
     setEditScriptText(scriptText);
     originalScriptTextRef.current = scriptText;
     setPreviewComments(comments);
+    setPreviewVoiceIgnoreLines(voiceIgnoreLines);
     setIsEditingScript(true);
   };
 
@@ -838,15 +856,41 @@ const ScriptsFollowPage: React.FC = () => {
     return updatedComments;
   };
 
+  const remapVoiceIgnoreLines = (oldText: string, newText: string, indexes: number[]): number[] => {
+    if (oldText === newText || indexes.length === 0) {
+      return normalizeVoiceIgnoreLineIndexes(indexes, newText.split('\n').length);
+    }
+    const fakeComments: Comment[] = indexes.map((lineNumber, i) => ({
+      id: `voice-ignore-${i}`,
+      lineNumber,
+      text: '',
+      author: '',
+      timestamp: new Date(),
+      type: 'GENERAL',
+    }));
+    return normalizeVoiceIgnoreLineIndexes(
+      adjustCommentLineNumbers(oldText, newText, fakeComments).map((c) => c.lineNumber),
+      newText.split('\n').length
+    );
+  };
+
   // Save script edits
   const saveScriptEdit = async () => {
     // Adjust comment line numbers based on changes
     const adjustedComments = adjustCommentLineNumbers(scriptText, editScriptText);
+    const adjustedIgnore = remapVoiceIgnoreLines(scriptText, editScriptText, voiceIgnoreLines);
     setComments(adjustedComments);
+    setVoiceIgnoreLines(adjustedIgnore);
     
     setScriptText(editScriptText);
     setIsEditingScript(false);
-    broadcastScriptContent(editScriptText, currentScriptName, currentScriptId, adjustedComments);
+    broadcastScriptContent(
+      editScriptText,
+      currentScriptName,
+      currentScriptId,
+      adjustedComments,
+      adjustedIgnore
+    );
     
     // Save to database if we have a current script
     if (currentScriptId) {
@@ -857,7 +901,8 @@ const ScriptsFollowPage: React.FC = () => {
           headers: apiJsonHeaders(),
           body: JSON.stringify({ 
             script_text: editScriptText,
-            script_name: currentScriptName 
+            script_name: currentScriptName,
+            voice_ignore_lines: adjustedIgnore,
           })
         });
         
@@ -904,6 +949,9 @@ const ScriptsFollowPage: React.FC = () => {
     // Update preview comments in real-time
     const adjustedComments = adjustCommentLineNumbers(originalScriptTextRef.current, newText);
     setPreviewComments(adjustedComments);
+    setPreviewVoiceIgnoreLines(
+      remapVoiceIgnoreLines(originalScriptTextRef.current, newText, voiceIgnoreLines)
+    );
   };
 
   // Sync scroll between textarea and line numbers
@@ -950,7 +998,8 @@ const ScriptsFollowPage: React.FC = () => {
         body: JSON.stringify({
           script_name: scriptName,
           script_text: scriptText,
-          created_by: userName
+          created_by: userName,
+          voice_ignore_lines: voiceIgnoreLines,
         })
       });
 
@@ -961,7 +1010,8 @@ const ScriptsFollowPage: React.FC = () => {
         scriptText,
         savedScript.script_name || scriptName,
         savedScript.id || null,
-        comments
+        comments,
+        voiceIgnoreLines
       );
       
       // Save comments - delete all existing comments first, then add current ones
@@ -1004,7 +1054,8 @@ const ScriptsFollowPage: React.FC = () => {
     nextText: string,
     nextName: string,
     nextId: string | null,
-    nextComments: Comment[]
+    nextComments: Comment[],
+    nextVoiceIgnore: number[] = voiceIgnoreLines
   ) => {
     if (!eventId) return;
     socketClient.emitScriptContent({
@@ -1012,8 +1063,45 @@ const ScriptsFollowPage: React.FC = () => {
       scriptName: nextName,
       scriptId: nextId,
       comments: nextComments,
+      voiceIgnoreLines: nextVoiceIgnore,
       fromUserId: user?.id || '',
       fromUserName: userName,
+    });
+  };
+
+  const persistVoiceIgnoreLines = async (nextIgnore: number[]) => {
+    if (!currentScriptId) return;
+    try {
+      await fetch(`${getApiBaseUrl()}/api/scripts/${currentScriptId}`, {
+        method: 'PUT',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify({
+          script_name: currentScriptName || 'Untitled Script',
+          script_text: scriptText,
+          voice_ignore_lines: nextIgnore,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to save voice ignore lines:', err);
+    }
+  };
+
+  const toggleVoiceIgnoreLine = (lineIndex: number) => {
+    if (userRole !== 'SCROLLER') return;
+    setVoiceIgnoreLines((prev) => {
+      const set = new Set(prev);
+      if (set.has(lineIndex)) set.delete(lineIndex);
+      else set.add(lineIndex);
+      const next = [...set].sort((a, b) => a - b);
+      broadcastScriptContent(
+        scriptText,
+        currentScriptName,
+        currentScriptId,
+        comments,
+        next
+      );
+      void persistVoiceIgnoreLines(next);
+      return next;
     });
   };
 
@@ -1039,13 +1127,19 @@ const ScriptsFollowPage: React.FC = () => {
         type: c.comment_type || 'GENERAL'
       }));
       setComments(loadedComments);
+      const loadedIgnore = normalizeVoiceIgnoreLineIndexes(
+        data.script.voice_ignore_lines,
+        String(data.script.script_text || '').split('\n').length
+      );
+      setVoiceIgnoreLines(loadedIgnore);
       
       setShowScriptManager(false);
       broadcastScriptContent(
         data.script.script_text || '',
         data.script.script_name || '',
         data.script.id || null,
-        loadedComments
+        loadedComments,
+        loadedIgnore
       );
       alert(`Script "${data.script.script_name}" loaded!`);
     } catch (error) {
@@ -1075,6 +1169,7 @@ const ScriptsFollowPage: React.FC = () => {
         setCurrentScriptName('');
         setScriptText('');
         setComments([]);
+        setVoiceIgnoreLines([]);
       }
     } catch (error) {
       console.error('Error deleting script:', error);
@@ -1169,7 +1264,8 @@ const ScriptsFollowPage: React.FC = () => {
                   state: {
                     scriptText,
                     comments,
-                    scriptId: currentScriptId
+                    scriptId: currentScriptId,
+                    voiceIgnoreLines,
                   }
                 });
               }}
@@ -1283,6 +1379,29 @@ const ScriptsFollowPage: React.FC = () => {
                 </button>
               </div>
               
+              {/* Voice ignore — no markup needed */}
+              {userRole === 'SCROLLER' && selectedLine !== null && (
+                <div className="mb-4 rounded-lg border border-amber-500/50 bg-amber-950/40 p-3">
+                  <div className="mb-2 text-sm font-bold text-amber-100">Voice auto-scroll</div>
+                  <button
+                    type="button"
+                    onClick={() => toggleVoiceIgnoreLine(selectedLine)}
+                    className={`w-full rounded-lg px-4 py-3 text-base font-bold transition-colors ${
+                      voiceIgnoreLines.includes(selectedLine)
+                        ? 'bg-amber-500 text-slate-900 ring-2 ring-amber-200'
+                        : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                    }`}
+                  >
+                    {voiceIgnoreLines.includes(selectedLine)
+                      ? 'Ignoring for voice — click to read again'
+                      : 'Ignore this line for voice'}
+                  </button>
+                  <p className="mt-2 text-xs text-amber-200/80">
+                    Ignored lines stay on screen (dimmed) but speech matching skips them — use for notes / stage directions.
+                  </p>
+                </div>
+              )}
+
               {/* Comment Type Selector */}
               <div className="mb-4">
                 <label className="text-base font-bold text-white mb-3 block">🎯 Comment Type:</label>
@@ -1336,7 +1455,8 @@ const ScriptsFollowPage: React.FC = () => {
           {selectedLine === null && (
             <div className="mb-6 p-4 bg-slate-700 rounded-lg border-2 border-dashed border-slate-600 text-center">
               <div className="text-slate-400 text-sm">
-                👉 Click a <span className="text-blue-400 font-bold">line number</span> on the script to add a comment
+                👉 Click a <span className="text-blue-400 font-bold">line number</span> to add a comment or mark{' '}
+                <span className="text-amber-300 font-bold">Ignore for voice</span>
               </div>
             </div>
           )}
@@ -1591,13 +1711,23 @@ const ScriptsFollowPage: React.FC = () => {
                         {editScriptText.split('\n').map((_, index) => {
                           const lineComments = previewComments.filter(c => c.lineNumber === index);
                           const hasComment = lineComments.length > 0;
+                          const isVoiceIgnored = previewVoiceIgnoreLines.includes(index);
                           return (
                             <div 
                               key={index} 
-                              className={`relative ${hasComment ? 'text-yellow-400 font-bold' : 'text-slate-500'}`}
+                              className={`relative ${
+                                isVoiceIgnored
+                                  ? 'text-amber-400 font-bold'
+                                  : hasComment
+                                    ? 'text-yellow-400 font-bold'
+                                    : 'text-slate-500'
+                              }`}
                             >
                               {hasComment && (
                                 <div className="absolute left-0 w-1 h-full bg-yellow-400 rounded-full"></div>
+                              )}
+                              {isVoiceIgnored && (
+                                <div className="absolute left-1.5 w-1 h-full bg-amber-400 rounded-full"></div>
                               )}
                               <span className="relative">{index + 1}</span>
                               {hasComment && (
@@ -1626,6 +1756,7 @@ const ScriptsFollowPage: React.FC = () => {
                 {scriptLines.map((line, index) => {
                   const lineComments = getCommentsForLine(index);
                   const hasComments = lineComments.length > 0;
+                  const isVoiceIgnored = voiceIgnoreLines.includes(index);
                   
                   return (
                     <div
@@ -1641,27 +1772,47 @@ const ScriptsFollowPage: React.FC = () => {
                       {hasComments && (
                         <div className="absolute left-0 top-2 w-1 bg-yellow-400 rounded-full shadow-lg" style={{ height: 'calc(100% - 1rem)' }}></div>
                       )}
+                      {isVoiceIgnored && (
+                        <div
+                          className="absolute left-1.5 top-2 w-1 bg-amber-400 rounded-full shadow-lg"
+                          style={{ height: 'calc(100% - 1rem)' }}
+                          title="Ignored for voice match"
+                        />
+                      )}
                       
                       {/* Line Number - Fixed width to maintain alignment */}
                       <div className="flex-shrink-0 w-16 text-right pr-2 relative z-10">
                         <button
                           onClick={() => setSelectedLine(index)}
                           className={`font-bold select-none cursor-pointer transition-colors ${
-                            hasComments
+                            isVoiceIgnored
+                              ? 'text-amber-400 hover:text-amber-300'
+                              : hasComments
                               ? 'text-blue-400 hover:text-blue-300'
                               : 'text-slate-500 hover:text-slate-400'
                           }`}
                           style={{ fontSize: `${Math.max(12, fontSize - 2)}px` }}
-                          title={hasComments ? `${lineComments.length} comment(s) - Click to add more` : 'Click to add comment'}
+                          title={
+                            isVoiceIgnored
+                              ? 'Voice ignore — click to edit'
+                              : hasComments
+                                ? `${lineComments.length} comment(s) - Click to add more`
+                                : 'Click to add comment or ignore for voice'
+                          }
                         >
                           {index + 1}
+                          {isVoiceIgnored ? (
+                            <span className="ml-0.5 text-[10px] font-semibold">🔇</span>
+                          ) : null}
                         </button>
                       </div>
                       
                       {/* Script Line and Icons */}
                       <div className="flex-1 flex items-start justify-between relative z-10">
                         <div className={`whitespace-pre-wrap break-words ${
-                          hasComments 
+                          isVoiceIgnored
+                            ? 'text-amber-100/70 italic opacity-70'
+                            : hasComments 
                             ? 'text-white font-medium bg-blue-900 rounded-md px-2 py-1' 
                             : 'text-white'
                         }`}>

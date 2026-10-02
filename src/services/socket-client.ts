@@ -568,6 +568,7 @@ class SocketClient {
     scriptName?: string;
     scriptId?: string | null;
     comments?: any[];
+    voiceIgnoreLines?: number[];
     fromUserId?: string;
     fromUserName?: string;
   }) {
@@ -578,6 +579,9 @@ class SocketClient {
         scriptName: payload.scriptName ?? '',
         scriptId: payload.scriptId ?? null,
         comments: payload.comments ?? [],
+        voiceIgnoreLines: Array.isArray(payload.voiceIgnoreLines)
+          ? payload.voiceIgnoreLines
+          : [],
         fromUserId: payload.fromUserId ?? '',
         fromUserName: payload.fromUserName ?? '',
       });
@@ -675,6 +679,7 @@ class SocketClient {
     settings?: any;
     guideLinePosition?: number;
     comments?: any[];
+    voiceIgnoreLines?: number[];
     scriptName?: string;
     voiceHighlight?: {
       enabled: boolean;
@@ -693,6 +698,9 @@ class SocketClient {
         settings: payload.settings,
         guideLinePosition: payload.guideLinePosition,
         comments: payload.comments,
+        voiceIgnoreLines: Array.isArray(payload.voiceIgnoreLines)
+          ? payload.voiceIgnoreLines
+          : undefined,
         scriptName: payload.scriptName,
         voiceHighlight: payload.voiceHighlight ?? null,
         timestamp: Date.now(),

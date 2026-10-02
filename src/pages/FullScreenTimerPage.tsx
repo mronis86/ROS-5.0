@@ -331,6 +331,9 @@ const FullScreenTimerPage: React.FC = () => {
               ? data.guideLinePosition
               : prev?.guideLinePosition ?? 50,
           comments: Array.isArray(data.comments) ? data.comments : prev?.comments || [],
+          voiceIgnoreLines: Array.isArray(data.voiceIgnoreLines)
+            ? data.voiceIgnoreLines
+            : prev?.voiceIgnoreLines || [],
           scriptName:
             typeof data.scriptName === 'string' ? data.scriptName : prev?.scriptName,
           voiceHighlight:

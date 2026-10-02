@@ -3,6 +3,7 @@ import {
   tokenizeScriptForSpeech,
   alignTranscriptVoicePrompt,
   normalizeSpeechToken,
+  normalizeVoiceIgnoreLineIndexes,
   isVoiceNoteScriptLine,
   type ScriptSpeechToken
 } from '../lib/teleprompter-voice-alignment';
@@ -84,10 +85,14 @@ const TeleprompterPage: React.FC = () => {
   const commentsFromState = location.state?.comments || [];
   const scriptIdFromState = location.state?.scriptId || scriptId;
   const scriptNameFromState = location.state?.scriptName || '';
+  const voiceIgnoreFromState = normalizeVoiceIgnoreLineIndexes(
+    location.state?.voiceIgnoreLines
+  );
   
   // State
   const [scriptText, setScriptText] = useState<string>(scriptTextFromState);
   const [comments, setComments] = useState<Comment[]>(commentsFromState);
+  const [voiceIgnoreLines, setVoiceIgnoreLines] = useState<number[]>(voiceIgnoreFromState);
   const [currentScriptId, setCurrentScriptId] = useState<string | null>(scriptIdFromState);
   const [currentScriptName, setCurrentScriptName] = useState<string>(scriptNameFromState);
   const [userRole, setUserRole] = useState<UserRole>('VIEWER');
@@ -446,12 +451,16 @@ const TeleprompterPage: React.FC = () => {
       scriptText?: string;
       scriptName?: string;
       scriptId?: string | null;
+      voiceIgnoreLines?: number[];
     }) => {
       if (data.eventId && data.eventId !== eventId) return;
       if (typeof data.scriptText !== 'string') return;
       setScriptText(data.scriptText);
       if (typeof data.scriptName === 'string') setCurrentScriptName(data.scriptName);
       if (data.scriptId != null) setCurrentScriptId(String(data.scriptId));
+      if (Array.isArray(data.voiceIgnoreLines)) {
+        setVoiceIgnoreLines(normalizeVoiceIgnoreLineIndexes(data.voiceIgnoreLines));
+      }
     };
 
     socket.on('scriptContentSync', onScriptContent);
@@ -815,6 +824,7 @@ const TeleprompterPage: React.FC = () => {
         text: c.text,
         type: c.type,
       })),
+      voiceIgnoreLines,
       scriptName: currentScriptName || undefined,
       voiceHighlight,
     };
@@ -873,6 +883,7 @@ const TeleprompterPage: React.FC = () => {
             text: c.text,
             type: c.type,
           })),
+          voiceIgnoreLines,
           scriptName: currentScriptName || undefined,
         });
       }
@@ -1106,7 +1117,7 @@ const TeleprompterPage: React.FC = () => {
     }
 
     const lineHeightPx = settings.fontSize * settings.lineHeight * 1.35;
-    const tokens = tokenizeScriptForSpeech(scriptText);
+    const tokens = tokenizeScriptForSpeech(scriptText, voiceIgnoreLines);
     let lastTs = performance.now();
 
     const tick = (ts: number) => {
@@ -1196,13 +1207,17 @@ const TeleprompterPage: React.FC = () => {
     userRole,
     eventId,
     scriptText,
+    voiceIgnoreLines,
     measureScrollDeltaWordToGuide,
     settings.fontSize,
     settings.lineHeight,
     settings.scrollSpeed,
     guideLinePosition,
   ]);
-  const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);
+  const scriptSpeechTokens = useMemo(
+    () => tokenizeScriptForSpeech(scriptText, voiceIgnoreLines),
+    [scriptText, voiceIgnoreLines]
+  );
   useEffect(() => {
     scriptSpeechTokensRef.current = scriptSpeechTokens;
   }, [scriptSpeechTokens]);
@@ -2059,7 +2074,8 @@ const TeleprompterPage: React.FC = () => {
                       scriptText,
                       comments,
                       scriptId: currentScriptId,
-                      scriptName: currentScriptName
+                      scriptName: currentScriptName,
+                      voiceIgnoreLines,
                     }
                   });
                 }}
@@ -2463,8 +2479,7 @@ const TeleprompterPage: React.FC = () => {
                       1) List mics → pick device → <span className="text-slate-300">Mic meter</span> (bars only).
                       2) Then <span className="text-slate-300">Auto-scroll</span> for speech matching.
                       Hand-scroll while listening re-syncs the matcher to the guide.
-                      Notes: wrap in <span className="text-slate-300">[brackets]</span> or start a line with{' '}
-                      <span className="text-slate-300">//</span> / <span className="text-slate-300">NOTE:</span> — shown, ignored by voice.
+                      Notes: on Scripts Follow, click a line number → <span className="text-slate-300">Ignore this line for voice</span>.
                       Mic meter is local; speech-to-text needs internet to Google&apos;s servers (corporate filters like Umbrella often block it).
                     </p>
                   </div>
@@ -2816,7 +2831,8 @@ const TeleprompterPage: React.FC = () => {
                 >
                   {scriptLines.map((line, index) => {
                     const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
-                    const isVoiceNoteLine = isVoiceNoteScriptLine(line);
+                    const isVoiceNoteLine =
+                      isVoiceNoteScriptLine(line) || voiceIgnoreLines.includes(index);
                     
                     const voiceLineActive =
                       voiceListenEnabled &&
@@ -3029,7 +3045,8 @@ const TeleprompterPage: React.FC = () => {
             // Get comments from PREVIOUS line (index - 1) to show after it
             // Comment on line 39 (stored as lineNumber: 38) appears before line 40 (index 39)
             const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
-            const isVoiceNoteLine = isVoiceNoteScriptLine(line);
+            const isVoiceNoteLine =
+              isVoiceNoteScriptLine(line) || voiceIgnoreLines.includes(index);
             const voiceLineActive =
               showVoiceHighlight &&
               voiceHighlightStyle === 'band' &&

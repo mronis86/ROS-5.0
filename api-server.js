@@ -9187,12 +9187,18 @@ io.on('connection', (socket) => {
     const eventId = data?.eventId != null ? String(data.eventId) : '';
     if (!eventId) return;
     const scriptText = typeof data.scriptText === 'string' ? data.scriptText : '';
+    const voiceIgnoreLines = Array.isArray(data.voiceIgnoreLines)
+      ? data.voiceIgnoreLines
+          .map((n) => Number(n))
+          .filter((n) => Number.isInteger(n) && n >= 0)
+      : [];
     const payload = {
       eventId,
       scriptId: data.scriptId != null ? String(data.scriptId) : null,
       scriptName: typeof data.scriptName === 'string' ? data.scriptName : '',
       scriptText,
       comments: Array.isArray(data.comments) ? data.comments : [],
+      voiceIgnoreLines,
       fromUserId: data.fromUserId != null ? String(data.fromUserId) : '',
       fromUserName: data.fromUserName != null ? String(data.fromUserName) : '',
       timestamp: Date.now(),
@@ -9202,6 +9208,7 @@ io.on('connection', (socket) => {
       scriptName: payload.scriptName,
       scriptText: payload.scriptText,
       comments: payload.comments,
+      voiceIgnoreLines: payload.voiceIgnoreLines,
       updatedAt: payload.timestamp,
     });
     console.log(
@@ -9221,6 +9228,7 @@ io.on('connection', (socket) => {
       scriptName: activeScript.scriptName || '',
       scriptText: activeScript.scriptText,
       comments: activeScript.comments || [],
+      voiceIgnoreLines: activeScript.voiceIgnoreLines || [],
       catchUp: true,
       timestamp: activeScript.updatedAt || Date.now(),
     });
@@ -9290,6 +9298,7 @@ io.on('connection', (socket) => {
       settings,
       guideLinePosition,
       comments,
+      voiceIgnoreLines,
       scriptName,
       voiceHighlight,
     } = data || {};
@@ -9302,6 +9311,7 @@ io.on('connection', (socket) => {
       settings: settings || null,
       guideLinePosition: guideLinePosition ?? null,
       comments: comments || null,
+      voiceIgnoreLines: Array.isArray(voiceIgnoreLines) ? voiceIgnoreLines : [],
       scriptName: scriptName || null,
       voiceHighlight: voiceHighlight ?? null,
       timestamp: Date.now(),
@@ -10004,14 +10014,27 @@ app.get('/api/scripts/:scriptId', async (req, res) => {
   }
 });
 
+function normalizeVoiceIgnoreLinesBody(raw) {
+  if (!Array.isArray(raw)) return [];
+  return [
+    ...new Set(
+      raw
+        .map((n) => Number(n))
+        .filter((n) => Number.isInteger(n) && n >= 0)
+    ),
+  ].sort((a, b) => a - b);
+}
+
 // Create new script
 app.post('/api/scripts', async (req, res) => {
   try {
-    const { script_name, script_text, created_by } = req.body;
+    const { script_name, script_text, created_by, voice_ignore_lines } = req.body;
+    const ignoreLines = normalizeVoiceIgnoreLinesBody(voice_ignore_lines);
     
     const result = await pool.query(
-      'INSERT INTO scripts (script_name, script_text, created_by) VALUES ($1, $2, $3) RETURNING *',
-      [script_name, script_text, created_by]
+      `INSERT INTO scripts (script_name, script_text, created_by, voice_ignore_lines)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [script_name, script_text, created_by, ignoreLines]
     );
     
     res.json(result.rows[0]);
@@ -10025,12 +10048,23 @@ app.post('/api/scripts', async (req, res) => {
 app.put('/api/scripts/:scriptId', async (req, res) => {
   try {
     const { scriptId } = req.params;
-    const { script_name, script_text } = req.body;
-    
-    const result = await pool.query(
-      'UPDATE scripts SET script_name = $1, script_text = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
-      [script_name, script_text, scriptId]
-    );
+    const { script_name, script_text, voice_ignore_lines } = req.body;
+    const hasIgnore = Object.prototype.hasOwnProperty.call(req.body, 'voice_ignore_lines');
+    const ignoreLines = normalizeVoiceIgnoreLinesBody(voice_ignore_lines);
+
+    const result = hasIgnore
+      ? await pool.query(
+          `UPDATE scripts
+           SET script_name = $1, script_text = $2, voice_ignore_lines = $3, updated_at = NOW()
+           WHERE id = $4 RETURNING *`,
+          [script_name, script_text, ignoreLines, scriptId]
+        )
+      : await pool.query(
+          `UPDATE scripts
+           SET script_name = $1, script_text = $2, updated_at = NOW()
+           WHERE id = $3 RETURNING *`,
+          [script_name, script_text, scriptId]
+        );
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Script not found' });
@@ -10487,6 +10521,15 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ extended_event_data table ready');
     } catch (err) {
       console.warn('⚠️ extended_event_data sync skipped:', err.message || err);
+    }
+    try {
+      await pool.query(
+        `ALTER TABLE public.scripts
+         ADD COLUMN IF NOT EXISTS voice_ignore_lines INTEGER[] NOT NULL DEFAULT '{}'::integer[]`
+      );
+      console.log('✅ scripts.voice_ignore_lines column ready');
+    } catch (err) {
+      console.warn('⚠️ scripts.voice_ignore_lines migration skipped:', err.message || err);
     }
   }
 });

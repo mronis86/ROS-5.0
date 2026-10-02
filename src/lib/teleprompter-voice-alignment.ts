@@ -41,11 +41,32 @@ export function normalizeSpeechToken(raw: string): string {
     .replace(/[^a-z0-9']/g, '');
 }
 
-export function tokenizeScriptForSpeech(scriptText: string): ScriptSpeechToken[] {
+/** Normalize persisted / socket ignore-line indexes (0-based). */
+export function normalizeVoiceIgnoreLineIndexes(
+  raw: unknown,
+  lineCount?: number
+): number[] {
+  if (!Array.isArray(raw)) return [];
+  const out = new Set<number>();
+  for (const v of raw) {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (!Number.isInteger(n) || n < 0) continue;
+    if (lineCount != null && n >= lineCount) continue;
+    out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+export function tokenizeScriptForSpeech(
+  scriptText: string,
+  ignoreLineIndexes?: Iterable<number>
+): ScriptSpeechToken[] {
+  const ignore = new Set(ignoreLineIndexes ?? []);
   const cleaned = stripNonSpokenScriptHints(scriptText);
   const lines = cleaned.split('\n');
   const tokens: ScriptSpeechToken[] = [];
   for (let li = 0; li < lines.length; li++) {
+    if (ignore.has(li)) continue;
     const parts = lines[li].split(/\s+/).filter((p) => p.length > 0);
     for (const w of parts) {
       const word = normalizeSpeechToken(w);

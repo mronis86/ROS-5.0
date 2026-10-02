@@ -420,6 +420,7 @@ const DirectorViewPage: React.FC = () => {
     DEFAULT_SCRIPT_TELE_SETTINGS
   );
   const [scriptComments, setScriptComments] = useState<TeleprompterClockComment[]>([]);
+  const [scriptVoiceIgnoreLines, setScriptVoiceIgnoreLines] = useState<number[]>([]);
   const [scriptVoiceHighlight, setScriptVoiceHighlight] =
     useState<TeleprompterVoiceHighlight | null>(null);
 
@@ -807,6 +808,7 @@ const DirectorViewPage: React.FC = () => {
       scriptText?: string;
       scriptName?: string;
       comments?: any[];
+      voiceIgnoreLines?: number[];
     }) => {
       if (data.eventId && data.eventId !== eventId) return;
       if (typeof data.scriptText !== 'string') return;
@@ -820,6 +822,13 @@ const DirectorViewPage: React.FC = () => {
             text: String(c.text ?? c.comment_text ?? ''),
             type: String(c.type ?? c.comment_type ?? 'GENERAL'),
           }))
+        );
+      }
+      if (Array.isArray(data.voiceIgnoreLines)) {
+        setScriptVoiceIgnoreLines(
+          data.voiceIgnoreLines
+            .map((n: unknown) => Number(n))
+            .filter((n: number) => Number.isInteger(n) && n >= 0)
         );
       }
       setScriptLoading(false);
@@ -931,6 +940,13 @@ const DirectorViewPage: React.FC = () => {
             text: String(c.text || ''),
             type: String(c.type || 'GENERAL'),
           }))
+        );
+      }
+      if (Array.isArray(data.voiceIgnoreLines)) {
+        setScriptVoiceIgnoreLines(
+          data.voiceIgnoreLines
+            .map((n: unknown) => Number(n))
+            .filter((n: number) => Number.isInteger(n) && n >= 0)
         );
       }
       if ('voiceHighlight' in data) applyVoiceHighlight(data.voiceHighlight);
@@ -1689,6 +1705,7 @@ const DirectorViewPage: React.FC = () => {
     settings: scriptTeleSettings,
     guideLinePosition: scriptGuideLinePosition,
     comments: scriptComments,
+    voiceIgnoreLines: scriptVoiceIgnoreLines,
     scriptName: scriptName || undefined,
     voiceHighlight: scriptVoiceHighlight,
   };

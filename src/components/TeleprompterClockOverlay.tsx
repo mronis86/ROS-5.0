@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   isVoiceNoteScriptLine,
   normalizeSpeechToken,
+  normalizeVoiceIgnoreLineIndexes,
   tokenizeScriptForSpeech,
 } from '../lib/teleprompter-voice-alignment';
 
@@ -39,6 +40,7 @@ export type TeleprompterClockFeed = {
   settings: TeleprompterClockSettings;
   guideLinePosition?: number;
   comments?: TeleprompterClockComment[];
+  voiceIgnoreLines?: number[];
   scriptName?: string;
   voiceHighlight?: TeleprompterVoiceHighlight | null;
 };
@@ -103,9 +105,13 @@ export const TeleprompterClockOverlay: React.FC<{
       voice.wordIndex != null ||
       voice.lineIndex != null)
   );
+  const voiceIgnoreLines = useMemo(
+    () => normalizeVoiceIgnoreLineIndexes(feed.voiceIgnoreLines, lines.length),
+    [feed.voiceIgnoreLines, lines.length]
+  );
   const speechTokens = useMemo(
-    () => (voiceOn ? tokenizeScriptForSpeech(feed.scriptText || '') : []),
-    [voiceOn, feed.scriptText]
+    () => (voiceOn ? tokenizeScriptForSpeech(feed.scriptText || '', voiceIgnoreLines) : []),
+    [voiceOn, feed.scriptText, voiceIgnoreLines]
   );
 
   useLayoutEffect(() => {
@@ -266,7 +272,8 @@ export const TeleprompterClockOverlay: React.FC<{
               >
                 {lines.map((line, index) => {
                   const lineComments = commentsForPrevLine(index);
-                  const isVoiceNoteLine = isVoiceNoteScriptLine(line);
+                  const isVoiceNoteLine =
+                    isVoiceNoteScriptLine(line) || voiceIgnoreLines.includes(index);
                   const voiceLineActive =
                     voiceOn &&
                     voice?.style === 'band' &&

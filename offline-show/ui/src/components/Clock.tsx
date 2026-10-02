@@ -637,6 +637,9 @@ const Clock: React.FC<ClockProps> = ({
           comments: Array.isArray(data.comments)
             ? data.comments
             : prev?.comments || [],
+          voiceIgnoreLines: Array.isArray(data.voiceIgnoreLines)
+            ? data.voiceIgnoreLines
+            : prev?.voiceIgnoreLines || [],
           scriptName:
             typeof data.scriptName === 'string'
               ? data.scriptName
