@@ -178,6 +178,9 @@ const ScriptsFollowPage: React.FC = () => {
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const originalScriptTextRef = useRef<string>('');
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
+  /** Multi-select for voice ignore (Ctrl/Cmd click, Shift range). */
+  const [selectedLines, setSelectedLines] = useState<number[]>([]);
+  const lastSelectedLineRef = useRef<number | null>(null);
   const [newComment, setNewComment] = useState<string>('');
   // Get user name from Stack Auth or default to "User"
   const userName = user?.displayName || user?.primaryEmail || 'User';
@@ -669,6 +672,8 @@ const ScriptsFollowPage: React.FC = () => {
     setComments(prev => [...prev, comment]);
     setNewComment('');
     setSelectedLine(null);
+    setSelectedLines([]);
+    lastSelectedLineRef.current = null;
 
     // Broadcast comment via WebSocket
     if (eventId) {
@@ -1086,12 +1091,60 @@ const ScriptsFollowPage: React.FC = () => {
     }
   };
 
-  const toggleVoiceIgnoreLine = (lineIndex: number) => {
-    if (userRole !== 'SCROLLER') return;
+  const clearLineSelection = () => {
+    setSelectedLine(null);
+    setSelectedLines([]);
+    lastSelectedLineRef.current = null;
+    setNewComment('');
+    setCommentType('GENERAL');
+  };
+
+  const handleLineNumberClick = (index: number, e: React.MouseEvent) => {
+    const additive = e.ctrlKey || e.metaKey;
+    const range = e.shiftKey;
+
+    if (range && lastSelectedLineRef.current != null) {
+      const a = Math.min(lastSelectedLineRef.current, index);
+      const b = Math.max(lastSelectedLineRef.current, index);
+      const spanned: number[] = [];
+      for (let i = a; i <= b; i++) spanned.push(i);
+      setSelectedLines((prev) => {
+        if (additive) {
+          return [...new Set([...prev, ...spanned])].sort((x, y) => x - y);
+        }
+        return spanned;
+      });
+      setSelectedLine(index);
+      return;
+    }
+
+    if (additive) {
+      setSelectedLines((prev) => {
+        const set = new Set(prev.length ? prev : selectedLine != null ? [selectedLine] : []);
+        if (set.has(index)) set.delete(index);
+        else set.add(index);
+        const next = [...set].sort((x, y) => x - y);
+        setSelectedLine(next.length ? index : null);
+        return next;
+      });
+      lastSelectedLineRef.current = index;
+      return;
+    }
+
+    setSelectedLines([index]);
+    setSelectedLine(index);
+    lastSelectedLineRef.current = index;
+  };
+
+  const toggleVoiceIgnoreLines = (lineIndexes: number[]) => {
+    if (userRole !== 'SCROLLER' || lineIndexes.length === 0) return;
     setVoiceIgnoreLines((prev) => {
       const set = new Set(prev);
-      if (set.has(lineIndex)) set.delete(lineIndex);
-      else set.add(lineIndex);
+      const allIgnored = lineIndexes.every((li) => set.has(li));
+      for (const li of lineIndexes) {
+        if (allIgnored) set.delete(li);
+        else set.add(li);
+      }
       const next = [...set].sort((a, b) => a - b);
       broadcastScriptContent(
         scriptText,
@@ -1354,109 +1407,117 @@ const ScriptsFollowPage: React.FC = () => {
             )}
           </div>
 
-          {/* Add Comment Form - Always visible when line selected */}
-          {selectedLine !== null && (
-            <div className="mb-6 p-4 bg-gradient-to-br from-blue-900 to-blue-800 rounded-lg border-2 border-blue-500 shadow-lg animate-in fade-in duration-200">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-lg font-bold text-white flex items-center gap-2">
-                    {COMMENT_TYPES[commentType].icon} Add Comment
+          {/* Compact line tools when line(s) selected */}
+          {selectedLine !== null && (() => {
+            const activeLines =
+              selectedLines.length > 0 ? selectedLines : [selectedLine];
+            const allVoiceIgnored = activeLines.every((li) =>
+              voiceIgnoreLines.includes(li)
+            );
+            const lineLabel =
+              activeLines.length === 1
+                ? `Line ${activeLines[0] + 1}`
+                : `${activeLines.length} lines`;
+            return (
+              <div className="mb-3 rounded-lg border border-blue-500/60 bg-slate-800/90 p-2.5">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-white">
+                      {COMMENT_TYPES[commentType].icon} Line tools
+                    </div>
+                    <div className="truncate text-[11px] text-blue-300">{lineLabel}</div>
                   </div>
-                  <span className="text-sm text-blue-300">
-                    Line {selectedLine + 1}
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    setSelectedLine(null);
-                    setNewComment('');
-                    setCommentType('GENERAL');
-                  }}
-                  className="text-slate-300 hover:text-white text-xl font-bold"
-                  title="Cancel"
-                >
-                  ✕
-                </button>
-              </div>
-              
-              {/* Voice ignore — no markup needed */}
-              {userRole === 'SCROLLER' && selectedLine !== null && (
-                <div className="mb-4 rounded-lg border border-amber-500/50 bg-amber-950/40 p-3">
-                  <div className="mb-2 text-sm font-bold text-amber-100">Voice auto-scroll</div>
                   <button
                     type="button"
-                    onClick={() => toggleVoiceIgnoreLine(selectedLine)}
-                    className={`w-full rounded-lg px-4 py-3 text-base font-bold transition-colors ${
-                      voiceIgnoreLines.includes(selectedLine)
-                        ? 'bg-amber-500 text-slate-900 ring-2 ring-amber-200'
-                        : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                    onClick={clearLineSelection}
+                    className="px-1 text-sm font-bold text-slate-400 hover:text-white"
+                    title="Clear selection"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {userRole === 'SCROLLER' && (
+                  <button
+                    type="button"
+                    onClick={() => toggleVoiceIgnoreLines(activeLines)}
+                    className={`mb-2 w-full rounded px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                      allVoiceIgnored
+                        ? 'bg-amber-500 text-slate-900'
+                        : 'border border-amber-500/40 bg-amber-950/50 text-amber-100 hover:bg-amber-900/40'
                     }`}
                   >
-                    {voiceIgnoreLines.includes(selectedLine)
-                      ? 'Ignoring for voice — click to read again'
-                      : 'Ignore this line for voice'}
+                    {allVoiceIgnored
+                      ? activeLines.length > 1
+                        ? `Clear voice ignore (${activeLines.length})`
+                        : 'Clear voice ignore'
+                      : activeLines.length > 1
+                        ? `Ignore ${activeLines.length} lines for voice`
+                        : 'Ignore line for voice'}
                   </button>
-                  <p className="mt-2 text-xs text-amber-200/80">
-                    Ignored lines stay on screen (dimmed) but speech matching skips them — use for notes / stage directions.
-                  </p>
-                </div>
-              )}
+                )}
 
-              {/* Comment Type Selector */}
-              <div className="mb-4">
-                <label className="text-base font-bold text-white mb-3 block">🎯 Comment Type:</label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="mb-2 grid grid-cols-3 gap-1">
                   {(Object.keys(COMMENT_TYPES) as CommentType[]).map((type) => (
                     <button
                       key={type}
+                      type="button"
                       onClick={() => setCommentType(type)}
-                      className={`px-4 py-3 rounded-lg text-base font-bold transition-all duration-200 shadow-lg ${
+                      className={`rounded px-1.5 py-1 text-[10px] font-semibold transition-colors ${
                         commentType === type
-                          ? `${COMMENT_TYPES[type].bgColor} text-white ring-2 ring-yellow-400 transform scale-105`
-                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:scale-102'
+                          ? `${COMMENT_TYPES[type].bgColor} text-white ring-1 ring-yellow-400`
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                       }`}
+                      title={COMMENT_TYPES[type].label}
                     >
-                      <span className="text-lg">{COMMENT_TYPES[type].icon}</span> {COMMENT_TYPES[type].label}
+                      {COMMENT_TYPES[type].icon} {COMMENT_TYPES[type].label}
                     </button>
                   ))}
                 </div>
+
+                <textarea
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  placeholder={
+                    activeLines.length > 1
+                      ? `Comment on line ${selectedLine + 1}…`
+                      : 'Comment…'
+                  }
+                  className="w-full resize-none rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  rows={2}
+                />
+                <div className="mt-1.5 flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleAddComment}
+                    disabled={!newComment.trim()}
+                    className="flex-1 rounded bg-blue-600 px-2 py-1.5 text-xs font-semibold hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-600"
+                  >
+                    Save comment
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearLineSelection}
+                    className="rounded bg-slate-600 px-2 py-1.5 text-xs hover:bg-slate-500"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
-              
-              <textarea
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                placeholder="Type your comment here..."
-                className="w-full px-3 py-3 bg-slate-700 border-2 border-slate-600 rounded text-white text-base resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                rows={4}
-                autoFocus
-              />
-              <div className="flex gap-2 mt-3">
-                <button
-                  onClick={handleAddComment}
-                  disabled={!newComment.trim()}
-                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed rounded text-base font-bold transition-colors"
-                >
-                  💾 Save Comment
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedLine(null);
-                    setNewComment('');
-                  }}
-                  className="px-4 py-3 bg-slate-600 hover:bg-slate-500 rounded text-base font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
+            );
+          })()}
           
           {/* Instruction when no line selected */}
           {selectedLine === null && (
-            <div className="mb-6 p-4 bg-slate-700 rounded-lg border-2 border-dashed border-slate-600 text-center">
-              <div className="text-slate-400 text-sm">
-                👉 Click a <span className="text-blue-400 font-bold">line number</span> to add a comment or mark{' '}
-                <span className="text-amber-300 font-bold">Ignore for voice</span>
+            <div className="mb-3 rounded-lg border border-dashed border-slate-600 bg-slate-800/60 px-3 py-2 text-center">
+              <div className="text-[11px] leading-snug text-slate-400">
+                Click a <span className="font-semibold text-blue-400">line #</span>
+                {' · '}
+                <span className="font-semibold text-slate-300">Ctrl</span> multi
+                {' · '}
+                <span className="font-semibold text-slate-300">Shift</span> range
+                {' · '}
+                then <span className="font-semibold text-amber-300">Ignore for voice</span>
               </div>
             </div>
           )}
@@ -1757,14 +1818,16 @@ const ScriptsFollowPage: React.FC = () => {
                   const lineComments = getCommentsForLine(index);
                   const hasComments = lineComments.length > 0;
                   const isVoiceIgnored = voiceIgnoreLines.includes(index);
+                  const isSelected =
+                    selectedLines.includes(index) || selectedLine === index;
                   
                   return (
                     <div
                       key={index}
                       data-line-number={index}
                       className={`relative flex items-start gap-3 py-2 transition-colors ${
-                        selectedLine === index 
-                          ? 'bg-blue-900 ring-2 ring-blue-500' 
+                        isSelected
+                          ? 'bg-blue-900/80 ring-1 ring-blue-500' 
                           : 'hover:bg-slate-700' 
                       }`}
                     >
@@ -1783,9 +1846,12 @@ const ScriptsFollowPage: React.FC = () => {
                       {/* Line Number - Fixed width to maintain alignment */}
                       <div className="flex-shrink-0 w-16 text-right pr-2 relative z-10">
                         <button
-                          onClick={() => setSelectedLine(index)}
+                          type="button"
+                          onClick={(e) => handleLineNumberClick(index, e)}
                           className={`font-bold select-none cursor-pointer transition-colors ${
-                            isVoiceIgnored
+                            isSelected
+                              ? 'text-blue-200'
+                              : isVoiceIgnored
                               ? 'text-amber-400 hover:text-amber-300'
                               : hasComments
                               ? 'text-blue-400 hover:text-blue-300'
@@ -1794,10 +1860,10 @@ const ScriptsFollowPage: React.FC = () => {
                           style={{ fontSize: `${Math.max(12, fontSize - 2)}px` }}
                           title={
                             isVoiceIgnored
-                              ? 'Voice ignore — click to edit'
+                              ? 'Voice ignore — Ctrl/Shift to multi-select'
                               : hasComments
-                                ? `${lineComments.length} comment(s) - Click to add more`
-                                : 'Click to add comment or ignore for voice'
+                                ? `${lineComments.length} comment(s) — Ctrl multi, Shift range`
+                                : 'Click · Ctrl multi · Shift range'
                           }
                         >
                           {index + 1}
