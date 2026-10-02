@@ -465,39 +465,45 @@ export function buildCivicsBeeAwardCsvRows(
     });
 }
 
+/** "Bob Smith" → "Bob S" for Top 25 / 10 / 5 graphics. */
+export function formatCivicsBeeShortDisplayName(studentName: string): string {
+  const { firstName, lastInitial } = splitStudentNameForGraphics(studentName);
+  if (!firstName) return lastInitial;
+  if (!lastInitial) return firstName;
+  return `${firstName} ${lastInitial}`;
+}
+
 /**
  * CSV for custom graphics.
- * Tier/roster: First Name, Last Initial, State
- * Award feeds (1st/2nd/3rd/People's): First Name, Last Name, State
+ * Tier/roster (Top 25/10/5 etc.): Name, State — e.g. "Bob S","Alabama"
+ * Award feeds (1st/2nd/3rd/People's): Name, State — e.g. "Bob Smith","Alabama"
  */
 export function buildCivicsBeeGraphicsCsv(
   entries: CivicsBeeEntry[],
   filter: CivicsBeeCsvFilter = 'participating'
 ): string {
+  const lines = ['Name,State'];
+
   if (isCivicsBeeAwardCsvFilter(filter)) {
-    const rows = buildCivicsBeeAwardCsvRows(entries, filter);
-    const lines = ['First Name,Last Name,State'];
-    for (const row of rows) {
+    for (const entry of entries) {
+      if (!entryMeetsCsvFilter(entry, filter)) continue;
+      const fullName = String(entry.studentName || '').trim().replace(/\s+/g, ' ');
+      if (!fullName) continue;
       lines.push(
-        [
-          escapeCivicsCsvField(row.firstName),
-          escapeCivicsCsvField(row.lastName),
-          escapeCivicsCsvField(row.state),
-        ].join(',')
+        [escapeCivicsCsvField(fullName), escapeCivicsCsvField(entry.name)].join(',')
       );
     }
     return `${lines.join('\n')}\n`;
   }
 
-  const rows = buildCivicsBeeGraphicsRows(entries, filter);
-  const lines = ['First Name,Last Initial,State'];
-  for (const row of rows) {
+  for (const entry of entries) {
+    if (!entryMeetsCsvFilter(entry, filter)) continue;
+    const fullName = String(entry.studentName || '').trim();
+    if (!fullName) continue;
+    const shortName = formatCivicsBeeShortDisplayName(fullName);
+    if (!shortName) continue;
     lines.push(
-      [
-        escapeCivicsCsvField(row.firstName),
-        escapeCivicsCsvField(row.lastInitial),
-        escapeCivicsCsvField(row.state),
-      ].join(',')
+      [escapeCivicsCsvField(shortName), escapeCivicsCsvField(entry.name)].join(',')
     );
   }
   return `${lines.join('\n')}\n`;

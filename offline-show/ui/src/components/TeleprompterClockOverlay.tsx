@@ -173,7 +173,7 @@ export const TeleprompterClockOverlay: React.FC<{
       }
       if (/^\[[^\]]*\]$/.test(part.trim())) {
         return (
-          <span key={i} className="opacity-45 italic">
+          <span key={i} className="italic" style={{ opacity: 0.22, color: '#94A3B8' }}>
             {part}
           </span>
         );
@@ -287,7 +287,7 @@ export const TeleprompterClockOverlay: React.FC<{
                         paddingRight: '0.5rem',
                       }
                     : isVoiceNoteLine
-                      ? { opacity: 0.45, fontStyle: 'italic' }
+                      ? { opacity: 0.22, color: '#94A3B8', fontStyle: 'italic' }
                       : {};
                   return (
                     <div

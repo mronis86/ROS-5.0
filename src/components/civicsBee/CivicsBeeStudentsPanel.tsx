@@ -149,6 +149,8 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
         ...e,
         participating: value,
         tier: value ? e.tier : null,
+        place: value ? e.place : null,
+        peoplesChoice: value ? e.peoplesChoice : false,
       })),
     });
   };
@@ -206,7 +208,7 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           <div>
             <h3 className="text-sm font-semibold text-white">Graphics CSV</h3>
             <p className="text-xs text-slate-400">
-              Columns: First Name, Last Initial, State — filtered to{' '}
+              Columns: Name, State — Top feeds use short name (Bob S); filtered to{' '}
               {CIVICS_BEE_CSV_FILTER_LABELS[graphicsFilter] || graphicsFilter}
               {filter === 'all' ? ' (All view uses Participating for the feed)' : ''}.
             </p>
@@ -303,7 +305,7 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           {awardCsvOpen ? (
             <div className="space-y-2 border-t border-slate-700 px-3 py-2">
               <p className="text-[11px] text-slate-500">
-                First Name, Last Name, State — save roster after marking awards for live URLs.
+                Name, State with full name (Bob Smith) — roster auto-saves for live URLs.
               </p>
               <div className="divide-y divide-slate-800 rounded border border-slate-700 bg-slate-950/50">
                 {CIVICS_BEE_AWARD_CSV_OPTIONS.map((opt) => (

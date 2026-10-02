@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import CivicsBeeStudentsPanel from '../components/civicsBee/CivicsBeeStudentsPanel';
 import {
@@ -30,6 +30,7 @@ const ExtendEventControlsPage: React.FC = () => {
   const [roster, setRoster] = useState<CivicsBeeRoster>(() => createDefaultCivicsBeeRoster());
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const eventId = event?.calendarId || event?.id || eventIdParam;
 
@@ -90,6 +91,10 @@ const ExtendEventControlsPage: React.FC = () => {
         extendEventControlModules: moduleList,
       });
 
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
       setRoster(parseCivicsBeeRoster(ext.moduleData?.civicsBee));
       setActiveTab((moduleList[0] || 'civicsBee') as TabId);
     } catch (e) {
@@ -104,30 +109,63 @@ const ExtendEventControlsPage: React.FC = () => {
     void load();
   }, [load]);
 
-  const saveCivicsBee = async () => {
-    if (!eventId) return;
-    setSaving(true);
-    setSaveMessage(null);
-    try {
-      const nextRoster: CivicsBeeRoster = {
-        ...roster,
-        updatedAt: new Date().toISOString(),
-      };
-      const ok = await DatabaseService.saveExtendModuleData(eventId, 'civicsBee', nextRoster);
-      if (!ok) {
-        setSaveMessage('Save failed. Try again.');
-        return;
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
+
+  const persistCivicsBee = useCallback(
+    async (nextRoster: CivicsBeeRoster, opts?: { silent?: boolean }) => {
+      if (!eventId) return false;
+      setSaving(true);
+      if (!opts?.silent) setSaveMessage(null);
+      try {
+        const stamped: CivicsBeeRoster = {
+          ...nextRoster,
+          updatedAt: new Date().toISOString(),
+        };
+        const ok = await DatabaseService.saveExtendModuleData(eventId, 'civicsBee', stamped);
+        if (!ok) {
+          setSaveMessage('Save failed. Try again.');
+          return false;
+        }
+        setRoster(stamped);
+        setSaveMessage(opts?.silent ? 'Auto-saved to database.' : 'Saved.');
+        setTimeout(() => setSaveMessage(null), 2500);
+        return true;
+      } catch (e) {
+        console.error(e);
+        setSaveMessage('Save failed.');
+        return false;
+      } finally {
+        setSaving(false);
       }
-      setRoster(nextRoster);
-      setSaveMessage('Saved.');
-      setTimeout(() => setSaveMessage(null), 2500);
-    } catch (e) {
-      console.error(e);
-      setSaveMessage('Save failed.');
-    } finally {
-      setSaving(false);
+    },
+    [eventId]
+  );
+
+  const saveCivicsBee = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
     }
+    await persistCivicsBee(roster);
   };
+
+  /** Keep Top 25/10/5, places, and People's Choice in Neon without relying on Save. */
+  const handleRosterChange = useCallback(
+    (next: CivicsBeeRoster) => {
+      setRoster(next);
+      if (!eventId) return;
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = setTimeout(() => {
+        autoSaveTimerRef.current = null;
+        void persistCivicsBee(next, { silent: true });
+      }, 700);
+    },
+    [eventId, persistCivicsBee]
+  );
 
   if (loading) {
     return (
@@ -187,7 +225,7 @@ const ExtendEventControlsPage: React.FC = () => {
               roster={roster}
               eventId={String(eventId)}
               saving={saving}
-              onChange={setRoster}
+              onChange={handleRosterChange}
               onSave={() => void saveCivicsBee()}
             />
           )}
