@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  isVoiceNoteScriptLine,
   normalizeSpeechToken,
   tokenizeScriptForSpeech,
 } from '../lib/teleprompter-voice-alignment';
@@ -165,7 +166,11 @@ export const TeleprompterClockOverlay: React.FC<{
         return <React.Fragment key={i}>{part}</React.Fragment>;
       }
       if (/^\[[^\]]*\]$/.test(part.trim())) {
-        return <React.Fragment key={i}>{part}</React.Fragment>;
+        return (
+          <span key={i} className="opacity-45 italic">
+            {part}
+          </span>
+        );
       }
       const norm = normalizeSpeechToken(part);
       const expected = tokenIdx >= 0 ? speechTokens[tokenIdx] : null;
@@ -261,6 +266,7 @@ export const TeleprompterClockOverlay: React.FC<{
               >
                 {lines.map((line, index) => {
                   const lineComments = commentsForPrevLine(index);
+                  const isVoiceNoteLine = isVoiceNoteScriptLine(line);
                   const voiceLineActive =
                     voiceOn &&
                     voice?.style === 'band' &&
@@ -273,7 +279,9 @@ export const TeleprompterClockOverlay: React.FC<{
                         paddingLeft: '0.5rem',
                         paddingRight: '0.5rem',
                       }
-                    : {};
+                    : isVoiceNoteLine
+                      ? { opacity: 0.45, fontStyle: 'italic' }
+                      : {};
                   return (
                     <div
                       key={index}

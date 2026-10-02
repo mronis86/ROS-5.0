@@ -3,6 +3,7 @@ import {
   tokenizeScriptForSpeech,
   alignTranscriptVoicePrompt,
   normalizeSpeechToken,
+  isVoiceNoteScriptLine,
   type ScriptSpeechToken
 } from '../lib/teleprompter-voice-alignment';
 import {
@@ -201,6 +202,13 @@ const TeleprompterPage: React.FC = () => {
   const voiceScrollVelocityRef = useRef(0);
   /** Current matched script word — RAF recomputes guide target from this each frame. */
   const voiceFollowWordRef = useRef<number | null>(null);
+  /** True while voice RAF is writing scrollTop (so onScroll doesn't treat it as a hand jump). */
+  const voiceProgrammaticScrollRef = useRef(false);
+  /** True while the scroller is hand-driving scroll; voice follow pauses until settle + reseed. */
+  const voiceManualScrollActiveRef = useRef(false);
+  const voiceManualSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scriptSpeechTokensRef = useRef<ScriptSpeechToken[]>([]);
+  const guideLinePositionRef = useRef(guideLinePosition);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const speechRecognitionRef = useRef<any>(null);
   /** Consecutive Web Speech `network` errors — backoff / stop instead of tight restart loop. */
@@ -999,6 +1007,95 @@ const TeleprompterPage: React.FC = () => {
     [userRole]
   );
 
+  /**
+   * After a manual jump, re-anchor the voice matcher to whatever is on the guide
+   * so matching / skip-ahead search from the new place instead of yanking back.
+   */
+  const reseedVoiceAnchorFromGuide = useCallback(() => {
+    if (!voiceListenEnabledRef.current || voiceMicCheckOnlyRef.current) return;
+    if (userRoleRef.current !== 'SCROLLER') return;
+
+    const el = previewScrollRef.current;
+    const tokens = scriptSpeechTokensRef.current;
+    if (!el || tokens.length === 0) return;
+
+    const cRect = el.getBoundingClientRect();
+    if (cRect.height < 2) return;
+    const guideY = cRect.top + (guideLinePositionRef.current / 100) * cRect.height;
+
+    let bestWi: number | null = null;
+    let bestDist = Infinity;
+    el.querySelectorAll('[data-voice-word]').forEach((node) => {
+      const html = node as HTMLElement;
+      const wi = Number(html.getAttribute('data-voice-word'));
+      if (!Number.isFinite(wi) || wi < 0 || wi >= tokens.length) return;
+      const r = html.getBoundingClientRect();
+      const mid = r.top + r.height * 0.5;
+      const d = Math.abs(mid - guideY);
+      if (d < bestDist) {
+        bestDist = d;
+        bestWi = wi;
+      }
+    });
+
+    let wi: number;
+    if (bestWi != null && bestDist < cRect.height * 0.45) {
+      wi = bestWi;
+    } else {
+      let bestLine = 0;
+      let bestLineDist = Infinity;
+      lineRefsMap.current.forEach((lineEl, lineIndex) => {
+        const r = lineEl.getBoundingClientRect();
+        const mid = r.top + r.height * 0.5;
+        const d = Math.abs(mid - guideY);
+        if (d < bestLineDist) {
+          bestLineDist = d;
+          bestLine = lineIndex;
+        }
+      });
+      const onLine = tokens.findIndex((t) => t.lineIndex === bestLine);
+      if (onLine >= 0) {
+        wi = onLine;
+      } else {
+        const after = tokens.findIndex((t) => t.lineIndex >= bestLine);
+        wi = after >= 0 ? after : tokens.length - 1;
+      }
+    }
+
+    wi = Math.max(0, Math.min(wi, tokens.length - 1));
+    const lineIndex = tokens[wi].lineIndex;
+    voiceCommittedAnchorRef.current = wi;
+    voiceScrollSnapLineRef.current = lineIndex;
+    voiceDesiredScrollTopRef.current = el.scrollTop;
+    voiceFollowWordRef.current = wi;
+    voiceLastMatchAtRef.current = performance.now();
+    voiceRecentTranscriptWordsRef.current = [];
+    lastVoiceInterimProcessedRef.current = '';
+    setVoiceHighlightLine(null);
+    setVoiceHighlightWordIndex(null);
+    setVoiceStatus('Re-synced to scroll — speak from here…');
+  }, []);
+
+  const noteManualVoiceScroll = useCallback(() => {
+    if (!voiceListenEnabledRef.current || voiceMicCheckOnlyRef.current) return;
+    if (userRoleRef.current !== 'SCROLLER') return;
+
+    voiceManualScrollActiveRef.current = true;
+    // Pause voice follow so it doesn't fight the hand scroll
+    voiceFollowWordRef.current = null;
+    const el = previewScrollRef.current;
+    if (el) voiceDesiredScrollTopRef.current = el.scrollTop;
+
+    if (voiceManualSettleTimerRef.current) {
+      clearTimeout(voiceManualSettleTimerRef.current);
+    }
+    voiceManualSettleTimerRef.current = setTimeout(() => {
+      voiceManualSettleTimerRef.current = null;
+      reseedVoiceAnchorFromGuide();
+      voiceManualScrollActiveRef.current = false;
+    }, 280);
+  }, [reseedVoiceAnchorFromGuide]);
+
   useEffect(() => {
     if (!voiceListenEnabled || userRole !== 'SCROLLER') {
       if (voiceScrollLoopRafRef.current !== null) {
@@ -1017,7 +1114,12 @@ const TeleprompterPage: React.FC = () => {
       const dt = Math.min(0.05, Math.max(0.008, (ts - lastTs) / 1000));
       lastTs = ts;
 
-      if (el && voiceFollowWordRef.current != null && tokens.length > 0) {
+      if (
+        el &&
+        !voiceManualScrollActiveRef.current &&
+        voiceFollowWordRef.current != null &&
+        tokens.length > 0
+      ) {
         const delta = measureScrollDeltaWordToGuide(voiceFollowWordRef.current, tokens);
         if (delta != null && Number.isFinite(delta)) {
           const maxS = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -1058,9 +1160,13 @@ const TeleprompterPage: React.FC = () => {
             if (Math.abs(step) > absDelta) step = delta;
 
             const next = Math.max(0, Math.min(el.scrollTop + step, maxS));
+            voiceProgrammaticScrollRef.current = true;
             el.scrollTop = next;
             voiceDesiredScrollTopRef.current = next;
             voiceScrollVelocityRef.current = step / Math.max(dt, 0.008);
+            requestAnimationFrame(() => {
+              voiceProgrammaticScrollRef.current = false;
+            });
           }
 
           if (scriptRef.current) scriptRef.current.scrollTop = el.scrollTop;
@@ -1097,6 +1203,12 @@ const TeleprompterPage: React.FC = () => {
     guideLinePosition,
   ]);
   const scriptSpeechTokens = useMemo(() => tokenizeScriptForSpeech(scriptText), [scriptText]);
+  useEffect(() => {
+    scriptSpeechTokensRef.current = scriptSpeechTokens;
+  }, [scriptSpeechTokens]);
+  useEffect(() => {
+    guideLinePositionRef.current = guideLinePosition;
+  }, [guideLinePosition]);
 
   /** Push speaker highlight to Director / clock followers even when scroll barely moves. */
   useEffect(() => {
@@ -1169,7 +1281,11 @@ const TeleprompterPage: React.FC = () => {
           return <React.Fragment key={i}>{part}</React.Fragment>;
         }
         if (/^\[[^\]]*\]$/.test(part.trim())) {
-          return <React.Fragment key={i}>{part}</React.Fragment>;
+          return (
+            <span key={i} className="opacity-45 italic" title="Ignored by voice match">
+              {part}
+            </span>
+          );
         }
         const norm = normalizeSpeechToken(part);
         const expected = tokenIdx >= 0 ? scriptSpeechTokens[tokenIdx] : null;
@@ -1371,6 +1487,11 @@ const TeleprompterPage: React.FC = () => {
         }
       }
       if (!voiceListenEnabled) {
+        if (voiceManualSettleTimerRef.current) {
+          clearTimeout(voiceManualSettleTimerRef.current);
+          voiceManualSettleTimerRef.current = null;
+        }
+        voiceManualScrollActiveRef.current = false;
         clearVoiceScrollTarget();
         if (!voiceMicCheckOnly) stopVoiceMicCapture();
         setVoiceInterimPreview('');
@@ -2341,6 +2462,9 @@ const TeleprompterPage: React.FC = () => {
                     <p className="mt-1 text-[10px] leading-snug text-slate-500">
                       1) List mics → pick device → <span className="text-slate-300">Mic meter</span> (bars only).
                       2) Then <span className="text-slate-300">Auto-scroll</span> for speech matching.
+                      Hand-scroll while listening re-syncs the matcher to the guide.
+                      Notes: wrap in <span className="text-slate-300">[brackets]</span> or start a line with{' '}
+                      <span className="text-slate-300">//</span> / <span className="text-slate-300">NOTE:</span> — shown, ignored by voice.
                       Mic meter is local; speech-to-text needs internet to Google&apos;s servers (corporate filters like Umbrella often block it).
                     </p>
                   </div>
@@ -2638,6 +2762,11 @@ const TeleprompterPage: React.FC = () => {
                   if (scriptRef.current) {
                     scriptRef.current.scrollTop = e.currentTarget.scrollTop;
                   }
+
+                  // Hand scroll while listening → pause follow and reseed matcher on settle
+                  if (!voiceProgrammaticScrollRef.current) {
+                    noteManualVoiceScroll();
+                  }
                   
                   // Broadcast scroll position to viewers when scrolling in 16:9 preview mode
                   if (userRole === 'SCROLLER' && eventId) {
@@ -2656,6 +2785,7 @@ const TeleprompterPage: React.FC = () => {
                   // Handle wheel events for manual scrolling
                   // Note: preventDefault() removed to avoid passive event listener error
                   // The scrolling will still work without it
+                  noteManualVoiceScroll();
                   if (scriptRef.current) {
                     scriptRef.current.scrollTop += e.deltaY;
                   }
@@ -2686,6 +2816,7 @@ const TeleprompterPage: React.FC = () => {
                 >
                   {scriptLines.map((line, index) => {
                     const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
+                    const isVoiceNoteLine = isVoiceNoteScriptLine(line);
                     
                     const voiceLineActive =
                       voiceListenEnabled &&
@@ -2700,13 +2831,16 @@ const TeleprompterPage: React.FC = () => {
                           paddingLeft: '0.5rem',
                           paddingRight: '0.5rem',
                         }
-                      : {};
+                      : isVoiceNoteLine
+                        ? { opacity: 0.45, fontStyle: 'italic' }
+                        : {};
 
                     return (
                       <div 
                         key={index} 
                         className="mb-2 transition-[background-color,box-shadow] duration-200"
                         style={voiceHighlightCss}
+                        title={isVoiceNoteLine ? 'Note line — ignored by voice match' : undefined}
                         data-line-number={index}
                         ref={(el) => {
                           if (el) lineRefsMap.current.set(index, el);
@@ -2895,6 +3029,7 @@ const TeleprompterPage: React.FC = () => {
             // Get comments from PREVIOUS line (index - 1) to show after it
             // Comment on line 39 (stored as lineNumber: 38) appears before line 40 (index 39)
             const lineComments = settings.showComments && index > 0 ? getCommentsForLine(index - 1) : [];
+            const isVoiceNoteLine = isVoiceNoteScriptLine(line);
             const voiceLineActive =
               showVoiceHighlight &&
               voiceHighlightStyle === 'band' &&
@@ -2907,13 +3042,16 @@ const TeleprompterPage: React.FC = () => {
                   paddingLeft: '0.5rem',
                   paddingRight: '0.5rem',
                 }
-              : {};
+              : isVoiceNoteLine
+                ? { opacity: 0.45, fontStyle: 'italic' }
+                : {};
             
             return (
               <div 
                 key={index} 
                 className="mb-2 transition-[background-color,box-shadow] duration-200"
                 style={voiceHighlightCss}
+                title={isVoiceNoteLine ? 'Note line — ignored by voice match' : undefined}
                 data-line-number={index}
                 ref={(el) => {
                   if (el) lineRefsMap.current.set(index, el);

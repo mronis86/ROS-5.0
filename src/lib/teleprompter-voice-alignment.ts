@@ -6,9 +6,32 @@ export type ScriptSpeechToken = {
   lineIndex: number;
 };
 
-/** Stage directions in [brackets] — show in script but ignore for speech matching (see voice-teleprompter pattern). */
+/**
+ * Whole-line notes the talent is not reading.
+ * - `// pause for applause`
+ * - `NOTE: look camera 2`
+ */
+export function isVoiceNoteScriptLine(line: string): boolean {
+  const t = line.trimStart();
+  return t.startsWith('//') || /^NOTE:\s/i.test(t);
+}
+
+/**
+ * Strip non-spoken markup before tokenization.
+ * - Whole-line `//` / `NOTE:` notes
+ * - Inline `[stage directions]` (shown on screen, ignored for matching)
+ */
+export function stripNonSpokenScriptHints(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => (isVoiceNoteScriptLine(line) ? '' : line))
+    .join('\n')
+    .replace(/\[[^\]]*\]/g, ' ');
+}
+
+/** @deprecated Prefer stripNonSpokenScriptHints — kept for call sites / offline sync. */
 export function stripBracketHintsForSpeech(text: string): string {
-  return text.replace(/\[[^\]]*\]/g, ' ');
+  return stripNonSpokenScriptHints(text);
 }
 
 export function normalizeSpeechToken(raw: string): string {
@@ -19,7 +42,7 @@ export function normalizeSpeechToken(raw: string): string {
 }
 
 export function tokenizeScriptForSpeech(scriptText: string): ScriptSpeechToken[] {
-  const cleaned = stripBracketHintsForSpeech(scriptText);
+  const cleaned = stripNonSpokenScriptHints(scriptText);
   const lines = cleaned.split('\n');
   const tokens: ScriptSpeechToken[] = [];
   for (let li = 0; li < lines.length; li++) {

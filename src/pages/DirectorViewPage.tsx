@@ -21,7 +21,7 @@ import TeleprompterClockOverlay, {
 } from '../components/TeleprompterClockOverlay';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
-import { GUEST_VISIBLE_COLUMNS } from '../lib/guestRosHelpers';
+import { GUEST_VISIBLE_COLUMNS, ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import {
   GUEST_COLUMN_LABELS,
   GUEST_COLUMN_TOGGLE_OPTIONS,
@@ -33,6 +33,8 @@ import {
 import { moveColumnInOrder, parseCustomColumnOrderKey } from '../lib/rosColumnOrder';
 import { isIndentedScheduleItem } from '../lib/scheduleStartTime';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { findTopPreshowCue } from '../lib/preshowCountdown';
+import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 
 const NOTES_SOURCE_KEY = 'director-view-notes-source';
 const SYNC_COLUMNS_KEY = 'director-view-sync-columns';
@@ -51,6 +53,7 @@ const SYNC_STRIP_KEY = 'director-view-sync-strip';
 const SYNC_CUE_VIEW_KEY = 'director-view-sync-cue-view';
 const LEFT_PANE_MODE_KEY = 'director-view-left-pane';
 const SCRIPT_VIEW_MODE_KEY = 'director-view-script-view';
+const ROS_VIEW_MODE_KEY = 'director-view-ros-view';
 /** Bottom Current/Next strip supports six custom columns inline (especially in Maximize). */
 const MAX_SYNC_COLUMNS = 6;
 const ZOOM_MIN = 0.5;
@@ -225,6 +228,8 @@ type NotesViewMode = 'plan' | 'follow';
 /** Left pane: personal notes (default) or event script / teleprompter follow. */
 type LeftPaneMode = 'notes' | 'script';
 type ScriptViewMode = 'plan' | 'follow';
+/** Run of show pane: free scroll vs keep live cue centered. */
+type RosViewMode = 'plan' | 'follow';
 /** What the synced custom-column cards show. */
 type SyncCueView = 'both' | 'current' | 'next';
 
@@ -395,6 +400,13 @@ const DirectorViewPage: React.FC = () => {
   const [scriptViewMode, setScriptViewMode] = useState<ScriptViewMode>(() => {
     try {
       return localStorage.getItem(SCRIPT_VIEW_MODE_KEY) === 'follow' ? 'follow' : 'plan';
+    } catch {
+      return 'plan';
+    }
+  });
+  const [rosViewMode, setRosViewMode] = useState<RosViewMode>(() => {
+    try {
+      return localStorage.getItem(ROS_VIEW_MODE_KEY) === 'follow' ? 'follow' : 'plan';
     } catch {
       return 'plan';
     }
@@ -709,6 +721,14 @@ const DirectorViewPage: React.FC = () => {
       /* ignore */
     }
   }, [scriptViewMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ROS_VIEW_MODE_KEY, rosViewMode);
+    } catch {
+      /* ignore */
+    }
+  }, [rosViewMode]);
 
   const persistZoom = useCallback((key: string, setter: (v: number) => void, value: number) => {
     const next = clampZoom(value);
@@ -1213,6 +1233,130 @@ const DirectorViewPage: React.FC = () => {
       ? guestSchedule.find((i) => i.id === activeItemId) || null
       : null;
 
+  const topPreshowItemId = useMemo(
+    () =>
+      findTopPreshowCue(guestSchedule, indentedLookup, liveCue?.day ?? selectedDay)?.id ?? null,
+    [guestSchedule, indentedLookup, liveCue?.day, selectedDay]
+  );
+
+  const usePreshowRainbow = shouldUsePreshowRainbow(null, {
+    isRunning: timerRunning,
+    programType: liveCue?.programType,
+    itemId: activeItemId,
+    topPreshowItemId,
+  });
+
+  const liveSegmentLabel = String(liveCue?.segmentName || '')
+    .replace(/^\s*[|│¦∥∣↳↘›>]\s*/u, '')
+    .trim();
+
+  /** CUE # + Program Type badge — shown above the session/segment title. */
+  const renderLiveCueMeta = (opts?: {
+    align?: 'left' | 'right' | 'center';
+    compact?: boolean;
+    emphasize?: boolean;
+  }) => {
+    const align = opts?.align ?? 'left';
+    const compact = !!opts?.compact;
+    const emphasize = !!opts?.emphasize;
+    const cueText = liveCue?.cue ? String(liveCue.cue).trim() : '';
+    const programType = liveCue?.programType ? String(liveCue.programType).trim() : '';
+    const badgeColor = programType ? ROS_PROGRAM_TYPE_COLORS[programType] || '#64748B' : '#64748B';
+    const hex = badgeColor.replace('#', '');
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const badgeText =
+      Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && (r * 299 + g * 587 + b * 114) / 1000 > 160
+        ? '#0f172a'
+        : '#ffffff';
+    const title = `CUE ${cueText || '—'} : ${programType || '—'}`;
+    // Dock emphasize: slightly above segment title, not oversized
+    const cuePad = emphasize
+      ? 'px-1.5 py-0.5 text-[11px] leading-none'
+      : compact
+        ? 'px-1.5 py-0.5 text-[10px] leading-none'
+        : 'px-2 py-0.5 text-xs leading-none';
+    const typePad = emphasize
+      ? 'px-1.5 py-0.5 text-[11px] leading-none'
+      : compact
+        ? 'px-1.5 py-0.5 text-[10px] leading-none'
+        : 'px-2 py-0.5 text-xs leading-none';
+    return (
+      <div
+        className={`flex flex-nowrap items-center gap-1 min-w-0 ${
+          align === 'right'
+            ? 'justify-end'
+            : align === 'center'
+              ? 'justify-center'
+              : 'justify-start'
+        }`}
+        title={title}
+      >
+        <span
+          className={`inline-flex shrink-0 items-baseline gap-1 rounded border border-slate-600 bg-slate-800/90 font-sans text-slate-200 ${cuePad}`}
+        >
+          <span className="font-semibold tracking-wide text-slate-400">CUE</span>
+          <span className="font-mono font-bold tabular-nums text-white">{cueText || '—'}</span>
+        </span>
+        <span className={`shrink-0 leading-none text-slate-500 ${emphasize || !compact ? 'text-[11px]' : 'text-[10px]'}`}>
+          :
+        </span>
+        {programType ? (
+          <span
+            className={`inline-flex min-w-0 truncate rounded-md border border-white/15 font-sans font-semibold shadow-sm ${typePad}`}
+            style={{ backgroundColor: badgeColor, color: badgeText }}
+            title={programType}
+          >
+            {programType}
+          </span>
+        ) : (
+          <span
+            className={`inline-flex shrink-0 rounded-md border border-slate-600 bg-slate-800 text-slate-400 ${typePad}`}
+          >
+            —
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  /** Maximize dock: right-justified; larger timer; cue/type badges above segment title. */
+  const renderDockClockCard = () => (
+    <div className="flex-shrink-0 w-[16.5rem] min-h-0 rounded-lg border border-slate-600 bg-slate-950/90 px-2.5 py-2 text-right flex flex-col overflow-hidden">
+      <p className={`text-[10px] font-bold uppercase tracking-wide leading-none ${statusClass}`}>
+        {statusLabel}
+      </p>
+      {usePreshowRainbow ? (
+        <div className="mt-1.5">
+          <div className="ros-preshow-super text-[10px] leading-none tracking-wide">
+            PRE SHOW COUNTDOWN
+          </div>
+          <span className="ros-preshow-super-rule" aria-hidden />
+          <p className="w-full text-right text-[3.85rem] font-mono font-black tabular-nums leading-[0.95] mt-1 tracking-tighter ros-rainbow-text">
+            {timerDisplay}
+          </p>
+        </div>
+      ) : (
+        <p
+          className="w-full text-right text-[3.85rem] font-mono font-black tabular-nums leading-[0.95] mt-1.5 tracking-tighter"
+          style={{ color: timerColor }}
+        >
+          {timerDisplay}
+        </p>
+      )}
+      <div className="mt-2.5 space-y-1 min-w-0">
+        {renderLiveCueMeta({ align: 'right', emphasize: true })}
+        <p
+          className="text-[11px] text-slate-400 font-medium truncate leading-tight"
+          title={liveSegmentLabel || ''}
+        >
+          {liveSegmentLabel || 'No cue loaded'}
+        </p>
+      </div>
+    </div>
+  );
+
   const toggleSyncColumn = (columnId: string) => {
     setSyncColumnIds((prev) => {
       if (prev.includes(columnId)) return prev.filter((id) => id !== columnId);
@@ -1664,22 +1808,29 @@ const DirectorViewPage: React.FC = () => {
                 <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">
                   Current cue
                 </p>
-                <p className="text-base font-semibold text-white truncate">
-                  {liveCue?.segmentName || 'No cue loaded'}
-                </p>
-                <p className="text-xs text-slate-400 font-mono truncate">
-                  {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
-                  {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
+                {renderLiveCueMeta({ align: 'left' })}
+                <p className="text-base font-semibold text-white truncate mt-1">
+                  {liveSegmentLabel || 'No cue loaded'}
                 </p>
               </div>
               <div className="text-right shrink-0">
                 <p className={`text-sm font-bold ${statusClass}`}>{statusLabel}</p>
-                <p
-                  className="text-3xl font-mono font-bold tabular-nums leading-none mt-0.5"
-                  style={{ color: timerColor }}
-                >
-                  {timerDisplay}
-                </p>
+                {usePreshowRainbow ? (
+                  <div className="mt-0.5">
+                    <div className="ros-preshow-super text-[11px] leading-none">PRE SHOW COUNTDOWN</div>
+                    <span className="ros-preshow-super-rule" aria-hidden />
+                    <p className="text-4xl font-mono font-bold tabular-nums leading-none mt-1 ros-rainbow-text">
+                      {timerDisplay}
+                    </p>
+                  </div>
+                ) : (
+                  <p
+                    className="text-4xl font-mono font-bold tabular-nums leading-none mt-0.5"
+                    style={{ color: timerColor }}
+                  >
+                    {timerDisplay}
+                  </p>
+                )}
                 <p className="text-[10px] text-slate-500 mt-0.5">
                   {timerRunning ? 'Remaining' : timerLoaded ? 'Loaded' : 'Standby'}
                 </p>
@@ -1688,10 +1839,12 @@ const DirectorViewPage: React.FC = () => {
             {hasTimer ? (
               <div className="mt-2 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
                 <div
-                  className="h-full transition-all duration-300 absolute top-0 right-0"
+                  className={`h-full transition-all duration-300 absolute top-0 right-0 ${
+                    usePreshowRainbow ? 'ros-rainbow-fill' : ''
+                  }`}
                   style={{
                     width: `${remainingPct}%`,
-                    background: timerColor,
+                    ...(usePreshowRainbow ? {} : { background: timerColor }),
                   }}
                 />
               </div>
@@ -1978,6 +2131,32 @@ const DirectorViewPage: React.FC = () => {
                   >
                     Filter Columns{activeFilterCount > 0 ? ` (${activeFilterCount} hidden)` : ''}
                   </button>
+                  <div className="flex rounded-lg bg-slate-800 p-0.5 border border-slate-600">
+                    <button
+                      type="button"
+                      onClick={() => setRosViewMode('plan')}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+                        rosViewMode === 'plan'
+                          ? 'bg-cyan-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Free-scroll the run of show"
+                    >
+                      Scroll
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRosViewMode('follow')}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${
+                        rosViewMode === 'follow'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Keep the live cue centered as the show advances"
+                    >
+                      Follow
+                    </button>
+                  </div>
                   <ScaleStepper
                     label="ROS"
                     value={rosZoom}
@@ -2175,6 +2354,7 @@ const DirectorViewPage: React.FC = () => {
                   customColumns={customColumns}
                   visibleCustomColumns={visibleCustomColumns}
                   zoom={rosZoom}
+                  followActive={rosViewMode === 'follow'}
                   onOpenSpeakers={(id) => setSpeakersItemId(id)}
                 />
               </div>
@@ -2257,37 +2437,7 @@ const DirectorViewPage: React.FC = () => {
                       {notesBody}
                     </div>
                   </div>
-                  {dockClockVisible ? (
-                    <div className="flex-shrink-0 w-[12.5rem] min-h-0 rounded-lg border border-slate-600 bg-slate-950/90 px-2.5 py-2 text-right flex flex-col overflow-hidden">
-                      <p className={`text-[10px] font-bold uppercase tracking-wide ${statusClass}`}>
-                        {statusLabel}
-                      </p>
-                      <p
-                        className="text-2xl font-mono font-bold tabular-nums leading-none mt-0.5"
-                        style={{ color: timerColor }}
-                      >
-                        {timerDisplay}
-                      </p>
-                      <p
-                        className="text-[11px] text-white font-semibold truncate mt-1.5"
-                        title={liveCue?.segmentName || ''}
-                      >
-                        {liveCue?.segmentName || 'No cue loaded'}
-                      </p>
-                      <p className="text-[10px] text-slate-400 font-mono truncate">
-                        {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
-                        {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
-                      </p>
-                      {hasTimer ? (
-                        <div className="mt-auto pt-1.5 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-1.5">
-                          <div
-                            className="h-full transition-all duration-300 absolute top-0 right-0"
-                            style={{ width: `${remainingPct}%`, background: timerColor }}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
+                  {dockClockVisible ? renderDockClockCard() : null}
                 </div>
               </>
             ) : (
@@ -2348,37 +2498,7 @@ const DirectorViewPage: React.FC = () => {
                     syncColumns.map((col) => renderSyncColumnCard(col))
                   )}
                 </div>
-                {dockClockVisible ? (
-                  <div className="flex-shrink-0 w-[12.5rem] min-h-0 rounded-lg border border-slate-600 bg-slate-950/90 px-2.5 py-2 text-right flex flex-col overflow-hidden">
-                    <p className={`text-[10px] font-bold uppercase tracking-wide ${statusClass}`}>
-                      {statusLabel}
-                    </p>
-                    <p
-                      className="text-2xl font-mono font-bold tabular-nums leading-none mt-0.5"
-                      style={{ color: timerColor }}
-                    >
-                      {timerDisplay}
-                    </p>
-                    <p
-                      className="text-[11px] text-white font-semibold truncate mt-1.5"
-                      title={liveCue?.segmentName || ''}
-                    >
-                      {liveCue?.segmentName || 'No cue loaded'}
-                    </p>
-                    <p className="text-[10px] text-slate-400 font-mono truncate">
-                      {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
-                      {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
-                    </p>
-                    {hasTimer ? (
-                      <div className="mt-auto pt-1.5 w-full bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-1.5">
-                        <div
-                          className="h-full transition-all duration-300 absolute top-0 right-0"
-                          style={{ width: `${remainingPct}%`, background: timerColor }}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
+                {dockClockVisible ? renderDockClockCard() : null}
               </div>
             ) : (
               <div
@@ -2395,27 +2515,8 @@ const DirectorViewPage: React.FC = () => {
             )}
           </section>
           ) : !chromeExpanded && dockClockVisible ? (
-            <div className="flex-shrink-0 border-t border-slate-700 bg-slate-900/95 px-3 py-2 flex items-center justify-end gap-3">
-              <div className="min-w-0 text-right">
-                <p className="text-[11px] text-white font-semibold truncate">
-                  {liveCue?.segmentName || 'No cue loaded'}
-                </p>
-                <p className="text-[10px] text-slate-400 font-mono truncate">
-                  {liveCue?.cue ? `CUE ${liveCue.cue}` : '—'}
-                  {liveCue?.programType ? ` · ${liveCue.programType}` : ''}
-                </p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className={`text-[10px] font-bold uppercase tracking-wide ${statusClass}`}>
-                  {statusLabel}
-                </p>
-                <p
-                  className="text-2xl font-mono font-bold tabular-nums leading-none"
-                  style={{ color: timerColor }}
-                >
-                  {timerDisplay}
-                </p>
-              </div>
+            <div className="flex-shrink-0 border-t border-slate-700 bg-slate-900/95 px-3 py-2.5 flex items-center justify-end">
+              {renderDockClockCard()}
             </div>
           ) : null}
           </div>

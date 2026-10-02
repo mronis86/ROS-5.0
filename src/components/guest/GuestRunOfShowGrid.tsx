@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import ScheduleRow from '../../pages/ScheduleRow';
 import type { GuestScheduleItem } from '../../lib/eventGuestLinks';
 import {
@@ -71,6 +71,8 @@ export interface GuestRunOfShowGridProps {
   visibleCustomColumns?: Record<string, boolean>;
   /** Applied on the scrollport (not an ancestor) so sticky #/CUE/Start still work. */
   zoom?: number;
+  /** When true, keep the live cue row in view as the timer advances. */
+  followActive?: boolean;
   onOpenSpeakers: (itemId: number) => void;
   onViewSegmentDetail?: (itemId: number) => void;
 }
@@ -93,9 +95,11 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   customColumns = [],
   visibleCustomColumns = {},
   zoom,
+  followActive = false,
   onOpenSpeakers,
   onViewSegmentDetail,
 }) => {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const columns = visibleColumns || GUEST_VISIBLE_COLUMNS;
   const startPinnedBesideCue = stickyStartColumn && columns.start;
   const scrollColumns = useMemo(
@@ -116,6 +120,15 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
 
   const scheduleRows = useMemo(() => schedule.map(toScheduleRowItem), [schedule]);
   const indentedCues = useMemo(() => buildIndentedLookup(schedule), [schedule]);
+
+  useEffect(() => {
+    if (!followActive || activeItemId == null) return;
+    const root = scrollRef.current;
+    if (!root) return;
+    const row = root.querySelector(`[data-item-id="${activeItemId}"]`) as HTMLElement | null;
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [followActive, activeItemId, filteredItems]);
 
   const calculateStartTime = useCallback(
     (index: number): string => {
@@ -250,6 +263,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     <div className="bg-slate-800 rounded-xl p-3 sm:p-4 shadow-2xl flex flex-col min-h-0 flex-1 h-full">
       <div
         id="guest-schedule-scroll"
+        ref={scrollRef}
         className="flex-1 min-h-0 overflow-auto rounded-lg border-2 border-slate-600"
         style={{
           scrollbarWidth: 'thin',
