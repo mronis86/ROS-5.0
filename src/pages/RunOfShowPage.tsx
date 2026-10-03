@@ -127,7 +127,10 @@ import {
   applyRosUiPreferencesToLocal,
   fetchUserUiPreferences,
   fromPortableColumnOrder,
+  loadFilterViewAccountSync,
   readLocalRosUiPreferences,
+  rosUiPreferencesHasContent,
+  saveFilterViewAccountSync,
   saveUserUiPreferences,
   toPortableColumnOrder,
   type RosUiPreferences,
@@ -1534,6 +1537,10 @@ const RunOfShowPage: React.FC = () => {
   const [isForcingClockSync, setIsForcingClockSync] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<RosVisibleColumns>(() => loadRosVisibleColumns());
   const [accountPrefsReady, setAccountPrefsReady] = useState(false);
+  /** When true, Filter View syncs to Neon for this user across events/devices. */
+  const [filterViewSyncToAccount, setFilterViewSyncToAccount] = useState(
+    () => loadFilterViewAccountSync() === true
+  );
   const skipAccountPrefsSaveRef = useRef(false);
   const portableColumnOrderRef = useRef<string[] | null>(null);
   useEffect(() => {
@@ -2377,7 +2384,8 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => { scheduleRef.current = schedule; }, [schedule]);
   useEffect(() => { customColumnsRef.current = customColumns; }, [customColumns]);
 
-  // Load account-level filter prefs from Neon (falls back to localStorage).
+  // Load account-level filter prefs from Neon only when account sync is on
+  // (or first visit that already has Neon prefs). Otherwise keep browser-local.
   useEffect(() => {
     const userId = user?.id;
     if (!userId) {
@@ -2387,10 +2395,27 @@ const RunOfShowPage: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
+        const localSync = loadFilterViewAccountSync();
+        // Explicitly browser-only: do not pull Neon over localStorage.
+        if (localSync === false) {
+          if (!cancelled) {
+            setFilterViewSyncToAccount(false);
+            setAccountPrefsReady(true);
+          }
+          return;
+        }
+
         const prefs = await fetchUserUiPreferences(userId);
         if (cancelled) return;
-        if (prefs && Object.keys(prefs).length > 0) {
+
+        const hasAccountPrefs = rosUiPreferencesHasContent(prefs);
+        // Sync on if user opted in locally, or first visit with existing account prefs.
+        const shouldApplyAccount = localSync === true || (localSync === null && hasAccountPrefs);
+
+        if (shouldApplyAccount && hasAccountPrefs && prefs) {
           skipAccountPrefsSaveRef.current = true;
+          setFilterViewSyncToAccount(true);
+          saveFilterViewAccountSync(true);
           applyRosUiPreferencesToLocal(prefs);
           if (prefs.visibleColumns) {
             setVisibleColumns({ ...DEFAULT_ROS_VISIBLE_COLUMNS, ...prefs.visibleColumns });
@@ -2410,6 +2435,11 @@ const RunOfShowPage: React.FC = () => {
               visibleCustomColumnsFromNames(customColumnsRef.current || [], prefs.visibleCustomByName)
             );
           }
+        } else if (localSync === true) {
+          setFilterViewSyncToAccount(true);
+        } else {
+          setFilterViewSyncToAccount(false);
+          saveFilterViewAccountSync(false);
         }
       } catch (err) {
         console.warn('Could not load account UI preferences from Neon:', err);
@@ -2430,9 +2460,10 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [customColumns]);
 
-  // Debounced save of filter prefs to Neon (+ local mirror already via other effects).
+  // Debounced save of filter prefs to Neon only when account sync is enabled.
+  // Browser-local mirror always happens via the other localStorage effects.
   useEffect(() => {
-    if (!accountPrefsReady || !user?.id) return;
+    if (!accountPrefsReady || !user?.id || !filterViewSyncToAccount) return;
     if (skipAccountPrefsSaveRef.current) {
       skipAccountPrefsSaveRef.current = false;
       return;
@@ -2454,6 +2485,7 @@ const RunOfShowPage: React.FC = () => {
   }, [
     accountPrefsReady,
     user?.id,
+    filterViewSyncToAccount,
     visibleColumns,
     visibleCustomColumns,
     stickyStartColumn,
@@ -19426,8 +19458,48 @@ const RunOfShowPage: React.FC = () => {
               <div className="space-y-4">
                 <p className="text-slate-300 text-sm">
                   Toggle columns left-to-right (same order as the schedule). Drag chips or use ← → to reorder. # and CUE stay fixed on the left.
-                  Column show/hide and order are saved to your account (Neon) and this browser, so they follow you across events and devices when signed in.
+                  Changes always stay in this browser; optionally sync them to your signed-in account for every event and device.
                 </p>
+
+                <label className="flex items-start gap-3 rounded-lg border border-blue-700/50 bg-blue-950/25 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={filterViewSyncToAccount}
+                    disabled={!user?.id}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      setFilterViewSyncToAccount(enabled);
+                      saveFilterViewAccountSync(enabled);
+                      if (enabled && user?.id) {
+                        const prefs: RosUiPreferences = {
+                          ...readLocalRosUiPreferences(columnOrder, customColumns, stickyStartColumn),
+                          visibleColumns,
+                          visibleCustomByName: customColumnVisibilityToNames(
+                            customColumns,
+                            visibleCustomColumns
+                          ),
+                          stickyStartColumn,
+                          columnOrder: toPortableColumnOrder(columnOrder, customColumns),
+                        };
+                        portableColumnOrderRef.current = prefs.columnOrder || null;
+                        void saveUserUiPreferences(user.id, prefs).catch((err) => {
+                          console.warn('Could not save account UI preferences to Neon:', err);
+                        });
+                      }
+                    }}
+                    className="rounded mt-0.5"
+                  />
+                  <span className="text-slate-200 text-sm">
+                    Save Filter View to my account
+                    <span className="block text-xs text-slate-400 font-normal">
+                      {user?.id
+                        ? filterViewSyncToAccount
+                          ? 'On — this layout syncs to Neon and follows you on any event/device when signed in.'
+                          : 'Off — keep this layout only in this browser (not pushed to your account).'
+                        : 'Sign in to sync Filter View to your account.'}
+                    </span>
+                  </span>
+                </label>
 
                 <div className="rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2.5">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1.5">

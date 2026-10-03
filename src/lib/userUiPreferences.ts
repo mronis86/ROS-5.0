@@ -20,6 +20,37 @@ export type RosUiPreferences = {
   columnOrder?: string[];
 };
 
+/** localStorage: whether Filter View should sync to the signed-in user (Neon). */
+export const FILTER_VIEW_ACCOUNT_SYNC_KEY = 'rosFilterViewSyncToAccount';
+
+export function loadFilterViewAccountSync(): boolean | null {
+  try {
+    const raw = localStorage.getItem(FILTER_VIEW_ACCOUNT_SYNC_KEY);
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function saveFilterViewAccountSync(enabled: boolean): void {
+  try {
+    localStorage.setItem(FILTER_VIEW_ACCOUNT_SYNC_KEY, enabled ? 'true' : 'false');
+  } catch {
+    /* ignore */
+  }
+}
+
+export function rosUiPreferencesHasContent(prefs: RosUiPreferences | null | undefined): boolean {
+  if (!prefs || typeof prefs !== 'object') return false;
+  if (prefs.visibleColumns && Object.keys(prefs.visibleColumns).length > 0) return true;
+  if (prefs.visibleCustomByName && Object.keys(prefs.visibleCustomByName).length > 0) return true;
+  if (Array.isArray(prefs.columnOrder) && prefs.columnOrder.length > 0) return true;
+  if (typeof prefs.stickyStartColumn === 'boolean') return true;
+  return false;
+}
+
 const CUSTOM_NAME_PREFIX = 'name:';
 
 export function customNameOrderKey(name: string): string {
