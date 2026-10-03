@@ -56,14 +56,55 @@ const AppHeader: React.FC = () => {
     liveSync.connected === false || (liveSync.connected === true && !selfInPresence);
   const showBadge = showLiveSyncBadge && liveSync.active;
 
+  const liveSyncLabel = liveOk
+    ? 'Socket.IO Live'
+    : liveBad
+      ? 'Socket.IO Offline'
+      : 'Socket.IO…';
+  const liveSyncControl = showBadge ? (
+    <button
+      type="button"
+      onClick={() => {
+        if (liveBad) {
+          liveSync.openAlert?.();
+        }
+      }}
+      className={`mt-1 flex w-full items-center justify-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-semibold leading-none whitespace-nowrap transition-colors ${
+        liveOk
+          ? 'border-emerald-600/80 bg-emerald-900/70 text-emerald-200 cursor-default'
+          : liveBad
+            ? 'border-amber-500/80 bg-amber-900/70 text-amber-100 hover:bg-amber-800/80'
+            : 'border-slate-500 bg-slate-700/80 text-slate-300 cursor-default'
+      }`}
+      title={
+        liveOk
+          ? 'Socket.IO connected — you appear in event presence'
+          : liveBad
+            ? 'Socket.IO not connected correctly — click for help'
+            : 'Connecting to Socket.IO…'
+      }
+    >
+      <span
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+          liveOk
+            ? 'bg-emerald-300'
+            : liveBad
+              ? 'bg-amber-300 animate-pulse'
+              : 'bg-slate-400 animate-pulse'
+        }`}
+      />
+      <span>{liveSyncLabel}</span>
+    </button>
+  ) : null;
+
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 h-[var(--app-header-height)] box-border bg-slate-800 border-b border-slate-700 transition-transform duration-200 ease-out ${
+      className={`fixed top-0 left-0 right-0 z-50 h-[var(--app-header-height)] box-border overflow-visible bg-slate-800 border-b border-slate-700 transition-transform duration-200 ease-out ${
         isNarrow ? 'px-3' : 'px-5'
       } ${hiddenOnRunOfShow ? '-translate-y-full pointer-events-none opacity-0' : ''}`}
       aria-hidden={hiddenOnRunOfShow}
     >
-      <div className="flex h-full min-w-0 items-center justify-between gap-2 sm:gap-4">
+      <div className="relative flex h-full min-w-0 items-center justify-between gap-2 sm:gap-4">
         <div className="flex min-w-0 shrink items-center gap-1.5 sm:gap-2">
           <AppLogo size="sm" />
           <AppBrandTitle
@@ -71,46 +112,11 @@ const AppHeader: React.FC = () => {
             taglineClassName="text-[10px] uppercase tracking-[0.04em] text-slate-400 leading-none -mt-0.5"
             showTagline={!isNarrow}
           />
-          {showBadge ? (
-            <button
-              type="button"
-              onClick={() => {
-                if (liveBad) {
-                  liveSync.openAlert?.();
-                }
-              }}
-              className={`ml-1 flex shrink-0 items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-medium transition-colors sm:text-xs ${
-                liveOk
-                  ? 'border-emerald-600 bg-emerald-800/80 text-emerald-50 hover:bg-emerald-700'
-                  : liveBad
-                    ? 'border-amber-500 bg-amber-800/90 text-amber-50 hover:bg-amber-700'
-                    : 'border-slate-500 bg-slate-600 text-slate-200'
-              }`}
-              title={
-                liveOk
-                  ? 'Live sync connected — you appear in event presence'
-                  : liveBad
-                    ? 'Live sync / presence issue — click for help'
-                    : 'Connecting to live sync…'
-              }
-            >
-              <span
-                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                  liveOk
-                    ? 'bg-emerald-300'
-                    : liveBad
-                      ? 'bg-amber-300 animate-pulse'
-                      : 'bg-slate-400 animate-pulse'
-                }`}
-              />
-              {liveOk ? 'Live' : liveBad ? 'Sync issue' : 'Connecting'}
-            </button>
-          ) : null}
         </div>
 
         {user ? (
           isNarrow ? (
-            <div className="flex min-w-0 max-w-[52%] shrink-0 items-center gap-2">
+            <div className="flex min-w-0 max-w-[60%] shrink-0 items-center gap-2">
               <div className="min-w-0 flex-1 text-right leading-tight">
                 <p
                   className="truncate text-xs font-semibold text-white"
@@ -124,23 +130,28 @@ const AppHeader: React.FC = () => {
                   </p>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                className="flex shrink-0 flex-col items-center justify-center rounded-md bg-red-600 px-2.5 py-1 text-white transition-colors hover:bg-red-500 active:bg-red-700"
-                title="Sign out"
-                aria-label="Sign out"
-              >
-                <svg className="h-3.5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9.75 9V5.25A2.25 2.25 0 0112 3h7.5a2.25 2.25 0 012.25 2.25v13.5A2.25 2.25 0 0119.5 21h-7.5a2.25 2.25 0 01-2.25-2.25V15M6.75 12H3m0 0l3-3m-3 3l3 3"
-                  />
-                </svg>
-                <span className="mt-0.5 text-[8px] font-semibold leading-none tracking-tight">Sign Out</span>
-              </button>
+              <div className="relative flex shrink-0 flex-col items-stretch">
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className={`flex flex-col items-center justify-center rounded-md bg-red-600 px-2.5 text-white transition-colors hover:bg-red-500 active:bg-red-700 ${
+                    showBadge ? 'py-0.5' : 'py-1'
+                  }`}
+                  title="Sign out"
+                  aria-label="Sign out"
+                >
+                  <svg className="h-3.5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9.75 9V5.25A2.25 2.25 0 0112 3h7.5a2.25 2.25 0 012.25 2.25v13.5A2.25 2.25 0 0119.5 21h-7.5a2.25 2.25 0 01-2.25-2.25V15M6.75 12H3m0 0l3-3m-3 3l3 3"
+                    />
+                  </svg>
+                  <span className="mt-0.5 text-[8px] font-semibold leading-none tracking-tight">Sign Out</span>
+                </button>
+                {liveSyncControl}
+              </div>
             </div>
           ) : (
             <div className="flex shrink-0 items-center gap-4">
@@ -149,13 +160,18 @@ const AppHeader: React.FC = () => {
                 <p className="text-xs text-slate-300">{user.email}</p>
               </div>
 
-              <button
-                onClick={handleSignOut}
-                className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-red-500"
-                title="Sign out"
-              >
-                Sign Out
-              </button>
+              <div className="relative flex flex-col items-stretch">
+                <button
+                  onClick={handleSignOut}
+                  className={`rounded-md bg-red-600 px-3 text-sm text-white transition-colors hover:bg-red-500 ${
+                    showBadge ? 'py-1' : 'py-1.5'
+                  }`}
+                  title="Sign out"
+                >
+                  Sign Out
+                </button>
+                {liveSyncControl}
+              </div>
             </div>
           )
         ) : (
