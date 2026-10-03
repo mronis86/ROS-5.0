@@ -221,6 +221,41 @@ export function applyAutoShotTypeFromSpeakers(enabled: boolean): void {
   );
 }
 
+export const SHOW_LIVE_SYNC_STATUS_BADGE_STORAGE_KEY = 'ros.showLiveSyncStatusBadge';
+export const SHOW_LIVE_SYNC_STATUS_BADGE_CHANGE_EVENT = 'ros:show-live-sync-status-badge-change';
+
+let cachedShowLiveSyncStatusBadge: boolean | null = null;
+
+function readShowLiveSyncStatusBadgeFromStorage(): boolean | null {
+  try {
+    const raw = localStorage.getItem(SHOW_LIVE_SYNC_STATUS_BADGE_STORAGE_KEY);
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function getShowLiveSyncStatusBadge(): boolean {
+  if (cachedShowLiveSyncStatusBadge != null) return cachedShowLiveSyncStatusBadge;
+  return readShowLiveSyncStatusBadgeFromStorage() ?? false;
+}
+
+export function applyShowLiveSyncStatusBadge(enabled: boolean): void {
+  cachedShowLiveSyncStatusBadge = !!enabled;
+  try {
+    localStorage.setItem(SHOW_LIVE_SYNC_STATUS_BADGE_STORAGE_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+  window.dispatchEvent(
+    new CustomEvent(SHOW_LIVE_SYNC_STATUS_BADGE_CHANGE_EVENT, {
+      detail: { showLiveSyncStatusBadge: !!enabled },
+    })
+  );
+}
+
 let cachedLogoVariantId: LogoVariantId | null = null;
 
 function readLogoVariantFromStorage(): LogoVariantId | null {

@@ -13,6 +13,7 @@ import {
   getCountdownColorModeId,
   getHideFullscreenTimerOption,
   getAutoShotTypeFromSpeakers,
+  getShowLiveSyncStatusBadge,
   LOGO_VARIANTS,
   GREEN_ROOM_LAYOUTS,
   COUNTDOWN_COLOR_MODES,
@@ -21,6 +22,7 @@ import {
   applyCountdownColorModeId,
   applyHideFullscreenTimerOption,
   applyAutoShotTypeFromSpeakers,
+  applyShowLiveSyncStatusBadge,
   type LogoVariantId,
   type GreenRoomLayoutId,
   type CountdownColorModeId,
@@ -32,6 +34,7 @@ import {
   saveAdminCountdownColorMode,
   saveAdminHideFullscreenTimerOption,
   saveAdminAutoShotTypeFromSpeakers,
+  saveAdminShowLiveSyncStatusBadge,
   syncAdminAppSettingsTable,
 } from '../lib/appSettings';
 import AppLogo from '../components/AppLogo';
@@ -523,6 +526,9 @@ export default function AdminPage() {
   const [autoShotTypeFromSpeakers, setAutoShotTypeFromSpeakersState] = useState(
     () => getAutoShotTypeFromSpeakers()
   );
+  const [showLiveSyncStatusBadge, setShowLiveSyncStatusBadgeState] = useState(
+    () => getShowLiveSyncStatusBadge()
+  );
   const [logoSettingsLoading, setLogoSettingsLoading] = useState(false);
   const [logoSettingsSaving, setLogoSettingsSaving] = useState(false);
   const [logoSettingsError, setLogoSettingsError] = useState<string | null>(null);
@@ -775,6 +781,7 @@ export default function AdminPage() {
     countdownColorModeId: CountdownColorModeId;
     hideFullscreenTimerOption: boolean;
     autoShotTypeFromSpeakers: boolean;
+    showLiveSyncStatusBadge: boolean;
     updatedAt: string | null;
     needsMigration?: boolean;
   }) => {
@@ -783,11 +790,13 @@ export default function AdminPage() {
     applyCountdownColorModeId(settings.countdownColorModeId);
     applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
     applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
+    applyShowLiveSyncStatusBadge(settings.showLiveSyncStatusBadge);
     setLogoVariantIdState(settings.logoVariantId);
     setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
     setCountdownColorModeIdState(settings.countdownColorModeId);
     setHideFullscreenTimerOptionState(settings.hideFullscreenTimerOption);
     setAutoShotTypeFromSpeakersState(settings.autoShotTypeFromSpeakers);
+    setShowLiveSyncStatusBadgeState(settings.showLiveSyncStatusBadge);
     setLogoSettingsUpdatedAt(settings.updatedAt);
     if (settings.needsMigration != null) {
       setLogoSettingsNeedsMigration(settings.needsMigration === true);
@@ -878,6 +887,21 @@ export default function AdminPage() {
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save auto shot type setting');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handleShowLiveSyncStatusBadgeChange = async (enabled: boolean) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminShowLiveSyncStatusBadge(enabled);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save live sync badge setting');
     } finally {
       setLogoSettingsSaving(false);
     }
@@ -4386,6 +4410,28 @@ export default function AdminPage() {
                   When saving speakers on a cue: one Podium speaker → Podium; otherwise N-Shot from named speaker
                   count (1–7). Manual shot type edits lock that cue (amber border); clear the shot type to unlock
                   auto again.
+                </span>
+              </span>
+            </label>
+            <label
+              className={`mt-3 flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+                showLiveSyncStatusBadge
+                  ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                  : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+              } ${logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration ? 'opacity-60' : ''}`}
+            >
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={showLiveSyncStatusBadge}
+                disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                onChange={(e) => void handleShowLiveSyncStatusBadgeChange(e.target.checked)}
+              />
+              <span>
+                <span className="block font-semibold text-white">Show Live sync status in top bar</span>
+                <span className="block mt-1 text-sm text-slate-400">
+                  When enabled, Run of Show shows a Live / Sync issue badge after the logo title in the top header.
+                  The connection-issue popup still works either way. Off by default.
                 </span>
               </span>
             </label>

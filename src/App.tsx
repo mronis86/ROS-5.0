@@ -4,6 +4,7 @@ import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { ActiveViewersProvider } from './contexts/ActiveViewersContext';
 import { AppHeaderCollapseProvider } from './contexts/AppHeaderCollapseContext';
+import { LiveSyncStatusProvider } from './contexts/LiveSyncStatusContext';
 import AuthGuard from './components/AuthGuard';
 import AppHeader from './components/AppHeader';
 import ReportIssueFab from './components/ReportIssueFab';
@@ -222,7 +223,9 @@ function App() {
     <AuthProvider>
       <Router>
         <AppHeaderCollapseProvider>
-          <AppContent />
+          <LiveSyncStatusProvider>
+            <AppContent />
+          </LiveSyncStatusProvider>
         </AppHeaderCollapseProvider>
       </Router>
     </AuthProvider>

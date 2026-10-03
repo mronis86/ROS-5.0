@@ -35,6 +35,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
 import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
+import { useLiveSyncStatus } from '../contexts/LiveSyncStatusContext';
 import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import { canAccessAccessManager, canAccessAdmin, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
@@ -1223,6 +1224,8 @@ const RunOfShowPage: React.FC = () => {
   
   const [showGridHeaders, setShowGridHeaders] = useState(false);
   const { collapsed: appHeaderCollapsed, toggleCollapsed: toggleAppHeaderCollapsed } = useAppHeaderCollapse();
+  const { setStatus: setLiveSyncStatus, clearStatus: clearLiveSyncStatus, setOpenAlert: setLiveSyncOpenAlert } =
+    useLiveSyncStatus();
   const rosToolbarHeightPx = showGridHeaders ? 240 : 150;
   const schedulePaddingTopPx = getAppHeaderOffsetPx(appHeaderCollapsed) + rosToolbarHeightPx + 8;
   const [activeRowMenu, setActiveRowMenu] = useState<number | null>(null);
@@ -9324,6 +9327,39 @@ const RunOfShowPage: React.FC = () => {
     socketPresenceAlertTestPreview,
   ]);
 
+  // Publish live sync status to the top AppHeader badge (admin-toggleable).
+  useEffect(() => {
+    if (!event?.id || !user?.id) {
+      clearLiveSyncStatus();
+      return;
+    }
+    const selfInPresence = viewers.some((v) => String(v.userId) === String(user.id));
+    setLiveSyncStatus({
+      active: true,
+      connected: socketLiveConnected,
+      selfInPresence,
+    });
+  }, [
+    event?.id,
+    user?.id,
+    viewers,
+    socketLiveConnected,
+    setLiveSyncStatus,
+    clearLiveSyncStatus,
+  ]);
+
+  useEffect(() => {
+    const openAlert = () => {
+      setSocketPresenceAlertDismissed(false);
+      setShowSocketPresenceAlert(true);
+    };
+    setLiveSyncOpenAlert(openAlert);
+    return () => {
+      setLiveSyncOpenAlert(null);
+      clearLiveSyncStatus();
+    };
+  }, [setLiveSyncOpenAlert, clearLiveSyncStatus]);
+
   // Real-time countdown timer for running timers (ClockPage style)
   // Uses clock offset to sync with server time
   useEffect(() => {
@@ -14993,53 +15029,6 @@ const RunOfShowPage: React.FC = () => {
                 >
                   Change Role
                 </button>
-                {(() => {
-                  const selfInPresence = Boolean(
-                    user?.id && viewers.some((v) => String(v.userId) === String(user.id))
-                  );
-                  const liveOk = socketLiveConnected === true && selfInPresence;
-                  const liveBad =
-                    socketLiveConnected === false ||
-                    (socketLiveConnected === true && !selfInPresence);
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (liveBad) {
-                          setSocketPresenceAlertDismissed(false);
-                          setShowSocketPresenceAlert(true);
-                        } else {
-                          setShowViewersModal(true);
-                        }
-                      }}
-                      className={`flex items-center gap-1.5 px-3 py-1 text-sm rounded border transition-colors ${
-                        liveOk
-                          ? 'bg-emerald-800/80 border-emerald-600 text-emerald-50 hover:bg-emerald-700'
-                          : liveBad
-                            ? 'bg-amber-800/90 border-amber-500 text-amber-50 hover:bg-amber-700'
-                            : 'bg-slate-600 border-slate-500 text-slate-200'
-                      }`}
-                      title={
-                        liveOk
-                          ? 'Live sync connected — you appear in event presence'
-                          : liveBad
-                            ? 'Live sync / presence issue — click for help'
-                            : 'Connecting to live sync…'
-                      }
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                          liveOk
-                            ? 'bg-emerald-300'
-                            : liveBad
-                              ? 'bg-amber-300 animate-pulse'
-                              : 'bg-slate-400 animate-pulse'
-                        }`}
-                      />
-                      {liveOk ? 'Live' : liveBad ? 'Sync issue' : 'Connecting'}
-                    </button>
-                  );
-                })()}
                 <button
                   onClick={openNameBackupModal}
                   className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"

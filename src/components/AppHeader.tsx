@@ -1,7 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
+import { useLiveSyncStatus } from '../contexts/LiveSyncStatusContext';
 import { useNarrowViewport } from '../hooks/useNarrowViewport';
+import {
+  getShowLiveSyncStatusBadge,
+  SHOW_LIVE_SYNC_STATUS_BADGE_CHANGE_EVENT,
+} from '../lib/branding';
 import UserProfile from './UserProfile';
 import AppLogo from './AppLogo';
 import AppBrandTitle from './AppBrandTitle';
@@ -23,12 +28,33 @@ const AppHeader: React.FC = () => {
   const isNarrow = useNarrowViewport();
   const { collapsed, isRunOfShowPage } = useAppHeaderCollapse();
   const hiddenOnRunOfShow = isRunOfShowPage && collapsed;
+  const liveSync = useLiveSyncStatus();
+  const [showLiveSyncBadge, setShowLiveSyncBadge] = useState(() => getShowLiveSyncStatusBadge());
+
+  useEffect(() => {
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ showLiveSyncStatusBadge?: boolean }>).detail;
+      if (typeof detail?.showLiveSyncStatusBadge === 'boolean') {
+        setShowLiveSyncBadge(detail.showLiveSyncStatusBadge);
+      } else {
+        setShowLiveSyncBadge(getShowLiveSyncStatusBadge());
+      }
+    };
+    window.addEventListener(SHOW_LIVE_SYNC_STATUS_BADGE_CHANGE_EVENT, onChange);
+    return () => window.removeEventListener(SHOW_LIVE_SYNC_STATUS_BADGE_CHANGE_EVENT, onChange);
+  }, []);
 
   const handleSignOut = () => {
     if (confirm('Are you sure you want to sign out?')) {
       signOut();
     }
   };
+
+  const selfInPresence = liveSync.selfInPresence;
+  const liveOk = liveSync.connected === true && selfInPresence;
+  const liveBad =
+    liveSync.connected === false || (liveSync.connected === true && !selfInPresence);
+  const showBadge = showLiveSyncBadge && liveSync.active;
 
   return (
     <header
@@ -45,6 +71,41 @@ const AppHeader: React.FC = () => {
             taglineClassName="text-[10px] uppercase tracking-[0.04em] text-slate-400 leading-none -mt-0.5"
             showTagline={!isNarrow}
           />
+          {showBadge ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (liveBad) {
+                  liveSync.openAlert?.();
+                }
+              }}
+              className={`ml-1 flex shrink-0 items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-medium transition-colors sm:text-xs ${
+                liveOk
+                  ? 'border-emerald-600 bg-emerald-800/80 text-emerald-50 hover:bg-emerald-700'
+                  : liveBad
+                    ? 'border-amber-500 bg-amber-800/90 text-amber-50 hover:bg-amber-700'
+                    : 'border-slate-500 bg-slate-600 text-slate-200'
+              }`}
+              title={
+                liveOk
+                  ? 'Live sync connected — you appear in event presence'
+                  : liveBad
+                    ? 'Live sync / presence issue — click for help'
+                    : 'Connecting to live sync…'
+              }
+            >
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                  liveOk
+                    ? 'bg-emerald-300'
+                    : liveBad
+                      ? 'bg-amber-300 animate-pulse'
+                      : 'bg-slate-400 animate-pulse'
+                }`}
+              />
+              {liveOk ? 'Live' : liveBad ? 'Sync issue' : 'Connecting'}
+            </button>
+          ) : null}
         </div>
 
         {user ? (
@@ -89,7 +150,6 @@ const AppHeader: React.FC = () => {
               </div>
 
               <button
-                type="button"
                 onClick={handleSignOut}
                 className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-red-500"
                 title="Sign out"

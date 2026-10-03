@@ -5,11 +5,13 @@ import {
   applyGreenRoomLayoutId,
   applyHideFullscreenTimerOption,
   applyAutoShotTypeFromSpeakers,
+  applyShowLiveSyncStatusBadge,
   applyLogoVariantId,
   getCountdownColorModeId,
   getGreenRoomLayoutId,
   getHideFullscreenTimerOption,
   getAutoShotTypeFromSpeakers,
+  getShowLiveSyncStatusBadge,
   getLogoVariantId,
   parseCountdownColorModeId,
   parseGreenRoomLayoutId,
@@ -24,6 +26,7 @@ export type AppSettingsResponse = {
   countdownColorModeId: CountdownColorModeId;
   hideFullscreenTimerOption: boolean;
   autoShotTypeFromSpeakers: boolean;
+  showLiveSyncStatusBadge: boolean;
   updatedAt: string | null;
   needsMigration?: boolean;
 };
@@ -38,6 +41,7 @@ function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }):
     countdownColorModeId,
     hideFullscreenTimerOption: data.hideFullscreenTimerOption === true,
     autoShotTypeFromSpeakers: data.autoShotTypeFromSpeakers === true,
+    showLiveSyncStatusBadge: data.showLiveSyncStatusBadge === true,
     updatedAt: data.updatedAt ?? null,
     needsMigration: data.needsMigration === true,
   };
@@ -49,6 +53,7 @@ function applySettings(settings: AppSettingsResponse): AppSettingsResponse {
   applyCountdownColorModeId(settings.countdownColorModeId);
   applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
   applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
+  applyShowLiveSyncStatusBadge(settings.showLiveSyncStatusBadge);
   return settings;
 }
 
@@ -158,6 +163,23 @@ export async function saveAdminAutoShotTypeFromSpeakers(
   return applySettings(parseSettings(data));
 }
 
+export async function saveAdminShowLiveSyncStatusBadge(
+  showLiveSyncStatusBadge: boolean
+): Promise<AppSettingsResponse> {
+  const res = await adminFetch('/api/admin/app-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ showLiveSyncStatusBadge }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to save live sync badge setting (${res.status})`);
+  }
+  return applySettings(parseSettings(data));
+}
+
 export async function syncAdminAppSettingsTable(): Promise<AppSettingsResponse> {
   const res = await adminFetch('/api/admin/app-settings/sync-table', { method: 'POST' });
   const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
@@ -184,6 +206,7 @@ export async function hydrateLogoVariantFromServer(): Promise<LogoVariantId> {
         applyCountdownColorModeId(getCountdownColorModeId());
         applyHideFullscreenTimerOption(getHideFullscreenTimerOption());
         applyAutoShotTypeFromSpeakers(getAutoShotTypeFromSpeakers());
+        applyShowLiveSyncStatusBadge(getShowLiveSyncStatusBadge());
         return getLogoVariantId();
       }
     })();

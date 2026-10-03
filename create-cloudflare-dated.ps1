@@ -37,11 +37,10 @@ $UnusedDeployZips = @(
 
 Write-Host '========== Cloudflare Pages deploy folder =========='
 
-if (-not (Test-Path (Join-Path $DistDir 'index.html'))) {
-    Write-Host 'dist/ missing - running npm run build...'
-    Push-Location $ProjectRoot
-    try { npm run build } finally { Pop-Location }
-}
+# Always rebuild so Pages never ships a stale dist from an earlier build.
+Write-Host 'Running npm run build...'
+Push-Location $ProjectRoot
+try { npm run build } finally { Pop-Location }
 
 if (-not (Test-Path (Join-Path $DistDir 'index.html'))) {
     Write-Error 'dist/index.html still missing after build.'
