@@ -114,6 +114,19 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
+              <div className="text-center mb-4">
+                <a
+                  href="/companion-module-runofshow-avplayout-full.zip"
+                  download="companion-module-runofshow-avplayout-full.zip"
+                  className="block bg-sky-700 hover:bg-sky-600 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  📺 Companion Module — AV-Playout Sync
+                </a>
+                <div className="text-xs text-sky-300 mt-2">
+                  SINOR AV-Playout / CasparCG WebSocket → ROS timer • Arm cue, fire index, telemetry re-sync
+                </div>
+              </div>
+
               {/* Offline Show — LAN show laptop */}
               <div className="text-center mb-4">
                 <a

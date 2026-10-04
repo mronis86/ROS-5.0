@@ -62,6 +62,7 @@ try {
     node scripts/zip-companion-module-full.js
     node scripts/zip-companion-module-resolume-full.js
     node scripts/zip-companion-module-mitti-full.js
+    node scripts/zip-companion-module-avplayout-full.js
     node scripts/zip-offline-show.js
     node scripts/zip-spout-bridge.js
     node scripts/zip-vmix-datasource-bridge.js
@@ -141,6 +142,7 @@ Copy-DeployZip 'ROS-OSC-Control-portable.zip'
 Copy-DeployZip 'companion-module-runofshow-full.zip'
 Copy-DeployZip 'companion-module-runofshow-resolume-full.zip'
 Copy-DeployZip 'companion-module-runofshow-mitti-full.zip'
+Copy-DeployZip 'companion-module-runofshow-avplayout-full.zip'
 Copy-DeployZip 'offline-show.zip'
 Copy-DeployZip 'ros-led-spout.zip'
 Copy-DeployZip 'ros-vmix-datasource-bridge.zip'
@@ -160,6 +162,7 @@ $RedirectsContent = @"
 /companion-module-runofshow-full.zip            /companion-module-runofshow-full.zip            200
 /companion-module-runofshow-resolume-full.zip   /companion-module-runofshow-resolume-full.zip   200
 /companion-module-runofshow-mitti-full.zip      /companion-module-runofshow-mitti-full.zip      200
+/companion-module-runofshow-avplayout-full.zip  /companion-module-runofshow-avplayout-full.zip  200
 /ros-osc-python-app.zip                         /ros-osc-python-app.zip                         200
 /ROS-OSC-Control-portable.zip                   /ROS-OSC-Control-portable.zip                   200
 /electron-osc-app.zip                           /electron-osc-app.zip                           200
@@ -200,6 +203,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/companion-module-runofshow-mitti-full.zip"
   to = "/companion-module-runofshow-mitti-full.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/companion-module-runofshow-avplayout-full.zip"
+  to = "/companion-module-runofshow-avplayout-full.zip"
   status = 200
   force = true
 

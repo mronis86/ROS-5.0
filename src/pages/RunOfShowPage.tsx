@@ -1797,29 +1797,59 @@ const RunOfShowPage: React.FC = () => {
   const [stoppedItems, setStoppedItems] = useState<Set<number>>(new Set());
   
   // Helper function to format cue display with proper spacing
-  /** True when timer is driven by Resolume or Mitti OSC sync (from WebSocket timerUpdated). */
-  const isResolumeTimerSource = (timer: { time_source?: string; resolume_state?: string; mitti_state?: string } | null | undefined) =>
-    timer?.time_source === 'resolume' || timer?.time_source === 'mitti';
+  /** True when timer is driven by Resolume / Mitti / AV-Playout sync (from WebSocket timerUpdated). */
+  const isResolumeTimerSource = (timer: {
+    time_source?: string;
+    resolume_state?: string;
+    mitti_state?: string;
+    avplayout_state?: string;
+  } | null | undefined) =>
+    timer?.time_source === 'resolume' ||
+    timer?.time_source === 'mitti' ||
+    timer?.time_source === 'avplayout';
 
-  const isResolumeArmed = (timer: { resolume_state?: string; mitti_state?: string } | null | undefined) =>
-    timer?.resolume_state === 'armed' || timer?.mitti_state === 'armed';
+  const isResolumeArmed = (timer: {
+    resolume_state?: string;
+    mitti_state?: string;
+    avplayout_state?: string;
+  } | null | undefined) =>
+    timer?.resolume_state === 'armed' ||
+    timer?.mitti_state === 'armed' ||
+    timer?.avplayout_state === 'armed';
 
-  const isResolumeSynced = (timer: { resolume_state?: string; mitti_state?: string; time_source?: string } | null | undefined) =>
+  const isResolumeSynced = (timer: {
+    resolume_state?: string;
+    mitti_state?: string;
+    avplayout_state?: string;
+    time_source?: string;
+  } | null | undefined) =>
     timer?.resolume_state === 'synced' ||
     timer?.mitti_state === 'synced' ||
+    timer?.avplayout_state === 'synced' ||
     (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed') ||
-    (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed');
+    (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed') ||
+    (timer?.time_source === 'avplayout' && timer?.avplayout_state !== 'armed');
 
-  /** Label for Companion playback sync (Mitti vs Resolume). */
+  /** Label for Companion playback sync. */
   const getExternalSyncLabel = (
     timer: {
       time_source?: string;
       resolume_state?: string;
       mitti_state?: string;
+      avplayout_state?: string;
       user_id?: string;
       user_name?: string;
     } | null | undefined
-  ): 'Mitti' | 'Resolume' => {
+  ): 'Mitti' | 'AV-Playout' | 'Resolume' => {
+    if (
+      timer?.time_source === 'avplayout' ||
+      timer?.avplayout_state === 'armed' ||
+      timer?.avplayout_state === 'synced' ||
+      timer?.user_id === 'companion-avplayout' ||
+      timer?.user_name === 'AV-Playout Sync'
+    ) {
+      return 'AV-Playout';
+    }
     if (
       timer?.time_source === 'mitti' ||
       timer?.mitti_state === 'armed' ||
@@ -1832,24 +1862,30 @@ const RunOfShowPage: React.FC = () => {
     return 'Resolume';
   };
 
-  /** Sub-cue started by Companion Resolume/Mitti align. */
+  /** Sub-cue started by Companion Resolume/Mitti/AV-Playout align. */
   const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
     timer?.user_name === 'Resolume Sync' ||
     timer?.user_id === 'companion-resolume' ||
     timer?.user_name === 'Mitti Sync' ||
-    timer?.user_id === 'companion-mitti';
+    timer?.user_id === 'companion-mitti' ||
+    timer?.user_name === 'AV-Playout Sync' ||
+    timer?.user_id === 'companion-avplayout';
 
   const enrichSubCueTimer = (timer: any) => {
     if (!timer || typeof timer !== 'object') return timer;
     if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
     if (!isResolumeCompanionSubCue(timer)) return timer;
+    const isAv =
+      timer?.user_id === 'companion-avplayout' || timer?.user_name === 'AV-Playout Sync';
     const isMitti = timer?.user_id === 'companion-mitti' || timer?.user_name === 'Mitti Sync';
     return {
       ...timer,
-      time_source: isMitti ? 'mitti' : 'resolume',
-      ...(isMitti
-        ? { mitti_state: timer.is_running ? 'synced' : 'armed' }
-        : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
+      time_source: isAv ? 'avplayout' : isMitti ? 'mitti' : 'resolume',
+      ...(isAv
+        ? { avplayout_state: timer.is_running ? 'synced' : 'armed' }
+        : isMitti
+          ? { mitti_state: timer.is_running ? 'synced' : 'armed' }
+          : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
     };
   };
 

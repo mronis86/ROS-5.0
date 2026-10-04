@@ -463,7 +463,11 @@ function broadcastLanFromProxy(broadcastUpdate, method, pathname, body, data) {
     broadcastUpdate(eventId, 'indentedCuesUpdated', data);
   } else if (pathname.includes('sub-cue-timers')) {
     broadcastUpdate(eventId, 'subCueTimerStarted', data);
-  } else if (pathname.includes('/api/timers/mitti-') || pathname.includes('/api/timers/resolume-')) {
+  } else if (
+    pathname.includes('/api/timers/mitti-') ||
+    pathname.includes('/api/timers/resolume-') ||
+    pathname.includes('/api/timers/avplayout-')
+  ) {
     if (data?.is_sub_cue) {
       broadcastUpdate(eventId, 'subCueTimerStarted', data);
     }

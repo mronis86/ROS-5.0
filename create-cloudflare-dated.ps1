@@ -85,6 +85,7 @@ $OptionalZips = @(
     'companion-module-runofshow-full.zip',
     'companion-module-runofshow-resolume-full.zip',
     'companion-module-runofshow-mitti-full.zip',
+    'companion-module-runofshow-avplayout-full.zip',
     'offline-show.zip',
     'ros-led-spout.zip',
     'ros-osc-python-app.zip',
@@ -120,6 +121,7 @@ $redirectLines = New-Object System.Collections.Generic.List[string]
 [void]$redirectLines.Add('/companion-module-runofshow-full.zip            /companion-module-runofshow-full.zip            200')
 [void]$redirectLines.Add('/companion-module-runofshow-resolume-full.zip   /companion-module-runofshow-resolume-full.zip   200')
 [void]$redirectLines.Add('/companion-module-runofshow-mitti-full.zip      /companion-module-runofshow-mitti-full.zip      200')
+[void]$redirectLines.Add('/companion-module-runofshow-avplayout-full.zip  /companion-module-runofshow-avplayout-full.zip  200')
 [void]$redirectLines.Add('/offline-show.zip                               /offline-show.zip                               200')
 [void]$redirectLines.Add('/ros-led-spout.zip                              /ros-led-spout.zip                              200')
 [void]$redirectLines.Add('/ros-osc-python-app.zip                         /ros-osc-python-app.zip                         200')

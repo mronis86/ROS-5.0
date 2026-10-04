@@ -1,0 +1,26 @@
+{
+  "id": "runofshow-avplayout",
+  "name": "AV-Playout Sync",
+  "shortname": "ros-avplayout",
+  "description": "Sync Run of Show timers from SINOR AV-Playout / CasparCG via WebSocket telemetry",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": "git+https://github.com/bitfocus/companion-module-runofshow.git",
+  "bugs": "https://github.com/bitfocus/companion-module-runofshow/issues",
+  "maintainers": [
+    {
+      "name": "ROS",
+      "email": ""
+    }
+  ],
+  "runtime": {
+    "type": "node18",
+    "api": "nodejs-ipc",
+    "apiVersion": "0.0.0",
+    "entrypoint": "../src/main.js"
+  },
+  "legacyIds": [],
+  "manufacturer": "Run of Show",
+  "products": ["AV-Playout Sync"],
+  "keywords": ["run of show", "av-playout", "casparcg", "timer", "video"]
+}
