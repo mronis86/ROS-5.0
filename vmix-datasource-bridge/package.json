@@ -8,7 +8,7 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "electron": "^33.2.1",
+    "electron": "^39.8.10",
     "electron-builder": "^25.1.8"
   },
   "scripts": {
