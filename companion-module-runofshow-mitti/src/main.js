@@ -1172,7 +1172,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 				min: 1,
 				max: 10,
 				tooltip: 'Must match the Run of Show day tab (e.g. 3 for Day 3). Wrong day = empty cue dropdown.',
-			}
+			},
 			{
 				type: 'number',
 				id: 'oscListenPort',
