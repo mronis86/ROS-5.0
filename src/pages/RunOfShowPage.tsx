@@ -1810,6 +1810,28 @@ const RunOfShowPage: React.FC = () => {
     (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed') ||
     (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed');
 
+  /** Label for Companion playback sync (Mitti vs Resolume). */
+  const getExternalSyncLabel = (
+    timer: {
+      time_source?: string;
+      resolume_state?: string;
+      mitti_state?: string;
+      user_id?: string;
+      user_name?: string;
+    } | null | undefined
+  ): 'Mitti' | 'Resolume' => {
+    if (
+      timer?.time_source === 'mitti' ||
+      timer?.mitti_state === 'armed' ||
+      timer?.mitti_state === 'synced' ||
+      timer?.user_id === 'companion-mitti' ||
+      timer?.user_name === 'Mitti Sync'
+    ) {
+      return 'Mitti';
+    }
+    return 'Resolume';
+  };
+
   /** Sub-cue started by Companion Resolume/Mitti align. */
   const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
     timer?.user_name === 'Resolume Sync' ||
@@ -14873,10 +14895,10 @@ const RunOfShowPage: React.FC = () => {
                   }`}>
                     {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
                       ? isResolumeSynced(hybridTimerData.activeTimer)
-                        ? 'RUNNING · RESOLUME'
+                        ? `RUNNING · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
                         : 'RUNNING'
                       : isResolumeArmed(hybridTimerData.activeTimer)
-                        ? 'LOADED · RESOLUME (armed)'
+                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()} (armed)`
                         : 'LOADED'
                     } - {(() => {
                       // Try to find the schedule item with proper type conversion
@@ -14917,12 +14939,16 @@ const RunOfShowPage: React.FC = () => {
                   ) : null}
                   </div>
                   {isResolumeArmed(hybridTimerData.activeTimer) && (
-                    <div className="text-xs text-purple-300/90">Waiting for Resolume playback…</div>
+                    <div className="text-xs text-purple-300/90">
+                      Waiting for {getExternalSyncLabel(hybridTimerData.activeTimer)} playback…
+                    </div>
                   )}
                   {isResolumeSynced(hybridTimerData.activeTimer) &&
                     hybridTimerData.activeTimer.is_running &&
                     hybridTimerData.activeTimer.is_active && (
-                    <div className="text-xs text-purple-300/90">Countdown synced to Resolume clip</div>
+                    <div className="text-xs text-purple-300/90">
+                      Countdown synced to {getExternalSyncLabel(hybridTimerData.activeTimer)} clip
+                    </div>
                   )}
                   {((hybridSecondaryTimer?.is_running && hybridSecondaryTimer?.is_active !== false) ||
                     (secondaryTimer && secondaryTimer.timerState === 'running')) && (
@@ -14955,10 +14981,11 @@ const RunOfShowPage: React.FC = () => {
                               : 'text-orange-400';
                           const time = formatSubCueTime(remaining);
                           // Same single-line pattern as the main timer above (status - cue - time)
+                          const syncLabel = getExternalSyncLabel(subCueData).toUpperCase();
                           const line = isSubCueResolumeRunning(subCueData)
-                            ? `RUNNING · RESOLUME - ${formattedCue} - ${time}`
+                            ? `RUNNING · ${syncLabel} - ${formattedCue} - ${time}`
                             : subCueData && isResolumeArmed(subCueData)
-                              ? `LOADED · RESOLUME (armed) - ${formattedCue} - ${time}`
+                              ? `LOADED · ${syncLabel} (armed) - ${formattedCue} - ${time}`
                               : `${formattedCue} - ${time}`;
 
                           return (

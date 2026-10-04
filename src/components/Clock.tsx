@@ -138,6 +138,27 @@ const Clock: React.FC<ClockProps> = ({
   const isResolumeArmed = (timer: { resolume_state?: string; mitti_state?: string } | null | undefined) =>
     timer?.resolume_state === 'armed' || timer?.mitti_state === 'armed';
 
+  const getExternalSyncLabel = (
+    timer: {
+      time_source?: string;
+      resolume_state?: string;
+      mitti_state?: string;
+      user_id?: string;
+      user_name?: string;
+    } | null | undefined
+  ): 'Mitti' | 'Resolume' => {
+    if (
+      timer?.time_source === 'mitti' ||
+      timer?.mitti_state === 'armed' ||
+      timer?.mitti_state === 'synced' ||
+      timer?.user_id === 'companion-mitti' ||
+      timer?.user_name === 'Mitti Sync'
+    ) {
+      return 'Mitti';
+    }
+    return 'Resolume';
+  };
+
   const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
     timer?.user_name === 'Resolume Sync' ||
     timer?.user_id === 'companion-resolume' ||
@@ -978,19 +999,20 @@ const Clock: React.FC<ClockProps> = ({
       : 'text-orange-400';
   const indentedDisplayColor =
     indentedSubTimer && isResolumeSynced(indentedSubTimer) ? 'text-yellow-300' : 'text-orange-400';
+  const secondarySyncLabel = getExternalSyncLabel(secondarySubTimer).toUpperCase();
   const secondaryResolumeLabel =
     !isOpAlt && secondarySubTimer
       ? isResolumeSynced(secondarySubTimer)
-        ? ' · RESOLUME'
+        ? ` · ${secondarySyncLabel}`
         : isResolumeArmed(secondarySubTimer)
-          ? ' · RESOLUME (armed)'
+          ? ` · ${secondarySyncLabel} (armed)`
           : ''
       : '';
   const secondaryStatusPrefix =
     !isOpAlt && secondarySubTimer && isResolumeSynced(secondarySubTimer) && secondarySubTimer.is_running
-      ? 'RUNNING · RESOLUME - '
+      ? `RUNNING · ${secondarySyncLabel} - `
       : !isOpAlt && secondarySubTimer && isResolumeArmed(secondarySubTimer)
-        ? 'LOADED · RESOLUME (armed) - '
+        ? `LOADED · ${secondarySyncLabel} (armed) - `
         : '';
 
   /** Sub-cues hide at 0; Op Timer keeps counting until operator clears it. */

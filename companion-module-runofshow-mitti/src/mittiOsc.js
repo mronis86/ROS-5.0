@@ -34,9 +34,15 @@ function matchesAddress(messageAddress, expected) {
 	return String(messageAddress).toLowerCase() === String(expected).toLowerCase()
 }
 
-/** Parse Mitti timecode hh:mm:ss:ff or hh:mm:ss → seconds. */
+/**
+ * Parse Mitti timecode → seconds.
+ * Accepts hh:mm:ss:ff, hh:mm:ss, mm:ss (Mitti shortens under 1h), or a bare number.
+ */
 function parseTimecodeToSeconds(raw, fps = 30) {
 	if (raw == null) return null
+	if (typeof raw === 'number') {
+		return Number.isFinite(raw) && raw >= 0 ? raw : null
+	}
 	const s = String(raw).trim()
 	if (!s) return null
 	if (!s.includes(':')) {
@@ -53,7 +59,27 @@ function parseTimecodeToSeconds(raw, fps = 30) {
 		const [h, m, sec] = parts
 		return h * 3600 + m * 60 + sec
 	}
+	if (parts.length === 2) {
+		const [m, sec] = parts
+		return m * 60 + sec
+	}
 	return null
+}
+
+/** First OSC arg whether metadata:{type,value} or bare. */
+function extractOscArgValue(oscMsg) {
+	const args = oscMsg?.args
+	if (!Array.isArray(args) || args.length === 0) return undefined
+	const a0 = args[0]
+	if (a0 != null && typeof a0 === 'object' && 'value' in a0) return a0.value
+	return a0
+}
+
+function addressEndsWith(messageAddress, suffix) {
+	if (!messageAddress || !suffix) return false
+	const a = String(messageAddress).toLowerCase()
+	const s = String(suffix).toLowerCase()
+	return a === s || a.endsWith(s)
 }
 
 function createUdpPort(port, onMessage, onError) {
@@ -100,7 +126,9 @@ module.exports = {
 	cuePlayAddress,
 	playPlaylistAddress,
 	matchesAddress,
+	addressEndsWith,
 	parseTimecodeToSeconds,
+	extractOscArgValue,
 	createUdpPort,
 	sendOsc,
 }

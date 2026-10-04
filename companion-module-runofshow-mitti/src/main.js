@@ -9,7 +9,9 @@ const {
 	cuePlayAddress,
 	playPlaylistAddress,
 	matchesAddress,
+	addressEndsWith,
 	parseTimecodeToSeconds,
+	extractOscArgValue,
 	createUdpPort,
 	sendOsc,
 } = require('./mittiOsc')
@@ -41,6 +43,9 @@ class RunOfShowMittiInstance extends InstanceBase {
 		this.durationSampleRequest = null
 		/** Last Mitti cue number seen via OSC (for restore after TRT pull). */
 		this.lastKnownMittiCueNumber = null
+		/** Count of OSC messages seen since listener opened (debug). */
+		this.oscGlobalMsgCount = 0
+		this.lastDriftAlignMs = 0
 	}
 
 	async init(config) {
@@ -648,12 +653,16 @@ class RunOfShowMittiInstance extends InstanceBase {
 				this.sendMittiTrigger({ triggerMode, cueNumber })
 			}
 			this.ensureOscListener()
+			// Ask Mitti to dump current feedback so we don't wait for the next tick
+			this.requestOscFeedbackResend()
+			setTimeout(() => this.requestOscFeedbackResend(), 250)
 			this.updateVariableValues()
 			this.checkFeedbacks('mitti_armed')
 			const cueDisplay = this.formatCueDisplay(item?.customFields?.cue, itemId)
 			this.log(
 				'info',
-				`Mitti sync armed for ${requireSubCue ? 'sub-cue' : 'cue'} ${cueDisplay} (Mitti cue ${cueNumber}; loaded ${loadItemId})`
+				`Mitti sync armed for ${requireSubCue ? 'sub-cue' : 'cue'} ${cueDisplay} (Mitti cue ${cueNumber}; loaded ${loadItemId}). ` +
+					`Listening UDP ${this.getOscListenPort()} — enable Mitti OSC Feedback → this PC:${this.getOscListenPort()}`
 			)
 		} catch (err) {
 			this.log('error', `Arm Mitti failed: ${err.message}`)
@@ -820,9 +829,13 @@ class RunOfShowMittiInstance extends InstanceBase {
 
 	handleOscMessage(oscMsg) {
 		const address = oscMsg?.address
-		const args = oscMsg?.args || []
-		const value = args[0]?.value
+		const value = extractOscArgValue(oscMsg)
 		const fps = this.getTimecodeFps()
+
+		this.oscGlobalMsgCount = (this.oscGlobalMsgCount || 0) + 1
+		if (this.oscGlobalMsgCount <= 12) {
+			this.log('info', `OSC rx #${this.oscGlobalMsgCount}: ${address} = ${JSON.stringify(value)}`)
+		}
 
 		// Track current cue number from select-style feedback paths like /mitti/3/...
 		const cuePathMatch = String(address || '').match(/^\/mitti\/(\d+)\//i)
@@ -831,7 +844,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 		}
 
 		const durSample = this.durationSampleRequest
-		if (durSample && matchesAddress(address, FEEDBACK.CURRENT_CUE_TRT)) {
+		if (durSample && addressEndsWith(address, FEEDBACK.CURRENT_CUE_TRT)) {
 			const trt = parseTimecodeToSeconds(value, fps)
 			if (trt != null && trt > 0) {
 				durSample.trt = trt
@@ -845,12 +858,15 @@ class RunOfShowMittiInstance extends InstanceBase {
 		const arm = this.mittiArm
 
 		arm.oscMsgCount = (arm.oscMsgCount || 0) + 1
-		if (arm.oscMsgCount <= 8) {
-			this.log('info', `OSC #${arm.oscMsgCount}: ${address} = ${value}`)
+		if (arm.oscMsgCount <= 12) {
+			this.log('info', `Armed OSC #${arm.oscMsgCount}: ${address} = ${JSON.stringify(value)}`)
 		}
 
-		if (matchesAddress(address, FEEDBACK.TOGGLE_PLAY)) {
-			const playing = Number(value) >= 1
+		if (addressEndsWith(address, FEEDBACK.TOGGLE_PLAY) || matchesAddress(address, '/mitti/playStatus')) {
+			const playing =
+				Number(value) >= 1 ||
+				String(value).toLowerCase() === 'playing' ||
+				String(value).toLowerCase() === 'true'
 			arm.isPlaying = playing
 			if (playing && arm.phase !== 'aligned') {
 				arm.phase = 'sampling'
@@ -859,7 +875,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 			}
 		}
 
-		if (matchesAddress(address, FEEDBACK.CURRENT_CUE_TRT)) {
+		if (addressEndsWith(address, FEEDBACK.CURRENT_CUE_TRT)) {
 			const trt = parseTimecodeToSeconds(value, fps)
 			if (trt != null && trt > 0) {
 				arm.inferredDuration = trt
@@ -867,15 +883,20 @@ class RunOfShowMittiInstance extends InstanceBase {
 			}
 		}
 
-		if (matchesAddress(address, FEEDBACK.CUE_TIME_ELAPSED)) {
+		if (addressEndsWith(address, FEEDBACK.CUE_TIME_ELAPSED)) {
 			const elapsed = parseTimecodeToSeconds(value, fps)
 			if (elapsed != null) arm.lastElapsed = elapsed
 		}
 
-		if (!matchesAddress(address, FEEDBACK.CUE_TIME_LEFT)) return
+		if (!addressEndsWith(address, FEEDBACK.CUE_TIME_LEFT)) return
 
 		const rem = parseTimecodeToSeconds(value, fps)
-		if (rem == null) return
+		if (rem == null) {
+			if ((arm.oscMsgCount || 0) <= 12) {
+				this.log('warn', `cueTimeLeft unparsed: ${JSON.stringify(value)}`)
+			}
+			return
+		}
 		arm.lastRemaining = rem
 		arm.lastFeedbackMs = Date.now()
 
@@ -893,6 +914,22 @@ class RunOfShowMittiInstance extends InstanceBase {
 				} else if (action === 'keep_running') {
 					this.triggerCueEndRelease().catch((err) => {
 						this.log('error', `Cue end release failed: ${err.message}`)
+					})
+				}
+				return
+			}
+			// Drift correction between periodic aligns (throttled)
+			if (!this.alignInFlight && arm.inferredDuration) {
+				const rosRem = this.getRosRemainingSeconds()
+				const now = Date.now()
+				if (
+					rosRem != null &&
+					Math.abs(rosRem - rem) >= 0.75 &&
+					now - (this.lastDriftAlignMs || 0) >= 1000
+				) {
+					this.lastDriftAlignMs = now
+					this.triggerMittiAlign(arm.inferredDuration, rem, now, true, 'drift').catch((err) => {
+						this.log('warn', `Drift align failed: ${err.message}`)
 					})
 				}
 			}
@@ -914,7 +951,8 @@ class RunOfShowMittiInstance extends InstanceBase {
 				arm.alignTimeoutLogged = true
 				this.log(
 					'warn',
-					`No align yet — enable Mitti OSC Feedback → this PC port ${this.getOscListenPort()}`
+					`No align yet — enable Mitti OSC Feedback → this PC port ${this.getOscListenPort()}. ` +
+						`If Companion log shows no "OSC rx" lines while Mitti plays, feedback is not reaching this module.`
 				)
 			}
 			return

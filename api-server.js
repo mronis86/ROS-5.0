@@ -244,6 +244,7 @@ function applyResolumeMeta(eventId, timerRow, options = {}) {
       ...timerRow,
       time_source: 'resolume',
       resolume_state: 'synced',
+      mitti_state: 'none',
       resolume_align_seq: synced.align_seq ?? 0,
       resolume_align_reason: synced.align_reason ?? null,
     };
@@ -255,7 +256,12 @@ function applyResolumeMeta(eventId, timerRow, options = {}) {
       return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
     }
     if (rowItemId === String(pending.item_id)) {
-      return { ...timerRow, time_source: 'resolume', resolume_state: 'armed' };
+      return {
+        ...timerRow,
+        time_source: 'resolume',
+        resolume_state: 'armed',
+        mitti_state: 'none',
+      };
     }
   }
   return { ...timerRow, time_source: 'schedule', resolume_state: 'none' };
@@ -278,6 +284,7 @@ function applyMittiMeta(eventId, timerRow, options = {}) {
       ...timerRow,
       time_source: 'mitti',
       mitti_state: 'synced',
+      resolume_state: 'none',
       mitti_align_seq: synced.align_seq ?? 0,
       mitti_align_reason: synced.align_reason ?? null,
     };
@@ -289,7 +296,12 @@ function applyMittiMeta(eventId, timerRow, options = {}) {
       return { ...timerRow, mitti_state: 'none' };
     }
     if (rowItemId === String(pending.item_id)) {
-      return { ...timerRow, time_source: 'mitti', mitti_state: 'armed' };
+      return {
+        ...timerRow,
+        time_source: 'mitti',
+        mitti_state: 'armed',
+        resolume_state: 'none',
+      };
     }
   }
   return { ...timerRow, mitti_state: 'none' };
@@ -8347,6 +8359,8 @@ app.post('/api/timers/resolume-arm', async (req, res) => {
       return res.status(400).json({ error: 'event_id and item_id are required' });
     }
     const isSubCue = !!is_sub_cue;
+    // Only one external sync source at a time
+    clearAllMittiState(event_id);
     clearResolumeTimeSource(event_id);
     resolumePendingByEvent.set(event_id, { item_id: parseInt(item_id, 10), is_sub_cue: isSubCue });
     if (isSubCue) {
@@ -8627,6 +8641,8 @@ app.post('/api/timers/mitti-arm', async (req, res) => {
       return res.status(400).json({ error: 'event_id and item_id are required' });
     }
     const isSubCue = !!is_sub_cue;
+    // Only one external sync source at a time
+    clearAllResolumeState(event_id);
     clearMittiTimeSource(event_id);
     mittiPendingByEvent.set(event_id, { item_id: parseInt(item_id, 10), is_sub_cue: isSubCue });
     if (isSubCue) {
