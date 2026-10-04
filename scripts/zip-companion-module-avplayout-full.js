@@ -17,8 +17,10 @@ if (!fs.existsSync(sourcePath)) {
   process.exit(0);
 }
 
-console.log('Installing dependencies in companion-module-runofshow-avplayout...');
-const installCmd = process.env.CI === 'true' ? 'npm ci' : 'npm install';
+console.log('Installing production dependencies in companion-module-runofshow-avplayout...');
+// Omit devDependencies (@companion-module/tools pulls webpack/typescript/eslint — bloated ~25MB zip hangs browsers)
+const installCmd =
+  process.env.CI === 'true' ? 'npm ci --omit=dev' : 'npm install --omit=dev';
 execSync(installCmd, { cwd: sourcePath, stdio: 'inherit' });
 
 const publicDir = path.dirname(zipPath);
