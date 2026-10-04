@@ -60,47 +60,54 @@ class RunOfShowMittiInstance extends InstanceBase {
 	}
 
 	async applyConfig(config, isFirstInit) {
-		this.config = config
-		this.updateStatus(InstanceStatus.Connecting)
-		if (isFirstInit) {
-			this.ensureOscListener()
-		} else {
-			this.closeOscListener()
-			this.ensureOscListener()
-		}
+		// Never let init throw — Companion treats that as "Restart forced" crash-loop.
 		try {
-			await this.fetchData()
-		} catch (err) {
-			this.log(
-				'warn',
-				`API fetch failed (${err.message}). Check API URL + Event ID. OSC listener is still active.`
-			)
+			this.config = config || {}
+			this.updateStatus(InstanceStatus.Connecting)
+			try {
+				if (isFirstInit) {
+					this.ensureOscListener()
+				} else {
+					this.closeOscListener()
+					this.ensureOscListener()
+				}
+			} catch (oscErr) {
+				this.log('warn', `OSC listener setup failed: ${oscErr.message}`)
+			}
+
+			try {
+				await this.fetchData()
+			} catch (err) {
+				this.log(
+					'warn',
+					`API fetch failed (${err.message}). Check API URL + Event ID. OSC listener is still active.`
+				)
+			}
+
 			this.updateActions()
 			await this.updateFeedbacks()
 			this.updatePresets()
 			this.updateVariableDefinitions()
 			this.updateVariableValues()
 			this.checkAllFeedbacks()
-			this.updateStatus(InstanceStatus.ConnectionFailure, err.message || 'API fetch failed')
-			return
-		}
-		this.updateActions()
-		await this.updateFeedbacks()
-		this.updatePresets()
-		this.updateVariableDefinitions()
-		this.updateVariableValues()
-		this.checkAllFeedbacks()
-		const eventId = this.normalizeEventId(this.config?.eventId)
-		const mainCount = this.getRegularCues().length
-		if (!eventId) {
-			this.updateStatus(InstanceStatus.BadConfig, 'Set Event ID')
-		} else if (mainCount === 0) {
-			this.updateStatus(
-				InstanceStatus.UnknownError,
-				`No main cues for day ${this.config?.day || 1} — check Event ID / Day (see log)`
-			)
-		} else {
-			this.updateStatus(InstanceStatus.Ok, `${mainCount} main cue(s)`)
+
+			const eventId = this.normalizeEventId(this.config?.eventId)
+			const mainCount = this.getRegularCues().length
+			if (!eventId) {
+				this.updateStatus(InstanceStatus.BadConfig, 'Set Event ID')
+			} else if (mainCount === 0) {
+				this.updateStatus(
+					InstanceStatus.BadConfig,
+					`No main cues for day ${this.config?.day || 1} — check Event ID / Day / API (see log)`
+				)
+			} else {
+				this.updateStatus(InstanceStatus.Ok, `${mainCount} main cue(s)`)
+			}
+		} catch (err) {
+			this.log('error', `applyConfig failed: ${err?.message || err}`)
+			try {
+				this.updateStatus(InstanceStatus.ConnectionFailure, err?.message || 'Init failed')
+			} catch (_) {}
 		}
 	}
 

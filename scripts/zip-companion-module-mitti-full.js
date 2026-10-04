@@ -32,7 +32,8 @@ archive.pipe(output);
 archive.glob('**/*', {
   cwd: sourcePath,
   dot: true,
-  ignore: ['.git/**'],
+  // Never pack the parent-repo symlink that used to come from file:..
+  ignore: ['.git/**', 'node_modules/run-of-show-timer-client/**'],
   prefix: 'companion-module-runofshow-mitti',
 });
 archive.finalize();

@@ -34,7 +34,7 @@ module.exports = function (self) {
 					self.log('info', `Reload complete — ${n} main cue(s)`)
 					if (n === 0) {
 						self.updateStatus(
-							InstanceStatus.UnknownError,
+							InstanceStatus.BadConfig,
 							`No main cues for day ${self.config?.day || 1}`
 						)
 					} else {
