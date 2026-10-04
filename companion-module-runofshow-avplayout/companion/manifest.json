@@ -3,7 +3,7 @@
   "name": "AV-Playout Sync",
   "shortname": "ros-avplayout",
   "description": "Sync Run of Show timers from SINOR AV-Playout / CasparCG via WebSocket telemetry",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "repository": "git+https://github.com/bitfocus/companion-module-runofshow.git",
   "bugs": "https://github.com/bitfocus/companion-module-runofshow/issues",

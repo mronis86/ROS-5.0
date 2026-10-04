@@ -107,25 +107,46 @@ module.exports = function (self) {
 		},
 		disarm_avplayout_sync: {
 			name: 'Disarm AV-Playout sync',
-			options: [],
-			callback: async () => {
-				await self.clearAvArm()
+			options: [
+				{
+					id: 'stopPlayback',
+					type: 'checkbox',
+					label: 'Also stop AV-Playout / Caspar',
+					default: true,
+				},
+			],
+			callback: async (event) => {
+				await self.clearAvArm({ stopPlayback: event.options?.stopPlayback !== false })
 				self.log('info', 'AV-Playout sync disarmed')
 			},
 		},
 		end_avplayout_sync: {
 			name: 'End AV-Playout sync (clear time source)',
-			options: [],
-			callback: async () => {
+			options: [
+				{
+					id: 'stopPlayback',
+					type: 'checkbox',
+					label: 'Also stop AV-Playout / Caspar',
+					default: true,
+				},
+			],
+			callback: async (event) => {
 				const eid = self.config?.eventId
 				if (!eid) return
 				try {
 					await self.apiPost('/api/timers/avplayout-end', { event_id: eid })
-					await self.clearAvArm()
+					await self.clearAvArm({ stopPlayback: event.options?.stopPlayback !== false })
 					self.log('info', 'AV-Playout time source cleared')
 				} catch (err) {
 					self.log('error', `End AV-Playout sync failed: ${err.message}`)
 				}
+			},
+		},
+		stop_avplayout_playback: {
+			name: 'Stop AV-Playout / Caspar only',
+			options: [],
+			callback: async () => {
+				await self.stopAvPlayback({ reason: 'manual' })
 			},
 		},
 		manual_avplayout_align: {
@@ -182,7 +203,7 @@ module.exports = function (self) {
 			},
 		},
 		stop_timer: {
-			name: 'Stop Timer',
+			name: 'Stop Timer (+ AV-Playout)',
 			options: [],
 			callback: async () => {
 				const eid = self.config?.eventId
@@ -190,15 +211,17 @@ module.exports = function (self) {
 				try {
 					await self.fetchActiveTimer(eid)
 					const itemId = self.activeTimer?.item_id
-					if (!itemId) return
-					await self.apiPost('/api/timers/stop', {
-						event_id: eid,
-						item_id: parseInt(itemId, 10),
-					})
-					await self.clearAvArm()
+					if (itemId) {
+						await self.apiPost('/api/timers/stop', {
+							event_id: eid,
+							item_id: parseInt(itemId, 10),
+						})
+					}
+					await self.apiPost('/api/timers/avplayout-end', { event_id: eid }).catch(() => {})
+					await self.clearAvArm({ stopPlayback: true })
 					await self.fetchActiveTimer(eid)
 					self.updateVariableValues()
-					self.log('info', 'Timer stopped')
+					self.log('info', 'Timer stopped (+ AV-Playout when enabled)')
 				} catch (err) {
 					self.log('error', `Stop Timer failed: ${err.message}`)
 				}

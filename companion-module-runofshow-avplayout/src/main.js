@@ -178,6 +178,28 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		return Number.isFinite(s) && s >= 0 ? s : 10
 	}
 
+	/** When clearing ROS sync / stopping timer, also stop Caspar via AV-Playout. */
+	getStopAvOnClear() {
+		return this.config?.stopAvOnClear !== false
+	}
+
+	getClearAvLayerOnStop() {
+		return this.config?.clearAvLayerOnStop === true
+	}
+
+	async stopAvPlayback({ reason = 'stop' } = {}) {
+		const base = this.getAvBaseUrl()
+		try {
+			await avClient.stop(base, {})
+			if (this.getClearAvLayerOnStop()) {
+				await avClient.clear(base, {})
+			}
+			this.log('info', `Stopped AV-Playout / Caspar (${reason})`)
+		} catch (err) {
+			this.log('warn', `AV-Playout stop failed (${reason}): ${err.message}`)
+		}
+	}
+
 	getFetchTimeoutMs() {
 		const ms = parseInt(this.config?.apiFetchTimeoutMs, 10)
 		return Number.isFinite(ms) && ms >= 2000 ? Math.min(ms, 30000) : 8000
@@ -871,12 +893,16 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		)
 	}
 
-	async clearAvArm() {
+	async clearAvArm({ stopPlayback = true } = {}) {
 		this.stopPeriodicAlign()
 		this.clearPendingCueEnd()
 		const eventId = this.config?.eventId
+		const shouldStop = stopPlayback && this.getStopAvOnClear()
 		this.avArm = null
 		this.alignInFlight = false
+		if (shouldStop) {
+			await this.stopAvPlayback({ reason: 'clear-sync' })
+		}
 		if (eventId) {
 			this.apiPost('/api/timers/avplayout-disarm', { event_id: eventId }).catch(() => {})
 		}
@@ -918,20 +944,14 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 				await this.triggerAvAlign(dur, 0, arm.lastFeedbackMs || Date.now(), true, 'cue-end')
 				await this.stopSubCueAtEnd(eventId, itemId)
 				await this.apiPost('/api/timers/avplayout-end', { event_id: eventId })
-				this.stopPeriodicAlign()
-				this.avArm = null
-				this.updateVariableValues()
-				this.checkFeedbacks('avplayout_armed', 'avplayout_aligned')
+				await this.clearAvArm({ stopPlayback: true })
 				return
 			}
 			await this.triggerAvAlign(dur, 0, arm.lastFeedbackMs || Date.now(), true, 'cue-end')
 			await this.apiPost('/api/timers/avplayout-end', { event_id: eventId })
-			this.stopPeriodicAlign()
-			this.avArm = null
-			this.updateVariableValues()
-			this.checkFeedbacks('avplayout_armed', 'avplayout_aligned')
+			await this.clearAvArm({ stopPlayback: true })
 			await this.fetchActiveTimer(eventId)
-			this.log('info', 'Cue ended — timer synced to 0')
+			this.log('info', 'Cue ended — timer synced to 0 (+ AV-Playout stopped if enabled)')
 		} catch (err) {
 			arm.endTriggered = false
 			throw err
@@ -951,7 +971,8 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 				await this.apiPost('/api/timers/stop', { event_id: eventId, item_id: itemId })
 			}
 			await this.apiPost('/api/timers/avplayout-end', { event_id: eventId })
-			this.clearAvArm()
+			// clearAvArm stops AV-Playout when stopAvOnClear is enabled
+			await this.clearAvArm({ stopPlayback: true })
 			await this.fetchActiveTimer(eventId)
 		} catch (err) {
 			arm.endTriggered = false
@@ -967,8 +988,11 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		try {
 			if (arm.isSubCue) await this.stopSubCueAtEnd(eventId, parseInt(arm.itemId, 10))
 			await this.apiPost('/api/timers/avplayout-end', { event_id: eventId })
+			// Release ROS lock only — leave Caspar playing
 			this.stopPeriodicAlign()
+			this.clearPendingCueEnd()
 			this.avArm = null
+			this.alignInFlight = false
 			this.updateVariableValues()
 			this.checkFeedbacks('avplayout_armed', 'avplayout_aligned')
 			await this.fetchActiveTimer(eventId)
@@ -1158,6 +1182,23 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 				default: 400,
 				min: 0,
 				max: 15000,
+			},
+			{
+				type: 'checkbox',
+				id: 'stopAvOnClear',
+				label: 'Stop AV-Playout / Caspar when disarming, ending sync, or Stop Timer',
+				width: 12,
+				default: true,
+				tooltip:
+					'Calls AV-Playout POST /api/transport/stop so the clip stops with the ROS timer. Turn off to only clear ROS sync.',
+			},
+			{
+				type: 'checkbox',
+				id: 'clearAvLayerOnStop',
+				label: 'Also clear Caspar layer after stop',
+				width: 12,
+				default: false,
+				tooltip: 'After stop, call /api/transport/clear (harder black / empty layer).',
 			},
 		]
 	}

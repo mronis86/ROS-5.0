@@ -40,4 +40,7 @@ module.exports = {
 	stop(baseUrl, body = {}) {
 		return request(baseUrl, 'POST', '/api/transport/stop', body)
 	},
+	clear(baseUrl, body = {}) {
+		return request(baseUrl, 'POST', '/api/transport/clear', body)
+	},
 }
