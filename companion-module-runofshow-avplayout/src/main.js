@@ -46,6 +46,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		this.syncPulseTimeout = null
 		this.lastDriftAlignMs = 0
 		this.telMsgCount = 0
+		this.pendingCueEndTimer = null
 	}
 
 	async init(config) {
@@ -54,10 +55,18 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 	async destroy() {
 		this.stopPeriodicAlign()
+		this.clearPendingCueEnd()
 		if (this.syncPulseTimeout) clearTimeout(this.syncPulseTimeout)
 		this.clearReconnect()
 		this.closeWs()
 		this.avArm = null
+	}
+
+	clearPendingCueEnd() {
+		if (this.pendingCueEndTimer) {
+			clearTimeout(this.pendingCueEndTimer)
+			this.pendingCueEndTimer = null
+		}
 	}
 
 	async configUpdated(config) {
@@ -266,16 +275,18 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 						await self.fetchActiveTimer(eventId)
 					} catch (_) {}
 				}
-				if (
+				const rem = arm.lastRemaining
+				const nearStartAfterNearEnd =
 					arm.lastRemaining > arm.inferredDuration * 0.9 &&
 					self.lastSyncRemaining != null &&
 					self.lastSyncRemaining <= 20
-				) {
-					self.log('info', 'Skipping periodic align — cue near start after near-end playback')
-					return
+				const reason = nearStartAfterNearEnd ? 'loop' : 'periodic'
+				if (nearStartAfterNearEnd) {
+					self.log('info', 'Periodic: clip looped — re-aligning ROS countdown to feedback')
+					arm.endTriggered = false
+					self.clearPendingCueEnd()
 				}
-				const rem = arm.lastRemaining
-				await self.triggerAvAlign(arm.inferredDuration, rem, Date.now(), true, 'periodic')
+				await self.triggerAvAlign(arm.inferredDuration, rem, Date.now(), true, reason)
 			}
 			run().catch((err) => self.log('warn', `Periodic align failed: ${err.message}`))
 		}, sec * 1000)
@@ -425,23 +436,52 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		}
 
 		if (arm.phase === 'aligned') {
-			if (!arm.endTriggered && rem <= this.getCueEndThresholdSeconds()) {
-				const action = this.getCueEndAction()
-				if (action === 'align_zero') {
-					this.triggerCueEndAlignZero().catch((err) =>
-						this.log('error', `Cue end align failed: ${err.message}`)
-					)
-				} else if (action === 'stop' || action === 'none') {
-					this.triggerCueEndStop().catch((err) =>
-						this.log('error', `Cue end stop failed: ${err.message}`)
-					)
-				} else if (action === 'keep_running') {
-					this.triggerCueEndRelease().catch((err) =>
-						this.log('error', `Cue end release failed: ${err.message}`)
-					)
-				}
+			const prevRem = arm.prevRemaining
+			arm.prevRemaining = rem
+
+			// Clip looped: remaining jumped from near-end back to near-full
+			const looped =
+				prevRem != null &&
+				prevRem <= Math.max(2, this.getCueEndThresholdSeconds() + 1.5) &&
+				rem > (arm.inferredDuration || duration) * 0.85
+			if (looped && arm.inferredDuration && !this.alignInFlight) {
+				this.clearPendingCueEnd()
+				arm.endTriggered = false
+				this.log('info', `Clip loop detected — rem ${prevRem?.toFixed?.(1)} → ${rem.toFixed?.(1)}s`)
+				this.triggerAvAlign(arm.inferredDuration, rem, Date.now(), true, 'loop').catch((err) =>
+					this.log('warn', `Loop align failed: ${err.message}`)
+				)
+				this.updateVariableValues()
 				return
 			}
+
+			// Defer cue-end so a loop restart can cancel it (looping Caspar clips)
+			if (!arm.endTriggered && rem <= this.getCueEndThresholdSeconds() && !this.pendingCueEndTimer) {
+				const action = this.getCueEndAction()
+				this.pendingCueEndTimer = setTimeout(() => {
+					this.pendingCueEndTimer = null
+					const a = this.avArm
+					if (!a || a.phase !== 'aligned' || a.endTriggered) return
+					// Still near end → treat as finished (non-looping clip)
+					if (a.lastRemaining == null || a.lastRemaining > this.getCueEndThresholdSeconds() + 0.75) {
+						return
+					}
+					if (action === 'align_zero') {
+						this.triggerCueEndAlignZero().catch((err) =>
+							this.log('error', `Cue end align failed: ${err.message}`)
+						)
+					} else if (action === 'stop' || action === 'none') {
+						this.triggerCueEndStop().catch((err) =>
+							this.log('error', `Cue end stop failed: ${err.message}`)
+						)
+					} else if (action === 'keep_running') {
+						this.triggerCueEndRelease().catch((err) =>
+							this.log('error', `Cue end release failed: ${err.message}`)
+						)
+					}
+				}, 1200)
+			}
+
 			if (!this.alignInFlight && arm.inferredDuration) {
 				const rosRem = this.getRosRemainingSeconds()
 				const now = Date.now()
@@ -451,8 +491,14 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 					now - (this.lastDriftAlignMs || 0) >= 1000
 				) {
 					this.lastDriftAlignMs = now
-					this.triggerAvAlign(arm.inferredDuration, rem, now, true, 'drift').catch((err) =>
-						this.log('warn', `Drift align failed: ${err.message}`)
+					const reason =
+						rosRem <= 15 && rem > arm.inferredDuration * 0.85 ? 'loop' : 'drift'
+					if (reason === 'loop') {
+						this.clearPendingCueEnd()
+						arm.endTriggered = false
+					}
+					this.triggerAvAlign(arm.inferredDuration, rem, now, true, reason).catch((err) =>
+						this.log('warn', `${reason} align failed: ${err.message}`)
 					)
 				}
 			}
@@ -810,6 +856,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 			scheduleDurationSeconds,
 			inferredDuration: null,
 			lastRemaining: null,
+			prevRemaining: null,
 			lastFeedbackMs: 0,
 			endTriggered: false,
 			followUpScheduled: false,
@@ -817,6 +864,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		}
 		this.alignInFlight = false
 		this.telMsgCount = 0
+		this.clearPendingCueEnd()
 		this.log(
 			'info',
 			`Watching AV-Playout telemetry (cue ${cueIndex}; schedule ${scheduleDurationSeconds ?? 'unknown'}s)`
@@ -825,6 +873,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 	async clearAvArm() {
 		this.stopPeriodicAlign()
+		this.clearPendingCueEnd()
 		const eventId = this.config?.eventId
 		this.avArm = null
 		this.alignInFlight = false

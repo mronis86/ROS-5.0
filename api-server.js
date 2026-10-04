@@ -9071,7 +9071,11 @@ app.post('/api/timers/avplayout-sync-align', async (req, res) => {
       `SELECT started_at, duration_seconds, is_running FROM ${existingTable} WHERE event_id = $1 LIMIT 1`,
       [event_id]
     );
-    if (existingTimer.rows[0]?.is_running && existingTimer.rows[0].started_at) {
+    const reasonEarly =
+      typeof align_reason === 'string' && align_reason.trim() ? align_reason.trim() : 'align';
+    // Allow loop restarts to reset remaining (Caspar looped clip)
+    const allowLoopReset = reasonEarly === 'loop';
+    if (!allowLoopReset && existingTimer.rows[0]?.is_running && existingTimer.rows[0].started_at) {
       const existingDur = Number(existingTimer.rows[0].duration_seconds) || dur;
       const startedMs = new Date(existingTimer.rows[0].started_at).getTime();
       if (Number.isFinite(startedMs) && startedMs < Date.now() + 86400000) {
@@ -9095,8 +9099,7 @@ app.post('/api/timers/avplayout-sync-align', async (req, res) => {
     clearAvPlayoutPending(event_id);
     const prevSynced = avplayoutTimeSourceByEvent.get(event_id);
     const alignSeq = (prevSynced?.align_seq || 0) + 1;
-    const reason =
-      typeof align_reason === 'string' && align_reason.trim() ? align_reason.trim() : 'align';
+    const reason = reasonEarly;
     avplayoutTimeSourceByEvent.set(event_id, {
       time_source: 'avplayout',
       item_id: parseInt(item_id, 10),

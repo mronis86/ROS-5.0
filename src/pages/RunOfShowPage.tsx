@@ -1840,7 +1840,7 @@ const RunOfShowPage: React.FC = () => {
       user_id?: string;
       user_name?: string;
     } | null | undefined
-  ): 'Mitti' | 'AV-Playout' | 'Resolume' => {
+  ): 'Mitti' | 'SINOR AV-Playout' | 'Resolume' => {
     if (
       timer?.time_source === 'avplayout' ||
       timer?.avplayout_state === 'armed' ||
@@ -1848,7 +1848,7 @@ const RunOfShowPage: React.FC = () => {
       timer?.user_id === 'companion-avplayout' ||
       timer?.user_name === 'AV-Playout Sync'
     ) {
-      return 'AV-Playout';
+      return 'SINOR AV-Playout';
     }
     if (
       timer?.time_source === 'mitti' ||
@@ -1871,13 +1871,16 @@ const RunOfShowPage: React.FC = () => {
     timer?.user_name === 'AV-Playout Sync' ||
     timer?.user_id === 'companion-avplayout';
 
-  const enrichSubCueTimer = (timer: any) => {
+  /** Infer Resolume/Mitti/AV-Playout sync meta from companion user fields when server flags were dropped. */
+  const enrichExternalSyncTimer = (timer: any) => {
     if (!timer || typeof timer !== 'object') return timer;
     if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
-    if (!isResolumeCompanionSubCue(timer)) return timer;
     const isAv =
       timer?.user_id === 'companion-avplayout' || timer?.user_name === 'AV-Playout Sync';
     const isMitti = timer?.user_id === 'companion-mitti' || timer?.user_name === 'Mitti Sync';
+    const isResolume =
+      timer?.user_id === 'companion-resolume' || timer?.user_name === 'Resolume Sync';
+    if (!isAv && !isMitti && !isResolume) return timer;
     return {
       ...timer,
       time_source: isAv ? 'avplayout' : isMitti ? 'mitti' : 'resolume',
@@ -1888,6 +1891,8 @@ const RunOfShowPage: React.FC = () => {
           : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
     };
   };
+
+  const enrichSubCueTimer = (timer: any) => enrichExternalSyncTimer(timer);
 
   const isSubCueResolumeRunning = (timer: any) => {
     const enriched = enrichSubCueTimer(timer);
@@ -1900,6 +1905,7 @@ const RunOfShowPage: React.FC = () => {
   const RESOLUME_RUNNING_ROW_NUM_CLASS = 'bg-yellow-400/35 border-2 border-yellow-300';
 
   const hybridSecondaryTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
+  const hybridActiveTimer = enrichExternalSyncTimer(hybridTimerData?.activeTimer);
   const liveOperatorCountdown =
     hybridTimerData?.operatorCountdown?.is_active && hybridTimerData?.operatorCountdown?.is_running
       ? hybridTimerData.operatorCountdown
@@ -2144,14 +2150,34 @@ const RunOfShowPage: React.FC = () => {
     return timer.duration_seconds - elapsed;
   };
 
-  /** Reject align when OSC position loops to 0 and would snap countdown back to full clip length. */
+  /**
+   * Reject accidental full-clip snap near end (Resolume/Mitti glitch).
+   * Allow intentional loop restarts from AV-Playout (and explicit loop aligns).
+   */
   const shouldRejectResolumeAlignReset = (
     prev: { started_at?: string; duration_seconds?: number; is_running?: boolean } | null | undefined,
-    next: { started_at?: string; duration_seconds?: number; is_running?: boolean; resolume_state?: string; time_source?: string },
+    next: {
+      started_at?: string;
+      duration_seconds?: number;
+      is_running?: boolean;
+      resolume_state?: string;
+      mitti_state?: string;
+      avplayout_state?: string;
+      time_source?: string;
+      resolume_align_reason?: string;
+      mitti_align_reason?: string;
+      avplayout_align_reason?: string;
+    },
     offsetMs: number
   ) => {
     if (!prev?.is_running || !next.is_running || !isResolumeSynced(next)) return false;
     if (!prev.started_at || !next.started_at || prev.started_at === next.started_at) return false;
+    const reason = String(
+      next.avplayout_align_reason || next.mitti_align_reason || next.resolume_align_reason || ''
+    ).toLowerCase();
+    if (reason === 'loop') return false;
+    // AV-Playout follows Caspar feedback including looped clips
+    if (next.time_source === 'avplayout' || next.avplayout_state === 'synced') return false;
     const dur = next.duration_seconds ?? prev.duration_seconds ?? 0;
     if (dur <= 0) return false;
     const prevRem = getRemainingFromTimer(prev, offsetMs);
@@ -2218,8 +2244,8 @@ const RunOfShowPage: React.FC = () => {
 
   const isResolumeSyncPulseActive = Boolean(
     resolumeSyncPulse &&
-      isResolumeSynced(hybridTimerData?.activeTimer) &&
-      hybridTimerData?.activeTimer?.is_running
+      isResolumeSynced(hybridActiveTimer) &&
+      hybridActiveTimer?.is_running
   );
 
   const formatCueDisplay = (cue: string | number | undefined) => {
@@ -14915,37 +14941,37 @@ const RunOfShowPage: React.FC = () => {
             {/* Countdown Timer and Action Buttons - Top Right */}
             <div className="flex items-center gap-6">
               <div className="text-center">
-                {hybridTimerData?.activeTimer ? (
+                {hybridActiveTimer ? (
                   <div className="flex flex-col items-center gap-0.5">
                   <div className="flex flex-col items-center gap-0.5">
                   <div className={`text-lg font-bold ${
-                    hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                    hybridActiveTimer.is_running && hybridActiveTimer.is_active
                       ? isResolumeSyncPulseActive
                         ? 'text-yellow-300'
-                        : isResolumeSynced(hybridTimerData.activeTimer)
+                        : isResolumeSynced(hybridActiveTimer)
                           ? 'text-purple-400'
                           : 'text-green-400'
-                      : isResolumeArmed(hybridTimerData.activeTimer)
+                      : isResolumeArmed(hybridActiveTimer)
                         ? 'text-purple-300'
                         : 'text-yellow-400'
                   }`}>
-                    {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? isResolumeSynced(hybridTimerData.activeTimer)
-                        ? `RUNNING · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
+                    {hybridActiveTimer.is_running && hybridActiveTimer.is_active
+                      ? isResolumeSynced(hybridActiveTimer)
+                        ? `RUNNING · ${getExternalSyncLabel(hybridActiveTimer).toUpperCase()}`
                         : 'RUNNING'
-                      : isResolumeArmed(hybridTimerData.activeTimer)
-                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()} (armed)`
+                      : isResolumeArmed(hybridActiveTimer)
+                        ? `LOADED · ${getExternalSyncLabel(hybridActiveTimer).toUpperCase()} (armed)`
                         : 'LOADED'
                     } - {(() => {
                       // Try to find the schedule item with proper type conversion
-                      const itemId = hybridTimerData.activeTimer.item_id;
+                      const itemId = hybridActiveTimer.item_id;
                       const idNum = typeof itemId === 'string' ? parseInt(itemId, 10) : Number(itemId);
                       const scheduleItem = schedule.find(item => item.id === idNum);
                       
                       // Debug: Log only occasionally to reduce spam
                       if (Math.random() < 0.01) {
-                        console.log('🔍 RunOfShow: Hybrid timer data:', hybridTimerData.activeTimer);
-                        console.log('🔍 RunOfShow: Looking for item_id:', hybridTimerData.activeTimer.item_id, typeof hybridTimerData.activeTimer.item_id);
+                        console.log('🔍 RunOfShow: Hybrid timer data:', hybridActiveTimer);
+                        console.log('🔍 RunOfShow: Looking for item_id:', hybridActiveTimer.item_id, typeof hybridActiveTimer.item_id);
                         console.log('🔍 RunOfShow: Found schedule item:', scheduleItem);
                       }
                       
@@ -14974,16 +15000,16 @@ const RunOfShowPage: React.FC = () => {
                     </span>
                   ) : null}
                   </div>
-                  {isResolumeArmed(hybridTimerData.activeTimer) && (
+                  {isResolumeArmed(hybridActiveTimer) && (
                     <div className="text-xs text-purple-300/90">
-                      Waiting for {getExternalSyncLabel(hybridTimerData.activeTimer)} playback…
+                      Waiting for {getExternalSyncLabel(hybridActiveTimer)} playback…
                     </div>
                   )}
-                  {isResolumeSynced(hybridTimerData.activeTimer) &&
-                    hybridTimerData.activeTimer.is_running &&
-                    hybridTimerData.activeTimer.is_active && (
+                  {isResolumeSynced(hybridActiveTimer) &&
+                    hybridActiveTimer.is_running &&
+                    hybridActiveTimer.is_active && (
                     <div className="text-xs text-purple-300/90">
-                      Countdown synced to {getExternalSyncLabel(hybridTimerData.activeTimer)} clip
+                      Countdown synced to {getExternalSyncLabel(hybridActiveTimer)} clip
                     </div>
                   )}
                   {((hybridSecondaryTimer?.is_running && hybridSecondaryTimer?.is_active !== false) ||

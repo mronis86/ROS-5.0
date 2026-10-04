@@ -546,7 +546,7 @@ const PhotoViewPage: React.FC = () => {
       user_id?: string;
       user_name?: string;
     } | null | undefined
-  ): 'Mitti' | 'AV-Playout' | 'Resolume' => {
+  ): 'Mitti' | 'SINOR AV-Playout' | 'Resolume' => {
     if (
       timer?.time_source === 'avplayout' ||
       timer?.avplayout_state === 'armed' ||
@@ -554,7 +554,7 @@ const PhotoViewPage: React.FC = () => {
       timer?.user_id === 'companion-avplayout' ||
       timer?.user_name === 'AV-Playout Sync'
     ) {
-      return 'AV-Playout';
+      return 'SINOR AV-Playout';
     }
     if (
       timer?.time_source === 'mitti' ||
@@ -643,11 +643,27 @@ const PhotoViewPage: React.FC = () => {
 
   const shouldRejectResolumeAlignReset = (
     prev: { started_at?: string; duration_seconds?: number; is_running?: boolean } | null | undefined,
-    next: { started_at?: string; duration_seconds?: number; is_running?: boolean; resolume_state?: string; time_source?: string },
+    next: {
+      started_at?: string;
+      duration_seconds?: number;
+      is_running?: boolean;
+      resolume_state?: string;
+      mitti_state?: string;
+      avplayout_state?: string;
+      time_source?: string;
+      resolume_align_reason?: string;
+      mitti_align_reason?: string;
+      avplayout_align_reason?: string;
+    },
     offsetMs: number
   ) => {
     if (!prev?.is_running || !next.is_running || !isResolumeSynced(next)) return false;
     if (!prev.started_at || !next.started_at || prev.started_at === next.started_at) return false;
+    const reason = String(
+      next.avplayout_align_reason || next.mitti_align_reason || next.resolume_align_reason || ''
+    ).toLowerCase();
+    if (reason === 'loop') return false;
+    if (next.time_source === 'avplayout' || next.avplayout_state === 'synced') return false;
     const dur = next.duration_seconds ?? prev.duration_seconds ?? 0;
     if (dur <= 0) return false;
     const prevRem = getRemainingFromTimer(prev, offsetMs);
