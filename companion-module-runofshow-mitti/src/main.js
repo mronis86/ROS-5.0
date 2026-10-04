@@ -75,6 +75,14 @@ class RunOfShowMittiInstance extends InstanceBase {
 				'warn',
 				`API fetch failed (${err.message}). Check API URL + Event ID. OSC listener is still active.`
 			)
+			this.updateActions()
+			await this.updateFeedbacks()
+			this.updatePresets()
+			this.updateVariableDefinitions()
+			this.updateVariableValues()
+			this.checkAllFeedbacks()
+			this.updateStatus(InstanceStatus.ConnectionFailure, err.message || 'API fetch failed')
+			return
 		}
 		this.updateActions()
 		await this.updateFeedbacks()
@@ -82,12 +90,29 @@ class RunOfShowMittiInstance extends InstanceBase {
 		this.updateVariableDefinitions()
 		this.updateVariableValues()
 		this.checkAllFeedbacks()
-		this.updateStatus(InstanceStatus.Ok)
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		const mainCount = this.getRegularCues().length
+		if (!eventId) {
+			this.updateStatus(InstanceStatus.BadConfig, 'Set Event ID')
+		} else if (mainCount === 0) {
+			this.updateStatus(
+				InstanceStatus.UnknownError,
+				`No main cues for day ${this.config?.day || 1} — check Event ID / Day (see log)`
+			)
+		} else {
+			this.updateStatus(InstanceStatus.Ok, `${mainCount} main cue(s)`)
+		}
 	}
 
 	getApiUrl() {
 		const url = (this.config?.apiUrl || '').trim().replace(/\/+$/, '')
 		return url || 'https://ros-50-production.up.railway.app'
+	}
+
+	getAuthHeaders() {
+		const token = (this.config?.apiToken || '').trim()
+		if (!token) return {}
+		return { Authorization: `Bearer ${token}` }
 	}
 
 	getOscListenPort() {
@@ -299,7 +324,11 @@ class RunOfShowMittiInstance extends InstanceBase {
 			const res = await fetch(fullUrl, {
 				...options,
 				signal: controller.signal,
-				headers: { 'Content-Type': 'application/json', ...options.headers },
+				headers: {
+					'Content-Type': 'application/json',
+					...this.getAuthHeaders(),
+					...options.headers,
+				},
 			})
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
 			const text = await res.text()
@@ -414,8 +443,14 @@ class RunOfShowMittiInstance extends InstanceBase {
 	}
 
 	async fetchEvents() {
-		const data = await this.fetch('/api/calendar-events')
-		this.events = Array.isArray(data) ? data : []
+		try {
+			const data = await this.fetch('/api/calendar-events')
+			this.events = Array.isArray(data) ? data : []
+		} catch (err) {
+			// calendar-events often requires auth; do not block cue loading
+			this.events = []
+			this.log('warn', `Event list unavailable (${err.message}) — continuing with Event ID only`)
+		}
 		return this.events
 	}
 
@@ -435,11 +470,28 @@ class RunOfShowMittiInstance extends InstanceBase {
 		return this.indentedCueIds?.has(String(item.id))
 	}
 
+	normalizeEventId(raw) {
+		let id = String(raw || '').trim()
+		if (!id) return ''
+		// Allow pasting a full ROS URL with ?eventId=...
+		try {
+			if (id.includes('eventId=')) {
+				const u = new URL(id.startsWith('http') ? id : `https://local.invalid/${id}`)
+				const fromQuery = u.searchParams.get('eventId')
+				if (fromQuery) id = fromQuery.trim()
+			}
+		} catch {
+			/* keep trimmed id */
+		}
+		return id
+	}
+
 	async fetchRunOfShow(eventId, day = 1) {
 		const data = await this.fetch(`/api/run-of-show-data/${eventId}`)
 		if (!data || !data.schedule_items) {
 			this.scheduleItems = []
 			this.indentedCueIds = new Set()
+			this.log('warn', `No schedule_items for event ${eventId} (API returned empty)`)
 			return []
 		}
 		let items = typeof data.schedule_items === 'string' ? JSON.parse(data.schedule_items) : data.schedule_items
@@ -447,12 +499,26 @@ class RunOfShowMittiInstance extends InstanceBase {
 		const dayNum = parseInt(day, 10) || 1
 		const indentedIds = await this.fetchIndentedCueIds(eventId)
 		this.indentedCueIds = indentedIds
+		const allCount = items.length
 		this.scheduleItems = items
-			.filter((item) => (item.day || 1) === dayNum)
+			.filter((item) => Number(item.day || 1) === dayNum)
 			.map((item) => ({
 				...item,
 				isIndented: !!(item.isIndented || indentedIds.has(String(item.id))),
 			}))
+		const mainCount = this.getRegularCues().length
+		const subCount = this.getSubCues().length
+		this.log(
+			'info',
+			`Loaded schedule: ${allCount} total row(s), ${this.scheduleItems.length} for day ${dayNum} (${mainCount} main, ${subCount} sub)`
+		)
+		if (allCount > 0 && this.scheduleItems.length === 0) {
+			const days = [...new Set(items.map((i) => Number(i.day || 1)))].sort((a, b) => a - b)
+			this.log(
+				'warn',
+				`Day ${dayNum} has 0 cues. This event has days: ${days.join(', ')}. Change Day in module config.`
+			)
+		}
 		return this.scheduleItems
 	}
 
@@ -504,7 +570,10 @@ class RunOfShowMittiInstance extends InstanceBase {
 	}
 
 	async fetchData() {
-		const eventId = this.config?.eventId
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (this.config && eventId && eventId !== this.config.eventId) {
+			this.config.eventId = eventId
+		}
 		if (!eventId) {
 			this.events = []
 			this.scheduleItems = []
@@ -513,9 +582,16 @@ class RunOfShowMittiInstance extends InstanceBase {
 			this.log('warn', 'Event ID is empty — set Event ID in module config to load cues')
 			return
 		}
+		this.log('info', `Fetching Run of Show for event ${eventId} (day ${this.config?.day || 1}) from ${this.getApiUrl()}`)
+		// Soft-fail: must not block schedule load if calendar-events returns 401
 		await this.fetchEvents()
 		await this.fetchRunOfShow(eventId, this.config?.day || 1)
-		await this.fetchActiveTimer(eventId)
+		try {
+			await this.fetchActiveTimer(eventId)
+		} catch (err) {
+			this.activeTimer = null
+			this.log('warn', `Active timer unavailable (${err.message})`)
+		}
 	}
 
 	formatCueDisplay(raw, itemId) {
@@ -1055,6 +1131,15 @@ class RunOfShowMittiInstance extends InstanceBase {
 				tooltip: 'Run of Show Railway API URL (must include mitti-* routes)',
 			},
 			{
+				type: 'textinput',
+				id: 'apiToken',
+				label: 'API Token (optional)',
+				width: 12,
+				default: '',
+				tooltip:
+					'Same Bearer token as the main Run of Show Companion module. Needed for indented-cues / active-timers / calendar-events when API auth is on. Cue list itself can load without it.',
+			},
+			{
 				type: 'number',
 				id: 'apiFetchTimeoutMs',
 				label: 'API fetch timeout (ms)',
@@ -1068,7 +1153,8 @@ class RunOfShowMittiInstance extends InstanceBase {
 				id: 'eventId',
 				label: 'Event ID',
 				width: 12,
-				tooltip: 'Paste the event ID from the Run of Show web app',
+				tooltip:
+					'UUID from the ROS URL (?eventId=...). Save this connection after pasting. A full URL with eventId= also works.',
 			},
 			{
 				type: 'number',
@@ -1078,7 +1164,8 @@ class RunOfShowMittiInstance extends InstanceBase {
 				default: 1,
 				min: 1,
 				max: 10,
-			},
+				tooltip: 'Must match the Run of Show day tab (e.g. 3 for Day 3). Wrong day = empty cue dropdown.',
+			}
 			{
 				type: 'number',
 				id: 'oscListenPort',

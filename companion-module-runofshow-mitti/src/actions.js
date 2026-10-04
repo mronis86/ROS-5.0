@@ -1,14 +1,51 @@
+const { InstanceStatus } = require('@companion-module/base')
+
 module.exports = function (self) {
-	const regularCueChoices = self.buildCueDropdownChoices(
-		self.getRegularCues(),
-		'No main cues — configure Event ID first'
-	)
+	const eventId = typeof self.normalizeEventId === 'function'
+		? self.normalizeEventId(self.config?.eventId)
+		: String(self.config?.eventId || '').trim()
+	const mainCues = self.getRegularCues()
+	const subCues = self.getSubCues()
+	const day = self.config?.day || 1
+	let regularEmpty = 'No main cues — set Event ID in module config, then Save'
+	if (eventId && (self.scheduleItems || []).length === 0) {
+		regularEmpty = `No cues loaded for day ${day} — check Event ID, Day, API URL (see Companion log)`
+	} else if (eventId && mainCues.length === 0) {
+		regularEmpty = `Event loaded but 0 main cues on day ${day} (only sub-cues?) — try another Day`
+	}
+	const regularCueChoices = self.buildCueDropdownChoices(mainCues, regularEmpty)
 	const subCueChoices = self.buildCueDropdownChoices(
-		self.getSubCues(),
+		subCues,
 		'No sub-cues — add indented rows in Run of Show'
 	)
 
 	self.setActionDefinitions({
+		reload_cues: {
+			name: 'Reload cues from API',
+			options: [],
+			callback: async () => {
+				try {
+					await self.fetchData()
+					self.updateActions()
+					self.updatePresets()
+					self.updateVariableValues()
+					if (typeof self.checkAllFeedbacks === 'function') self.checkAllFeedbacks()
+					const n = self.getRegularCues().length
+					self.log('info', `Reload complete — ${n} main cue(s)`)
+					if (n === 0) {
+						self.updateStatus(
+							InstanceStatus.UnknownError,
+							`No main cues for day ${self.config?.day || 1}`
+						)
+					} else {
+						self.updateStatus(InstanceStatus.Ok, `${n} main cue(s)`)
+					}
+				} catch (err) {
+					self.log('error', `Reload cues failed: ${err.message}`)
+					self.updateStatus(InstanceStatus.ConnectionFailure, err.message || 'Reload failed')
+				}
+			},
+		},
 		arm_mitti_sync: {
 			name: 'Arm Mitti sync (load cue + listen)',
 			options: [
