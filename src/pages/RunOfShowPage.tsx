@@ -50,6 +50,7 @@ import {
   ensureNotesEditorTypingSpace,
   stripNotesEditorTypingSpacers,
 } from '../lib/audioCallouts';
+import { boostNotesContrastHtml } from '../lib/notesContrast';
 import {
   getEventLocalHHMM,
   getSyncedNow,
@@ -2355,7 +2356,8 @@ const RunOfShowPage: React.FC = () => {
   const getRowDimStyle = (item: { id: number; programType?: string }): React.CSSProperties => {
     if (item.programType === 'KILLED') return { opacity: 0.7 };
     if (isItemDimmed(item.id)) {
-      return { opacity: 0.68, filter: 'brightness(0.59) saturate(0.33)' };
+      // Opacity only — brightness/saturate filters washed out notes highlights and colored text
+      return { opacity: 0.78 };
     }
     return { opacity: 1 };
   };
@@ -6062,8 +6064,8 @@ const RunOfShowPage: React.FC = () => {
         case 'highlight':
           if (value && value !== 'none' && value !== 'transparent') {
             document.execCommand('backColor', false, value);
-            // Dark text on highlighter fills — white-on-pastel is hard to read on slate rows
-            document.execCommand('foreColor', false, '#0f172a');
+            // Near-black bold text on highlighter fills
+            document.execCommand('foreColor', false, '#111111');
           } else {
             document.execCommand('backColor', false, 'transparent');
             document.execCommand('foreColor', false, '#ffffff');
@@ -7998,10 +8000,12 @@ const RunOfShowPage: React.FC = () => {
   // Convert plain-text newlines to <br> for contenteditable (e.g. Excel-imported notes)
   const notesForEditor = (raw: string) => {
     if (!raw) return '';
-    return String(raw)
-      .replace(/\r\n/g, '<br>')
-      .replace(/\r/g, '<br>')
-      .replace(/\n/g, '<br>');
+    return boostNotesContrastHtml(
+      String(raw)
+        .replace(/\r\n/g, '<br>')
+        .replace(/\r/g, '<br>')
+        .replace(/\n/g, '<br>')
+    );
   };
 
   /** After VO / Settle / Stage Direction chips: refresh open Notes modal + caret below chips. */
@@ -18538,33 +18542,38 @@ const RunOfShowPage: React.FC = () => {
                        title="White"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#f87171')}
-                       className="w-6 h-6 bg-red-400 rounded"
+                       onClick={() => applyFormatting('color', '#ff5252')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#ff5252' }}
                        title="Red"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#93c5fd')}
-                       className="w-6 h-6 bg-blue-300 rounded"
+                       onClick={() => applyFormatting('color', '#7dd3fc')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#7dd3fc' }}
                        title="Blue"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#4ade80')}
-                       className="w-6 h-6 bg-green-400 rounded"
+                       onClick={() => applyFormatting('color', '#69f0ae')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#69f0ae' }}
                        title="Green"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#fb923c')}
-                       className="w-6 h-6 bg-orange-400 rounded"
+                       onClick={() => applyFormatting('color', '#ffab40')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#ffab40' }}
                        title="Orange"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#c084fc')}
-                       className="w-6 h-6 bg-purple-400 rounded"
+                       onClick={() => applyFormatting('color', '#e040fb')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#e040fb' }}
                        title="Purple"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#0f172a')}
-                       className="w-6 h-6 bg-slate-900 border border-slate-400 rounded"
+                       onClick={() => applyFormatting('color', '#111111')}
+                       className="w-6 h-6 bg-black border border-slate-400 rounded"
                        title="Near black (best on highlights)"
                      ></button>
                    </div>
@@ -18581,28 +18590,33 @@ const RunOfShowPage: React.FC = () => {
                        ×
                      </button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#facc15')}
-                       className="w-6 h-6 bg-yellow-400 rounded ring-1 ring-yellow-200/80"
+                       onClick={() => applyFormatting('highlight', '#ffe600')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#ffe600' }}
                        title="Yellow"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#38bdf8')}
-                       className="w-6 h-6 bg-sky-400 rounded ring-1 ring-sky-200/80"
+                       onClick={() => applyFormatting('highlight', '#00b0ff')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#00b0ff' }}
                        title="Sky"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#4ade80')}
-                       className="w-6 h-6 bg-green-400 rounded ring-1 ring-green-200/80"
+                       onClick={() => applyFormatting('highlight', '#00e676')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#00e676' }}
                        title="Green"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#f472b6')}
-                       className="w-6 h-6 bg-pink-400 rounded ring-1 ring-pink-200/80"
+                       onClick={() => applyFormatting('highlight', '#ff4081')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#ff4081' }}
                        title="Pink"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#fb923c')}
-                       className="w-6 h-6 bg-orange-400 rounded ring-1 ring-orange-200/80"
+                       onClick={() => applyFormatting('highlight', '#ff9100')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#ff9100' }}
                        title="Orange"
                      ></button>
                    </div>

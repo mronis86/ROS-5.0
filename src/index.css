@@ -177,27 +177,42 @@ html.led-output-broadcast #root,
   padding-left: 28px;
 }
 
-/* Fix highlight (backColor) sizing - execCommand + font size causes short highlights.
-   Use pixel values: Small needs minimal padding, XL needs substantial padding for ascenders/descenders.
-   Force dark bold text on highlights so pastel swatches stay readable on dark ROS rows. */
-#notes-editor [style*="background-color"]:not([style*="transparent"]),
-.notes-display [style*="background-color"]:not([style*="transparent"]) {
-  padding: 1px 4px;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  border-radius: 2px;
-  line-height: 1.5;
-  color: #0f172a !important;
-  -webkit-text-fill-color: #0f172a;
-  font-weight: 700 !important;
+/* Notes base: keep body text bright on slate cells (overrides dimmed-row text-slate-500) */
+#notes-editor,
+.notes-display {
+  color: #f8fafc;
 }
 
-/* Colored text (no highlight) — bump weight so hues read clearly on slate rows */
+/* Fix highlight (backColor) sizing - execCommand + font size causes short highlights.
+   High-contrast highlighter: vivid fill + near-black bold text. */
+#notes-editor [style*="background-color"]:not([style*="transparent"]),
+.notes-display [style*="background-color"]:not([style*="transparent"]) {
+  padding: 2px 5px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  border-radius: 3px;
+  line-height: 1.5;
+  color: #111111 !important;
+  -webkit-text-fill-color: #111111 !important;
+  font-weight: 800 !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+#notes-editor [style*="background-color"]:not([style*="transparent"]) *,
+.notes-display [style*="background-color"]:not([style*="transparent"]) *,
+#notes-editor [style*="background-color"]:not([style*="transparent"]) font,
+.notes-display [style*="background-color"]:not([style*="transparent"]) font {
+  color: #111111 !important;
+  -webkit-text-fill-color: #111111 !important;
+  font-weight: 800 !important;
+}
+
+/* Colored text (no highlight) — heavier weight on dark rows */
 #notes-editor font[color],
 .notes-display font[color],
 #notes-editor span[style*="color:"],
 .notes-display span[style*="color:"] {
-  font-weight: 600;
+  font-weight: 700;
 }
 /* Small (font size 1) - zero vertical padding, horizontal only, size to content */
 #notes-editor [style*="background-color"]:not([style*="transparent"]):has(font[size="1"]),

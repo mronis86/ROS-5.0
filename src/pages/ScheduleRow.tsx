@@ -8,6 +8,7 @@ import {
 } from '../lib/audioCallouts';
 import { shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { boostNotesContrastHtml } from '../lib/notesContrast';
 import StageDirectionModal from '../components/StageDirectionModal';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
 
@@ -1152,18 +1153,20 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setEditingNotesItem && setEditingNotesItem(item.id);
               setShowNotesModal && setShowNotesModal(true);
             }}
-            className={`w-full px-3 py-2 border rounded text-base transition-colors ${isLockedByOther ? cellFill + ' opacity-70 cursor-not-allowed' : cellFillInteractive}`}
+            className={`w-full px-3 py-2 border rounded text-base transition-colors text-white ${isLockedByOther ? 'bg-slate-700 border-slate-600 opacity-70 cursor-not-allowed' : 'bg-slate-700 border-slate-600 cursor-pointer hover:bg-slate-600'}`}
             title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot edit notes' : currentUserRole === 'OPERATOR' ? 'Click to view notes (read-only)' : 'Click to edit notes'}
           >
             {item.notes ? (
               <div 
-                className="text-left w-full notes-display"
-                style={{ lineHeight: '1.4', overflow: 'visible', whiteSpace: 'pre-line' }}
+                className="text-left w-full notes-display text-white"
+                style={{ lineHeight: '1.45', overflow: 'visible', whiteSpace: 'pre-line' }}
                 dangerouslySetInnerHTML={{ 
-                  __html: String(item.notes)
-                    .replace(/\r\n/g, '<br>') // Handle Windows line breaks
-                    .replace(/\r/g, '<br>') // Handle Mac line breaks
-                    .replace(/\n/g, '<br>') // Handle Unix line breaks
+                  __html: boostNotesContrastHtml(
+                    String(item.notes)
+                      .replace(/\r\n/g, '<br>')
+                      .replace(/\r/g, '<br>')
+                      .replace(/\n/g, '<br>')
+                  )
                 }}
               />
             ) : (
