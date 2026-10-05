@@ -27,10 +27,10 @@ const TEXT_HEX: Record<string, string> = {
   '#60a5fa': '#2563eb',
   '#93c5fd': '#2563eb',
   '#7dd3fc': '#2563eb',
-  '#22c55e': '#15803d',
-  '#4ade80': '#15803d',
-  '#69f0ae': '#15803d',
-  '#16a34a': '#15803d',
+  '#15803d': '#22c55e',
+  '#16a34a': '#22c55e',
+  '#4ade80': '#22c55e',
+  '#69f0ae': '#22c55e',
   '#a855f7': '#7e22ce',
   '#c084fc': '#7e22ce',
   '#e040fb': '#7e22ce',
@@ -101,14 +101,18 @@ function boostElementColors(root: HTMLElement): void {
       if (hex) {
         el.style.backgroundColor = mapHighlight(hex);
       }
-      el.style.color = DARK_ON_HIGHLIGHT;
-      el.style.fontWeight = '800';
-      el.querySelectorAll('font').forEach((font) => {
-        font.setAttribute('color', DARK_ON_HIGHLIGHT);
-        (font as HTMLElement).style.color = DARK_ON_HIGHLIGHT;
-        (font as HTMLElement).style.fontWeight = '800';
-      });
-      return;
+      if (!el.style.fontWeight) el.style.fontWeight = '800';
+      // Keep existing foreColor / font[color] so text + highlight can mix.
+      // Only default to black when the highlight has no explicit text color.
+      const ownColor = normalizeColorToken(el.style.color || '');
+      const fontChild = el.querySelector(':scope > font[color]') as HTMLElement | null;
+      const hasExplicitTextColor =
+        (ownColor && ownColor !== '#ffffff') ||
+        !!fontChild ||
+        !!el.querySelector(':scope > [style*="color"]');
+      if (!hasExplicitTextColor) {
+        el.style.color = DARK_ON_HIGHLIGHT;
+      }
     }
 
     const inlineColor = el.style?.color;

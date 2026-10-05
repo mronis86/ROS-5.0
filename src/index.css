@@ -184,7 +184,7 @@ html.led-output-broadcast #root,
 }
 
 /* Fix highlight (backColor) sizing - execCommand + font size causes short highlights.
-   High-contrast highlighter: vivid fill + near-black bold text. */
+   Do not force text color here — users mix foreColor with highlights (black, red, etc.). */
 #notes-editor [style*="background-color"]:not([style*="transparent"]),
 .notes-display [style*="background-color"]:not([style*="transparent"]) {
   padding: 2px 5px;
@@ -192,19 +192,8 @@ html.led-output-broadcast #root,
   -webkit-box-decoration-break: clone;
   border-radius: 3px;
   line-height: 1.5;
-  color: #111111 !important;
-  -webkit-text-fill-color: #111111 !important;
-  font-weight: 800 !important;
+  font-weight: 800;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
-}
-
-#notes-editor [style*="background-color"]:not([style*="transparent"]) *,
-.notes-display [style*="background-color"]:not([style*="transparent"]) *,
-#notes-editor [style*="background-color"]:not([style*="transparent"]) font,
-.notes-display [style*="background-color"]:not([style*="transparent"]) font {
-  color: #111111 !important;
-  -webkit-text-fill-color: #111111 !important;
-  font-weight: 800 !important;
 }
 
 /* Colored text (no highlight) — heavier weight on dark rows */

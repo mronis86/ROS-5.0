@@ -6058,16 +6058,14 @@ const RunOfShowPage: React.FC = () => {
           break;
         case 'color':
           if (value) {
-            // Text color and highlight are mutually exclusive — clear fill first
-            document.execCommand('backColor', false, 'transparent');
-            document.execCommand('hiliteColor', false, 'transparent');
+            // Apply text color without clearing highlight so they can be mixed
             document.execCommand('foreColor', false, value);
           }
           break;
         case 'highlight':
           if (value && value !== 'none' && value !== 'transparent') {
             document.execCommand('backColor', false, value);
-            // Highlight always uses near-black text (no colored text on fills)
+            // Default to near-black on new highlights; user can change text color after
             document.execCommand('foreColor', false, '#111111');
           } else {
             document.execCommand('backColor', false, 'transparent');
@@ -18558,9 +18556,9 @@ const RunOfShowPage: React.FC = () => {
                        title="Blue"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#15803d')}
+                       onClick={() => applyFormatting('color', '#22c55e')}
                        className="w-6 h-6 rounded"
-                       style={{ backgroundColor: '#15803d' }}
+                       style={{ backgroundColor: '#22c55e' }}
                        title="Green"
                      ></button>
                      <button
@@ -18574,6 +18572,11 @@ const RunOfShowPage: React.FC = () => {
                        className="w-6 h-6 rounded"
                        style={{ backgroundColor: '#7e22ce' }}
                        title="Purple"
+                     ></button>
+                     <button
+                       onClick={() => applyFormatting('color', '#111111')}
+                       className="w-6 h-6 bg-black border border-slate-400 rounded"
+                       title="Black"
                      ></button>
                    </div>
                  </div>
