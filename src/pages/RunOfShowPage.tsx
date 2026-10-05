@@ -6058,16 +6058,20 @@ const RunOfShowPage: React.FC = () => {
           break;
         case 'color':
           if (value) {
+            // Text color and highlight are mutually exclusive — clear fill first
+            document.execCommand('backColor', false, 'transparent');
+            document.execCommand('hiliteColor', false, 'transparent');
             document.execCommand('foreColor', false, value);
           }
           break;
         case 'highlight':
           if (value && value !== 'none' && value !== 'transparent') {
             document.execCommand('backColor', false, value);
-            // Near-black bold text on highlighter fills
+            // Highlight always uses near-black text (no colored text on fills)
             document.execCommand('foreColor', false, '#111111');
           } else {
             document.execCommand('backColor', false, 'transparent');
+            document.execCommand('hiliteColor', false, 'transparent');
             document.execCommand('foreColor', false, '#ffffff');
           }
           break;
@@ -18542,39 +18546,34 @@ const RunOfShowPage: React.FC = () => {
                        title="White"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#ff5252')}
+                       onClick={() => applyFormatting('color', '#dc2626')}
                        className="w-6 h-6 rounded"
-                       style={{ backgroundColor: '#ff5252' }}
+                       style={{ backgroundColor: '#dc2626' }}
                        title="Red"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#7dd3fc')}
+                       onClick={() => applyFormatting('color', '#2563eb')}
                        className="w-6 h-6 rounded"
-                       style={{ backgroundColor: '#7dd3fc' }}
+                       style={{ backgroundColor: '#2563eb' }}
                        title="Blue"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#69f0ae')}
+                       onClick={() => applyFormatting('color', '#15803d')}
                        className="w-6 h-6 rounded"
-                       style={{ backgroundColor: '#69f0ae' }}
+                       style={{ backgroundColor: '#15803d' }}
                        title="Green"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#ffab40')}
+                       onClick={() => applyFormatting('color', '#ea580c')}
                        className="w-6 h-6 rounded"
-                       style={{ backgroundColor: '#ffab40' }}
+                       style={{ backgroundColor: '#ea580c' }}
                        title="Orange"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#e040fb')}
+                       onClick={() => applyFormatting('color', '#7e22ce')}
                        className="w-6 h-6 rounded"
-                       style={{ backgroundColor: '#e040fb' }}
+                       style={{ backgroundColor: '#7e22ce' }}
                        title="Purple"
-                     ></button>
-                     <button
-                       onClick={() => applyFormatting('color', '#111111')}
-                       className="w-6 h-6 bg-black border border-slate-400 rounded"
-                       title="Near black (best on highlights)"
                      ></button>
                    </div>
                  </div>

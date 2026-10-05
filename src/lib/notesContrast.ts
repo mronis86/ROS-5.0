@@ -19,17 +19,24 @@ const HIGHLIGHT_HEX: Record<string, string> = {
 };
 
 const TEXT_HEX: Record<string, string> = {
-  '#ef4444': '#ff5252',
-  '#f87171': '#ff5252',
-  '#3b82f6': '#7dd3fc',
-  '#60a5fa': '#7dd3fc',
-  '#93c5fd': '#7dd3fc',
-  '#22c55e': '#69f0ae',
-  '#4ade80': '#69f0ae',
-  '#a855f7': '#e040fb',
-  '#c084fc': '#e040fb',
-  '#f97316': '#ffab40',
-  '#fb923c': '#ffab40',
+  // Soft / neon → darker stage-readable text colors
+  '#ef4444': '#dc2626',
+  '#f87171': '#dc2626',
+  '#ff5252': '#dc2626',
+  '#3b82f6': '#2563eb',
+  '#60a5fa': '#2563eb',
+  '#93c5fd': '#2563eb',
+  '#7dd3fc': '#2563eb',
+  '#22c55e': '#15803d',
+  '#4ade80': '#15803d',
+  '#69f0ae': '#15803d',
+  '#16a34a': '#15803d',
+  '#a855f7': '#7e22ce',
+  '#c084fc': '#7e22ce',
+  '#e040fb': '#7e22ce',
+  '#f97316': '#ea580c',
+  '#fb923c': '#ea580c',
+  '#ffab40': '#ea580c',
 };
 
 const DARK_ON_HIGHLIGHT = '#111111';
