@@ -4495,6 +4495,41 @@ export default function AdminPage() {
           <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 space-y-3 text-sm text-slate-200">
             <div>
               <h3 className="text-base font-semibold text-amber-100">
+                Offline Show — Linux / Raspberry Pi pack (parked 2026-10-04)
+              </h3>
+              <p className="mt-1 text-slate-300 leading-relaxed">
+                Offline show already runs as Node + SQLite + prebuilt UI — mostly cross-platform. Windows-only pieces
+                today are the <code className="text-amber-200/90 text-xs">.bat</code> launchers. Pi role ={' '}
+                <strong className="text-white">LAN hub</strong> (API / SQLite / Socket.IO), not Resolume / Mitti /
+                Caspar playout.
+              </p>
+              <ul className="mt-2 list-disc pl-5 space-y-1 text-slate-300">
+                <li>
+                  Keep one code tree: <code className="text-amber-200/90 text-xs">offline-show/</code> — do not fork a
+                  second product folder.
+                </li>
+                <li>
+                  Add <code className="text-amber-200/90 text-xs">launcher/start-offline-show.sh</code> (+ optional
+                  systemd unit); ship a separate zip e.g.{' '}
+                  <code className="text-amber-200/90 text-xs">offline-show-linux.zip</code> /{' '}
+                  <code className="text-amber-200/90 text-xs">offline-show-pi.zip</code> with no Windows{' '}
+                  <code className="text-amber-200/90 text-xs">node_modules</code>.
+                </li>
+                <li>
+                  Target: Raspberry Pi OS 64-bit + Node 20+; first-run{' '}
+                  <code className="text-amber-200/90 text-xs">npm install</code> builds{' '}
+                  <code className="text-amber-200/90 text-xs">better-sqlite3</code> for{' '}
+                  <code className="text-amber-200/90 text-xs">linux-arm64</code> (needs build-essential once).
+                </li>
+                <li>
+                  OSC modal: second download next to Windows zip — “Offline Show (Linux / Raspberry Pi)”.
+                </li>
+                <li>Effort estimate: ~1–2 days for launcher + zip + docs; not a rewrite.</li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-base font-semibold text-amber-100">
                 Run of Show performance — row virtualization (parked 2026-09-30)
               </h3>
               <p className="mt-1 text-slate-300 leading-relaxed">

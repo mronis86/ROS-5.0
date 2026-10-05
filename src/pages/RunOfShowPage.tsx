@@ -468,6 +468,9 @@ const RunOfShowPage: React.FC = () => {
   const [masterChangeLog, setMasterChangeLog] = useState<any[]>([]);
   const [showMasterChangeLog, setShowMasterChangeLog] = useState(false);
   const [changeLogTab, setChangeLogTab] = useState<'local' | 'master' | 'vs-rehearsal'>('local');
+  const [changeLogSearch, setChangeLogSearch] = useState('');
+  const [changeLogFieldFilter, setChangeLogFieldFilter] = useState<string>('all');
+  const [expandedChangeLogIds, setExpandedChangeLogIds] = useState<Set<string>>(() => new Set());
   const [rehearsalBaseline, setRehearsalBaseline] = useState<RehearsalBaseline | null>(null);
   const [recapturingBaseline, setRecapturingBaseline] = useState(false);
 
@@ -822,6 +825,302 @@ const RunOfShowPage: React.FC = () => {
       rowNumber: rowIndex + 1,
       cue: cue
     };
+  };
+
+  /** Normalize local/master change-log rows for display + Admin restore. */
+  const parseChangeLogDetails = (change: any): Record<string, any> => {
+    let details = change?.details ?? change?.new_values_json ?? {};
+    if (typeof details === 'string') {
+      try {
+        details = JSON.parse(details);
+      } catch {
+        details = {};
+      }
+    }
+    let metadata = change?.metadata ?? {};
+    if (typeof metadata === 'string') {
+      try {
+        metadata = JSON.parse(metadata);
+      } catch {
+        metadata = {};
+      }
+    }
+    const nested = metadata?.details && typeof metadata.details === 'object' ? metadata.details : {};
+    return { ...nested, ...details, metadata };
+  };
+
+  const getChangeLogFieldInfo = (change: any) => {
+    const details = parseChangeLogDetails(change);
+    const action = change?.action || change?.changeType || '';
+    const fieldName = String(
+      change?.field_name || details.fieldName || details.changeType || ''
+    ).trim();
+    const oldValue =
+      change?.old_value !== undefined && change?.old_value !== null
+        ? change.old_value
+        : details.oldValue;
+    const newValue =
+      change?.new_value !== undefined && change?.new_value !== null
+        ? change.new_value
+        : details.newValue;
+    const itemIdRaw = details.itemId ?? details.item_id;
+    let itemId =
+      itemIdRaw != null && itemIdRaw !== ''
+        ? typeof itemIdRaw === 'number'
+          ? itemIdRaw
+          : parseInt(String(itemIdRaw), 10)
+        : null;
+    if ((itemId == null || Number.isNaN(itemId)) && change?.row_number != null) {
+      const idx = Number(change.row_number) - 1;
+      if (Number.isFinite(idx) && idx >= 0 && idx < schedule.length) {
+        itemId = schedule[idx]?.id ?? null;
+      }
+    }
+    if ((itemId == null || Number.isNaN(itemId)) && details.rowNumber != null) {
+      const idx = Number(details.rowNumber) - 1;
+      if (Number.isFinite(idx) && idx >= 0 && idx < schedule.length) {
+        itemId = schedule[idx]?.id ?? null;
+      }
+    }
+    return {
+      action,
+      fieldName,
+      oldValue,
+      newValue,
+      itemId: itemId != null && Number.isFinite(itemId) ? itemId : null,
+      details,
+      description: change?.description || details.itemName || '',
+    };
+  };
+
+  const formatChangeLogPreview = (value: unknown, expanded: boolean): string => {
+    if (value == null) return '(empty)';
+    let text = typeof value === 'string' ? value : JSON.stringify(value);
+    // Strip simple HTML tags for notes readability in the log
+    text = text.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '');
+    text = text.replace(/\s+/g, ' ').trim();
+    if (!text) return '(empty)';
+    if (expanded || text.length <= 180) return text;
+    return `${text.slice(0, 180)}…`;
+  };
+
+  const isChangeLogFieldRestorable = (change: any): boolean => {
+    if (!canAccessAdmin(user)) return false;
+    const info = getChangeLogFieldInfo(change);
+    if (info.action !== 'FIELD_UPDATE') return false;
+    if (!info.fieldName || info.itemId == null) return false;
+    if (info.oldValue === undefined || info.oldValue === null) return false;
+    // Skip non-schedule / settings-only fields
+    if (
+      [
+        'showMode',
+        'showStartOvertime',
+        'overtimeMinutes',
+        'overtimeOffsets',
+        'masterStartTime',
+        'rehearsalBaseline',
+      ].includes(info.fieldName)
+    ) {
+      return false;
+    }
+    return schedule.some((item) => item.id === info.itemId);
+  };
+
+  const applyRestoredFieldToItem = (item: ScheduleItem, fieldName: string, rawValue: unknown): ScheduleItem => {
+    const asString = rawValue == null ? '' : String(rawValue);
+    const asBool = asString === 'true' || asString === '1';
+    const asNum = Number(asString);
+
+    if (fieldName === 'notes') return { ...item, notes: asString };
+    if (fieldName === 'speakers') {
+      return { ...item, speakers: asString, speakersText: asString };
+    }
+    if (fieldName === 'assets') return { ...item, assets: asString };
+    if (fieldName === 'segmentName') return { ...item, segmentName: asString };
+    if (fieldName === 'programType') return { ...item, programType: asString };
+    if (fieldName === 'shotType') return { ...item, shotType: asString };
+    if (fieldName === 'cue') {
+      return { ...item, customFields: { ...item.customFields, cue: asString } };
+    }
+    if (fieldName === 'durationHours') {
+      return { ...item, durationHours: Number.isFinite(asNum) ? asNum : item.durationHours };
+    }
+    if (fieldName === 'durationMinutes') {
+      return { ...item, durationMinutes: Number.isFinite(asNum) ? asNum : item.durationMinutes };
+    }
+    if (fieldName === 'durationSeconds') {
+      return { ...item, durationSeconds: Number.isFinite(asNum) ? asNum : item.durationSeconds };
+    }
+    if (fieldName === 'needsRecording') return { ...item, needsRecording: asBool };
+    if (fieldName === 'hasPPT') return { ...item, hasPPT: asBool };
+    if (fieldName === 'hasQA') return { ...item, hasQA: asBool };
+    if (fieldName === 'isPublic') return { ...item, isPublic: asBool };
+    if (fieldName === 'timerDisplay') return { ...item, timerDisplay: asString as any };
+    if (fieldName === 'voCues') {
+      try {
+        const parsed = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
+        return { ...item, voCues: Array.isArray(parsed) ? parsed : item.voCues };
+      } catch {
+        return item;
+      }
+    }
+    if (fieldName.startsWith('custom_')) {
+      const colName = fieldName.slice('custom_'.length);
+      return {
+        ...item,
+        customFields: { ...item.customFields, [colName]: asString },
+      };
+    }
+    // Unknown named custom column (logged without custom_ prefix)
+    if (item.customFields && Object.prototype.hasOwnProperty.call(item.customFields, fieldName)) {
+      return {
+        ...item,
+        customFields: { ...item.customFields, [fieldName]: asString },
+      };
+    }
+    return item;
+  };
+
+  const restoreChangeLogPreviousValue = (change: any) => {
+    if (!canAccessAdmin(user)) {
+      alert('Only Admins can restore values from the change log.');
+      return;
+    }
+    if (currentUserRole === 'VIEWER') {
+      alert('Switch to Editor or Operator first, then restore from the change log.');
+      return;
+    }
+    const info = getChangeLogFieldInfo(change);
+    if (!isChangeLogFieldRestorable(change) || info.itemId == null) {
+      alert('This change cannot be restored (missing cue/field/previous value).');
+      return;
+    }
+    const item = schedule.find((s) => s.id === info.itemId);
+    if (!item) {
+      alert('Could not find that cue in the current schedule.');
+      return;
+    }
+    const knownFields = new Set([
+      'notes',
+      'speakers',
+      'assets',
+      'segmentName',
+      'programType',
+      'shotType',
+      'cue',
+      'durationHours',
+      'durationMinutes',
+      'durationSeconds',
+      'needsRecording',
+      'hasPPT',
+      'hasQA',
+      'isPublic',
+      'timerDisplay',
+      'voCues',
+    ]);
+    const canApply =
+      knownFields.has(info.fieldName) ||
+      info.fieldName.startsWith('custom_') ||
+      Object.prototype.hasOwnProperty.call(item.customFields || {}, info.fieldName);
+    if (!canApply) {
+      alert(`Restore is not supported for field "${info.fieldName}" yet. Copy the previous value from the log manually.`);
+      return;
+    }
+
+    const preview = formatChangeLogPreview(info.oldValue, true);
+    const ok = window.confirm(
+      `Restore previous value for Admin recovery?\n\n` +
+        `Cue: ${item.customFields?.cue || item.segmentName || info.itemId}\n` +
+        `Field: ${info.fieldName}\n` +
+        `Restore to:\n${preview.slice(0, 500)}${preview.length > 500 ? '…' : ''}\n\n` +
+        `This overwrites the current field and logs a new change.`
+    );
+    if (!ok) return;
+
+    const currentValue = (() => {
+      if (info.fieldName === 'notes') return item.notes;
+      if (info.fieldName === 'speakers') return item.speakersText || item.speakers;
+      if (info.fieldName === 'assets') return item.assets;
+      if (info.fieldName === 'segmentName') return item.segmentName;
+      if (info.fieldName === 'programType') return item.programType;
+      if (info.fieldName === 'shotType') return item.shotType;
+      if (info.fieldName === 'cue') return item.customFields?.cue;
+      if (info.fieldName.startsWith('custom_')) {
+        return item.customFields?.[info.fieldName.slice('custom_'.length)];
+      }
+      return (item as any)[info.fieldName];
+    })();
+
+    handleUserEditing();
+    setSchedule((prev) =>
+      prev.map((row) =>
+        row.id === info.itemId ? applyRestoredFieldToItem(row, info.fieldName, info.oldValue) : row
+      )
+    );
+    logChange(
+      'FIELD_UPDATE',
+      `Admin restored ${info.fieldName} from change log for "${item.segmentName}"`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: info.itemId,
+        itemName: item.segmentName,
+        fieldName: info.fieldName,
+        oldValue: currentValue,
+        newValue: info.oldValue,
+        details: {
+          restoredFromChangeLog: true,
+          sourceChangeId: change?.id || null,
+          restoredByAdmin: true,
+        },
+      }
+    );
+    console.log('⏪ Admin restored change-log value', {
+      fieldName: info.fieldName,
+      itemId: info.itemId,
+      sourceChangeId: change?.id,
+    });
+  };
+
+  const changeLogEntryMatchesFilters = (change: any): boolean => {
+    const info = getChangeLogFieldInfo(change);
+    if (changeLogFieldFilter !== 'all') {
+      const field = (info.fieldName || '').toLowerCase();
+      if (changeLogFieldFilter === 'notes' && field !== 'notes') return false;
+      if (changeLogFieldFilter === 'speakers' && field !== 'speakers') return false;
+      if (changeLogFieldFilter === 'assets' && field !== 'assets') return false;
+      if (
+        changeLogFieldFilter === 'other' &&
+        (field === 'notes' || field === 'speakers' || field === 'assets' || !field)
+      ) {
+        return false;
+      }
+    }
+    const q = changeLogSearch.trim().toLowerCase();
+    if (!q) return true;
+    const haystack = [
+      info.action,
+      info.fieldName,
+      info.description,
+      change?.user_name,
+      change?.userName,
+      String(info.oldValue ?? ''),
+      String(info.newValue ?? ''),
+      String(info.itemId ?? ''),
+      String(change?.cue_number ?? ''),
+      String(change?.row_number ?? ''),
+    ]
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(q);
+  };
+
+  const toggleChangeLogExpanded = (id: string) => {
+    setExpandedChangeLogIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   // Force finalize all pending changes (call this when user saves or navigates away)
@@ -13726,6 +14025,35 @@ const RunOfShowPage: React.FC = () => {
               </div>
             </div>
             
+            {changeLogTab !== 'vs-rehearsal' && (
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <input
+                  type="search"
+                  value={changeLogSearch}
+                  onChange={(e) => setChangeLogSearch(e.target.value)}
+                  placeholder="Search cue, user, notes text…"
+                  className="flex-1 min-w-[180px] px-3 py-1.5 rounded bg-slate-700 border border-slate-600 text-white text-sm placeholder:text-slate-400"
+                />
+                <select
+                  value={changeLogFieldFilter}
+                  onChange={(e) => setChangeLogFieldFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded bg-slate-700 border border-slate-600 text-white text-sm"
+                  title="Filter by field"
+                >
+                  <option value="all">All fields</option>
+                  <option value="notes">Notes</option>
+                  <option value="speakers">Speakers</option>
+                  <option value="assets">Assets</option>
+                  <option value="other">Other fields</option>
+                </select>
+                {canAccessAdmin(user) && (
+                  <span className="text-xs text-amber-300/90">
+                    Admin: use Restore previous on a field change to undo that edit
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto">
               {changeLogTab === 'vs-rehearsal' ? (
                 <ShowVsRehearsalPanel
@@ -13775,22 +14103,28 @@ const RunOfShowPage: React.FC = () => {
                   <p className="text-gray-400 text-center py-8">No master changes found</p>
                 ) : (
                   <div className="space-y-3">
-                    {masterChangeLog.map((change) => {
-                      // Parse data from new_values_json if new columns are null (before migration)
-                      const details = change.new_values_json || {};
-                      const metadata = change.metadata || {};
+                    {masterChangeLog.filter(changeLogEntryMatchesFilters).length === 0 && (
+                      <p className="text-gray-400 text-center py-6">No changes match this search/filter</p>
+                    )}
+                    {masterChangeLog.filter(changeLogEntryMatchesFilters).map((change) => {
+                      const info = getChangeLogFieldInfo(change);
+                      const details = info.details;
+                      const metadata = typeof change.metadata === 'object' && change.metadata ? change.metadata : {};
                       const rowNumber = change.row_number || metadata.rowNumber || details.rowNumber;
                       const cueNumber = change.cue_number || metadata.cueNumber || details.cueNumber;
                       const userRole = change.user_role || metadata.userRole || 'EDITOR';
-                      const fieldName = change.field_name || details.fieldName || details.changeType;
-                      const oldValue = change.old_value || details.oldValue;
-                      const newValue = change.new_value || details.newValue;
-                      const description = change.description || details.itemName;
+                      const fieldName = info.fieldName;
+                      const oldValue = info.oldValue;
+                      const newValue = info.newValue;
+                      const description = info.description;
+                      const entryKey = String(change.id || `${change.batch_id}-${change.created_at}-${fieldName}`);
+                      const expanded = expandedChangeLogIds.has(entryKey);
+                      const restorable = isChangeLogFieldRestorable(change);
                       
                       return (
-                      <div key={change.id} className="bg-slate-700 rounded-lg p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex items-center gap-2">
+                      <div key={entryKey} className="bg-slate-700 rounded-lg p-4">
+                        <div className="flex justify-between items-start mb-2 gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className={`text-white text-xs px-2 py-1 rounded ${
                               change.action === 'ADD_ITEM' ? 'bg-green-600' :
                               change.action === 'REMOVE_ITEM' ? 'bg-red-600' :
@@ -13822,38 +14156,56 @@ const RunOfShowPage: React.FC = () => {
                               </span>
                             )}
                           </div>
-                          <div className="text-gray-400 text-xs">
-                            {new Date(change.created_at || change.timestamp || change.change_timestamp).toLocaleString()}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {restorable && (
+                              <button
+                                type="button"
+                                onClick={() => restoreChangeLogPreviousValue(change)}
+                                className="px-2 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white"
+                                title="Restore the previous (old) value onto this cue"
+                              >
+                                Restore previous
+                              </button>
+                            )}
+                            <div className="text-gray-400 text-xs">
+                              {new Date(change.created_at || change.timestamp || change.change_timestamp).toLocaleString()}
+                            </div>
                           </div>
                         </div>
                         
-                        {/* Show field changes only (ROW/CUE already shown at top) */}
                           <div className="space-y-1 text-sm">
-                          {/* Show field changes for FIELD_UPDATE - handle both new columns and existing JSON */}
-                          {change.action === 'FIELD_UPDATE' && (fieldName || details.fieldName) && (
+                          {change.action === 'FIELD_UPDATE' && fieldName && (
                               <div className="text-gray-300">
-                              <strong>Field:</strong> {fieldName || details.fieldName}
+                              <strong>Field:</strong> {fieldName}
                               </div>
                             )}
                             
-                          {/* Show value changes - handle both new columns and existing JSON */}
-                          {change.action === 'FIELD_UPDATE' && (oldValue !== undefined || details.oldValue !== undefined) && (
-                              <div className="text-gray-300">
-                                <strong>Changed from:</strong> 
-                              <span className="text-red-300 ml-1">"{oldValue || details.oldValue}"</span>
-                              <span className="text-gray-400 mx-1">→</span>
-                              <span className="text-green-300">"{newValue || details.newValue}"</span>
+                          {change.action === 'FIELD_UPDATE' && (oldValue !== undefined || newValue !== undefined) && (
+                              <div className="text-gray-300 space-y-1">
+                                <div>
+                                  <strong>Changed from:</strong>{' '}
+                                  <span className="text-red-300">"{formatChangeLogPreview(oldValue, expanded)}"</span>
+                                  <span className="text-gray-400 mx-1">→</span>
+                                  <span className="text-green-300">"{formatChangeLogPreview(newValue, expanded)}"</span>
+                                </div>
+                                {(String(oldValue ?? '').length > 180 || String(newValue ?? '').length > 180) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleChangeLogExpanded(entryKey)}
+                                    className="text-xs text-sky-300 hover:text-sky-200"
+                                  >
+                                    {expanded ? 'Show less' : 'Show full text'}
+                                  </button>
+                                )}
                             </div>
                           )}
                           
-                          {/* Fallback: if no field info, show the description but formatted nicely */}
-                          {change.action === 'FIELD_UPDATE' && !fieldName && !details.fieldName && description && (
+                          {change.action === 'FIELD_UPDATE' && !fieldName && description && (
                             <div className="text-gray-300">
                               <strong>Change:</strong> {description}
                               </div>
                             )}
                             
-                            {/* Show batch information */}
                             {change.batch_id && (
                               <div className="text-gray-500 text-xs mt-2 pt-2 border-t border-slate-600">
                                 Batch: {change.batch_id.slice(0, 8)}... | 
@@ -13871,10 +14223,13 @@ const RunOfShowPage: React.FC = () => {
                   <p className="text-gray-400 text-center py-8">No local changes recorded yet</p>
               ) : (
                 <div className="space-y-3">
-                  {changeLog.map((change) => (
+                  {changeLog.filter(changeLogEntryMatchesFilters).length === 0 && changeLog.length > 0 && (
+                    <p className="text-gray-400 text-center py-6">No changes match this search/filter</p>
+                  )}
+                  {changeLog.filter(changeLogEntryMatchesFilters).map((change) => (
                     <div key={change.id} className="bg-slate-700 rounded-lg p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center gap-2">
+                      <div className="flex justify-between items-start mb-2 gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className={`text-white text-xs px-2 py-1 rounded ${
                             change.action === 'ADD_ITEM' ? 'bg-green-600' :
                             change.action === 'REMOVE_ITEM' ? 'bg-red-600' :
@@ -13905,8 +14260,20 @@ const RunOfShowPage: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div className="text-gray-400 text-xs">
-                          {change.timestamp.toLocaleString()}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {isChangeLogFieldRestorable(change) && (
+                            <button
+                              type="button"
+                              onClick={() => restoreChangeLogPreviousValue(change)}
+                              className="px-2 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white"
+                              title="Restore the previous (old) value onto this cue"
+                            >
+                              Restore previous
+                            </button>
+                          )}
+                          <div className="text-gray-400 text-xs">
+                            {change.timestamp.toLocaleString()}
+                          </div>
                         </div>
                       </div>
                       

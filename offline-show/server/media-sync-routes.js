@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Resolume + Mitti companion sync for offline LAN mode.
- * Mirrors api-server.js mitti and resolume timer routes (in-memory armed/synced meta + one-shot align).
+ * Resolume + Mitti + AV-Playout companion sync for offline LAN mode.
+ * Mirrors api-server.js mitti/resolume/avplayout timer routes (in-memory armed/synced meta + one-shot align).
  * When cloud is connected, cloud-proxy forwards these to Railway instead.
  */
 
@@ -12,6 +12,8 @@ const resolumeTimeSourceByEvent = new Map();
 const resolumePendingByEvent = new Map();
 const mittiTimeSourceByEvent = new Map();
 const mittiPendingByEvent = new Map();
+const avplayoutTimeSourceByEvent = new Map();
+const avplayoutPendingByEvent = new Map();
 
 function applyResolumeMeta(eventId, timerRow, options = {}) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
@@ -81,9 +83,44 @@ function applyMittiMeta(eventId, timerRow, options = {}) {
   return { ...timerRow, mitti_state: 'none' };
 }
 
+function applyAvPlayoutMeta(eventId, timerRow, options = {}) {
+  if (!timerRow || typeof timerRow !== 'object') return timerRow;
+  const wantsSubCue = options.isSubCue === true;
+  const rowItemId = timerRow.item_id != null ? String(timerRow.item_id) : '';
+
+  const synced = avplayoutTimeSourceByEvent.get(eventId);
+  if (synced?.time_source === 'avplayout') {
+    if (!!synced.is_sub_cue !== wantsSubCue) {
+      return { ...timerRow, avplayout_state: 'none' };
+    }
+    if (String(synced.item_id) !== rowItemId) {
+      return { ...timerRow, avplayout_state: 'none' };
+    }
+    return {
+      ...timerRow,
+      time_source: 'avplayout',
+      avplayout_state: 'synced',
+      avplayout_align_seq: synced.align_seq ?? 0,
+      avplayout_align_reason: synced.align_reason ?? null,
+    };
+  }
+
+  const pending = avplayoutPendingByEvent.get(eventId);
+  if (pending) {
+    if (!!pending.is_sub_cue !== wantsSubCue) {
+      return { ...timerRow, avplayout_state: 'none' };
+    }
+    if (rowItemId === String(pending.item_id)) {
+      return { ...timerRow, time_source: 'avplayout', avplayout_state: 'armed' };
+    }
+  }
+  return { ...timerRow, avplayout_state: 'none' };
+}
+
 function applyMediaSyncMeta(eventId, timerRow, options = {}) {
   let data = applyResolumeMeta(eventId, timerRow, options);
   data = applyMittiMeta(eventId, data, options);
+  data = applyAvPlayoutMeta(eventId, data, options);
   return data;
 }
 
@@ -95,6 +132,11 @@ function clearResolume(eventId) {
 function clearMitti(eventId) {
   mittiTimeSourceByEvent.delete(eventId);
   mittiPendingByEvent.delete(eventId);
+}
+
+function clearAvPlayout(eventId) {
+  avplayoutTimeSourceByEvent.delete(eventId);
+  avplayoutPendingByEvent.delete(eventId);
 }
 
 function wrapBroadcast(broadcastUpdate) {
@@ -232,7 +274,12 @@ function registerMediaSyncRoutes(app, db, helpers) {
     return getSubTimer(eventId);
   }
 
-  function clampAlignRemaining(eventId, isSubCue, dur, rem) {
+  function clampAlignRemaining(eventId, isSubCue, dur, rem, alignReason, timeSource) {
+    // Allow loop restarts to reset remaining (Caspar looped clip / explicit loop aligns)
+    const reason = String(alignReason || '').toLowerCase();
+    if (reason === 'loop' || timeSource === 'avplayout') {
+      return rem;
+    }
     const table = isSubCue ? 'sub_cue_timers' : 'active_timers';
     const existing = db.prepare(`SELECT started_at, duration_seconds, is_running FROM ${table} WHERE event_id = ? LIMIT 1`).get(eventId);
     if (!existing || !(existing.is_running === 1 || existing.is_running === true) || !existing.started_at) {
@@ -250,19 +297,40 @@ function registerMediaSyncRoutes(app, db, helpers) {
 
   function registerSourceRoutes(source) {
     const isMitti = source === 'mitti';
-    const prefix = isMitti ? 'mitti' : 'resolume';
-    const pendingMap = isMitti ? mittiPendingByEvent : resolumePendingByEvent;
-    const syncedMap = isMitti ? mittiTimeSourceByEvent : resolumeTimeSourceByEvent;
-    const clearAll = isMitti ? clearMitti : clearResolume;
+    const isAv = source === 'avplayout';
+    const prefix = isAv ? 'avplayout' : isMitti ? 'mitti' : 'resolume';
+    const pendingMap = isAv
+      ? avplayoutPendingByEvent
+      : isMitti
+        ? mittiPendingByEvent
+        : resolumePendingByEvent;
+    const syncedMap = isAv
+      ? avplayoutTimeSourceByEvent
+      : isMitti
+        ? mittiTimeSourceByEvent
+        : resolumeTimeSourceByEvent;
+    const clearAll = isAv ? clearAvPlayout : isMitti ? clearMitti : clearResolume;
     const clearPending = (eventId) => pendingMap.delete(eventId);
     const clearTimeSource = (eventId) => syncedMap.delete(eventId);
-    const userIdDefault = isMitti ? 'companion-mitti' : 'companion-resolume';
-    const userNameDefault = isMitti ? 'Mitti Sync' : 'Resolume Sync';
-    const stateKey = isMitti ? 'mitti_state' : 'resolume_state';
-    const seqKey = isMitti ? 'mitti_align_seq' : 'resolume_align_seq';
-    const reasonKey = isMitti ? 'mitti_align_reason' : 'resolume_align_reason';
-    const timeSource = isMitti ? 'mitti' : 'resolume';
-    const emoji = isMitti ? '🎬' : '🎬';
+    const userIdDefault = isAv
+      ? 'companion-avplayout'
+      : isMitti
+        ? 'companion-mitti'
+        : 'companion-resolume';
+    const userNameDefault = isAv
+      ? 'AV-Playout Sync'
+      : isMitti
+        ? 'Mitti Sync'
+        : 'Resolume Sync';
+    const stateKey = isAv ? 'avplayout_state' : isMitti ? 'mitti_state' : 'resolume_state';
+    const seqKey = isAv ? 'avplayout_align_seq' : isMitti ? 'mitti_align_seq' : 'resolume_align_seq';
+    const reasonKey = isAv
+      ? 'avplayout_align_reason'
+      : isMitti
+        ? 'mitti_align_reason'
+        : 'resolume_align_reason';
+    const timeSource = isAv ? 'avplayout' : isMitti ? 'mitti' : 'resolume';
+    const emoji = '🎬';
 
     app.post(`/api/timers/${prefix}-arm`, (req, res) => {
       try {
@@ -271,6 +339,10 @@ function registerMediaSyncRoutes(app, db, helpers) {
           return res.status(400).json({ error: 'event_id and item_id are required' });
         }
         const isSubCue = !!is_sub_cue;
+        // Mutual exclusivity: arming one source clears the others
+        if (source !== 'resolume') clearResolume(event_id);
+        if (source !== 'mitti') clearMitti(event_id);
+        if (source !== 'avplayout') clearAvPlayout(event_id);
         clearTimeSource(event_id);
         pendingMap.set(event_id, { item_id: parseInt(item_id, 10), is_sub_cue: isSubCue });
         if (isSubCue) {
@@ -332,7 +404,9 @@ function registerMediaSyncRoutes(app, db, helpers) {
         const isSubCue = !!is_sub_cue;
         const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
         let rem = Math.max(0, Math.min(dur, Number(remaining_seconds)));
-        rem = clampAlignRemaining(event_id, isSubCue, dur, rem);
+        const reasonEarly =
+          typeof align_reason === 'string' && align_reason.trim() ? align_reason.trim() : 'align';
+        rem = clampAlignRemaining(event_id, isSubCue, dur, rem, reasonEarly, timeSource);
 
         const elapsed = dur - rem;
         const alignMs = align_at ? new Date(align_at).getTime() : Date.now();
@@ -344,8 +418,7 @@ function registerMediaSyncRoutes(app, db, helpers) {
         clearPending(event_id);
         const prevSynced = syncedMap.get(event_id);
         const alignSeq = (prevSynced?.align_seq || 0) + 1;
-        const reason =
-          typeof align_reason === 'string' && align_reason.trim() ? align_reason.trim() : 'align';
+        const reason = reasonEarly;
         syncedMap.set(event_id, {
           time_source: timeSource,
           item_id: parseInt(item_id, 10),
@@ -444,6 +517,7 @@ function registerMediaSyncRoutes(app, db, helpers) {
 
   registerSourceRoutes('resolume');
   registerSourceRoutes('mitti');
+  registerSourceRoutes('avplayout');
 
   // Companion arm/load helpers used by both modules (LAN)
   app.post('/api/timers/start', (req, res) => {
@@ -568,7 +642,14 @@ function registerMediaSyncRoutes(app, db, helpers) {
         event_id,
         item_id: parseInt(item_id, 10),
         user_id: user_id || 'companion',
-        user_name: user_id === 'companion-mitti' ? 'Mitti Sync' : user_id === 'companion-resolume' ? 'Resolume Sync' : 'Companion',
+        user_name:
+          user_id === 'companion-avplayout'
+            ? 'AV-Playout Sync'
+            : user_id === 'companion-mitti'
+              ? 'Mitti Sync'
+              : user_id === 'companion-resolume'
+                ? 'Resolume Sync'
+                : 'Companion',
         cue_is: cue_is || `CUE ${item_id}`,
         duration_seconds: dur,
         created_at: ts,

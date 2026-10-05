@@ -97,32 +97,82 @@ const Clock: React.FC<ClockProps> = ({
     return Math.floor((syncedNow.getTime() - start.getTime()) / 1000);
   };
 
-  const isResolumeSynced = (timer: { resolume_state?: string; mitti_state?: string; time_source?: string } | null | undefined) =>
+  const isResolumeSynced = (timer: {
+    resolume_state?: string;
+    mitti_state?: string;
+    avplayout_state?: string;
+    time_source?: string;
+  } | null | undefined) =>
     timer?.resolume_state === 'synced' ||
     timer?.mitti_state === 'synced' ||
+    timer?.avplayout_state === 'synced' ||
     (timer?.time_source === 'resolume' && timer?.resolume_state !== 'armed') ||
-    (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed');
+    (timer?.time_source === 'mitti' && timer?.mitti_state !== 'armed') ||
+    (timer?.time_source === 'avplayout' && timer?.avplayout_state !== 'armed');
 
-  const isResolumeArmed = (timer: { resolume_state?: string; mitti_state?: string } | null | undefined) =>
-    timer?.resolume_state === 'armed' || timer?.mitti_state === 'armed';
+  const isResolumeArmed = (timer: {
+    resolume_state?: string;
+    mitti_state?: string;
+    avplayout_state?: string;
+  } | null | undefined) =>
+    timer?.resolume_state === 'armed' ||
+    timer?.mitti_state === 'armed' ||
+    timer?.avplayout_state === 'armed';
+
+  const getExternalSyncLabel = (
+    timer: {
+      time_source?: string;
+      resolume_state?: string;
+      mitti_state?: string;
+      avplayout_state?: string;
+      user_id?: string;
+      user_name?: string;
+    } | null | undefined
+  ): 'Mitti' | 'SINOR AV-Playout' | 'Resolume' => {
+    if (
+      timer?.time_source === 'avplayout' ||
+      timer?.avplayout_state === 'armed' ||
+      timer?.avplayout_state === 'synced' ||
+      timer?.user_id === 'companion-avplayout' ||
+      timer?.user_name === 'AV-Playout Sync'
+    ) {
+      return 'SINOR AV-Playout';
+    }
+    if (
+      timer?.time_source === 'mitti' ||
+      timer?.mitti_state === 'armed' ||
+      timer?.mitti_state === 'synced' ||
+      timer?.user_id === 'companion-mitti' ||
+      timer?.user_name === 'Mitti Sync'
+    ) {
+      return 'Mitti';
+    }
+    return 'Resolume';
+  };
 
   const isResolumeCompanionSubCue = (timer: { user_name?: string; user_id?: string } | null | undefined) =>
     timer?.user_name === 'Resolume Sync' ||
     timer?.user_id === 'companion-resolume' ||
     timer?.user_name === 'Mitti Sync' ||
-    timer?.user_id === 'companion-mitti';
+    timer?.user_id === 'companion-mitti' ||
+    timer?.user_name === 'AV-Playout Sync' ||
+    timer?.user_id === 'companion-avplayout';
 
   const enrichSubCueTimer = (timer: any) => {
     if (!timer || typeof timer !== 'object') return timer;
     if (isResolumeSynced(timer) || isResolumeArmed(timer)) return timer;
     if (!isResolumeCompanionSubCue(timer)) return timer;
+    const isAv =
+      timer?.user_id === 'companion-avplayout' || timer?.user_name === 'AV-Playout Sync';
     const isMitti = timer?.user_id === 'companion-mitti' || timer?.user_name === 'Mitti Sync';
     return {
       ...timer,
-      time_source: isMitti ? 'mitti' : 'resolume',
-      ...(isMitti
-        ? { mitti_state: timer.is_running ? 'synced' : 'armed' }
-        : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
+      time_source: isAv ? 'avplayout' : isMitti ? 'mitti' : 'resolume',
+      ...(isAv
+        ? { avplayout_state: timer.is_running ? 'synced' : 'armed' }
+        : isMitti
+          ? { mitti_state: timer.is_running ? 'synced' : 'armed' }
+          : { resolume_state: timer.is_running ? 'synced' : 'armed' }),
     };
   };
 
@@ -144,12 +194,21 @@ const Clock: React.FC<ClockProps> = ({
       is_running?: boolean;
       resolume_state?: string;
       mitti_state?: string;
+      avplayout_state?: string;
       time_source?: string;
+      resolume_align_reason?: string;
+      mitti_align_reason?: string;
+      avplayout_align_reason?: string;
     },
     offsetMs: number
   ) => {
     if (!prev?.is_running || !next.is_running || !isResolumeSynced(next)) return false;
     if (!prev.started_at || !next.started_at || prev.started_at === next.started_at) return false;
+    const reason = String(
+      next.avplayout_align_reason || next.mitti_align_reason || next.resolume_align_reason || ''
+    ).toLowerCase();
+    if (reason === 'loop') return false;
+    if (next.time_source === 'avplayout' || next.avplayout_state === 'synced') return false;
     const dur = next.duration_seconds ?? prev.duration_seconds ?? 0;
     if (dur <= 0) return false;
     const prevRem = getRemainingFromTimer(prev, offsetMs);
@@ -857,18 +916,19 @@ const Clock: React.FC<ClockProps> = ({
   const secondarySubTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
   const secondaryDisplayColor =
     secondarySubTimer && isResolumeSynced(secondarySubTimer) ? 'text-yellow-300' : 'text-orange-400';
+  const secondarySyncLabel = getExternalSyncLabel(secondarySubTimer).toUpperCase();
   const secondaryResolumeLabel = secondarySubTimer
     ? isResolumeSynced(secondarySubTimer)
-      ? ' · RESOLUME'
+      ? ` · ${secondarySyncLabel}`
       : isResolumeArmed(secondarySubTimer)
-        ? ' · RESOLUME (armed)'
+        ? ` · ${secondarySyncLabel} (armed)`
         : ''
     : '';
   const secondaryStatusPrefix =
     secondarySubTimer && isResolumeSynced(secondarySubTimer) && secondarySubTimer.is_running
-      ? 'RUNNING · RESOLUME - '
+      ? `RUNNING · ${secondarySyncLabel} - `
       : secondarySubTimer && isResolumeArmed(secondarySubTimer)
-        ? 'LOADED · RESOLUME (armed) - '
+        ? `LOADED · ${secondarySyncLabel} (armed) - `
         : '';
 
   // Prefer any currently enabled message; Pre Show uses OVER TIME-style label instead of overlay
