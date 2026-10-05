@@ -8253,6 +8253,12 @@ const RunOfShowPage: React.FC = () => {
     }
     const files = fileList ? Array.from(fileList).filter((f) => f && f.size > 0) : [];
     if (!files.length) return;
+    const maxBytes = 200 * 1024 * 1024;
+    const tooLarge = files.find((f) => f.size > maxBytes);
+    if (tooLarge) {
+      setPlatformUploadError(`"${tooLarge.name}" is too large. Max size is 200 MB.`);
+      return;
+    }
     setPlatformUploadBusy(true);
     setPlatformUploadError(null);
     try {
@@ -19095,7 +19101,7 @@ const RunOfShowPage: React.FC = () => {
                        {platformUploadBusy ? 'Uploading…' : 'Drag a file here, or click to upload'}
                      </div>
                      <div className="mt-1 text-xs text-slate-400">
-                       PDF, Office, images, audio, video, or zip · max 50 MB
+                       Any file type · max 200 MB
                      </div>
                    </div>
                  </>
