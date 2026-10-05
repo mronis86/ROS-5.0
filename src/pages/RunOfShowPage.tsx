@@ -895,7 +895,19 @@ const RunOfShowPage: React.FC = () => {
 
   const formatChangeLogPreview = (value: unknown, expanded: boolean): string => {
     if (value == null) return '(empty)';
-    let text = typeof value === 'string' ? value : JSON.stringify(value);
+    let text: string;
+    if (typeof value === 'string') {
+      text = value;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      text = String(value);
+    } else {
+      try {
+        text = JSON.stringify(value);
+      } catch {
+        text = String(value);
+      }
+    }
+    if (typeof text !== 'string') text = String(text);
     // Strip simple HTML tags for notes readability in the log
     text = text.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '');
     text = text.replace(/\s+/g, ' ').trim();
@@ -2711,7 +2723,7 @@ const RunOfShowPage: React.FC = () => {
   
   // Toast notification state
   const [showTimeToast, setShowTimeToast] = useState(false);
-  const [timeToastEnabled, setTimeToastEnabled] = useState(true); // New state to track if toast is enabled
+  const [timeToastEnabled, setTimeToastEnabled] = useState(false); // Off by default; toggle in Operator Actions
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
   const [timeDifference, setTimeDifference] = useState(0);
@@ -6048,10 +6060,13 @@ const RunOfShowPage: React.FC = () => {
           }
           break;
         case 'highlight':
-          if (value && value !== 'none') {
+          if (value && value !== 'none' && value !== 'transparent') {
             document.execCommand('backColor', false, value);
+            // Dark text on highlighter fills — white-on-pastel is hard to read on slate rows
+            document.execCommand('foreColor', false, '#0f172a');
           } else {
-            document.execCommand('removeFormat', false);
+            document.execCommand('backColor', false, 'transparent');
+            document.execCommand('foreColor', false, '#ffffff');
           }
           break;
         case 'fontSize':
@@ -14188,7 +14203,8 @@ const RunOfShowPage: React.FC = () => {
                                   <span className="text-gray-400 mx-1">→</span>
                                   <span className="text-green-300">"{formatChangeLogPreview(newValue, expanded)}"</span>
                                 </div>
-                                {(String(oldValue ?? '').length > 180 || String(newValue ?? '').length > 180) && (
+                                {(formatChangeLogPreview(oldValue, true).length > 180 ||
+                                  formatChangeLogPreview(newValue, true).length > 180) && (
                                   <button
                                     type="button"
                                     onClick={() => toggleChangeLogExpanded(entryKey)}
@@ -14383,8 +14399,11 @@ const RunOfShowPage: React.FC = () => {
                                   <strong>Assets:</strong>
                                   <div className="mt-1 text-sm text-blue-300">
                                     {(() => {
-                                      const assets = change.details.newValue.split('||').filter(s => s.trim());
-                                      return assets.map(asset => {
+                                      const raw = typeof change.details.newValue === 'string'
+                                        ? change.details.newValue
+                                        : formatChangeLogPreview(change.details.newValue, true);
+                                      const assets = raw.split('||').filter((s: string) => s.trim());
+                                      return assets.map((asset: string) => {
                                         if (asset.includes('|')) {
                                           const [name, url] = asset.split('|');
                                           return `${name}${url ? ` (${url})` : ''}`;
@@ -14417,13 +14436,13 @@ const RunOfShowPage: React.FC = () => {
                             <div className="text-gray-300">
                               {/* Show just the changed value for duration fields */}
                               {(change.details.fieldName === 'durationHours' || change.details.fieldName === 'durationMinutes' || change.details.fieldName === 'durationSeconds') ? (
-                                <span className="text-green-300">{change.details.newValue}</span>
+                                <span className="text-green-300">{formatChangeLogPreview(change.details.newValue, true)}</span>
                               ) : (
                                 <>
                                   <strong>Changed from:</strong> 
-                                  <span className="text-red-300 ml-1">"{change.details.oldValue}"</span>
+                                  <span className="text-red-300 ml-1">"{formatChangeLogPreview(change.details.oldValue, false)}"</span>
                                   <span className="text-gray-400 mx-1">→</span>
-                                  <span className="text-green-300">"{change.details.newValue}"</span>
+                                  <span className="text-green-300">"{formatChangeLogPreview(change.details.newValue, false)}"</span>
                                 </>
                               )}
                             </div>
@@ -14474,9 +14493,9 @@ const RunOfShowPage: React.FC = () => {
                             {pendingChange.details.oldValue !== undefined && pendingChange.details.newValue !== undefined && (
                               <div className="text-slate-300">
                                 <strong>Will change from:</strong> 
-                                <span className="text-red-300 ml-1">"{pendingChange.details.oldValue}"</span>
+                                <span className="text-red-300 ml-1">"{formatChangeLogPreview(pendingChange.details.oldValue, false)}"</span>
                                 <span className="text-slate-400 mx-1">→</span>
-                                <span className="text-green-300">"{pendingChange.details.newValue}"</span>
+                                <span className="text-green-300">"{formatChangeLogPreview(pendingChange.details.newValue, false)}"</span>
                               </div>
                             )}
                           </div>
@@ -18519,34 +18538,34 @@ const RunOfShowPage: React.FC = () => {
                        title="White"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#ef4444')}
-                       className="w-6 h-6 bg-red-500 rounded"
+                       onClick={() => applyFormatting('color', '#f87171')}
+                       className="w-6 h-6 bg-red-400 rounded"
                        title="Red"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#3b82f6')}
-                       className="w-6 h-6 bg-blue-500 rounded"
+                       onClick={() => applyFormatting('color', '#93c5fd')}
+                       className="w-6 h-6 bg-blue-300 rounded"
                        title="Blue"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#22c55e')}
-                       className="w-6 h-6 bg-green-500 rounded"
+                       onClick={() => applyFormatting('color', '#4ade80')}
+                       className="w-6 h-6 bg-green-400 rounded"
                        title="Green"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#f97316')}
-                       className="w-6 h-6 bg-orange-500 rounded"
+                       onClick={() => applyFormatting('color', '#fb923c')}
+                       className="w-6 h-6 bg-orange-400 rounded"
                        title="Orange"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#a855f7')}
-                       className="w-6 h-6 bg-purple-500 rounded"
+                       onClick={() => applyFormatting('color', '#c084fc')}
+                       className="w-6 h-6 bg-purple-400 rounded"
                        title="Purple"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#000000')}
-                       className="w-6 h-6 bg-black border border-slate-400 rounded"
-                       title="Black"
+                       onClick={() => applyFormatting('color', '#0f172a')}
+                       className="w-6 h-6 bg-slate-900 border border-slate-400 rounded"
+                       title="Near black (best on highlights)"
                      ></button>
                    </div>
                  </div>
@@ -18562,28 +18581,28 @@ const RunOfShowPage: React.FC = () => {
                        ×
                      </button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#fbbf24')}
-                       className="w-6 h-6 bg-yellow-400 rounded"
+                       onClick={() => applyFormatting('highlight', '#facc15')}
+                       className="w-6 h-6 bg-yellow-400 rounded ring-1 ring-yellow-200/80"
                        title="Yellow"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#60a5fa')}
-                       className="w-6 h-6 bg-blue-400 rounded"
-                       title="Light Blue"
+                       onClick={() => applyFormatting('highlight', '#38bdf8')}
+                       className="w-6 h-6 bg-sky-400 rounded ring-1 ring-sky-200/80"
+                       title="Sky"
                      ></button>
                      <button
                        onClick={() => applyFormatting('highlight', '#4ade80')}
-                       className="w-6 h-6 bg-green-400 rounded"
-                       title="Light Green"
+                       className="w-6 h-6 bg-green-400 rounded ring-1 ring-green-200/80"
+                       title="Green"
                      ></button>
                      <button
                        onClick={() => applyFormatting('highlight', '#f472b6')}
-                       className="w-6 h-6 bg-pink-400 rounded"
+                       className="w-6 h-6 bg-pink-400 rounded ring-1 ring-pink-200/80"
                        title="Pink"
                      ></button>
                      <button
                        onClick={() => applyFormatting('highlight', '#fb923c')}
-                       className="w-6 h-6 bg-orange-400 rounded"
+                       className="w-6 h-6 bg-orange-400 rounded ring-1 ring-orange-200/80"
                        title="Orange"
                      ></button>
                    </div>

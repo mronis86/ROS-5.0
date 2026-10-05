@@ -359,6 +359,16 @@ function applyAvPlayoutMeta(eventId, timerRow, options = {}) {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** Reject non-UUID event ids before Neon cast errors become CRITICAL 500 alerts. */
+function requireUuidParam(res, value, name = 'eventId') {
+  if (value && UUID_RE.test(String(value))) return true;
+  res.status(400).json({
+    error: `Invalid ${name}`,
+    message: `${name} must be a UUID (got temporary/local id format)`,
+  });
+  return false;
+}
+
 /** active_timers.event_id is UUID in Neon — ensure a calendar_events row exists. */
 async function ensureCalendarEventExists(eventId, eventName = 'Quick Mode') {
   if (!eventId || !UUID_RE.test(String(eventId))) return false;
@@ -3008,6 +3018,7 @@ app.get('/api/stream-guide/summary', async (req, res) => {
 app.get('/api/calendar-events/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!requireUuidParam(res, id, 'id')) return;
     if (!userCanAccessEvent(req.auth, id)) {
       return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this event.' });
     }
@@ -7194,6 +7205,7 @@ app.put('/api/active-timers/:eventId/:itemId/duration', async (req, res) => {
 app.get('/api/sub-cue-timers/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!requireUuidParam(res, eventId)) return;
     const result = await pool.query(
       'SELECT * FROM sub_cue_timers WHERE event_id = $1 AND is_running = true ORDER BY created_at DESC',
       [eventId]
@@ -7451,6 +7463,7 @@ app.delete('/api/change-log/:eventId', async (req, res) => {
 app.get('/api/timer-messages/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!requireUuidParam(res, eventId)) return;
     const result = await pool.query(
       'SELECT * FROM timer_messages WHERE event_id = $1 ORDER BY created_at DESC',
       [eventId]
@@ -7564,6 +7577,7 @@ app.post('/api/timer-messages', async (req, res) => {
 app.get('/api/operator-countdown/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!requireUuidParam(res, eventId)) return;
     const result = await pool.query(
       'SELECT * FROM operator_countdowns WHERE event_id = $1',
       [eventId]
@@ -7584,6 +7598,7 @@ app.get('/api/operator-countdown/:eventId', async (req, res) => {
 app.put('/api/operator-countdown/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!requireUuidParam(res, eventId)) return;
     const { label, duration_seconds } = req.body || {};
     const dur = Math.max(1, Math.floor(Number(duration_seconds) || 300));
     const name = String(label || 'Operator Timer').trim() || 'Operator Timer';
@@ -7608,6 +7623,7 @@ app.put('/api/operator-countdown/:eventId', async (req, res) => {
 app.post('/api/operator-countdown/:eventId/start', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!requireUuidParam(res, eventId)) return;
     const { user_id, user_name, user_role, label, duration_seconds } = req.body || {};
     let dur = duration_seconds != null ? Math.max(1, Math.floor(Number(duration_seconds))) : null;
     let name = label != null ? String(label).trim() : null;
@@ -7659,6 +7675,7 @@ app.post('/api/operator-countdown/:eventId/start', async (req, res) => {
 app.put('/api/operator-countdown/:eventId/adjust', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!requireUuidParam(res, eventId)) return;
     const { delta_seconds, duration_seconds, restart } = req.body || {};
     const existing = await pool.query(
       'SELECT * FROM operator_countdowns WHERE event_id = $1',
@@ -7712,6 +7729,7 @@ app.put('/api/operator-countdown/:eventId/adjust', async (req, res) => {
 app.put('/api/operator-countdown/:eventId/clear', async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!requireUuidParam(res, eventId)) return;
     const result = await pool.query(
       `UPDATE operator_countdowns SET
          is_active = false,

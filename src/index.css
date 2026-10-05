@@ -178,7 +178,8 @@ html.led-output-broadcast #root,
 }
 
 /* Fix highlight (backColor) sizing - execCommand + font size causes short highlights.
-   Use pixel values: Small needs minimal padding, XL needs substantial padding for ascenders/descenders. */
+   Use pixel values: Small needs minimal padding, XL needs substantial padding for ascenders/descenders.
+   Force dark bold text on highlights so pastel swatches stay readable on dark ROS rows. */
 #notes-editor [style*="background-color"]:not([style*="transparent"]),
 .notes-display [style*="background-color"]:not([style*="transparent"]) {
   padding: 1px 4px;
@@ -186,6 +187,17 @@ html.led-output-broadcast #root,
   -webkit-box-decoration-break: clone;
   border-radius: 2px;
   line-height: 1.5;
+  color: #0f172a !important;
+  -webkit-text-fill-color: #0f172a;
+  font-weight: 700 !important;
+}
+
+/* Colored text (no highlight) — bump weight so hues read clearly on slate rows */
+#notes-editor font[color],
+.notes-display font[color],
+#notes-editor span[style*="color:"],
+.notes-display span[style*="color:"] {
+  font-weight: 600;
 }
 /* Small (font size 1) - zero vertical padding, horizontal only, size to content */
 #notes-editor [style*="background-color"]:not([style*="transparent"]):has(font[size="1"]),
