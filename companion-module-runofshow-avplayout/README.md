@@ -1,8 +1,22 @@
 # Companion Module — AV-Playout Sync (ROS)
 
-Sync Run of Show timers from **SINOR AV-Playout** (CasparCG) the same way Mitti / Resolume sync work.
+Sync Run of Show timers from **SINOR AV-Playout** (CasparCG), or run AV-Playout transport directly without picking a ROS cue.
 
-## Flow
+## Direct transport (no cue / layer select)
+
+| Action | What it does |
+|--------|----------------|
+| **AV Direct: Play / Fire** | `POST /api/transport/play` — current cue, or optional 1-based index |
+| **AV Direct: Pause** | `POST /api/transport/pause` |
+| **AV Direct: Resume** | `POST /api/transport/resume` |
+| **AV Direct: Stop** | `POST /api/transport/stop` (+ optional clear) |
+| **AV Direct: Load** | Cue up current / index without taking |
+| **Arm (current)** | Uses loaded ROS cue if present; otherwise AV-only arm + optional fire |
+| **Send Time** | Pushes live AV remaining/duration to the armed or loaded ROS cue |
+
+Event ID is optional for direct Play / Pause / Stop. Send Time needs Event ID + a loaded/armed ROS cue.
+
+## ROS sync flow
 
 1. **Arm AV-Playout sync** — loads ROS cue, `POST /api/timers/avplayout-arm`, connects to AV-Playout `/ws`.
 2. Optionally fires AV-Playout cue via `POST /api/transport/play { index }`.
@@ -14,7 +28,7 @@ Sync Run of Show timers from **SINOR AV-Playout** (CasparCG) the same way Mitti 
 | Field | Default |
 |-------|---------|
 | API Base URL | Railway production |
-| Event ID / Day | From ROS URL |
+| Event ID / Day | From ROS URL (optional for direct transport) |
 | AV-Playout host | `127.0.0.1` |
 | AV-Playout port | `8080` |
 

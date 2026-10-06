@@ -20,6 +20,15 @@ module.exports = function (self) {
 		'No sub-cues — add indented rows in Run of Show'
 	)
 
+	const cueIndexOption = {
+		id: 'cueIndex',
+		type: 'number',
+		label: 'AV-Playout cue index (0 = current / selected)',
+		default: 0,
+		min: 0,
+		max: 999,
+	}
+
 	self.setActionDefinitions({
 		reload_cues: {
 			name: 'Reload cues from API',
@@ -35,8 +44,10 @@ module.exports = function (self) {
 					self.log('info', `Reload complete — ${n} main cue(s)`)
 					if (n === 0) {
 						self.updateStatus(
-							InstanceStatus.BadConfig,
-							`No main cues for day ${self.config?.day || 1}`
+							InstanceStatus.Ok,
+							self.avConnected
+								? `AV-Playout OK · no main cues for day ${self.config?.day || 1}`
+								: `No main cues for day ${self.config?.day || 1}`
 						)
 					} else {
 						self.updateStatus(InstanceStatus.Ok, `${n} main cue(s)`)
@@ -47,6 +58,83 @@ module.exports = function (self) {
 				}
 			},
 		},
+
+		// ── Direct AV-Playout transport (no ROS cue / layer required) ──
+		av_play: {
+			name: 'AV Direct: Play / Fire',
+			options: [cueIndexOption],
+			callback: async (event) => {
+				try {
+					await self.playAvDirect({ cueIndex: event.options?.cueIndex })
+				} catch (err) {
+					self.log('error', `Play/Fire failed: ${err.message}`)
+				}
+			},
+		},
+		av_pause: {
+			name: 'AV Direct: Pause',
+			options: [],
+			callback: async () => {
+				try {
+					await self.pauseAvDirect()
+				} catch (err) {
+					self.log('error', `Pause failed: ${err.message}`)
+				}
+			},
+		},
+		av_resume: {
+			name: 'AV Direct: Resume',
+			options: [],
+			callback: async () => {
+				try {
+					await self.resumeAvDirect()
+				} catch (err) {
+					self.log('error', `Resume failed: ${err.message}`)
+				}
+			},
+		},
+		av_load: {
+			name: 'AV Direct: Load (cue up)',
+			options: [cueIndexOption],
+			callback: async (event) => {
+				try {
+					await self.loadAvDirect({ cueIndex: event.options?.cueIndex })
+				} catch (err) {
+					self.log('error', `Load failed: ${err.message}`)
+				}
+			},
+		},
+		stop_avplayout_playback: {
+			name: 'AV Direct: Stop',
+			options: [],
+			callback: async () => {
+				await self.stopAvPlayback({ reason: 'manual' })
+			},
+		},
+		arm_avplayout_current: {
+			name: 'Arm AV-Playout (current — no cue select)',
+			options: [
+				cueIndexOption,
+				{
+					id: 'triggerOnArm',
+					type: 'checkbox',
+					label: 'Fire AV-Playout on arm',
+					default: true,
+				},
+			],
+			callback: async (event) => {
+				await self.runArmAvPlayoutCurrent(event.options || {})
+			},
+		},
+		send_avplayout_time: {
+			name: 'Send Time (current telemetry → ROS)',
+			options: [],
+			callback: async () => {
+				await self.sendAvPlayoutTime()
+			},
+		},
+
+		// ── ROS-tied sync (pick a cue) ──
 		arm_avplayout_sync: {
 			name: 'Arm AV-Playout sync (load cue + listen)',
 			options: [
@@ -140,13 +228,6 @@ module.exports = function (self) {
 				} catch (err) {
 					self.log('error', `End AV-Playout sync failed: ${err.message}`)
 				}
-			},
-		},
-		stop_avplayout_playback: {
-			name: 'Stop AV-Playout / Caspar only',
-			options: [],
-			callback: async () => {
-				await self.stopAvPlayback({ reason: 'manual' })
 			},
 		},
 		manual_avplayout_align: {

@@ -104,15 +104,20 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 			const eventId = this.normalizeEventId(this.config?.eventId)
 			const mainCount = this.getRegularCues().length
-			if (!eventId) {
-				this.updateStatus(InstanceStatus.BadConfig, 'Set Event ID')
+			if (!this.avConnected && !eventId) {
+				this.updateStatus(InstanceStatus.BadConfig, 'Connect AV-Playout host/port (Event ID optional for direct control)')
+			} else if (!this.avConnected) {
+				this.updateStatus(
+					InstanceStatus.Connecting,
+					eventId ? `${mainCount} cues — connecting AV-Playout…` : 'Connecting AV-Playout…'
+				)
+			} else if (!eventId) {
+				this.updateStatus(InstanceStatus.Ok, 'AV-Playout OK · direct transport (no Event ID)')
 			} else if (mainCount === 0) {
 				this.updateStatus(
-					InstanceStatus.BadConfig,
-					`No main cues for day ${this.config?.day || 1} — check Event ID / Day / API`
+					InstanceStatus.Ok,
+					`AV-Playout OK · no ROS cues for day ${this.config?.day || 1} (direct transport still works)`
 				)
-			} else if (!this.avConnected) {
-				this.updateStatus(InstanceStatus.Connecting, `${mainCount} cues — connecting AV-Playout…`)
 			} else {
 				this.updateStatus(InstanceStatus.Ok, `${mainCount} main cue(s) · AV-Playout OK`)
 			}
@@ -197,6 +202,166 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 			this.log('info', `Stopped AV-Playout / Caspar (${reason})`)
 		} catch (err) {
 			this.log('warn', `AV-Playout stop failed (${reason}): ${err.message}`)
+		}
+	}
+
+	/** Play/Fire current AV cue, or a 1-based index when provided. */
+	async playAvDirect({ cueIndex } = {}) {
+		const base = this.getAvBaseUrl()
+		const index = parseInt(cueIndex, 10)
+		const body = Number.isFinite(index) && index >= 1 ? { index } : {}
+		await avClient.play(base, body)
+		this.log('info', body.index ? `Play/Fire AV cue index ${body.index}` : 'Play/Fire AV current cue')
+	}
+
+	async pauseAvDirect() {
+		await avClient.pause(this.getAvBaseUrl())
+		this.log('info', 'Paused AV-Playout / Caspar')
+	}
+
+	async resumeAvDirect() {
+		await avClient.resume(this.getAvBaseUrl())
+		this.log('info', 'Resumed AV-Playout / Caspar')
+	}
+
+	async loadAvDirect({ cueIndex } = {}) {
+		const base = this.getAvBaseUrl()
+		const index = parseInt(cueIndex, 10)
+		const body = Number.isFinite(index) && index >= 1 ? { index } : {}
+		await avClient.load(base, body)
+		this.log('info', body.index ? `Loaded AV cue index ${body.index}` : 'Loaded AV current cue')
+	}
+
+	/**
+	 * Arm without picking a ROS cue/layer:
+	 * - If Event ID + a loaded ROS cue exists → full sync arm on that cue
+	 * - Else → AV-only arm (listen / optional fire) for standalone use
+	 */
+	async runArmAvPlayoutCurrent(options = {}) {
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		const cueIndexRaw = parseInt(options.cueIndex, 10)
+		const cueIndex = Number.isFinite(cueIndexRaw) && cueIndexRaw >= 1 ? cueIndexRaw : 0
+		const triggerOnArm = options.triggerOnArm !== false
+
+		if (eventId) {
+			try {
+				await this.fetchActiveTimer(eventId)
+			} catch (_) {}
+			const activeId = this.activeTimer?.item_id
+			if (activeId) {
+				const item = this.scheduleItems.find((s) => String(s.id) === String(activeId))
+				const isSub = this.isScheduleItemSubCue(item)
+				await this.runArmAvPlayoutSync(
+					{
+						itemId: String(activeId),
+						cueIndex,
+						triggerOnArm,
+					},
+					{ requireSubCue: isSub }
+				)
+				return
+			}
+		}
+
+		// Standalone / no loaded ROS cue — arm AV listen only
+		this.setAvArm({
+			itemId: 'direct',
+			cueIndex: cueIndex || 1,
+			isSubCue: false,
+			avOnly: true,
+		})
+		if (triggerOnArm) {
+			try {
+				await this.playAvDirect({ cueIndex: cueIndex || undefined })
+			} catch (fireErr) {
+				this.log('warn', `AV-Playout fire failed: ${fireErr.message}`)
+			}
+		}
+		await this.connectAvPlayout()
+		this.updateVariableValues()
+		this.checkFeedbacks('avplayout_armed')
+		this.log(
+			'info',
+			`AV-Playout armed (direct / no ROS cue)${cueIndex ? ` — cue index ${cueIndex}` : ' — current cue'}`
+		)
+	}
+
+	/** Push current AV remaining/duration to the armed or loaded ROS cue (no dropdown). */
+	async sendAvPlayoutTime() {
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (!eventId) {
+			this.log('warn', 'Send Time: set Event ID to push time into ROS (direct AV transport does not need this)')
+			return
+		}
+
+		try {
+			const snap = await avClient.getState(this.getAvBaseUrl())
+			this.applyAvSnapshot(snap)
+		} catch (err) {
+			this.log('warn', `Send Time: AV state refresh failed (${err.message})`)
+		}
+
+		try {
+			await this.fetchActiveTimer(eventId)
+		} catch (_) {}
+
+		const armedId =
+			this.avArm?.itemId && this.avArm.itemId !== 'direct' && !this.avArm.avOnly
+				? this.avArm.itemId
+				: null
+		const itemId = armedId || this.activeTimer?.item_id
+		if (!itemId) {
+			this.log('warn', 'Send Time: no loaded or armed ROS cue — load a cue in ROS, or Arm with a cue first')
+			return
+		}
+
+		let durationSeconds =
+			this.avDuration > 1
+				? Math.round(this.avDuration)
+				: this.avArm?.inferredDuration > 1
+					? Math.round(this.avArm.inferredDuration)
+					: this.getScheduleDurationSeconds(itemId)
+		let remainingSeconds =
+			this.avDuration > 1
+				? Math.max(0, this.avDuration - this.avPosition)
+				: this.avArm?.lastRemaining
+
+		if (!(durationSeconds > 0) || remainingSeconds == null || !Number.isFinite(remainingSeconds)) {
+			this.log('warn', 'Send Time: no AV duration/position yet — play a clip first (Caspar Live lamp)')
+			return
+		}
+
+		const item = this.scheduleItems.find((s) => String(s.id) === String(itemId))
+		const cueIs = item?.customFields?.cue ?? this.activeTimer?.cue_is ?? `CUE ${itemId}`
+		const isSubCue = this.avArm?.isSubCue === true || this.isScheduleItemSubCue(item)
+
+		try {
+			if (!this.avArm || this.avArm.avOnly || this.avArm.itemId === 'direct') {
+				this.setAvArm({
+					itemId: String(itemId),
+					cueIndex: this.avArm?.cueIndex || 1,
+					isSubCue,
+					avOnly: false,
+				})
+				await this.notifyAvArm(itemId, { isSubCue })
+			}
+			await this.postAvAlign({
+				eventId,
+				itemId,
+				cueIs,
+				durationSeconds,
+				remainingSeconds,
+				alignAtMs: Date.now(),
+				alignReason: 'manual-send',
+				isSubCue,
+			})
+			this.recordSyncSuccess('manual-send', remainingSeconds, durationSeconds)
+			this.log(
+				'info',
+				`Send Time: ${Math.round(remainingSeconds * 10) / 10}s left of ${durationSeconds}s → ${this.formatCueDisplay(cueIs, itemId)}`
+			)
+		} catch (err) {
+			this.log('error', `Send Time failed: ${err.message}`)
 		}
 	}
 
@@ -455,6 +620,13 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		if (duration > 1) {
 			arm.inferredDuration = duration
 			this.lastInferredDuration = duration
+		}
+
+		// Standalone AV arm — track telemetry only (no ROS align until Send Time / cue arm)
+		if (arm.avOnly || arm.itemId === 'direct') {
+			if (playing && arm.phase !== 'aligned') arm.phase = 'sampling'
+			this.updateVariableValues()
+			return
 		}
 
 		if (arm.phase === 'aligned') {
@@ -751,15 +923,21 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 	}
 
 	async fireAvPlayoutCue(cueIndex) {
-		const index = Math.max(1, parseInt(cueIndex, 10) || 1)
-		await avClient.play(this.getAvBaseUrl(), { index })
-		this.log('info', `Fired AV-Playout cue index ${index}`)
+		const index = parseInt(cueIndex, 10)
+		if (Number.isFinite(index) && index >= 1) {
+			await avClient.play(this.getAvBaseUrl(), { index })
+			this.log('info', `Fired AV-Playout cue index ${index}`)
+			return
+		}
+		await avClient.play(this.getAvBaseUrl(), {})
+		this.log('info', 'Fired AV-Playout current cue')
 	}
 
 	async runArmAvPlayoutSync(options, { requireSubCue }) {
 		const eventId = this.config?.eventId
 		const itemId = options.itemId
-		const cueIndex = Math.max(1, parseInt(options.cueIndex, 10) || 1)
+		const cueIndexRaw = parseInt(options.cueIndex, 10)
+		const cueIndex = Number.isFinite(cueIndexRaw) && cueIndexRaw >= 1 ? cueIndexRaw : 0
 		const triggerOnArm = options.triggerOnArm === true
 		if (!eventId || !itemId) {
 			this.log('warn', 'Arm AV-Playout: Event ID and cue are required')
@@ -788,7 +966,11 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		}
 		try {
 			await this.loadCueForAv(eventId, loadItemId, { forSubCueParent: !!requireSubCue })
-			this.setAvArm({ itemId: String(armTrackItemId), cueIndex, isSubCue: !!requireSubCue })
+			this.setAvArm({
+				itemId: String(armTrackItemId),
+				cueIndex: cueIndex || 1,
+				isSubCue: !!requireSubCue,
+			})
 			await this.notifyAvArm(armTrackItemId, { isSubCue: requireSubCue })
 			if (triggerOnArm) {
 				try {
@@ -803,7 +985,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 			const cueDisplay = this.formatCueDisplay(item?.customFields?.cue, itemId)
 			this.log(
 				'info',
-				`AV-Playout sync armed for ${requireSubCue ? 'sub-cue' : 'cue'} ${cueDisplay} (AV cue ${cueIndex})`
+				`AV-Playout sync armed for ${requireSubCue ? 'sub-cue' : 'cue'} ${cueDisplay} (AV ${cueIndex ? `cue ${cueIndex}` : 'current'})`
 			)
 		} catch (err) {
 			this.log('error', `Arm AV-Playout failed: ${err.message}`)
@@ -867,11 +1049,12 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		}
 	}
 
-	setAvArm({ itemId, cueIndex, isSubCue = false }) {
-		const scheduleDurationSeconds = this.getScheduleDurationSeconds(itemId)
+	setAvArm({ itemId, cueIndex, isSubCue = false, avOnly = false }) {
+		const scheduleDurationSeconds = avOnly ? null : this.getScheduleDurationSeconds(itemId)
 		this.avArm = {
 			itemId: String(itemId),
 			isSubCue: !!isSubCue,
+			avOnly: !!avOnly,
 			cueIndex: Math.max(1, parseInt(cueIndex, 10) || 1),
 			phase: 'idle',
 			sampleStartMs: 0,
@@ -1004,6 +1187,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 	async triggerAvAlign(durationSeconds, remainingSeconds, alignAtMs, isFollowUp = false, reason = 'align') {
 		if (this.alignInFlight || !this.avArm) return
+		if (this.avArm.avOnly || this.avArm.itemId === 'direct') return
 		this.alignInFlight = true
 		const eventId = this.config?.eventId
 		const itemId = this.avArm.itemId
@@ -1222,6 +1406,98 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 	updatePresets() {
 		const presets = {
+			av_play: {
+				type: 'button',
+				category: 'AV Direct',
+				name: 'Play / Fire current',
+				style: {
+					text: 'Play\n/ Fire',
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(0, 140, 60),
+				},
+				feedbacks: [],
+				steps: [{ down: [{ actionId: 'av_play', options: { cueIndex: 0 } }], up: [] }],
+			},
+			av_pause: {
+				type: 'button',
+				category: 'AV Direct',
+				name: 'Pause',
+				style: {
+					text: 'Pause',
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(180, 120, 20),
+				},
+				feedbacks: [],
+				steps: [{ down: [{ actionId: 'av_pause', options: {} }], up: [] }],
+			},
+			av_stop: {
+				type: 'button',
+				category: 'AV Direct',
+				name: 'Stop',
+				style: {
+					text: 'Stop',
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(160, 40, 40),
+				},
+				feedbacks: [],
+				steps: [{ down: [{ actionId: 'stop_avplayout_playback', options: {} }], up: [] }],
+			},
+			arm_av_current: {
+				type: 'button',
+				category: 'AV Direct',
+				name: 'Arm current (no cue select)',
+				style: {
+					text: 'Arm\nCurrent',
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(40, 100, 140),
+				},
+				feedbacks: [
+					{
+						feedbackId: 'avplayout_armed',
+						options: {},
+						style: { bgcolor: combineRgb(160, 80, 200), color: combineRgb(255, 255, 255) },
+					},
+					{
+						feedbackId: 'avplayout_aligned',
+						options: {},
+						style: { bgcolor: combineRgb(0, 140, 60), color: combineRgb(255, 255, 255) },
+					},
+				],
+				steps: [
+					{
+						down: [
+							{
+								actionId: 'arm_avplayout_current',
+								options: { cueIndex: 0, triggerOnArm: true },
+							},
+						],
+						up: [],
+					},
+				],
+			},
+			send_av_time: {
+				type: 'button',
+				category: 'AV Direct',
+				name: 'Send Time (current)',
+				style: {
+					text: 'Send\nTime',
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(70, 90, 160),
+				},
+				feedbacks: [
+					{
+						feedbackId: 'avplayout_sync_pulse',
+						options: {},
+						style: { bgcolor: combineRgb(0, 180, 80), color: combineRgb(255, 255, 255) },
+					},
+				],
+				steps: [{ down: [{ actionId: 'send_avplayout_time', options: {} }], up: [] }],
+			},
 			arm_av_generic: {
 				type: 'button',
 				category: 'AV-Playout',

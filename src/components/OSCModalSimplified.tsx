@@ -123,7 +123,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                   📺 Companion Module — AV-Playout Sync
                 </a>
                 <div className="text-xs text-sky-300 mt-2">
-                  SINOR AV-Playout / CasparCG WebSocket → ROS timer • Arm cue, fire index, telemetry re-sync
+                  SINOR AV-Playout / CasparCG • Direct Play/Pause/Stop • Arm & Send Time without cue select • ROS sync
                 </div>
               </div>
 
