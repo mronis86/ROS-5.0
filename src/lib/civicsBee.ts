@@ -20,9 +20,21 @@ export type CivicsBeeEntry = {
   peoplesChoice: boolean;
 };
 
+/** On-air / vMix Data Source selection (not tied to a ROS cue). */
+export type CivicsBeeGraphicsSelection = {
+  code: string;
+  /** Exact value in the Civics CSV Name column for this filter. */
+  name: string;
+  state: string;
+  filter: CivicsBeeTier;
+  updatedAt: string;
+};
+
 export type CivicsBeeRoster = {
   entries: CivicsBeeEntry[];
   updatedAt?: string;
+  /** Current graphics pick for the Civics vMix bridge. */
+  graphicsSelection?: CivicsBeeGraphicsSelection | null;
 };
 
 /** 50 states + DC + five inhabited territories commonly used in national student competitions. */
@@ -143,6 +155,8 @@ export function parseCivicsBeeRoster(raw: unknown): CivicsBeeRoster {
     });
   }
 
+  const graphicsSelection = parseCivicsBeeGraphicsSelection(src.graphicsSelection);
+
   return {
     entries: defaults.entries.map((base) => {
       const overlay = byCode.get(base.code);
@@ -160,6 +174,39 @@ export function parseCivicsBeeRoster(raw: unknown): CivicsBeeRoster {
       };
     }),
     updatedAt: typeof src.updatedAt === 'string' ? src.updatedAt : undefined,
+    graphicsSelection,
+  };
+}
+
+export function parseCivicsBeeGraphicsSelection(raw: unknown): CivicsBeeGraphicsSelection | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  const filter = normalizeTier(s.filter);
+  const code = String(s.code || '')
+    .trim()
+    .toUpperCase();
+  const name = String(s.name || '').trim();
+  if (!filter || !code || !name) return null;
+  return {
+    code,
+    name,
+    state: String(s.state || '').trim(),
+    filter,
+    updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : new Date().toISOString(),
+  };
+}
+
+/** Build a graphics selection payload for a roster entry + tier page. */
+export function buildCivicsBeeGraphicsSelection(
+  entry: CivicsBeeEntry,
+  filter: CivicsBeeTier
+): CivicsBeeGraphicsSelection {
+  return {
+    code: entry.code,
+    name: formatCivicsBeeShortDisplayName(entry.studentName),
+    state: entry.name,
+    filter,
+    updatedAt: new Date().toISOString(),
   };
 }
 

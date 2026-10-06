@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   applyCivicsBeePeoplesChoice,
   applyCivicsBeePlace,
@@ -200,6 +201,38 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
       {importNotice && (
         <div className="rounded-md border border-emerald-700/40 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-100">
           {importNotice}
+        </div>
+      )}
+
+      {eventId && (
+        <div className="rounded-lg border border-cyan-800/50 bg-cyan-950/30 px-4 py-3 space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Civics vMix graphics control</h3>
+              <p className="text-xs text-slate-400">
+                StreamDeck-style pages pick a student Name for vMix (not tied to ROS cues). Run the
+                Civics bridge on the vMix PC in parallel with the everyday DataSource bridge.
+              </p>
+            </div>
+            <a
+              href="/ros-civics-vmix-bridge.zip"
+              download="ros-civics-vmix-bridge.zip"
+              className="shrink-0 rounded-md border border-cyan-600/70 bg-cyan-900/40 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-800/50"
+            >
+              Download Civics vMix Bridge
+            </a>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(['top25', 'top10', 'top5'] as const).map((t) => (
+              <Link
+                key={t}
+                to={`/civics-graphics/${t}?eventId=${encodeURIComponent(eventId)}`}
+                className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-white"
+              >
+                {CIVICS_BEE_FILTER_LABELS[t]} buttons
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

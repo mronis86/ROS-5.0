@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>ROS Civics vMix Bridge</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f172a;
+        --card: #1e293b;
+        --line: #334155;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #22d3ee;
+        --ok: #34d399;
+        --warn: #fbbf24;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Segoe UI, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 18px;
+      }
+      h1 { font-size: 1.25rem; margin: 0 0 4px; }
+      p.sub { margin: 0 0 16px; color: var(--muted); font-size: 0.85rem; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+      label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
+      input {
+        width: 100%;
+        background: #0f172a;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 8px 10px;
+        margin-bottom: 10px;
+      }
+      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 9px 14px;
+        font-weight: 600;
+        cursor: pointer;
+        background: #334155;
+        color: var(--text);
+      }
+      button.primary { background: #0891b2; color: #041016; }
+      button.danger { background: #7f1d1d; }
+      button.ok { background: #065f46; }
+      #status {
+        font-size: 0.85rem;
+        white-space: pre-wrap;
+        min-height: 3.5rem;
+      }
+      .ok { color: var(--ok); }
+      .err { color: #f87171; }
+      .hint { font-size: 0.75rem; color: var(--muted); margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>ROS Civics vMix Bridge</h1>
+    <p class="sub">
+      Parallel to the everyday cue bridge. Watches Extend Event Controls student selection and
+      selects that Name in your Civics Top 25 / 10 / 5 Data Sources.
+    </p>
+
+    <div class="card">
+      <div class="grid2">
+        <div>
+          <label>API Base URL</label>
+          <input id="apiBaseUrl" />
+        </div>
+        <div>
+          <label>API Token (optional if selection feed is public)</label>
+          <input id="apiToken" placeholder="ros_itok_…" />
+        </div>
+      </div>
+      <label>Event ID (UUID)</label>
+      <input id="eventId" />
+      <div class="grid2">
+        <div>
+          <label>vMix host</label>
+          <input id="vmixHost" />
+        </div>
+        <div>
+          <label>vMix port</label>
+          <input id="vmixPort" type="number" />
+        </div>
+      </div>
+      <label>Poll seconds</label>
+      <input id="pollSeconds" type="number" step="0.5" min="0.5" />
+    </div>
+
+    <div class="card">
+      <strong>vMix Data Source names</strong>
+      <p class="hint">Must match the Data Sources that load the Civics CSV live URLs from ROS.</p>
+      <div class="grid2">
+        <div>
+          <label>Top 25 Data Source</label>
+          <input id="dsTop25" />
+        </div>
+        <div>
+          <label>Top 25 sheet/table (blank for CSV)</label>
+          <input id="tblTop25" />
+        </div>
+        <div>
+          <label>Top 10 Data Source</label>
+          <input id="dsTop10" />
+        </div>
+        <div>
+          <label>Top 10 sheet/table</label>
+          <input id="tblTop10" />
+        </div>
+        <div>
+          <label>Top 5 Data Source</label>
+          <input id="dsTop5" />
+        </div>
+        <div>
+          <label>Top 5 sheet/table</label>
+          <input id="tblTop5" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button class="primary" id="btnSave">Save config</button>
+        <button class="ok" id="btnStart">Start</button>
+        <button class="danger" id="btnStop">Stop</button>
+        <button id="btnTest">Test vMix</button>
+        <button id="btnResync">Force resync</button>
+      </div>
+      <p class="hint" id="runState">Stopped</p>
+      <div id="status"></div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

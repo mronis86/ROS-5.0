@@ -1,0 +1,39 @@
+{
+  "name": "ros-civics-vmix-bridge",
+  "version": "0.1.0",
+  "description": "Civics Bee student Name → vMix DataSourceSelectRow (parallel to schedule cue bridge)",
+  "private": true,
+  "main": "electron/main.js",
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.sinor.ros.civics-vmix",
+    "productName": "ROS Civics vMix Bridge",
+    "directories": {
+      "output": "dist-ready",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "ROS-Civics-vMix-Bridge-${version}-portable.exe"
+    }
+  }
+}

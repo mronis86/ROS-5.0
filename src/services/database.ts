@@ -599,6 +599,33 @@ export class DatabaseService {
     }
   }
 
+  static async getCivicsBeeSelection(eventId: string) {
+    try {
+      return await apiClient.getCivicsBeeSelection(eventId);
+    } catch (error) {
+      console.error('❌ Exception getting Civics selection:', error);
+      return { eventId, selection: null, updatedAt: null };
+    }
+  }
+
+  static async setCivicsBeeSelection(
+    eventId: string,
+    selection: {
+      code: string;
+      name: string;
+      state: string;
+      filter: 'top25' | 'top10' | 'top5';
+    } | null
+  ): Promise<boolean> {
+    try {
+      await apiClient.setCivicsBeeSelection(eventId, selection);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception saving Civics selection:', error);
+      return false;
+    }
+  }
+
   static async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show'): Promise<boolean> {
     try {
       await apiClient.saveShowMode(eventId, showMode);

@@ -3983,6 +3983,93 @@ app.get('/api/civics-bee.csv', async (req, res) => {
   }
 });
 
+/** Public poll target for the Civics vMix bridge (selected Name row — not ROS cue). */
+app.get('/api/civics-bee/selection', async (req, res) => {
+  try {
+    const eventId = String(req.query.eventId || '').trim();
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    const config = await loadExtendEventControls(pool, eventId);
+    const roster = config.moduleData?.civicsBee;
+    const selection =
+      roster && typeof roster === 'object' && roster.graphicsSelection && typeof roster.graphicsSelection === 'object'
+        ? roster.graphicsSelection
+        : null;
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    return res.json({
+      eventId,
+      selection,
+      updatedAt: selection?.updatedAt || roster?.updatedAt || null,
+    });
+  } catch (error) {
+    console.error('Error in civics-bee/selection:', error);
+    return res.status(500).json({ error: 'Failed to load Civics selection' });
+  }
+});
+
+/** Set / clear on-air Civics graphics selection (auth required). */
+app.put('/api/civics-bee/selection', async (req, res) => {
+  try {
+    const eventId = String(req.body?.eventId || req.query.eventId || '').trim();
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+
+    const clear = req.body?.clear === true || req.body?.selection === null;
+    let selection = null;
+    if (!clear) {
+      const raw = req.body?.selection && typeof req.body.selection === 'object' ? req.body.selection : req.body;
+      const filter = String(raw?.filter || '').trim();
+      const code = String(raw?.code || '')
+        .trim()
+        .toUpperCase();
+      const name = String(raw?.name || '').trim();
+      if (!['top25', 'top10', 'top5'].includes(filter) || !code || !name) {
+        return res.status(400).json({
+          error: 'selection requires filter (top25|top10|top5), code, and name',
+        });
+      }
+      selection = {
+        code,
+        name,
+        state: String(raw?.state || '').trim(),
+        filter,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    const config = await loadExtendEventControls(pool, eventId);
+    const prev =
+      config.moduleData?.civicsBee && typeof config.moduleData.civicsBee === 'object'
+        ? config.moduleData.civicsBee
+        : { entries: [] };
+    const nextPayload = {
+      ...prev,
+      graphicsSelection: selection,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await saveExtendModuleData(pool, eventId, 'civicsBee', nextPayload);
+    if (!result.ok) {
+      return res.status(result.status || 500).json({ error: result.error || 'Save failed' });
+    }
+
+    return res.json({
+      eventId,
+      selection,
+      moduleData: result.config.moduleData,
+    });
+  } catch (error) {
+    console.error('Error saving civics-bee/selection:', error);
+    return res.status(500).json({ error: 'Failed to save Civics selection' });
+  }
+});
+
 // Soft-delete calendar event by default; admins may pass ?permanent=1 to purge fully
 app.delete('/api/calendar-events/:id', async (req, res) => {
   try {

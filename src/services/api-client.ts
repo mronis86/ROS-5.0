@@ -427,6 +427,41 @@ class ApiClient {
     return result;
   }
 
+  async getCivicsBeeSelection(eventId: string) {
+    return this.request<{
+      eventId: string;
+      selection: {
+        code: string;
+        name: string;
+        state: string;
+        filter: 'top25' | 'top10' | 'top5';
+        updatedAt: string;
+      } | null;
+      updatedAt: string | null;
+    }>(`/api/civics-bee/selection?eventId=${encodeURIComponent(eventId)}`, {}, undefined, 0);
+  }
+
+  async setCivicsBeeSelection(
+    eventId: string,
+    selection: {
+      code: string;
+      name: string;
+      state: string;
+      filter: 'top25' | 'top10' | 'top5';
+    } | null
+  ) {
+    const result = await this.request(`/api/civics-bee/selection`, {
+      method: 'PUT',
+      body: JSON.stringify(
+        selection
+          ? { eventId, selection }
+          : { eventId, clear: true, selection: null }
+      ),
+    });
+    this.cache.delete(`extendControls_${eventId}`);
+    return result;
+  }
+
   async saveShowMode(eventId: string, showMode: 'rehearsal' | 'in-show') {
     const result = await this.request(`/api/show-mode/${eventId}`, {
       method: 'PATCH',

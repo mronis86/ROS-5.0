@@ -60,6 +60,7 @@ import LedOutputPage from './pages/LedOutputPage';
 import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
 import StreamGuidePage from './pages/StreamGuidePage';
 import ExtendEventControlsPage from './pages/ExtendEventControlsPage';
+import CivicsGraphicsSelectPage from './pages/CivicsGraphicsSelectPage';
 
 function AppContent() {
   const location = useLocation();
@@ -176,6 +177,10 @@ function AppContent() {
             <Route path="/creative/event" element={<CreativeEventPage />} />
             <Route path="/content-review" element={<ContentReviewPage />} />
             <Route path="/extend-event-controls" element={<ExtendEventControlsPage />} />
+            <Route path="/civics-graphics" element={<CivicsGraphicsSelectPage />} />
+            <Route path="/civics-graphics/top25" element={<CivicsGraphicsSelectPage />} />
+            <Route path="/civics-graphics/top10" element={<CivicsGraphicsSelectPage />} />
+            <Route path="/civics-graphics/top5" element={<CivicsGraphicsSelectPage />} />
             <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />
             <Route path="/director-view" element={<DirectorViewPage />} />

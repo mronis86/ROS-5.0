@@ -143,6 +143,7 @@ Copy-DeployZip 'companion-module-runofshow-full.zip'
 Copy-DeployZip 'companion-module-runofshow-resolume-full.zip'
 Copy-DeployZip 'companion-module-runofshow-mitti-full.zip'
 Copy-DeployZip 'companion-module-runofshow-avplayout-full.zip'
+Copy-DeployZip 'ros-civics-vmix-bridge.zip'
 Copy-DeployZip 'offline-show.zip'
 Copy-DeployZip 'ros-led-spout.zip'
 Copy-DeployZip 'ros-vmix-datasource-bridge.zip'
@@ -169,6 +170,7 @@ $RedirectsContent = @"
 /offline-show.zip                               /offline-show.zip                               200
 /ros-led-spout.zip                              /ros-led-spout.zip                              200
 /ros-vmix-datasource-bridge.zip                 /ros-vmix-datasource-bridge.zip                 200
+/ros-civics-vmix-bridge.zip                     /ros-civics-vmix-bridge.zip                     200
 /ros-hyperdeck-ingest.zip                       /ros-hyperdeck-ingest.zip                       200
 
 /*    https://ros1615.pages.dev/:splat    301!
@@ -209,6 +211,12 @@ $TomlContent = @"
 [[redirects]]
   from = "/companion-module-runofshow-avplayout-full.zip"
   to = "/companion-module-runofshow-avplayout-full.zip"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ros-civics-vmix-bridge.zip"
+  to = "/ros-civics-vmix-bridge.zip"
   status = 200
   force = true
 

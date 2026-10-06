@@ -49,6 +49,8 @@ cloudflare-20*/
 *.zip
 !public/*.zip
 public/ROS-OSC-Control-portable.zip
+public/ros-civics-vmix-bridge.zip
+public/ros-vmix-datasource-bridge.zip
 
 # IDE files
 .vscode/
