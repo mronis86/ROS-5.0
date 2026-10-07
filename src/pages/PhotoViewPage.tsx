@@ -546,7 +546,7 @@ const PhotoViewPage: React.FC = () => {
       user_id?: string;
       user_name?: string;
     } | null | undefined
-  ): 'Mitti' | 'SINOR AV-Playout' | 'Resolume' => {
+  ): 'Mitti' | 'AV-Playout' | 'Resolume' => {
     if (
       timer?.time_source === 'avplayout' ||
       timer?.avplayout_state === 'armed' ||
@@ -554,7 +554,7 @@ const PhotoViewPage: React.FC = () => {
       timer?.user_id === 'companion-avplayout' ||
       timer?.user_name === 'AV-Playout Sync'
     ) {
-      return 'SINOR AV-Playout';
+      return 'AV-Playout';
     }
     if (
       timer?.time_source === 'mitti' ||
@@ -2517,7 +2517,7 @@ const PhotoViewPage: React.FC = () => {
                             ? `RUNNING · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
                             : 'RUNNING'
                           : isResolumeArmed(hybridTimerData.activeTimer)
-                            ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()} (armed)`
+                            ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
                             : 'LOADED'}
                       </div>
                       {isResolumeArmed(hybridTimerData.activeTimer) && (
@@ -2970,7 +2970,7 @@ const PhotoViewPage: React.FC = () => {
                         ? `RUNNING · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
                         : 'RUNNING'
                       : isResolumeArmed(hybridTimerData.activeTimer)
-                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()} (armed)`
+                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
                         : 'LOADED'
                     } - {(() => {
                       const itemId = hybridTimerData.activeTimer.item_id;
@@ -3029,7 +3029,7 @@ const PhotoViewPage: React.FC = () => {
                         const line = isSubCueResolumeRunning(subCueData)
                           ? `RUNNING · ${syncLabel} - ${formattedCue} - ${time}`
                           : subCueData && isResolumeArmed(subCueData)
-                            ? `LOADED · ${syncLabel} (armed) - ${formattedCue} - ${time}`
+                            ? `LOADED · ${syncLabel} - ${formattedCue} - ${time}`
                             : `${formattedCue} - ${time}`;
 
                         return (

@@ -34,6 +34,11 @@ import {
   type MicAssignment,
   type MicType,
 } from '../lib/micManager';
+import {
+  enrichExternalSyncTimer,
+  externalSyncStatusClass,
+  formatExternalSyncStatusLine,
+} from '../lib/externalSyncLabel';
 
 const MIC_TABLE_COLS =
   'minmax(4.5rem,0.85fr) minmax(9rem,1.5fr) repeat(7, minmax(0,1fr))';
@@ -164,6 +169,8 @@ const MicManagerPage: React.FC = () => {
   const [timerProgress, setTimerProgress] = useState({ elapsed: 0, total: 0 });
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [clockOffset, setClockOffset] = useState(0);
+  /** Kept for AV / Mitti / Resolume LOADED·RUNNING feedback. */
+  const [activeTimerMeta, setActiveTimerMeta] = useState<any | null>(null);
 
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
@@ -193,16 +200,25 @@ const MicManagerPage: React.FC = () => {
       setTimerLoaded(false);
       setStartedAt(null);
       setTimerProgress({ elapsed: 0, total: 0 });
+      setActiveTimerMeta(null);
       return;
     }
-    const itemId = timer.item_id ?? timer.itemId;
+    const enriched = enrichExternalSyncTimer(timer);
+    setActiveTimerMeta(enriched);
+    const itemId = enriched.item_id ?? enriched.itemId;
     setActiveItemId(itemId != null ? Number(itemId) : null);
-    const running = Boolean(timer.is_running && timer.is_active !== false);
-    const loaded = Boolean(timer.is_active && !timer.is_running);
+    const running =
+      enriched.timer_state === 'running' ||
+      Boolean(enriched.is_running && enriched.is_active !== false && enriched.timer_state !== 'loaded');
+    const loaded =
+      !running &&
+      (enriched.timer_state === 'loaded' ||
+        enriched.timer_state === 'armed' ||
+        Boolean(enriched.is_active && !enriched.is_running));
     setTimerRunning(running);
     setTimerLoaded(loaded || running);
-    const total = Number(timer.duration_seconds || timer.duration || 0);
-    const start = timer.started_at || timer.created_at || null;
+    const total = Number(enriched.duration_seconds || enriched.duration || 0);
+    const start = enriched.started_at || enriched.created_at || null;
     setStartedAt(running ? start : null);
     if (running && start) {
       const syncedNow = Date.now() + clockOffset;
@@ -495,16 +511,22 @@ const MicManagerPage: React.FC = () => {
   }, [activeItemId, schedule]);
 
   const statusLine = useMemo(() => {
-    if (timerRunning && activeItemId != null) return `RUNNING - ${activeCueLabel}`;
-    if (timerLoaded && activeItemId != null) return `LOADED - ${activeCueLabel}`;
-    return 'NO CUE SELECTED';
-  }, [timerRunning, timerLoaded, activeItemId, activeCueLabel]);
+    if (!timerRunning && !timerLoaded) return 'NO CUE SELECTED';
+    return formatExternalSyncStatusLine({
+      running: timerRunning,
+      loaded: timerLoaded,
+      timer: activeTimerMeta,
+      cueLabel: activeCueLabel,
+      idleLabel: 'NO CUE SELECTED',
+    });
+  }, [timerRunning, timerLoaded, activeItemId, activeCueLabel, activeTimerMeta]);
 
-  const statusClass = timerRunning
-    ? 'text-green-400'
-    : timerLoaded
-      ? 'text-yellow-400'
-      : 'text-slate-300';
+  const statusClass = externalSyncStatusClass({
+    running: timerRunning,
+    loaded: timerLoaded && !timerRunning,
+    timer: activeTimerMeta,
+    idleClass: 'text-slate-300',
+  });
 
   useEffect(() => {
     if (viewMode !== 'follow' || activeItemId == null) return;

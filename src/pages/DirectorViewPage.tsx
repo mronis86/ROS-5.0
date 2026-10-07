@@ -35,6 +35,11 @@ import { isIndentedScheduleItem } from '../lib/scheduleStartTime';
 import { countdownColorForRemaining } from '../lib/countdownColor';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
+import {
+  enrichExternalSyncTimer,
+  externalSyncStatusClass,
+  formatExternalSyncStatusLine,
+} from '../lib/externalSyncLabel';
 
 const NOTES_SOURCE_KEY = 'director-view-notes-source';
 const SYNC_COLUMNS_KEY = 'director-view-sync-columns';
@@ -346,6 +351,8 @@ const DirectorViewPage: React.FC = () => {
   const [timerDurationSeconds, setTimerDurationSeconds] = useState(0);
   const [timerElapsedHint, setTimerElapsedHint] = useState(0);
   const [clockOffset, setClockOffset] = useState(0);
+  /** Kept for AV / Mitti / Resolume LOADED·RUNNING feedback. */
+  const [activeTimerMeta, setActiveTimerMeta] = useState<any | null>(null);
   const [tick, setTick] = useState(0);
   const [speakersItemId, setSpeakersItemId] = useState<number | null>(null);
   const [speakerPanel, setSpeakerPanel] = useState<'photos' | 'info'>('photos');
@@ -1090,6 +1097,7 @@ const DirectorViewPage: React.FC = () => {
     setTimerStartedAt(null);
     setTimerDurationSeconds(0);
     setTimerElapsedHint(0);
+    setActiveTimerMeta(null);
   }, []);
 
   const applyTimer = useCallback(
@@ -1098,25 +1106,28 @@ const DirectorViewPage: React.FC = () => {
         clearTimerUi();
         return;
       }
-      const rawId = timer.item_id != null ? timer.item_id : timer.itemId;
+      const enriched = enrichExternalSyncTimer(timer);
+      setActiveTimerMeta(enriched);
+      const rawId = enriched.item_id != null ? enriched.item_id : enriched.itemId;
       const id = rawId != null ? Number(rawId) : null;
       setActiveItemId(Number.isFinite(id as number) ? (id as number) : null);
       const running =
-        timer.timer_state === 'running' ||
-        (!!(timer.is_running && timer.is_active !== false) && timer.timer_state !== 'loaded');
+        enriched.timer_state === 'running' ||
+        (!!(enriched.is_running && enriched.is_active !== false) &&
+          enriched.timer_state !== 'loaded');
       const loaded =
         !running &&
-        (timer.timer_state === 'loaded' ||
-          timer.timer_state === 'armed' ||
-          (!!timer.is_active && !timer.is_running));
+        (enriched.timer_state === 'loaded' ||
+          enriched.timer_state === 'armed' ||
+          (!!enriched.is_active && !enriched.is_running));
       setTimerRunning(running);
       setTimerLoaded(loaded);
       const duration =
-        Number(timer.duration_seconds) ||
-        Number(timer.durationSeconds) ||
+        Number(enriched.duration_seconds) ||
+        Number(enriched.durationSeconds) ||
         0;
       setTimerDurationSeconds(Number.isFinite(duration) ? duration : 0);
-      const started = timer.started_at || timer.startedAt || null;
+      const started = enriched.started_at || enriched.startedAt || null;
       // Placeholder / non-running started_at values from API — ignore for countdown math
       const startedMs = started ? new Date(started).getTime() : NaN;
       const startedLooksReal =
@@ -1125,10 +1136,10 @@ const DirectorViewPage: React.FC = () => {
         startedMs < new Date('2090-01-01').getTime();
       setTimerStartedAt(running && startedLooksReal ? String(started) : null);
       const elapsedHint =
-        typeof timer.elapsed_seconds === 'number'
-          ? timer.elapsed_seconds
-          : typeof timer.elapsedSeconds === 'number'
-            ? timer.elapsedSeconds
+        typeof enriched.elapsed_seconds === 'number'
+          ? enriched.elapsed_seconds
+          : typeof enriched.elapsedSeconds === 'number'
+            ? enriched.elapsedSeconds
             : 0;
       setTimerElapsedHint(Number.isFinite(elapsedHint) ? elapsedHint : 0);
     },
@@ -1234,12 +1245,19 @@ const DirectorViewPage: React.FC = () => {
     hasTimer && timerDurationSeconds > 0
       ? Math.max(0, Math.min(100, (Math.max(0, remainingSeconds) / timerDurationSeconds) * 100))
       : 0;
-  const statusLabel = timerRunning ? 'RUNNING' : timerLoaded ? 'LOADED' : 'STANDBY';
-  const statusClass = timerRunning
-    ? 'text-green-400'
-    : timerLoaded
-      ? 'text-yellow-400'
-      : 'text-slate-400';
+  const statusLabel = formatExternalSyncStatusLine({
+    running: timerRunning,
+    loaded: timerLoaded,
+    timer: activeTimerMeta,
+    includeCue: false,
+    idleLabel: 'STANDBY',
+  });
+  const statusClass = externalSyncStatusClass({
+    running: timerRunning,
+    loaded: timerLoaded,
+    timer: activeTimerMeta,
+    idleClass: 'text-slate-400',
+  });
   const activeFilterCount =
     GUEST_COLUMN_TOGGLE_OPTIONS.filter((opt) => !visibleColumns[opt.key]).length +
     customColumns.filter((col) => visibleCustomColumns[col.id] === false).length;

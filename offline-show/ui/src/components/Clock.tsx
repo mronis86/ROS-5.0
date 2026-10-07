@@ -128,7 +128,7 @@ const Clock: React.FC<ClockProps> = ({
       user_id?: string;
       user_name?: string;
     } | null | undefined
-  ): 'Mitti' | 'SINOR AV-Playout' | 'Resolume' => {
+  ): 'Mitti' | 'AV-Playout' | 'Resolume' => {
     if (
       timer?.time_source === 'avplayout' ||
       timer?.avplayout_state === 'armed' ||
@@ -136,7 +136,7 @@ const Clock: React.FC<ClockProps> = ({
       timer?.user_id === 'companion-avplayout' ||
       timer?.user_name === 'AV-Playout Sync'
     ) {
-      return 'SINOR AV-Playout';
+      return 'AV-Playout';
     }
     if (
       timer?.time_source === 'mitti' ||
@@ -921,14 +921,14 @@ const Clock: React.FC<ClockProps> = ({
     ? isResolumeSynced(secondarySubTimer)
       ? ` · ${secondarySyncLabel}`
       : isResolumeArmed(secondarySubTimer)
-        ? ` · ${secondarySyncLabel} (armed)`
+        ? ` · ${secondarySyncLabel}`
         : ''
     : '';
   const secondaryStatusPrefix =
     secondarySubTimer && isResolumeSynced(secondarySubTimer) && secondarySubTimer.is_running
       ? `RUNNING · ${secondarySyncLabel} - `
       : secondarySubTimer && isResolumeArmed(secondarySubTimer)
-        ? `LOADED · ${secondarySyncLabel} (armed) - `
+        ? `LOADED · ${secondarySyncLabel} - `
         : '';
 
   // Prefer any currently enabled message; Pre Show uses OVER TIME-style label instead of overlay

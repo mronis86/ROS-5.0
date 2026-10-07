@@ -23,6 +23,11 @@ import {
 } from '../lib/displaySession';
 import { itemMarkedByComms, itemNeedsRecording } from '../lib/cueRecording';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import {
+  enrichExternalSyncTimer,
+  externalSyncStatusClass,
+  formatExternalSyncStatusLine,
+} from '../lib/externalSyncLabel';
 
 type ScheduleItem = {
   id: number;
@@ -633,7 +638,13 @@ const OperatorCueDisplayPage: React.FC = () => {
   useEffect(() => {
     if (!event?.id) return;
     let dead = false;
-    const apply = (t: any) => setTimer(t?.item_id ? t : null);
+    const apply = (t: any) => {
+      if (!t?.item_id) {
+        setTimer(null);
+        return;
+      }
+      setTimer(enrichExternalSyncTimer(t));
+    };
 
     const boot = async () => {
       if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
@@ -769,11 +780,21 @@ const OperatorCueDisplayPage: React.FC = () => {
       findTopPreshowCue(schedule, undefined, current?.day ?? null)?.id ?? null,
   });
 
-  const statusTextCls = running ? 'text-green-400' : loaded ? 'text-yellow-400' : 'text-slate-300';
-  const statusLine = running
-    ? `RUNNING - ${cueLabel(current, activeId ?? undefined)}`
-    : loaded
-      ? `LOADED - ${cueLabel(current, activeId ?? undefined)}`
+  const statusTextCls = externalSyncStatusClass({
+    running,
+    loaded,
+    timer,
+    idleClass: 'text-slate-300',
+  });
+  const statusLine =
+    running || loaded
+      ? formatExternalSyncStatusLine({
+          running,
+          loaded,
+          timer,
+          cueLabel: cueLabel(current, activeId ?? undefined),
+          idleLabel: 'No CUE Selected',
+        })
       : 'No CUE Selected';
   const currentBg = running ? 'bg-green-950' : loaded ? 'bg-blue-950' : 'bg-slate-900';
 

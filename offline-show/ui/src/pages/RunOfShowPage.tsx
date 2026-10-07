@@ -1045,7 +1045,7 @@ const RunOfShowPage: React.FC = () => {
       user_id?: string;
       user_name?: string;
     } | null | undefined
-  ): 'Mitti' | 'SINOR AV-Playout' | 'Resolume' => {
+  ): 'Mitti' | 'AV-Playout' | 'Resolume' => {
     if (
       timer?.time_source === 'avplayout' ||
       timer?.avplayout_state === 'armed' ||
@@ -1053,7 +1053,7 @@ const RunOfShowPage: React.FC = () => {
       timer?.user_id === 'companion-avplayout' ||
       timer?.user_name === 'AV-Playout Sync'
     ) {
-      return 'SINOR AV-Playout';
+      return 'AV-Playout';
     }
     if (
       timer?.time_source === 'mitti' ||
@@ -11715,7 +11715,7 @@ const RunOfShowPage: React.FC = () => {
                         ? `RUNNING · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
                         : 'RUNNING'
                       : isResolumeArmed(hybridTimerData.activeTimer)
-                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()} (armed)`
+                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
                         : 'LOADED'
                     } - {(() => {
                       // Try to find the schedule item with proper type conversion
@@ -11786,7 +11786,7 @@ const RunOfShowPage: React.FC = () => {
                           const line = isSubCueResolumeRunning(subCueData)
                             ? `RUNNING · ${syncLabel} - ${formattedCue} - ${time}`
                             : subCueData && isResolumeArmed(subCueData)
-                              ? `LOADED · ${syncLabel} (armed) - ${formattedCue} - ${time}`
+                              ? `LOADED · ${syncLabel} - ${formattedCue} - ${time}`
                               : `${formattedCue} - ${time}`;
 
                           return (
