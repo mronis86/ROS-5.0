@@ -83,7 +83,7 @@ module.exports = function (self) {
 				},
 			],
 			callback: async (event) => {
-				await self.runArmMittiSync(event.options, { requireSubCue: false })
+				await self.runArmMittiSync(event.options, { requireSubCue: false, userInitiated: true })
 			},
 		},
 		arm_mitti_sub_sync: {
@@ -123,7 +123,7 @@ module.exports = function (self) {
 				},
 			],
 			callback: async (event) => {
-				await self.runArmMittiSync(event.options, { requireSubCue: true })
+				await self.runArmMittiSync(event.options, { requireSubCue: true, userInitiated: true })
 			},
 		},
 		mark_mitti_next_cue: {

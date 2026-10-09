@@ -426,6 +426,17 @@ function clearAllMittiState(eventId) {
   clearMittiPending(eventId);
 }
 
+/** After Disarm/End, late OSC aligns must not reload the cue the operator just cleared. */
+const mittiAlignBlockedByEvent = new Map();
+
+function blockMittiAlign(eventId) {
+  if (eventId) mittiAlignBlockedByEvent.set(eventId, true);
+}
+
+function allowMittiAlign(eventId) {
+  if (eventId) mittiAlignBlockedByEvent.delete(eventId);
+}
+
 /** Disarm must drop the companion user or the rundown keeps labeling the cue as synced. */
 async function releaseSyncIdentityAndBroadcast(eventId, userId, userName) {
   await pool.query(
@@ -9112,6 +9123,7 @@ app.post('/api/timers/mitti-arm', async (req, res) => {
     clearAllResolumeState(event_id);
     clearAllAvPlayoutState(event_id);
     clearMittiTimeSource(event_id);
+    allowMittiAlign(event_id);
     mittiPendingByEvent.set(event_id, { item_id: parseInt(item_id, 10), is_sub_cue: isSubCue });
     if (isSubCue) {
       const subResult = await pool.query(
@@ -9146,6 +9158,7 @@ app.post('/api/timers/mitti-disarm', async (req, res) => {
     const synced = mittiTimeSourceByEvent.get(event_id);
     const pending = mittiPendingByEvent.get(event_id);
     const itemId = synced?.item_id ?? pending?.item_id;
+    blockMittiAlign(event_id);
     clearAllMittiState(event_id);
     await stopSyncedCueAndBroadcast(event_id, 'companion-mitti', 'Mitti Sync', itemId);
     res.json({ success: true, event_id });
@@ -9176,6 +9189,9 @@ app.post('/api/timers/mitti-sync-align', async (req, res) => {
     }
     if (remaining_seconds == null || remaining_seconds === '') {
       return res.status(400).json({ error: 'remaining_seconds is required' });
+    }
+    if (mittiAlignBlockedByEvent.get(event_id) === true) {
+      return res.json({ success: true, ignored: true, reason: 'disarmed', event_id });
     }
 
     const isSubCue = !!is_sub_cue;
@@ -9340,6 +9356,7 @@ app.post('/api/timers/mitti-end', async (req, res) => {
     const synced = mittiTimeSourceByEvent.get(event_id);
     const pending = mittiPendingByEvent.get(event_id);
     const wasSubCue = !!(synced?.is_sub_cue ?? pending?.is_sub_cue);
+    blockMittiAlign(event_id);
     clearAllMittiState(event_id);
     console.log(
       `🎬 Mitti end - cleared Mitti state for event: ${event_id}${wasSubCue ? ' [sub-cue]' : ''}`

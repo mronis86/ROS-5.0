@@ -622,7 +622,12 @@ class RunOfShowMittiInstance extends InstanceBase {
 		return `CUE ${s}`
 	}
 
-	async runArmMittiSync(options, { requireSubCue }) {
+	async runArmMittiSync(options, { requireSubCue, userInitiated = false } = {}) {
+		if (userInitiated) this.suppressSyncWhilePlaying = false
+		if (this.suppressSyncWhilePlaying) {
+			this.log('info', 'Mitti sync stayed off — Disarm holds until this Mitti play stops')
+			return
+		}
 		const eventId = this.config?.eventId
 		const itemId = options.itemId
 		const cueNumber = Math.max(1, parseInt(options.cueNumber, 10) || 1)
@@ -671,6 +676,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 			} else {
 				await this.loadCueForMitti(eventId, loadItemId, { forSubCueParent: !!requireSubCue })
 			}
+			if (this.suppressSyncWhilePlaying && !userInitiated) return
 			this.setMittiArm({
 				itemId: String(armTrackItemId),
 				cueNumber,
@@ -870,10 +876,13 @@ class RunOfShowMittiInstance extends InstanceBase {
 	}
 
 	async clearMittiArm() {
+		this.alignGeneration = (this.alignGeneration || 0) + 1
+		this.suppressSyncWhilePlaying = this.mittiTransportPlaying === true
 		this.stopPeriodicAlign()
 		const eventId = this.config?.eventId
 		this.mittiArm = null
 		this.alignInFlight = false
+		this.deferArmForWatch = false
 		if (eventId) {
 			try {
 				await this.apiPost('/api/timers/mitti-disarm', { event_id: eventId })
@@ -920,6 +929,8 @@ class RunOfShowMittiInstance extends InstanceBase {
 			this.log('info', `OSC rx #${this.oscGlobalMsgCount}: ${address} = ${JSON.stringify(value)}`)
 		}
 		this.noteMittiTransport(address, value, fps)
+		// Disarm holds through the play that was already running. OSC must not put that cue back.
+		if (this.suppressSyncWhilePlaying) return
 		// A checked next-cue row is being loaded. Do not keep syncing the previously loaded cue.
 		if (this.deferArmForWatch) return
 
@@ -1089,8 +1100,11 @@ class RunOfShowMittiInstance extends InstanceBase {
 				String(value).toLowerCase() === 'true'
 			const rising = playing && this.mittiTransportPlaying !== true
 			this.mittiTransportPlaying = playing
-			if (!playing) this.mittiElapsedStall = true
-			if (rising) this.maybeConsumeWatchColumn('play')
+			if (!playing) {
+				this.mittiElapsedStall = true
+				this.suppressSyncWhilePlaying = false
+			}
+			if (rising && !this.suppressSyncWhilePlaying) this.maybeConsumeWatchColumn('play')
 			return
 		}
 		if (!addressEndsWith(address, FEEDBACK.CUE_TIME_ELAPSED)) return
@@ -1102,14 +1116,14 @@ class RunOfShowMittiInstance extends InstanceBase {
 		} else if (this.mittiElapsedStall && prev != null && elapsed > prev + 0.04) {
 			this.mittiElapsedStall = false
 			this.mittiTransportPlaying = true
-			this.maybeConsumeWatchColumn('elapsed')
+			if (!this.suppressSyncWhilePlaying) this.maybeConsumeWatchColumn('elapsed')
 		}
 		this.mittiTransportElapsed = elapsed
 	}
 
 	maybeConsumeWatchColumn(reason) {
 		if (this.config?.followWatchColumn === false) return
-		if (this.watchConsumeInFlight) return
+		if (this.suppressSyncWhilePlaying || this.watchConsumeInFlight) return
 		this.watchConsumeInFlight = true
 		// Hold the old loaded cue until we know whether a row is checked.
 		this.deferArmForWatch = true
@@ -1129,6 +1143,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 	/** Next Mitti play loads the checked rundown row, even if another cue is already loaded. */
 	async consumeMittiWatchColumn(reason) {
 		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (this.suppressSyncWhilePlaying) return
 		if (!eventId) {
 			this.resumeLoadedCueAfterWatch(reason)
 			this.watchConsumeInFlight = false
@@ -1136,6 +1151,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 		}
 		try {
 			await this.fetchData()
+			if (this.suppressSyncWhilePlaying) return
 			const item = (this.scheduleItems || []).find(
 				(row) => row?.mittiWatch === true || row?.mitti_watch === true
 			)
@@ -1366,7 +1382,8 @@ class RunOfShowMittiInstance extends InstanceBase {
 	}
 
 	async triggerMittiAlign(durationSeconds, remainingSeconds, alignAtMs, isFollowUp = false, reason = 'align') {
-		if (this.alignInFlight || !this.mittiArm) return
+		const generation = this.alignGeneration || 0
+		if (this.suppressSyncWhilePlaying || this.alignInFlight || !this.mittiArm) return
 		this.alignInFlight = true
 		const eventId = this.config?.eventId
 		const itemId = this.mittiArm.itemId
@@ -1386,6 +1403,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 				isSubCue,
 				rowNumber: item?.rowNumber ?? item?.row_number ?? 0,
 			})
+			if (generation !== (this.alignGeneration || 0) || this.suppressSyncWhilePlaying || !this.mittiArm) return
 			this.recordSyncSuccess(reason, remainingSeconds, durationSeconds)
 			const drift = this.getEstimatedDriftSeconds()
 			this.log(
