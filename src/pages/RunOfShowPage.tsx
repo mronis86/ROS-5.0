@@ -9211,6 +9211,35 @@ const RunOfShowPage: React.FC = () => {
       onTimerUpdated: (data: any) => {
         console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
         if (data && data.event_id === event?.id) {
+          const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
+          const isCleared = data.timer_state === 'stopped' || data.is_active === false;
+          if (isCleared) {
+            setHybridTimerData((prev) => (prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }));
+            setActiveItemId((prev) => (prev === numericItemId ? null : prev));
+            setLastLoadedCueId((prev) => (prev === numericItemId ? null : prev));
+            if (numericItemId != null) {
+              setTimerProgress((prev) => {
+                if (!(numericItemId in prev)) return prev;
+                const next = { ...prev };
+                delete next[numericItemId];
+                return next;
+              });
+              setActiveTimers((prev) => {
+                if (!(numericItemId in prev)) return prev;
+                const next = { ...prev };
+                delete next[numericItemId];
+                return next;
+              });
+              setLoadedItems((prev) => {
+                if (!(numericItemId in prev)) return prev;
+                const next = { ...prev };
+                delete next[numericItemId];
+                return next;
+              });
+            }
+            console.log('✅ RunOfShow: Timer cleared from timerUpdated:', numericItemId);
+            return;
+          }
           // Hybrid state (row colors / load-run-stop): skip elapsed-only ticks.
           // Countdown uses timerProgress below so it stays live.
           setHybridTimerData(prev => {
@@ -9301,11 +9330,21 @@ const RunOfShowPage: React.FC = () => {
       },
       onTimerStopped: (data: any) => {
         if (data && data.event_id === event?.id) {
-          // Clear hybrid timer data when stopped (ClockPage style)
+          const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           setHybridTimerData(prev => ({
             ...prev,
             activeTimer: null
           }));
+          setActiveItemId((prev) => (numericItemId != null && prev === numericItemId ? null : prev));
+          setLastLoadedCueId((prev) => (numericItemId != null && prev === numericItemId ? null : prev));
+          if (numericItemId != null) {
+            setTimerProgress((prev) => {
+              if (!(numericItemId in prev)) return prev;
+              const next = { ...prev };
+              delete next[numericItemId];
+              return next;
+            });
+          }
           console.log('✅ RunOfShow: Timer cleared via WebSocket');
         }
       },

@@ -483,7 +483,18 @@ async function stopSyncedCueAndBroadcast(eventId, userId, userName, itemId) {
      RETURNING *`,
     params
   );
-  if (active.rows[0]) broadcastTimerUpdated(eventId, active.rows[0]);
+  if (active.rows[0]) {
+    broadcastTimerUpdated(eventId, active.rows[0]);
+    broadcastUpdate(eventId, 'timerStopped', {
+      event_id: eventId,
+      item_id: active.rows[0].item_id,
+      timer_state: 'stopped',
+    });
+  } else {
+    console.warn(
+      `Disarm found no Mitti/AV timer to clear for ${eventId} (user ${userId}, item ${itemId ?? 'none'})`
+    );
+  }
   if (sub.rows.length > 0) {
     broadcastUpdate(eventId, 'subCueTimerStopped', {
       event_id: eventId,
