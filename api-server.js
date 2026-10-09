@@ -452,6 +452,46 @@ async function releaseSyncIdentityAndBroadcast(eventId, userId, userName) {
   if (subResult.rows[0]) broadcastSubCueTimerUpdated(eventId, subResult.rows[0]);
 }
 
+/** Disarm unloads the synced cue so the loaded line and countdown clear. */
+async function stopSyncedCueAndBroadcast(eventId, userId, userName, itemId) {
+  const itemNum = parseInt(itemId, 10);
+  const hasItem = Number.isFinite(itemNum);
+  const params = hasItem ? [eventId, userId, userName, itemNum] : [eventId, userId, userName];
+  const match = hasItem
+    ? '(user_id = $2 OR user_name = $3 OR item_id = $4)'
+    : '(user_id = $2 OR user_name = $3)';
+  const active = await pool.query(
+    `UPDATE active_timers
+     SET is_running = false,
+         is_active = false,
+         timer_state = 'stopped',
+         user_id = 'operator',
+         user_name = 'Operator',
+         updated_at = NOW()
+     WHERE event_id = $1 AND ${match}
+     RETURNING *`,
+    params
+  );
+  const sub = await pool.query(
+    `UPDATE sub_cue_timers
+     SET is_running = false,
+         is_active = false,
+         user_id = 'operator',
+         user_name = 'Operator',
+         updated_at = NOW()
+     WHERE event_id = $1 AND ${match}
+     RETURNING *`,
+    params
+  );
+  if (active.rows[0]) broadcastTimerUpdated(eventId, active.rows[0]);
+  if (sub.rows.length > 0) {
+    broadcastUpdate(eventId, 'subCueTimerStopped', {
+      event_id: eventId,
+      stopped_count: sub.rows.length,
+    });
+  }
+}
+
 function clearAvPlayoutTimeSource(eventId) {
   avplayoutTimeSourceByEvent.delete(eventId);
 }
@@ -9086,8 +9126,11 @@ app.post('/api/timers/mitti-disarm', async (req, res) => {
   try {
     const { event_id } = req.body;
     if (!event_id) return res.status(400).json({ error: 'event_id is required' });
+    const synced = mittiTimeSourceByEvent.get(event_id);
+    const pending = mittiPendingByEvent.get(event_id);
+    const itemId = synced?.item_id ?? pending?.item_id;
     clearAllMittiState(event_id);
-    await releaseSyncIdentityAndBroadcast(event_id, 'companion-mitti', 'Mitti Sync');
+    await stopSyncedCueAndBroadcast(event_id, 'companion-mitti', 'Mitti Sync', itemId);
     res.json({ success: true, event_id });
   } catch (error) {
     console.error('Error in mitti-disarm:', error);
@@ -9352,8 +9395,11 @@ app.post('/api/timers/avplayout-disarm', async (req, res) => {
   try {
     const { event_id } = req.body;
     if (!event_id) return res.status(400).json({ error: 'event_id is required' });
+    const synced = avplayoutTimeSourceByEvent.get(event_id);
+    const pending = avplayoutPendingByEvent.get(event_id);
+    const itemId = synced?.item_id ?? pending?.item_id;
     clearAllAvPlayoutState(event_id);
-    await releaseSyncIdentityAndBroadcast(event_id, 'companion-avplayout', 'AV-Playout Sync');
+    await stopSyncedCueAndBroadcast(event_id, 'companion-avplayout', 'AV-Playout Sync', itemId);
     res.json({ success: true, event_id });
   } catch (error) {
     console.error('Error in avplayout-disarm:', error);
