@@ -1879,13 +1879,9 @@ const RunOfShowPage: React.FC = () => {
   }, [stickyStartColumn]);
   const startPinnedBesideCue = stickyStartColumn && visibleColumns.start;
   /** Columns passed into the scrollable ScheduleRow (Start omitted when pinned). */
-  const scrollVisibleColumns = useMemo(
-    () => ({
-      ...(startPinnedBesideCue ? { ...visibleColumns, start: false } : visibleColumns),
-      mittiWatch: mittiWatchColumnEnabled,
-      avWatch: avWatchColumnEnabled,
-    }),
-    [startPinnedBesideCue, visibleColumns, mittiWatchColumnEnabled, avWatchColumnEnabled]
+  const scrollVisibleColumnsBase = useMemo(
+    () => (startPinnedBesideCue ? { ...visibleColumns, start: false } : visibleColumns),
+    [startPinnedBesideCue, visibleColumns]
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
@@ -2737,6 +2733,14 @@ const RunOfShowPage: React.FC = () => {
   const [mittiWatchColumnEnabled, setMittiWatchColumnEnabled] = useState(false);
   /** Per event. Hidden until Operator Actions turns the AV column on. */
   const [avWatchColumnEnabled, setAvWatchColumnEnabled] = useState(false);
+  const scrollVisibleColumns = useMemo(
+    () => ({
+      ...scrollVisibleColumnsBase,
+      mittiWatch: mittiWatchColumnEnabled,
+      avWatch: avWatchColumnEnabled,
+    }),
+    [scrollVisibleColumnsBase, mittiWatchColumnEnabled, avWatchColumnEnabled]
+  );
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
   const [timeDifference, setTimeDifference] = useState(0);
