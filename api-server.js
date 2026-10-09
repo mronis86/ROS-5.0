@@ -9284,12 +9284,7 @@ app.post('/api/timers/mitti-end', async (req, res) => {
     console.log(
       `🎬 Mitti end - cleared Mitti state for event: ${event_id}${wasSubCue ? ' [sub-cue]' : ''}`
     );
-
-    const timerResult = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [event_id]
-    );
-    if (timerResult.rows[0]) broadcastTimerUpdated(event_id, timerResult.rows[0]);
+    await releaseSyncIdentityAndBroadcast(event_id, 'companion-mitti', 'Mitti Sync');
 
     if (wasSubCue) {
       const stopResult = await pool.query(
@@ -9558,12 +9553,7 @@ app.post('/api/timers/avplayout-end', async (req, res) => {
     console.log(
       `🎬 AV-Playout end - cleared state for event: ${event_id}${wasSubCue ? ' [sub-cue]' : ''}`
     );
-
-    const timerResult = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [event_id]
-    );
-    if (timerResult.rows[0]) broadcastTimerUpdated(event_id, timerResult.rows[0]);
+    await releaseSyncIdentityAndBroadcast(event_id, 'companion-avplayout', 'AV-Playout Sync');
 
     if (wasSubCue) {
       const stopResult = await pool.query(

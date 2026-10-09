@@ -1203,7 +1203,11 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 			await this.stopAvPlayback({ reason: 'clear-sync' })
 		}
 		if (eventId) {
-			this.apiPost('/api/timers/avplayout-disarm', { event_id: eventId }).catch(() => {})
+			try {
+				await this.apiPost('/api/timers/avplayout-disarm', { event_id: eventId })
+			} catch (err) {
+				this.log('error', `AV-Playout disarm failed: ${err.message}`)
+			}
 		}
 		this.updateVariableValues()
 		this.checkFeedbacks('avplayout_armed', 'avplayout_aligned')
