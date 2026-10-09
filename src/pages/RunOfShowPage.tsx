@@ -317,6 +317,50 @@ interface CustomColumn {
   id: string;
 }
 
+/** Stable compare so a cell edit does not look like every other row changed. */
+function scheduleItemSignature(item: any): string {
+  if (!item) return '';
+  const asText = (value: unknown) => (value == null || value === false ? '' : String(value));
+  const custom = item.customFields && typeof item.customFields === 'object' ? item.customFields : {};
+  const customSorted = Object.keys(custom)
+    .sort()
+    .map((key) => `${key}=${custom[key] ?? ''}`)
+    .join('|');
+  return [
+    asText(item.id),
+    asText(item.day),
+    asText(item.programType),
+    asText(item.shotType),
+    item.shotTypeManualOverride ? '1' : '',
+    asText(item.segmentName),
+    asText(item.durationHours),
+    asText(item.durationMinutes),
+    asText(item.durationSeconds),
+    asText(item.notes),
+    asText(item.assets),
+    asText(item.speakers),
+    asText(item.speakersText),
+    item.hasPPT ? '1' : '',
+    item.hasQA ? '1' : '',
+    item.needsRecording ? '1' : '',
+    item.mittiWatch ? '1' : '',
+    item.avWatch ? '1' : '',
+    asText(item.recordingSource),
+    asText(item.otherRoom),
+    asText(item.timerId),
+    customSorted,
+    item.isPublic ? '1' : '',
+    item.isIndented ? '1' : '',
+    item.isTimedMarker ? '1' : '',
+    asText(item.markerTimeMode),
+    asText(item.markerOffsetSeconds),
+    asText(item.markerAbsoluteSeconds),
+    asText(item.timerDisplay),
+    item.isStartCue ? '1' : '',
+    JSON.stringify(item.voCues || []),
+  ].join('\u001f');
+}
+
 type SessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
 
 function resolveSessionRole(
@@ -2789,6 +2833,12 @@ const RunOfShowPage: React.FC = () => {
   const originalDurationsRef = useRef(originalDurations);
   const eventTimezoneRef = useRef(eventTimezone);
   const flushSaveToAPIRef = useRef<(() => Promise<void>) | null>(null);
+  /** Remote schedule/settings applies must not autosave the whole rundown. */
+  const applyingRemoteRunOfShowRef = useRef(false);
+  /** One automatic retry after a version conflict so a finished row is not dropped. */
+  const saveRetryRef = useRef(false);
+  /** Settings/column edits must still save when no cue row changed. */
+  const settingsSaveRequestedRef = useRef(false);
 
   useEffect(() => {
     rowLocksRef.current = rowLocks;
@@ -3135,7 +3185,12 @@ const RunOfShowPage: React.FC = () => {
    * 2) blur so focus does not block the upcoming sync
    * 3) resume the normal sync countdown
    */
-  const finishEditingSession = useCallback(() => {
+  const finishEditingSession = useCallback(async () => {
+    try {
+      if (flushSaveToAPIRef.current) await flushSaveToAPIRef.current();
+    } catch (err) {
+      console.warn('Could not publish the row before unlocking', err);
+    }
     const rowId = localEditingRowIdRef.current;
     if (rowId != null && modalLockRowIdRef.current !== rowId) {
       releaseRowEditLock(rowId);
@@ -8419,6 +8474,30 @@ const RunOfShowPage: React.FC = () => {
       if (allowEmpty) allowEmptyScheduleOnceRef.current = false;
 
       const originals = originalDurationsRef.current || {};
+      const localIds = scheduleWithDurationSeconds.map((item) => Number(item.id));
+      const syncedIds = lastSynced.map((item: any) => Number(item.id));
+      const structureChange =
+        allowEmpty ||
+        lastSynced.length === 0 ||
+        localIds.length !== syncedIds.length ||
+        localIds.some((id, index) => id !== syncedIds[index]);
+      const syncedById = new Map(lastSynced.map((item: any) => [Number(item.id), item]));
+      const editedItemIds = structureChange
+        ? []
+        : scheduleWithDurationSeconds
+            .filter((item) => {
+              const prev = syncedById.get(Number(item.id));
+              if (!prev) return true;
+              return scheduleItemSignature(prev) !== scheduleItemSignature(item);
+            })
+            .map((item) => Number(item.id));
+      const rowPatch = !structureChange;
+      const settingsSave = settingsSaveRequestedRef.current;
+      settingsSaveRequestedRef.current = false;
+      if (rowPatch && editedItemIds.length === 0 && !settingsSave) {
+        console.log('⏭️ Schedule save skipped — no finished row changes to publish');
+        return;
+      }
       const dataToSave = {
         event_id: event.id,
         event_name: event.name,
@@ -8444,6 +8523,13 @@ const RunOfShowPage: React.FC = () => {
         },
         version: scheduleVersionRef.current,
         ...(allowEmpty ? { allow_empty_schedule: true } : {}),
+        ...(rowPatch
+          ? {
+              schedule_row_patch: true,
+              edited_item_ids: editedItemIds,
+              ...(settingsSave ? { include_settings: true } : {}),
+            }
+          : {}),
       };
 
       console.log('🔄 Saving schedule', {
@@ -8452,6 +8538,8 @@ const RunOfShowPage: React.FC = () => {
         version: scheduleVersionRef.current,
         preservedLockCount,
         allowEmpty,
+        rowPatch,
+        editedItemIds,
       });
 
       const result = await DatabaseService.saveRunOfShowData(dataToSave, {
@@ -8487,20 +8575,58 @@ const RunOfShowPage: React.FC = () => {
           }
         }
         if (Array.isArray(items)) {
+          const localItems = scheduleRef.current || [];
+          const localIdsNow = localItems.map((item: any) => Number(item.id));
+          const serverIds = items.map((item: any) => Number(item.id));
+          const structureNow =
+            localIdsNow.length !== serverIds.length ||
+            localIdsNow.some((id: number, index: number) => id !== serverIds[index]);
+          const syncedBefore = new Map(
+            (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+          );
+          const editedNow = structureNow
+            ? []
+            : localItems
+                .filter((item: any) => {
+                  const prev = syncedBefore.get(Number(item.id));
+                  if (!prev) return false;
+                  return scheduleItemSignature(prev) !== scheduleItemSignature(item);
+                })
+                .map((item: any) => Number(item.id));
           lastSyncedScheduleRef.current = items;
-          // Adopt server version so the next save can succeed, but keep rows we're editing
           if (current.version != null) {
             scheduleVersionRef.current = Number(current.version);
           }
-          const merged = mergeSchedulePreservingLocalEdits(
-            normalizeScheduleVoCues(items, scheduleRef.current, false),
-            scheduleRef.current
-          );
+          const serverById = new Map(items.map((item: any) => [Number(item.id), item]));
+          const localById = new Map(localItems.map((item: any) => [Number(item.id), item]));
+          const merged = !structureNow
+            ? items.map((item: any) => {
+                const id = Number(item.id);
+                if (editedNow.includes(id) && localById.has(id)) return localById.get(id);
+                return serverById.get(id) || item;
+              })
+            : mergeSchedulePreservingLocalEdits(
+                normalizeScheduleVoCues(items, localItems, false),
+                localItems
+              );
+          applyingRemoteRunOfShowRef.current = true;
+          setTimeout(() => {
+            applyingRemoteRunOfShowRef.current = false;
+          }, 0);
+          scheduleRef.current = merged;
           setSchedule(merged);
           if (Array.isArray(current.custom_columns) && !isUserEditingRef.current) {
             setCustomColumns(current.custom_columns);
           }
           if (current.updated_at) setLastChangeAt(current.updated_at);
+          if (!rejectedEmpty && !structureNow && editedNow.length > 0 && !saveRetryRef.current) {
+            saveRetryRef.current = true;
+            try {
+              await performSaveToAPI();
+            } finally {
+              saveRetryRef.current = false;
+            }
+          }
         } else if (!isUserEditingRef.current) {
           rememberSyncedSchedule(current);
         }
@@ -9041,6 +9167,10 @@ const RunOfShowPage: React.FC = () => {
         
         // Add small delay to ensure WebSocket updates are processed consistently
         setTimeout(() => {
+          applyingRemoteRunOfShowRef.current = true;
+          setTimeout(() => {
+            applyingRemoteRunOfShowRef.current = false;
+          }, 0);
           // Update schedule items (parse if string, e.g. from timer duration update from Companion)
           let scheduleItems = data.schedule_items;
           if (typeof scheduleItems === 'string') {
@@ -10772,7 +10902,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('📝 Schedule saved and event dispatched for event:', event.id);
       
       // Auto-save to API only if this is a user-initiated change
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated schedule change detected - auto-saving');
         saveToAPI();
       } else {
@@ -10814,8 +10944,9 @@ const RunOfShowPage: React.FC = () => {
     if (event?.id) {
       localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(customColumns));
       // Auto-save to API only if this is a user-initiated change
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated custom columns change detected - auto-saving');
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Custom columns change from API/sync - skipping auto-save');
@@ -10827,8 +10958,9 @@ const RunOfShowPage: React.FC = () => {
     if (event?.id) {
       localStorage.setItem(`eventName_${event.id}`, eventName);
       // Auto-save to API when event name changes (only if user-initiated)
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated event name change detected - auto-saving');
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Event name change from API/sync - skipping auto-save');
@@ -10846,8 +10978,9 @@ const RunOfShowPage: React.FC = () => {
       });
       localStorage.setItem(`masterStartTime_${event.id}`, masterStartTime);
       // Auto-save to API when master start time changes (only if user-initiated)
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated master start time change detected - auto-saving to API with value:', masterStartTime);
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Master start time change from API/sync - skipping auto-save (value:', masterStartTime, ')');
@@ -10864,8 +10997,9 @@ const RunOfShowPage: React.FC = () => {
       });
       localStorage.setItem(`dayStartTimes_${event.id}`, JSON.stringify(dayStartTimes));
       // Auto-save to API when day start times change (only if user-initiated)
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated day start times change detected - auto-saving to API');
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Day start times change from API/sync - skipping auto-save');

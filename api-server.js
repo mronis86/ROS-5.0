@@ -5552,6 +5552,12 @@ app.post('/api/run-of-show-data', async (req, res) => {
 
     // Preserve rows locked by someone other than this saver (server-side safety net)
     let scheduleToSave = Array.isArray(schedule_items) ? schedule_items : [];
+    const scheduleRowPatch = req.body?.schedule_row_patch === true;
+    const editedItemIds = new Set(
+      (Array.isArray(req.body?.edited_item_ids) ? req.body.edited_item_ids : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id))
+    );
     if (currentRow) {
       let existingItems = currentRow.schedule_items;
       if (typeof existingItems === 'string') {
@@ -5562,6 +5568,32 @@ app.post('/api/run-of-show-data', async (req, res) => {
         }
       }
       if (!Array.isArray(existingItems)) existingItems = [];
+
+      // Cell/modal edits write only the rows this browser changed. Other rows stay as stored,
+      // even if this client still has an older copy because someone else is editing.
+      if (scheduleRowPatch) {
+        const incomingById = new Map(scheduleToSave.map((item) => [Number(item.id), item]));
+        const locks = typeof locksByEvent !== 'undefined' ? locksByEvent.get(String(event_id)) : null;
+        const saverId = last_modified_by ? String(last_modified_by) : '';
+        const patched = existingItems.map((item) => {
+          const id = Number(item.id);
+          if (!editedItemIds.has(id)) return item;
+          const lock = locks?.get(String(id));
+          if (lock && saverId && lock.userId !== saverId) return item;
+          return incomingById.get(id) || item;
+        });
+        const existingIds = new Set(patched.map((item) => Number(item.id)));
+        for (const id of editedItemIds) {
+          if (existingIds.has(id) || !incomingById.has(id)) continue;
+          const lock = locks?.get(String(id));
+          if (lock && saverId && lock.userId !== saverId) continue;
+          patched.push(incomingById.get(id));
+        }
+        scheduleToSave = patched;
+        console.log(
+          `🔒 Row patch for event ${event_id}: ${editedItemIds.size} edited row(s), schedule stays ${scheduleToSave.length} row(s)`
+        );
+      }
 
       // Guard: refuse accidental wipe of a non-empty schedule with []
       // Intentional clears must send allow_empty_schedule: true (e.g. Excel Delete All).
@@ -5629,6 +5661,12 @@ app.post('/api/run-of-show-data', async (req, res) => {
       });
     }
 
+    let columnsToSave = custom_columns;
+    if (scheduleRowPatch && req.body?.include_settings !== true && currentRow) {
+      settingsToSave = currentRow.settings || {};
+      columnsToSave = currentRow.custom_columns;
+    }
+
     let result;
     if (!currentRow) {
       result = await pool.query(
@@ -5642,7 +5680,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
           event_name,
           resolvedEventDate,
           JSON.stringify(scheduleToSave),
-          JSON.stringify(custom_columns),
+          JSON.stringify(columnsToSave),
           JSON.stringify(settingsToSave),
           last_modified_by,
           last_modified_by_name,
@@ -5674,7 +5712,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
           event_name,
           resolvedEventDate,
           JSON.stringify(scheduleToSave),
-          JSON.stringify(custom_columns),
+          JSON.stringify(columnsToSave),
           JSON.stringify(settingsToSave),
           last_modified_by,
           last_modified_by_name,

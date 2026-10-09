@@ -366,6 +366,9 @@ export class DatabaseService {
     data: Omit<RunOfShowData, 'id' | 'created_at' | 'updated_at' | 'last_change_at' | 'last_modified_by' | 'last_modified_by_name' | 'last_modified_by_role'> & {
       version?: number | null;
       allow_empty_schedule?: boolean;
+      schedule_row_patch?: boolean;
+      edited_item_ids?: number[];
+      include_settings?: boolean;
     },
     userInfo?: { userId: string; userName: string; userRole: string }
   ): Promise<RunOfShowData | null> {
