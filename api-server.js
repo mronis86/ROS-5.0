@@ -7231,7 +7231,11 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
           THEN EXTRACT(EPOCH FROM (NOW() - started_at))::integer
           ELSE COALESCE(elapsed_seconds, 0)
         END AS elapsed_seconds
-       FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1`,
+       FROM active_timers
+       WHERE event_id = $1
+         AND is_active IS NOT FALSE
+         AND COALESCE(timer_state, '') <> 'stopped'
+       ORDER BY updated_at DESC LIMIT 1`,
       [eventId]
     );
     const rows = result.rows.map((row) =>
@@ -8768,6 +8772,8 @@ app.post('/api/timers/reset', async (req, res) => {
     
     console.log(`🔄 OSC: Resetting timer - Event: ${event_id}`);
     clearAllResolumeState(event_id);
+    clearAllMittiState(event_id);
+    clearAllAvPlayoutState(event_id);
     
     // Clear all timer tables (like old Supabase reset did)
     // DO NOT touch run_of_show_data table

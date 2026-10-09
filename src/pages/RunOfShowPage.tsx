@@ -7599,6 +7599,7 @@ const RunOfShowPage: React.FC = () => {
     setStoppedItems(new Set());
     setLoadedCueDependents(new Set()); // Clear dependent row highlighting
     setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
+    setHybridTimerData({ activeTimer: null });
     setOvertimeMinutes({}); // Clear all overtime indicators
     setShowStartOvertime(0); // Clear show start overtime
     // Note: Do NOT clear startCueId - the star is just a marker, not overtime data

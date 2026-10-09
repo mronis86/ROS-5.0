@@ -1244,7 +1244,9 @@ export class DatabaseService {
         return null;
       }
       const timers = await response.json();
-      return timers.length > 0 ? timers[0] : null;
+      const timer = Array.isArray(timers) ? timers[0] : null;
+      if (!timer || timer.is_active === false || timer.timer_state === 'stopped') return null;
+      return timer;
     } catch (error) {
       console.error('Error getting active timer:', error);
       return null;
@@ -1559,8 +1561,8 @@ export class DatabaseService {
       // Use the existing stop-all endpoint instead of DELETE
       console.log('🔄 Clearing all active timers for event via API:', eventId);
       
-      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/active-timers/stop-all`, {
-        method: 'PUT',
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/timers/reset`, {
+        method: 'POST',
         headers: apiJsonHeaders(),
         body: JSON.stringify({
           event_id: eventId
