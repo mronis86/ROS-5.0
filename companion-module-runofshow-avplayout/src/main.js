@@ -852,6 +852,20 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		}
 	}
 
+	async clearAvWatchCues() {
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (!eventId) {
+			this.log('warn', 'AV next cue: Event ID is required')
+			return
+		}
+		await this.apiPatch(`/api/run-of-show-data/${eventId}/av-watch`, {
+			clear_all: true,
+			enabled: false,
+		})
+		await this.fetchData()
+		this.log('info', 'Cleared every AV next-cue check')
+	}
+
 	async markAvWatchCue(itemId, enabled) {
 		const eventId = this.normalizeEventId(this.config?.eventId)
 		if (!eventId || !itemId) {

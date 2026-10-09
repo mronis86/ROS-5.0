@@ -4618,11 +4618,13 @@ app.patch('/api/run-of-show-data/:eventId/mitti-watch', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const body = req.body || {};
+    const clearAll = body.clear_all === true || body.clearAll === true;
     const itemId = Number(body.item_id ?? body.itemId ?? body.id);
-    if (!Number.isFinite(itemId)) {
+    if (!clearAll && !Number.isFinite(itemId)) {
       return res.status(400).json({ error: 'item_id is required' });
     }
-    const enabled = body.enabled === true || body.mitti_watch === true || body.mittiWatch === true;
+    const enabled =
+      !clearAll && (body.enabled === true || body.mitti_watch === true || body.mittiWatch === true);
 
     const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
     if (existing.rows.length === 0) {
@@ -4638,9 +4640,10 @@ app.patch('/api/run-of-show-data/:eventId/mitti-watch', async (req, res) => {
     }
     if (!Array.isArray(items)) items = [];
 
-    let found = false;
+    let found = clearAll;
     const nextItems = items.map((item) => {
       const id = Number(item.id);
+      if (clearAll) return { ...item, mittiWatch: false };
       if (enabled) {
         const on = id === itemId;
         if (on) found = true;
@@ -4717,11 +4720,13 @@ app.patch('/api/run-of-show-data/:eventId/av-watch', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const body = req.body || {};
+    const clearAll = body.clear_all === true || body.clearAll === true;
     const itemId = Number(body.item_id ?? body.itemId ?? body.id);
-    if (!Number.isFinite(itemId)) {
+    if (!clearAll && !Number.isFinite(itemId)) {
       return res.status(400).json({ error: 'item_id is required' });
     }
-    const enabled = body.enabled === true || body.av_watch === true || body.avWatch === true;
+    const enabled =
+      !clearAll && (body.enabled === true || body.av_watch === true || body.avWatch === true);
 
     const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
     if (existing.rows.length === 0) {
@@ -4737,9 +4742,10 @@ app.patch('/api/run-of-show-data/:eventId/av-watch', async (req, res) => {
     }
     if (!Array.isArray(items)) items = [];
 
-    let found = false;
+    let found = clearAll;
     const nextItems = items.map((item) => {
       const id = Number(item.id);
+      if (clearAll) return { ...item, avWatch: false };
       if (enabled) {
         const on = id === itemId;
         if (on) found = true;

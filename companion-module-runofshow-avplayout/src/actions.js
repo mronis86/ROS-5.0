@@ -147,18 +147,10 @@ module.exports = function (self) {
 		},
 		clear_av_next_cue: {
 			name: 'Clear AV next cue',
-			options: [
-				{
-					id: 'itemId',
-					type: 'dropdown',
-					label: 'Cue / Row',
-					default: '',
-					choices: [...regularCueChoices, ...subCueChoices.filter((c) => c.id)],
-				},
-			],
-			callback: async (event) => {
+			options: [],
+			callback: async () => {
 				try {
-					await self.markAvWatchCue(event.options?.itemId, false)
+					await self.clearAvWatchCues()
 				} catch (err) {
 					self.log('error', `Clear AV next cue failed: ${err.message}`)
 				}

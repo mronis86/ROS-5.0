@@ -1152,6 +1152,20 @@ class RunOfShowMittiInstance extends InstanceBase {
 		}
 	}
 
+	async clearMittiWatchCues() {
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (!eventId) {
+			this.log('warn', 'Mitti next cue: Event ID is required')
+			return
+		}
+		await this.apiPatch(`/api/run-of-show-data/${eventId}/mitti-watch`, {
+			clear_all: true,
+			enabled: false,
+		})
+		await this.fetchData()
+		this.log('info', 'Cleared every Mitti next-cue check')
+	}
+
 	async markMittiWatchCue(itemId, enabled) {
 		const eventId = this.normalizeEventId(this.config?.eventId)
 		if (!eventId || !itemId) {

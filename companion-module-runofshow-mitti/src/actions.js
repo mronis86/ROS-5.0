@@ -183,18 +183,10 @@ module.exports = function (self) {
 		},
 		clear_mitti_next_cue: {
 			name: 'Clear Mitti next cue',
-			options: [
-				{
-					id: 'itemId',
-					type: 'dropdown',
-					label: 'Cue / Row (any checked row is cleared if this matches)',
-					default: '',
-					choices: [...regularCueChoices, ...subCueChoices.filter((c) => c.id)],
-				},
-			],
-			callback: async (event) => {
+			options: [],
+			callback: async () => {
 				try {
-					await self.markMittiWatchCue(event.options?.itemId, false)
+					await self.clearMittiWatchCues()
 				} catch (err) {
 					self.log('error', `Clear Mitti next cue failed: ${err.message}`)
 				}
