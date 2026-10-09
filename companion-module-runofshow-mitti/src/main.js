@@ -678,9 +678,6 @@ class RunOfShowMittiInstance extends InstanceBase {
 				watchNextPlay,
 			})
 			await this.notifyMittiArm(armTrackItemId, { isSubCue: requireSubCue })
-			if (watchNextPlay) {
-				await this.markMittiWatchCue(armTrackItemId, true)
-			}
 			if (triggerOnArm) {
 				this.sendMittiTrigger({ triggerMode, cueNumber })
 			}
@@ -1186,7 +1183,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 			'info',
 			enabled === false
 				? `Cleared Mitti next cue (${label})`
-				: `Mitti next cue is ${label}. The next Mitti play will load and sync that row.`
+				: `Mitti next cue is ${label}. The loaded cue stays as it is. The next Mitti play will load and sync that row.`
 		)
 	}
 
@@ -1602,35 +1599,6 @@ class RunOfShowMittiInstance extends InstanceBase {
 								options: { itemId: '', cueNumber: 1, triggerOnArm: true, triggerMode: 'cue' },
 							},
 						],
-						up: [],
-					},
-				],
-			},
-			watch_next_play: {
-				type: 'button',
-				category: 'Mitti',
-				name: 'Watch next Mitti play (loaded ROS cue)',
-				style: {
-					text: 'Watch\nNext Play',
-					size: 'auto',
-					color: combineRgb(255, 255, 255),
-					bgcolor: combineRgb(90, 50, 160),
-				},
-				feedbacks: [
-					{
-						feedbackId: 'mitti_armed',
-						options: {},
-						style: { bgcolor: combineRgb(160, 80, 200), color: combineRgb(255, 255, 255) },
-					},
-					{
-						feedbackId: 'mitti_aligned',
-						options: {},
-						style: { bgcolor: combineRgb(0, 140, 60), color: combineRgb(255, 255, 255) },
-					},
-				],
-				steps: [
-					{
-						down: [{ actionId: 'arm_mitti_watch_current', options: {} }],
 						up: [],
 					},
 				],

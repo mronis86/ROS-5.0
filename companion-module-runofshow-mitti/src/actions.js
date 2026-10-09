@@ -126,42 +126,6 @@ module.exports = function (self) {
 				await self.runArmMittiSync(event.options, { requireSubCue: true })
 			},
 		},
-		arm_mitti_watch_next: {
-			name: 'Watch next Mitti play (pick ROS cue)',
-			options: [
-				{
-					id: 'itemId',
-					type: 'dropdown',
-					label: 'Main cue / Row',
-					default: '',
-					choices: regularCueChoices,
-				},
-			],
-			callback: async (event) => {
-				await self.runArmMittiSync(
-					{ ...event.options, triggerOnArm: false, watchNextPlay: true },
-					{ requireSubCue: false }
-				)
-			},
-		},
-		arm_mitti_watch_sub_next: {
-			name: 'Watch next Mitti play (sub-cue)',
-			options: [
-				{
-					id: 'itemId',
-					type: 'dropdown',
-					label: 'Sub-cue / Row',
-					default: '',
-					choices: subCueChoices,
-				},
-			],
-			callback: async (event) => {
-				await self.runArmMittiSync(
-					{ ...event.options, triggerOnArm: false, watchNextPlay: true },
-					{ requireSubCue: true }
-				)
-			},
-		},
 		mark_mitti_next_cue: {
 			name: 'Set Mitti next cue (one row)',
 			options: [
@@ -190,13 +154,6 @@ module.exports = function (self) {
 				} catch (err) {
 					self.log('error', `Clear Mitti next cue failed: ${err.message}`)
 				}
-			},
-		},
-		arm_mitti_watch_current: {
-			name: 'Watch next Mitti play (loaded ROS cue)',
-			options: [],
-			callback: async () => {
-				await self.runArmMittiWatchCurrent()
 			},
 		},
 		disarm_mitti_sync: {

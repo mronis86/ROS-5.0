@@ -97,7 +97,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                   🎞️ Companion Module — Mitti Sync
                 </a>
                 <div className="text-xs text-orange-300 mt-2">
-                  Mitti OSC feedback → ROS timer • Arm+play, or Watch next play (switcher cut) • TRT pull
+                  Mitti OSC feedback → ROS timer • Arm+play fires Mitti • Set next cue waits for the switcher • TRT pull
                 </div>
               </div>
 

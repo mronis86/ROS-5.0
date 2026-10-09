@@ -21,9 +21,8 @@ Separate Companion module: **Mitti cue playback → ROS timer sync**, as an alte
 
 Use when Mitti is already cued and only starts when the switcher cuts it to air. These actions do **not** replace Arm+Play.
 
-- **Watch next Mitti play (pick ROS cue)** — loads that ROS cue, sends no OSC play.
-- **Watch next Mitti play (loaded ROS cue)** — uses the cue already loaded in ROS. No cue dropdown and no Mitti cue number.
-- **Watch next Mitti play (sub-cue)** — same for an indented row.
+- **Set Mitti next cue (one row)** — checks that rundown row only. Does not change the loaded cue. The next Mitti play loads and syncs it.
+- **Arm Mitti sync** — loads the ROS cue and can fire Mitti immediately.
 
 A cued clip can still report time remaining. Watch mode ignores that. The ROS timer stays LOADED until `/mitti/togglePlay` goes to playing or `/mitti/cueTimeElapsed` starts moving. Then it locks like a normal arm.
 
