@@ -2259,7 +2259,10 @@ const RunOfShowPage: React.FC = () => {
       timer.is_active === false ? 0 : 1,
       timer.resolume_state ?? '',
       timer.mitti_state ?? '',
+      timer.avplayout_state ?? '',
       timer.time_source ?? '',
+      timer.user_id ?? '',
+      timer.user_name ?? '',
     ].join('|');
   };
 

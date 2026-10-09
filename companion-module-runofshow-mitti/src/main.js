@@ -875,7 +875,11 @@ class RunOfShowMittiInstance extends InstanceBase {
 		this.mittiArm = null
 		this.alignInFlight = false
 		if (eventId) {
-			this.apiPost('/api/timers/mitti-disarm', { event_id: eventId }).catch(() => {})
+			try {
+				await this.apiPost('/api/timers/mitti-disarm', { event_id: eventId })
+			} catch (err) {
+				this.log('error', `Mitti disarm failed: ${err.message}`)
+			}
 		}
 		this.updateVariableValues()
 		this.checkFeedbacks('mitti_armed', 'mitti_aligned')

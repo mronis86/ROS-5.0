@@ -426,6 +426,32 @@ function clearAllMittiState(eventId) {
   clearMittiPending(eventId);
 }
 
+/** Disarm must drop the companion user or the rundown keeps labeling the cue as synced. */
+async function releaseSyncIdentityAndBroadcast(eventId, userId, userName) {
+  await pool.query(
+    `UPDATE active_timers
+     SET user_id = 'operator', user_name = 'Operator', updated_at = NOW()
+     WHERE event_id = $1 AND (user_id = $2 OR user_name = $3)`,
+    [eventId, userId, userName]
+  );
+  await pool.query(
+    `UPDATE sub_cue_timers
+     SET user_id = 'operator', user_name = 'Operator', updated_at = NOW()
+     WHERE event_id = $1 AND (user_id = $2 OR user_name = $3)`,
+    [eventId, userId, userName]
+  );
+  const timerResult = await pool.query(
+    'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+    [eventId]
+  );
+  if (timerResult.rows[0]) broadcastTimerUpdated(eventId, timerResult.rows[0]);
+  const subResult = await pool.query(
+    'SELECT * FROM sub_cue_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
+    [eventId]
+  );
+  if (subResult.rows[0]) broadcastSubCueTimerUpdated(eventId, subResult.rows[0]);
+}
+
 function clearAvPlayoutTimeSource(eventId) {
   avplayoutTimeSourceByEvent.delete(eventId);
 }
@@ -9055,11 +9081,7 @@ app.post('/api/timers/mitti-disarm', async (req, res) => {
     const { event_id } = req.body;
     if (!event_id) return res.status(400).json({ error: 'event_id is required' });
     clearAllMittiState(event_id);
-    const timerResult = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [event_id]
-    );
-    if (timerResult.rows[0]) broadcastTimerUpdated(event_id, timerResult.rows[0]);
+    await releaseSyncIdentityAndBroadcast(event_id, 'companion-mitti', 'Mitti Sync');
     res.json({ success: true, event_id });
   } catch (error) {
     console.error('Error in mitti-disarm:', error);
@@ -9330,11 +9352,7 @@ app.post('/api/timers/avplayout-disarm', async (req, res) => {
     const { event_id } = req.body;
     if (!event_id) return res.status(400).json({ error: 'event_id is required' });
     clearAllAvPlayoutState(event_id);
-    const timerResult = await pool.query(
-      'SELECT * FROM active_timers WHERE event_id = $1 ORDER BY updated_at DESC LIMIT 1',
-      [event_id]
-    );
-    if (timerResult.rows[0]) broadcastTimerUpdated(event_id, timerResult.rows[0]);
+    await releaseSyncIdentityAndBroadcast(event_id, 'companion-avplayout', 'AV-Playout Sync');
     res.json({ success: true, event_id });
   } catch (error) {
     console.error('Error in avplayout-disarm:', error);
