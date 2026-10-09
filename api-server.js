@@ -4583,6 +4583,204 @@ app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
   }
 });
 
+// One rundown row is the next Mitti play. Checking a row clears every other row.
+app.patch('/api/run-of-show-data/:eventId/mitti-watch', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const body = req.body || {};
+    const itemId = Number(body.item_id ?? body.itemId ?? body.id);
+    if (!Number.isFinite(itemId)) {
+      return res.status(400).json({ error: 'item_id is required' });
+    }
+    const enabled = body.enabled === true || body.mitti_watch === true || body.mittiWatch === true;
+
+    const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    let items = existing.rows[0].schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    if (!Array.isArray(items)) items = [];
+
+    let found = false;
+    const nextItems = items.map((item) => {
+      const id = Number(item.id);
+      if (enabled) {
+        const on = id === itemId;
+        if (on) found = true;
+        return { ...item, mittiWatch: on };
+      }
+      if (id === itemId) {
+        found = true;
+        return { ...item, mittiWatch: false };
+      }
+      return item;
+    });
+    if (!found) return res.status(404).json({ error: 'Cue not found' });
+
+    const result = await pool.query(
+      `UPDATE run_of_show_data SET
+         schedule_items = $1,
+         last_change_at = NOW(),
+         updated_at = NOW(),
+         version = COALESCE(version, 1) + 1
+       WHERE event_id = $2
+       RETURNING *`,
+      [JSON.stringify(nextItems), eventId]
+    );
+    const savedData = result.rows[0];
+    await regenerateUpstashCache(eventId, savedData);
+    broadcastUpdate(eventId, 'runOfShowDataUpdated', savedData);
+    const watched = nextItems.find((item) => item.mittiWatch === true) || null;
+    res.json({
+      success: true,
+      item_id: itemId,
+      enabled: enabled && !!watched && Number(watched.id) === itemId,
+      mitti_watch_item_id: watched ? Number(watched.id) : null,
+      schedule_items: savedData.schedule_items,
+      version: savedData.version,
+    });
+  } catch (error) {
+    console.error('Error updating Mitti watch cue:', error);
+    res.status(500).json({ error: 'Failed to update Mitti watch cue' });
+  }
+});
+
+app.patch('/api/run-of-show-data/:eventId/mitti-watch-column', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const enabled = req.body?.enabled === true;
+    const result = await pool.query(
+      `UPDATE run_of_show_data
+       SET settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING settings`,
+      [eventId, JSON.stringify({ mittiWatchColumn: enabled })]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    broadcastUpdate(eventId, 'mittiWatchColumnUpdate', { event_id: eventId, enabled });
+    res.json({ enabled });
+  } catch (error) {
+    console.error('Error updating Mitti watch column:', error);
+    res.status(500).json({ error: 'Failed to update Mitti watch column' });
+  }
+});
+
+// One rundown row is the next AV-Playout play. Checking a row clears every other AV row.
+app.patch('/api/run-of-show-data/:eventId/av-watch', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const body = req.body || {};
+    const itemId = Number(body.item_id ?? body.itemId ?? body.id);
+    if (!Number.isFinite(itemId)) {
+      return res.status(400).json({ error: 'item_id is required' });
+    }
+    const enabled = body.enabled === true || body.av_watch === true || body.avWatch === true;
+
+    const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    let items = existing.rows[0].schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    if (!Array.isArray(items)) items = [];
+
+    let found = false;
+    const nextItems = items.map((item) => {
+      const id = Number(item.id);
+      if (enabled) {
+        const on = id === itemId;
+        if (on) found = true;
+        return { ...item, avWatch: on };
+      }
+      if (id === itemId) {
+        found = true;
+        return { ...item, avWatch: false };
+      }
+      return item;
+    });
+    if (!found) return res.status(404).json({ error: 'Cue not found' });
+
+    const result = await pool.query(
+      `UPDATE run_of_show_data SET
+         schedule_items = $1,
+         last_change_at = NOW(),
+         updated_at = NOW(),
+         version = COALESCE(version, 1) + 1
+       WHERE event_id = $2
+       RETURNING *`,
+      [JSON.stringify(nextItems), eventId]
+    );
+    const savedData = result.rows[0];
+    await regenerateUpstashCache(eventId, savedData);
+    broadcastUpdate(eventId, 'runOfShowDataUpdated', savedData);
+    const watched = nextItems.find((item) => item.avWatch === true) || null;
+    res.json({
+      success: true,
+      item_id: itemId,
+      enabled: enabled && !!watched && Number(watched.id) === itemId,
+      av_watch_item_id: watched ? Number(watched.id) : null,
+      schedule_items: savedData.schedule_items,
+      version: savedData.version,
+    });
+  } catch (error) {
+    console.error('Error updating AV watch cue:', error);
+    res.status(500).json({ error: 'Failed to update AV watch cue' });
+  }
+});
+
+app.patch('/api/run-of-show-data/:eventId/av-watch-column', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const enabled = req.body?.enabled === true;
+    const result = await pool.query(
+      `UPDATE run_of_show_data
+       SET settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING settings`,
+      [eventId, JSON.stringify({ avWatchColumn: enabled })]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    broadcastUpdate(eventId, 'avWatchColumnUpdate', { event_id: eventId, enabled });
+    res.json({ enabled });
+  } catch (error) {
+    console.error('Error updating AV watch column:', error);
+    res.status(500).json({ error: 'Failed to update AV watch column' });
+  }
+});
+
 // Lower Thirds XML endpoint
 app.get('/api/lower-thirds.xml', async (req, res) => {
   try {

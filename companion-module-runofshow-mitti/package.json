@@ -1,6 +1,6 @@
 {
   "name": "companion-module-runofshow-mitti",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "main": "src/main.js",
   "scripts": {
     "format": "prettier -w .",

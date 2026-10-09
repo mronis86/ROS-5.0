@@ -47,6 +47,10 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		this.lastDriftAlignMs = 0
 		this.telMsgCount = 0
 		this.pendingCueEndTimer = null
+		this.avWasPlaying = null
+		this.avLastPos = null
+		this.avPosStall = false
+		this.watchConsumeInFlight = false
 	}
 
 	async init(config) {
@@ -594,6 +598,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 	}
 
 	onTelemetryTick(position, duration) {
+		this.noteAvTransport(position, duration)
 		if (!this.avArm) return
 		const arm = this.avArm
 
@@ -769,6 +774,103 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 	async apiPost(path, body) {
 		return this.fetch(path, { method: 'POST', body: JSON.stringify(body) })
+	}
+
+	async apiPatch(path, body) {
+		return this.fetch(path, { method: 'PATCH', body: JSON.stringify(body) })
+	}
+
+	noteAvTransport(position, duration) {
+		if (this.config?.followWatchColumn === false) return
+		const pos = Number(position) || 0
+		const dur = Number(duration) || 0
+		const phasePlaying = this.avPhase === 'playing'
+		if (this.avWasPlaying == null) {
+			this.avWasPlaying = phasePlaying
+			this.avLastPos = pos
+			this.avPosStall = !phasePlaying
+			return
+		}
+		const rising = phasePlaying && this.avWasPlaying !== true
+		this.avWasPlaying = phasePlaying
+		if (!phasePlaying) this.avPosStall = true
+		if (rising) this.maybeConsumeAvWatch('play')
+		const prev = this.avLastPos
+		if (prev != null && Math.abs(pos - prev) < 0.02) {
+			this.avPosStall = true
+		} else if (this.avPosStall && prev != null && pos > prev + 0.05 && dur > 1) {
+			this.avPosStall = false
+			this.avWasPlaying = true
+			this.maybeConsumeAvWatch('position')
+		}
+		this.avLastPos = pos
+	}
+
+	maybeConsumeAvWatch(reason) {
+		if (this.config?.followWatchColumn === false) return
+		if (this.avArm || this.watchConsumeInFlight) return
+		this.consumeAvWatchColumn(reason).catch((err) => {
+			this.log('error', `AV next-cue failed: ${err.message}`)
+		})
+	}
+
+	/** Next AV-Playout play uses the single checked rundown row. Does not replace Arm+Play. */
+	async consumeAvWatchColumn(reason) {
+		if (this.avArm || this.watchConsumeInFlight) return
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (!eventId) return
+		this.watchConsumeInFlight = true
+		try {
+			await this.fetchData()
+			const item = (this.scheduleItems || []).find(
+				(row) => row?.avWatch === true || row?.av_watch === true
+			)
+			if (!item) {
+				this.log('info', `AV-Playout started (${reason}) — no rundown row is checked as next`)
+				return
+			}
+			const isSub = this.isScheduleItemSubCue(item)
+			this.log(
+				'info',
+				`AV-Playout started (${reason}) — using checked row ${this.formatCueDisplay(item.customFields?.cue, item.id)}`
+			)
+			await this.runArmAvPlayoutSync(
+				{
+					itemId: String(item.id),
+					cueIndex: 0,
+					triggerOnArm: false,
+				},
+				{ requireSubCue: isSub }
+			)
+			await this.apiPatch(`/api/run-of-show-data/${eventId}/av-watch`, {
+				item_id: parseInt(item.id, 10),
+				enabled: false,
+			})
+			this.log('info', 'Cleared AV next-cue check so the following play waits for a new row')
+		} finally {
+			this.watchConsumeInFlight = false
+		}
+	}
+
+	async markAvWatchCue(itemId, enabled) {
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (!eventId || !itemId) {
+			this.log('warn', 'AV next cue: Event ID and cue are required')
+			return
+		}
+		await this.apiPatch(`/api/run-of-show-data/${eventId}/av-watch`, {
+			item_id: parseInt(itemId, 10),
+			enabled: enabled !== false,
+		})
+		await this.fetchData()
+		const item = (this.scheduleItems || []).find((row) => String(row.id) === String(itemId))
+		const label = this.formatCueDisplay(item?.customFields?.cue, itemId)
+		this.log(
+			'info',
+			enabled === false
+				? `Cleared AV next cue (${label})`
+				: `AV next cue is ${label}. The next AV-Playout play will load and sync that row.`
+		)
 	}
 
 	async apiPut(path, body) {
@@ -1277,6 +1379,15 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 				default: 8000,
 				min: 2000,
 				max: 30000,
+			},
+			{
+				type: 'checkbox',
+				id: 'followWatchColumn',
+				label: 'Follow rundown AV column',
+				width: 12,
+				default: true,
+				tooltip:
+					'When AV-Playout next starts playing, load and sync the single ROS row checked in the AV column. Turn off to use only the Arm buttons.',
 			},
 			{
 				type: 'textinput',

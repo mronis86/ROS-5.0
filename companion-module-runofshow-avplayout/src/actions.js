@@ -126,6 +126,44 @@ module.exports = function (self) {
 				await self.runArmAvPlayoutCurrent(event.options || {})
 			},
 		},
+		mark_av_next_cue: {
+			name: 'Set AV next cue (one row)',
+			options: [
+				{
+					id: 'itemId',
+					type: 'dropdown',
+					label: 'Cue / Row',
+					default: '',
+					choices: [...regularCueChoices, ...subCueChoices.filter((c) => c.id)],
+				},
+			],
+			callback: async (event) => {
+				try {
+					await self.markAvWatchCue(event.options?.itemId, true)
+				} catch (err) {
+					self.log('error', `Set AV next cue failed: ${err.message}`)
+				}
+			},
+		},
+		clear_av_next_cue: {
+			name: 'Clear AV next cue',
+			options: [
+				{
+					id: 'itemId',
+					type: 'dropdown',
+					label: 'Cue / Row',
+					default: '',
+					choices: [...regularCueChoices, ...subCueChoices.filter((c) => c.id)],
+				},
+			],
+			callback: async (event) => {
+				try {
+					await self.markAvWatchCue(event.options?.itemId, false)
+				} catch (err) {
+					self.log('error', `Clear AV next cue failed: ${err.message}`)
+				}
+			},
+		},
 		send_avplayout_time: {
 			name: 'Send Time (current telemetry → ROS)',
 			options: [],

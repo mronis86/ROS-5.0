@@ -12,10 +12,20 @@ Separate Companion module: **Mitti cue playback → ROS timer sync**, as an alte
 
 ## Live sync flow
 
-1. **Arm Mitti sync** — loads ROS cue, calls `mitti-arm`, listens for OSC feedback.
+1. **Arm Mitti sync** — loads ROS cue, calls `mitti-arm`, listens for OSC feedback. Optional: fire Mitti on arm.
 2. When Mitti plays, module reads `cueTimeLeft` / `currentCueTRT`.
 3. One-shot `POST /api/timers/mitti-sync-align` (not per-tick HTTP).
 4. Clients get `timerUpdated` with `time_source: 'mitti'` and count down locally.
+
+### Watch next play (broadcast / switcher cut)
+
+Use when Mitti is already cued and only starts when the switcher cuts it to air. These actions do **not** replace Arm+Play.
+
+- **Watch next Mitti play (pick ROS cue)** — loads that ROS cue, sends no OSC play.
+- **Watch next Mitti play (loaded ROS cue)** — uses the cue already loaded in ROS. No cue dropdown and no Mitti cue number.
+- **Watch next Mitti play (sub-cue)** — same for an indented row.
+
+A cued clip can still report time remaining. Watch mode ignores that. The ROS timer stays LOADED until `/mitti/togglePlay` goes to playing or `/mitti/cueTimeElapsed` starts moving. Then it locks like a normal arm.
 
 ## Pull TRT (file replaced / duration changed)
 

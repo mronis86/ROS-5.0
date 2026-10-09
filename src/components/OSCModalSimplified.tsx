@@ -97,7 +97,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                   🎞️ Companion Module — Mitti Sync
                 </a>
                 <div className="text-xs text-orange-300 mt-2">
-                  Mitti OSC feedback → ROS timer • Arm cue, TRT pull (select→restore), periodic re-sync
+                  Mitti OSC feedback → ROS timer • Arm+play, or Watch next play (switcher cut) • TRT pull
                 </div>
               </div>
 
@@ -123,7 +123,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                   📺 Companion Module — AV-Playout Sync
                 </a>
                 <div className="text-xs text-sky-300 mt-2">
-                  SINOR AV-Playout / CasparCG • Direct Play/Pause/Stop • Arm & Send Time without cue select • ROS sync
+                  SINOR AV-Playout / CasparCG • Direct Play/Pause/Stop • Arm, or AV column next-play • ROS sync
                 </div>
               </div>
 

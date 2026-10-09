@@ -40,6 +40,9 @@ export interface ScheduleRowProps {
   onNotesChipUpdated?: (itemId: number, notesHtml: string) => void;
   /** Immediate Neon persist for REC checkbox (avoids debounced full-schedule race on navigate away). */
   persistCueRecording?: (itemId: number, needsRecording: boolean, source: 'comms' | 'ros') => void | Promise<void>;
+  /** Exclusive next-Mitti-play checkbox. */
+  persistMittiWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
+  persistAvWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
   calculateStartTimeWithOvertime?: (index: number) => string | number;
   calculateStartTime?: (index: number) => string | number;
   onEditTimedMarker?: (itemId: number) => void;
@@ -117,6 +120,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   saveToAPI,
   onNotesChipUpdated,
   persistCueRecording,
+  persistMittiWatch,
+  persistAvWatch,
   calculateStartTimeWithOvertime,
   calculateStartTime,
   onEditTimedMarker,
@@ -980,6 +985,70 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 <div className="mt-2 text-[18px] font-bold text-neutral-900">{CUE_RECORDING_HOVER_BODY}</div>
               </div>
             )}
+          </label>
+        </div>
+      )}
+      {visibleColumns.mittiWatch && (
+        <div
+          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={{ width: 88, order: (columnFlexOrder?.recording ?? 6) + 0.5 }}
+        >
+          <label className="flex flex-col items-center gap-0.5">
+            <input
+              type="checkbox"
+              checked={!!item.mittiWatch}
+              onChange={(e) => {
+                void persistMittiWatch?.(item.id, e.target.checked);
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistMittiWatch}
+              className={`w-6 h-6 rounded border-2 ${
+                item.mittiWatch
+                  ? 'border-orange-300 bg-orange-600'
+                  : isRowDimmed
+                    ? 'border-purple-600/50 bg-purple-950/70'
+                    : 'border-slate-400 bg-slate-700'
+              }`}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : 'Next Mitti play uses this cue. Checking this clears every other row.'
+              }
+            />
+            <span className={`text-[10px] font-black tracking-wide ${item.mittiWatch ? 'text-orange-300' : 'text-slate-400'}`}>
+              NEXT
+            </span>
+          </label>
+        </div>
+      )}
+      {visibleColumns.avWatch && (
+        <div
+          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={{ width: 72, order: (columnFlexOrder?.recording ?? 6) + 0.6 }}
+        >
+          <label className="flex flex-col items-center gap-0.5">
+            <input
+              type="checkbox"
+              checked={!!item.avWatch}
+              onChange={(e) => {
+                void persistAvWatch?.(item.id, e.target.checked);
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistAvWatch}
+              className={`w-6 h-6 rounded border-2 ${
+                item.avWatch
+                  ? 'border-sky-300 bg-sky-600'
+                  : isRowDimmed
+                    ? 'border-purple-600/50 bg-purple-950/70'
+                    : 'border-slate-400 bg-slate-700'
+              }`}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : 'Next AV-Playout play uses this cue. Checking this clears every other AV row.'
+              }
+            />
+            <span className={`text-[10px] font-black tracking-wide ${item.avWatch ? 'text-sky-300' : 'text-slate-400'}`}>
+              NEXT
+            </span>
           </label>
         </div>
       )}

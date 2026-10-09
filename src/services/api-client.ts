@@ -982,6 +982,50 @@ class ApiClient {
     return result;
   }
 
+  async setMittiWatch(eventId: string, itemId: number, enabled: boolean) {
+    const result = await this.request<any>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/mitti-watch`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ item_id: itemId, enabled }),
+      }
+    );
+    this.cache.delete(`runOfShowData_${eventId}`);
+    return result;
+  }
+
+  async setMittiWatchColumn(eventId: string, enabled: boolean) {
+    return this.request<{ enabled: boolean }>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/mitti-watch-column`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      }
+    );
+  }
+
+  async setAvWatch(eventId: string, itemId: number, enabled: boolean) {
+    const result = await this.request<any>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/av-watch`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ item_id: itemId, enabled }),
+      }
+    );
+    this.cache.delete(`runOfShowData_${eventId}`);
+    return result;
+  }
+
+  async setAvWatchColumn(eventId: string, enabled: boolean) {
+    return this.request<{ enabled: boolean }>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/av-watch-column`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      }
+    );
+  }
+
   async getEventCueFilesStatus() {
     return this.request<{ configured: boolean; retentionMonths: number; maxFileBytes: number }>(
       '/api/event-cue-files/status',

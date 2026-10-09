@@ -46,6 +46,10 @@ class RunOfShowMittiInstance extends InstanceBase {
 		/** Count of OSC messages seen since listener opened (debug). */
 		this.oscGlobalMsgCount = 0
 		this.lastDriftAlignMs = 0
+		this.mittiTransportPlaying = null
+		this.mittiTransportElapsed = null
+		this.mittiElapsedStall = false
+		this.watchConsumeInFlight = false
 	}
 
 	async init(config) {
@@ -359,6 +363,10 @@ class RunOfShowMittiInstance extends InstanceBase {
 		return this.fetch(path, { method: 'POST', body: JSON.stringify(body) })
 	}
 
+	async apiPatch(path, body) {
+		return this.fetch(path, { method: 'PATCH', body: JSON.stringify(body) })
+	}
+
 	async apiPut(path, body) {
 		return this.fetch(path, { method: 'PUT', body: JSON.stringify(body) })
 	}
@@ -618,7 +626,8 @@ class RunOfShowMittiInstance extends InstanceBase {
 		const eventId = this.config?.eventId
 		const itemId = options.itemId
 		const cueNumber = Math.max(1, parseInt(options.cueNumber, 10) || 1)
-		const triggerOnArm = options.triggerOnArm === true
+		const watchNextPlay = options.watchNextPlay === true
+		const triggerOnArm = watchNextPlay ? false : options.triggerOnArm === true
 		const triggerMode = options.triggerMode || 'cue'
 		if (!eventId || !itemId) {
 			this.log('warn', 'Arm Mitti: Event ID and cue are required')
@@ -646,8 +655,28 @@ class RunOfShowMittiInstance extends InstanceBase {
 			armTrackItemId = itemId
 		}
 		try {
-			await this.loadCueForMitti(eventId, loadItemId, { forSubCueParent: !!requireSubCue })
-			this.setMittiArm({ itemId: String(armTrackItemId), cueNumber, isSubCue: !!requireSubCue })
+			if (watchNextPlay) {
+				try {
+					await this.fetchActiveTimer(eventId)
+				} catch (_) {}
+			}
+			const alreadyLoaded =
+				watchNextPlay &&
+				this.activeTimer?.item_id != null &&
+				String(this.activeTimer.item_id) === String(loadItemId) &&
+				this.activeTimer?.is_running !== true &&
+				this.activeTimer?.timer_state !== 'running'
+			if (alreadyLoaded) {
+				this.log('info', `Watch: ROS cue ${loadItemId} already loaded — not reloading`)
+			} else {
+				await this.loadCueForMitti(eventId, loadItemId, { forSubCueParent: !!requireSubCue })
+			}
+			this.setMittiArm({
+				itemId: String(armTrackItemId),
+				cueNumber,
+				isSubCue: !!requireSubCue,
+				watchNextPlay,
+			})
 			await this.notifyMittiArm(armTrackItemId, { isSubCue: requireSubCue })
 			if (triggerOnArm) {
 				this.sendMittiTrigger({ triggerMode, cueNumber })
@@ -661,8 +690,12 @@ class RunOfShowMittiInstance extends InstanceBase {
 			const cueDisplay = this.formatCueDisplay(item?.customFields?.cue, itemId)
 			this.log(
 				'info',
-				`Mitti sync armed for ${requireSubCue ? 'sub-cue' : 'cue'} ${cueDisplay} (Mitti cue ${cueNumber}; loaded ${loadItemId}). ` +
-					`Listening UDP ${this.getOscListenPort()} — enable Mitti OSC Feedback → this PC:${this.getOscListenPort()}`
+				watchNextPlay
+					? `Mitti watch armed for ${requireSubCue ? 'sub-cue' : 'cue'} ${cueDisplay}. ` +
+						`ROS stays loaded until Mitti starts playing (switcher cut). Not sending play. ` +
+						`Listening UDP ${this.getOscListenPort()}`
+					: `Mitti sync armed for ${requireSubCue ? 'sub-cue' : 'cue'} ${cueDisplay} (Mitti cue ${cueNumber}; loaded ${loadItemId}). ` +
+						`Listening UDP ${this.getOscListenPort()} — enable Mitti OSC Feedback → this PC:${this.getOscListenPort()}`
 			)
 		} catch (err) {
 			this.log('error', `Arm Mitti failed: ${err.message}`)
@@ -764,12 +797,58 @@ class RunOfShowMittiInstance extends InstanceBase {
 		}
 	}
 
-	setMittiArm({ itemId, cueNumber, isSubCue = false }) {
+	/** Arm whatever ROS cue is already loaded. Does not play Mitti — waits for the next play. */
+	async runArmMittiWatchCurrent({ requireSubCue = false } = {}) {
+		const eventId = this.config?.eventId
+		if (!eventId) {
+			this.log('warn', 'Watch next play: set Event ID first')
+			return
+		}
+		try {
+			await this.fetchActiveTimer(eventId)
+		} catch (err) {
+			this.log('warn', `Watch next play: active timer unavailable (${err.message})`)
+			return
+		}
+		const activeId = this.activeTimer?.item_id
+		if (!activeId) {
+			this.log('warn', 'Watch next play: no ROS cue is loaded — load one in ROS, or use Watch next play (pick cue)')
+			return
+		}
+		const item = this.scheduleItems.find((s) => String(s.id) === String(activeId))
+		const isSub = this.isScheduleItemSubCue(item)
+		if (requireSubCue && !isSub) {
+			this.log('warn', 'Watch next play (sub-cue): the loaded row is not a sub-cue')
+			return
+		}
+		if (!requireSubCue && isSub) {
+			this.log('warn', 'Watch next play: loaded row is a sub-cue — use the sub-cue watch action')
+			return
+		}
+		await this.runArmMittiSync(
+			{
+				itemId: String(activeId),
+				cueNumber: this.lastKnownMittiCueNumber || 1,
+				triggerOnArm: false,
+				watchNextPlay: true,
+			},
+			{ requireSubCue: isSub }
+		)
+	}
+
+	setMittiArm({ itemId, cueNumber, isSubCue = false, watchNextPlay = false }) {
 		const scheduleDurationSeconds = this.getScheduleDurationSeconds(itemId)
+		const parsedCue = parseInt(cueNumber, 10)
 		this.mittiArm = {
 			itemId: String(itemId),
 			isSubCue: !!isSubCue,
-			cueNumber: Math.max(1, parseInt(cueNumber, 10) || 1),
+			cueNumber: watchNextPlay
+				? Number.isFinite(parsedCue) && parsedCue > 0
+					? parsedCue
+					: this.lastKnownMittiCueNumber || 0
+				: Math.max(1, parsedCue || 1),
+			watchNextPlay: !!watchNextPlay,
+			sawPlayEdge: false,
 			phase: 'idle',
 			sampleStartMs: 0,
 			scheduleDurationSeconds,
@@ -836,6 +915,7 @@ class RunOfShowMittiInstance extends InstanceBase {
 		if (this.oscGlobalMsgCount <= 12) {
 			this.log('info', `OSC rx #${this.oscGlobalMsgCount}: ${address} = ${JSON.stringify(value)}`)
 		}
+		this.noteMittiTransport(address, value, fps)
 
 		// Track current cue number from select-style feedback paths like /mitti/3/...
 		const cuePathMatch = String(address || '').match(/^\/mitti\/(\d+)\//i)
@@ -867,11 +947,10 @@ class RunOfShowMittiInstance extends InstanceBase {
 				Number(value) >= 1 ||
 				String(value).toLowerCase() === 'playing' ||
 				String(value).toLowerCase() === 'true'
+			const rising = playing && !arm.isPlaying
 			arm.isPlaying = playing
-			if (playing && arm.phase !== 'aligned') {
-				arm.phase = 'sampling'
-				arm.sampleStartMs = Date.now()
-				arm.endTriggered = false
+			if (rising && arm.phase !== 'aligned') {
+				this.markMittiPlayStarted(arm)
 			}
 		}
 
@@ -885,7 +964,20 @@ class RunOfShowMittiInstance extends InstanceBase {
 
 		if (addressEndsWith(address, FEEDBACK.CUE_TIME_ELAPSED)) {
 			const elapsed = parseTimecodeToSeconds(value, fps)
-			if (elapsed != null) arm.lastElapsed = elapsed
+			if (elapsed != null) {
+				// Watch mode: a parked/cued clip still reports time left. Only advancing
+				// elapsed means Mitti actually started (switcher cut / play).
+				if (
+					arm.watchNextPlay &&
+					arm.phase === 'idle' &&
+					arm.lastElapsed != null &&
+					elapsed > arm.lastElapsed + 0.04
+				) {
+					arm.isPlaying = true
+					this.markMittiPlayStarted(arm)
+				}
+				arm.lastElapsed = elapsed
+			}
 		}
 
 		if (!addressEndsWith(address, FEEDBACK.CUE_TIME_LEFT)) return
@@ -938,7 +1030,12 @@ class RunOfShowMittiInstance extends InstanceBase {
 
 		if (this.alignInFlight) return
 
-		if (arm.phase === 'idle' && (arm.isPlaying || rem > 0)) {
+		if (arm.watchNextPlay) {
+			if (arm.phase === 'idle' && arm.sawPlayEdge) {
+				arm.phase = 'sampling'
+				arm.sampleStartMs = arm.sampleStartMs || Date.now()
+			}
+		} else if (arm.phase === 'idle' && (arm.isPlaying || rem > 0)) {
 			arm.phase = 'sampling'
 			arm.sampleStartMs = Date.now()
 		}
@@ -975,6 +1072,113 @@ class RunOfShowMittiInstance extends InstanceBase {
 			arm.phase = 'idle'
 			this.alignInFlight = false
 		})
+	}
+
+	noteMittiTransport(address, value, fps) {
+		if (this.config?.followWatchColumn === false) return
+		if (addressEndsWith(address, FEEDBACK.TOGGLE_PLAY) || matchesAddress(address, '/mitti/playStatus')) {
+			const playing =
+				Number(value) >= 1 ||
+				String(value).toLowerCase() === 'playing' ||
+				String(value).toLowerCase() === 'true'
+			const rising = playing && this.mittiTransportPlaying !== true
+			this.mittiTransportPlaying = playing
+			if (!playing) this.mittiElapsedStall = true
+			if (rising) this.maybeConsumeWatchColumn('play')
+			return
+		}
+		if (!addressEndsWith(address, FEEDBACK.CUE_TIME_ELAPSED)) return
+		const elapsed = parseTimecodeToSeconds(value, fps)
+		if (elapsed == null) return
+		const prev = this.mittiTransportElapsed
+		if (prev != null && elapsed <= prev + 0.02) {
+			this.mittiElapsedStall = true
+		} else if (this.mittiElapsedStall && prev != null && elapsed > prev + 0.04) {
+			this.mittiElapsedStall = false
+			this.mittiTransportPlaying = true
+			this.maybeConsumeWatchColumn('elapsed')
+		}
+		this.mittiTransportElapsed = elapsed
+	}
+
+	maybeConsumeWatchColumn(reason) {
+		if (this.config?.followWatchColumn === false) return
+		if (this.mittiArm || this.watchConsumeInFlight) return
+		this.consumeMittiWatchColumn(reason).catch((err) => {
+			this.log('error', `Mitti next-cue failed: ${err.message}`)
+		})
+	}
+
+	/** Next Mitti play uses the single checked rundown row. Does not replace Arm+Play. */
+	async consumeMittiWatchColumn(reason) {
+		if (this.mittiArm || this.watchConsumeInFlight) return
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (!eventId) return
+		this.watchConsumeInFlight = true
+		try {
+			await this.fetchData()
+			const item = (this.scheduleItems || []).find(
+				(row) => row?.mittiWatch === true || row?.mitti_watch === true
+			)
+			if (!item) {
+				this.log('info', `Mitti started (${reason}) — no rundown row is checked as next`)
+				return
+			}
+			const isSub = this.isScheduleItemSubCue(item)
+			this.log(
+				'info',
+				`Mitti started (${reason}) — using checked row ${this.formatCueDisplay(item.customFields?.cue, item.id)}`
+			)
+			await this.runArmMittiSync(
+				{
+					itemId: String(item.id),
+					cueNumber: this.lastKnownMittiCueNumber || 1,
+					triggerOnArm: false,
+					watchNextPlay: false,
+				},
+				{ requireSubCue: isSub }
+			)
+			await this.apiPatch(`/api/run-of-show-data/${eventId}/mitti-watch`, {
+				item_id: parseInt(item.id, 10),
+				enabled: false,
+			})
+			this.log('info', 'Cleared Mitti next-cue check so the following play waits for a new row')
+		} finally {
+			this.watchConsumeInFlight = false
+		}
+	}
+
+	async markMittiWatchCue(itemId, enabled) {
+		const eventId = this.normalizeEventId(this.config?.eventId)
+		if (!eventId || !itemId) {
+			this.log('warn', 'Mitti next cue: Event ID and cue are required')
+			return
+		}
+		await this.apiPatch(`/api/run-of-show-data/${eventId}/mitti-watch`, {
+			item_id: parseInt(itemId, 10),
+			enabled: enabled !== false,
+		})
+		await this.fetchData()
+		const item = (this.scheduleItems || []).find((row) => String(row.id) === String(itemId))
+		const label = this.formatCueDisplay(item?.customFields?.cue, itemId)
+		this.log(
+			'info',
+			enabled === false
+				? `Cleared Mitti next cue (${label})`
+				: `Mitti next cue is ${label}. The next Mitti play will load and sync that row.`
+		)
+	}
+
+	markMittiPlayStarted(arm) {
+		if (!arm || arm.phase === 'aligned') return
+		arm.sawPlayEdge = true
+		arm.phase = 'sampling'
+		arm.sampleStartMs = Date.now()
+		arm.endTriggered = false
+		if (!arm.playEdgeLogged) {
+			arm.playEdgeLogged = true
+			this.log('info', 'Mitti playback started — locking ROS timer to this cue')
+		}
 	}
 
 	scheduleFollowUpAlign() {
@@ -1212,6 +1416,15 @@ class RunOfShowMittiInstance extends InstanceBase {
 				tooltip: 'Must match the Run of Show day tab (e.g. 3 for Day 3). Wrong day = empty cue dropdown.',
 			},
 			{
+				type: 'checkbox',
+				id: 'followWatchColumn',
+				label: 'Follow rundown Mitti column',
+				width: 12,
+				default: true,
+				tooltip:
+					'When Mitti next starts playing, load and sync the single ROS row checked in the Mitti column. Turn off to use only the Arm buttons.',
+			},
+			{
 				type: 'number',
 				id: 'oscListenPort',
 				label: 'OSC listen port (Mitti feedback → Companion)',
@@ -1368,6 +1581,35 @@ class RunOfShowMittiInstance extends InstanceBase {
 								options: { itemId: '', cueNumber: 1, triggerOnArm: true, triggerMode: 'cue' },
 							},
 						],
+						up: [],
+					},
+				],
+			},
+			watch_next_play: {
+				type: 'button',
+				category: 'Mitti',
+				name: 'Watch next Mitti play (loaded ROS cue)',
+				style: {
+					text: 'Watch\nNext Play',
+					size: 'auto',
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(90, 50, 160),
+				},
+				feedbacks: [
+					{
+						feedbackId: 'mitti_armed',
+						options: {},
+						style: { bgcolor: combineRgb(160, 80, 200), color: combineRgb(255, 255, 255) },
+					},
+					{
+						feedbackId: 'mitti_aligned',
+						options: {},
+						style: { bgcolor: combineRgb(0, 140, 60), color: combineRgb(255, 255, 255) },
+					},
+				],
+				steps: [
+					{
+						down: [{ actionId: 'arm_mitti_watch_current', options: {} }],
 						up: [],
 					},
 				],
@@ -1567,7 +1809,9 @@ class RunOfShowMittiInstance extends InstanceBase {
 		const phase = this.mittiArm?.phase ?? 'off'
 		const statusMap = {
 			off: 'Off',
-			idle: 'Armed — waiting for playback',
+			idle: this.mittiArm?.watchNextPlay
+				? 'Watching — waiting for Mitti play'
+				: 'Armed — waiting for playback',
 			sampling: 'Receiving OSC — locking…',
 			aligned: 'Locked to Mitti',
 		}

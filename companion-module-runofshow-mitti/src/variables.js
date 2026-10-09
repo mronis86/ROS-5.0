@@ -1,7 +1,7 @@
 module.exports = function (self) {
 	self.setVariableDefinitions([
 		{ variableId: 'mitti_armed', name: 'Mitti sync armed (Yes/No)' },
-		{ variableId: 'mitti_sync_status', name: 'Mitti sync status (Off / waiting / locked)' },
+		{ variableId: 'mitti_sync_status', name: 'Mitti sync status (Off / watching / waiting / locked)' },
 		{ variableId: 'mitti_cue_number', name: 'Mitti cue number (armed)' },
 		{ variableId: 'mitti_inferred_duration', name: 'Last inferred cue duration (seconds)' },
 		{ variableId: 'last_sync_at', name: 'Last Mitti sync (local time)' },

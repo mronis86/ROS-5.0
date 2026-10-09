@@ -280,6 +280,10 @@ interface ScheduleItem {
   hasPPT: boolean;
   hasQA: boolean;
   needsRecording?: boolean;
+  /** Exclusive: the next Mitti play syncs this row. Only one cue is true. */
+  mittiWatch?: boolean;
+  /** Exclusive: the next AV-Playout play syncs this row. Only one cue is true. */
+  avWatch?: boolean;
   /** Who marked REC: 'comms' (ASAP) vs 'ros' (export / planned post). */
   recordingSource?: 'comms' | 'ros' | null;
   /**
@@ -1876,9 +1880,12 @@ const RunOfShowPage: React.FC = () => {
   const startPinnedBesideCue = stickyStartColumn && visibleColumns.start;
   /** Columns passed into the scrollable ScheduleRow (Start omitted when pinned). */
   const scrollVisibleColumns = useMemo(
-    () =>
-      startPinnedBesideCue ? { ...visibleColumns, start: false } : visibleColumns,
-    [startPinnedBesideCue, visibleColumns]
+    () => ({
+      ...(startPinnedBesideCue ? { ...visibleColumns, start: false } : visibleColumns),
+      mittiWatch: mittiWatchColumnEnabled,
+      avWatch: avWatchColumnEnabled,
+    }),
+    [startPinnedBesideCue, visibleColumns, mittiWatchColumnEnabled, avWatchColumnEnabled]
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
@@ -2726,6 +2733,10 @@ const RunOfShowPage: React.FC = () => {
   // Toast notification state
   const [showTimeToast, setShowTimeToast] = useState(false);
   const [timeToastEnabled, setTimeToastEnabled] = useState(false); // Off by default; toggle in Operator Actions
+  /** Per event. Hidden until Operator Actions turns the Mitti column on. */
+  const [mittiWatchColumnEnabled, setMittiWatchColumnEnabled] = useState(false);
+  /** Per event. Hidden until Operator Actions turns the AV column on. */
+  const [avWatchColumnEnabled, setAvWatchColumnEnabled] = useState(false);
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
   const [timeDifference, setTimeDifference] = useState(0);
@@ -8492,6 +8503,54 @@ const RunOfShowPage: React.FC = () => {
   flushSaveToAPIRef.current = performSaveToAPI;
 
   /** Persist a single cue's REC flag immediately (same path as Comms) so leaving the event does not lose it. */
+  const persistAvWatch = useCallback(
+    async (itemId: number, enabled: boolean) => {
+      if (!event?.id) return;
+      setSchedule((prev) =>
+        prev.map((row) => ({
+          ...row,
+          avWatch: enabled ? row.id === itemId : row.id === itemId ? false : !!row.avWatch,
+        }))
+      );
+      try {
+        const result = await apiClient.setAvWatch(event.id, itemId, enabled);
+        if (result?.version != null && !Number.isNaN(Number(result.version))) {
+          scheduleVersionRef.current = Number(result.version);
+        }
+        if (Array.isArray(result?.schedule_items)) {
+          lastSyncedScheduleRef.current = result.schedule_items;
+        }
+      } catch (err) {
+        console.warn('AV watch update failed', err);
+      }
+    },
+    [event?.id]
+  );
+
+  const persistMittiWatch = useCallback(
+    async (itemId: number, enabled: boolean) => {
+      if (!event?.id) return;
+      setSchedule((prev) =>
+        prev.map((row) => ({
+          ...row,
+          mittiWatch: enabled ? row.id === itemId : row.id === itemId ? false : !!row.mittiWatch,
+        }))
+      );
+      try {
+        const result = await apiClient.setMittiWatch(event.id, itemId, enabled);
+        if (result?.version != null && !Number.isNaN(Number(result.version))) {
+          scheduleVersionRef.current = Number(result.version);
+        }
+        if (Array.isArray(result?.schedule_items)) {
+          lastSyncedScheduleRef.current = result.schedule_items;
+        }
+      } catch (err) {
+        console.warn('Mitti watch update failed', err);
+      }
+    },
+    [event?.id]
+  );
+
   const persistCueRecording = useCallback(
     async (itemId: number, needsRecording: boolean, source: 'comms' | 'ros' = 'ros') => {
       if (!event?.id) return;
@@ -8590,6 +8649,8 @@ const RunOfShowPage: React.FC = () => {
           handleUserEditing();
         }
         
+        setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
+        setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
@@ -8806,6 +8867,8 @@ const RunOfShowPage: React.FC = () => {
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
         rememberSyncedSchedule(data);
+        setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
+        setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
@@ -8968,6 +9031,12 @@ const RunOfShowPage: React.FC = () => {
           
           // Update settings
           if (data.settings) {
+            if (data.settings.mittiWatchColumn !== undefined) {
+              setMittiWatchColumnEnabled(data.settings.mittiWatchColumn === true);
+            }
+            if (data.settings.avWatchColumn !== undefined) {
+              setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
+            }
             if (data.settings.eventName !== undefined) {
               setEventName(data.settings.eventName);
               console.log('✅ Real-time: Event name updated');
@@ -9602,6 +9671,12 @@ const RunOfShowPage: React.FC = () => {
           setStartCueId(data.item_id); // Also update which cue is marked as START
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
         }
+      },
+      onMittiWatchColumnUpdate: (data: { event_id: string; enabled: boolean }) => {
+        if (data?.event_id === event?.id) setMittiWatchColumnEnabled(data.enabled === true);
+      },
+      onAvWatchColumnUpdate: (data: { event_id: string; enabled: boolean }) => {
+        if (data?.event_id === event?.id) setAvWatchColumnEnabled(data.enabled === true);
       },
       onShowModeUpdate: (data: {
         event_id: string;
@@ -14936,6 +15011,58 @@ const RunOfShowPage: React.FC = () => {
                               </svg>
                               Graphics Links
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!event?.id || currentUserRole === 'VIEWER') return;
+                                const next = !mittiWatchColumnEnabled;
+                                setMittiWatchColumnEnabled(next);
+                                void apiClient.setMittiWatchColumn(event.id, next).catch((err) => {
+                                  console.warn('Mitti column toggle failed', err);
+                                  setMittiWatchColumnEnabled(!next);
+                                });
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Show a Mitti checkbox column. Only one row can be checked. The next Mitti play uses that row."
+                            >
+                              <span className="w-4 text-center font-black">{mittiWatchColumnEnabled ? '☑' : '☐'}</span>
+                              <span className="flex-1">Mitti column</span>
+                              {mittiWatchColumnEnabled ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-orange-300">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!event?.id || currentUserRole === 'VIEWER') return;
+                                const next = !avWatchColumnEnabled;
+                                setAvWatchColumnEnabled(next);
+                                void apiClient.setAvWatchColumn(event.id, next).catch((err) => {
+                                  console.warn('AV column toggle failed', err);
+                                  setAvWatchColumnEnabled(!next);
+                                });
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Show an AV-Playout checkbox column. Only one row can be checked. The next AV play uses that row."
+                            >
+                              <span className="w-4 text-center font-black">{avWatchColumnEnabled ? '☑' : '☐'}</span>
+                              <span className="flex-1">AV column</span>
+                              {avWatchColumnEnabled ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
                           </div>
                         )}
                       </div>
@@ -16121,6 +16248,24 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
+                      {mittiWatchColumnEnabled && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                          style={{ width: 88, order: (scrollColumnFlexOrder.recording ?? 6) + 0.5 }}
+                          title="Checked row is the next Mitti play. Only one row at a time."
+                        >
+                          <span className="text-white font-bold text-sm">Mitti</span>
+                        </div>
+                      )}
+                      {avWatchColumnEnabled && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                          style={{ width: 72, order: (scrollColumnFlexOrder.recording ?? 6) + 0.6 }}
+                          title="Checked row is the next AV-Playout play. Only one row at a time."
+                        >
+                          <span className="text-white font-bold text-sm">AV</span>
+                        </div>
+                      )}
                       {visibleColumns.notes && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
@@ -17282,6 +17427,24 @@ const RunOfShowPage: React.FC = () => {
                       />
                     </div>
                   )}
+                  {mittiWatchColumnEnabled && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                      style={{ width: 88, order: (scrollColumnFlexOrder.recording ?? 6) + 0.5 }}
+                      title="Checked row is the next Mitti play. Only one row at a time."
+                    >
+                      <span className="text-white font-bold text-sm">Mitti</span>
+                    </div>
+                  )}
+                  {avWatchColumnEnabled && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                      style={{ width: 72, order: (scrollColumnFlexOrder.recording ?? 6) + 0.6 }}
+                      title="Checked row is the next AV-Playout play. Only one row at a time."
+                    >
+                      <span className="text-white font-bold text-sm">AV</span>
+                    </div>
+                  )}
                   {visibleColumns.notes && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
@@ -17480,6 +17643,8 @@ const RunOfShowPage: React.FC = () => {
                         saveToAPI={saveToAPI}
                         onNotesChipUpdated={applyNotesChipToOpenEditor}
                         persistCueRecording={persistCueRecording}
+                        persistMittiWatch={persistMittiWatch}
+                        persistAvWatch={persistAvWatch}
                         onEditTimedMarker={editTimedMarkerTime}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
