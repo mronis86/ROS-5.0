@@ -920,6 +920,8 @@ class RunOfShowMittiInstance extends InstanceBase {
 			this.log('info', `OSC rx #${this.oscGlobalMsgCount}: ${address} = ${JSON.stringify(value)}`)
 		}
 		this.noteMittiTransport(address, value, fps)
+		// A checked next-cue row is being loaded. Do not keep syncing the previously loaded cue.
+		if (this.deferArmForWatch) return
 
 		// Track current cue number from select-style feedback paths like /mitti/3/...
 		const cuePathMatch = String(address || '').match(/^\/mitti\/(\d+)\//i)
@@ -1107,31 +1109,68 @@ class RunOfShowMittiInstance extends InstanceBase {
 
 	maybeConsumeWatchColumn(reason) {
 		if (this.config?.followWatchColumn === false) return
-		if (this.mittiArm || this.watchConsumeInFlight) return
+		if (this.watchConsumeInFlight) return
+		this.watchConsumeInFlight = true
+		// Hold the old loaded cue until we know whether a row is checked.
+		this.deferArmForWatch = true
 		this.consumeMittiWatchColumn(reason).catch((err) => {
 			this.log('error', `Mitti next-cue failed: ${err.message}`)
 		})
 	}
 
-	/** Next Mitti play uses the single checked rundown row. Does not replace Arm+Play. */
+	resumeLoadedCueAfterWatch(reason) {
+		this.deferArmForWatch = false
+		if (!this.mittiTransportPlaying || !this.mittiArm) return
+		if (this.mittiArm.phase === 'aligned') return
+		this.log('info', `Mitti started (${reason}) — no next-cue row checked, keeping the loaded cue`)
+		this.markMittiPlayStarted(this.mittiArm)
+	}
+
+	/** Next Mitti play loads the checked rundown row, even if another cue is already loaded. */
 	async consumeMittiWatchColumn(reason) {
-		if (this.mittiArm || this.watchConsumeInFlight) return
 		const eventId = this.normalizeEventId(this.config?.eventId)
-		if (!eventId) return
-		this.watchConsumeInFlight = true
+		if (!eventId) {
+			this.resumeLoadedCueAfterWatch(reason)
+			this.watchConsumeInFlight = false
+			return
+		}
 		try {
 			await this.fetchData()
 			const item = (this.scheduleItems || []).find(
 				(row) => row?.mittiWatch === true || row?.mitti_watch === true
 			)
 			if (!item) {
-				this.log('info', `Mitti started (${reason}) — no rundown row is checked as next`)
+				this.resumeLoadedCueAfterWatch(reason)
 				return
 			}
+			const label = this.formatCueDisplay(item.customFields?.cue, item.id)
+			if (this.mittiArm && String(this.mittiArm.itemId) === String(item.id)) {
+				this.deferArmForWatch = false
+				if (this.mittiTransportPlaying && this.mittiArm.phase !== 'aligned') {
+					this.markMittiPlayStarted(this.mittiArm)
+				}
+				await this.apiPatch(`/api/run-of-show-data/${eventId}/mitti-watch`, {
+					item_id: parseInt(item.id, 10),
+					enabled: false,
+				})
+				this.log('info', `Mitti started (${reason}) — ${label} was already the loaded cue. Check cleared.`)
+				return
+			}
+			const previous = this.mittiArm
+				? this.formatCueDisplay(
+						this.scheduleItems.find((row) => String(row.id) === String(this.mittiArm.itemId))?.customFields?.cue,
+						this.mittiArm.itemId
+					)
+				: this.activeTimer?.cue_is || null
+			this.stopPeriodicAlign()
+			this.alignInFlight = false
+			this.mittiArm = null
 			const isSub = this.isScheduleItemSubCue(item)
 			this.log(
 				'info',
-				`Mitti started (${reason}) — using checked row ${this.formatCueDisplay(item.customFields?.cue, item.id)}`
+				previous
+					? `Mitti started (${reason}) — loading checked row ${label} instead of ${previous}`
+					: `Mitti started (${reason}) — loading checked row ${label}`
 			)
 			await this.runArmMittiSync(
 				{
@@ -1146,9 +1185,14 @@ class RunOfShowMittiInstance extends InstanceBase {
 				item_id: parseInt(item.id, 10),
 				enabled: false,
 			})
-			this.log('info', 'Cleared Mitti next-cue check so the following play waits for a new row')
+			this.deferArmForWatch = false
+			if (this.mittiTransportPlaying && this.mittiArm) {
+				this.markMittiPlayStarted(this.mittiArm)
+			}
+			this.log('info', `${label} is now the loaded Mitti cue. Disarm will clear it. Next-cue check cleared.`)
 		} finally {
 			this.watchConsumeInFlight = false
+			this.deferArmForWatch = false
 		}
 	}
 

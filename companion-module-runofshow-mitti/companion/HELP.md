@@ -6,7 +6,7 @@ Experimental Companion module: sync Run of Show timers from **Mitti** via OSC fe
 
 - **Arm Mitti sync** — load main cue, `mitti-arm`, listen for feedback (can also fire Mitti)
 - **Arm Mitti sync (sub-cue)** — load parent, arm sub-cue
-- **Set Mitti next cue (one row)** — checks that rundown row for everyone and does not change the loaded cue or timer. The next time Mitti actually plays, that row loads and syncs
+- **Set Mitti next cue (one row)** — checks that rundown row for everyone and does not change the loaded cue or timer. The next time Mitti actually plays, that checked row loads and syncs, even if a different cue was loaded. Disarm then clears that cue
 - **Clear Mitti next cue** — unchecks every Mitti next-cue row. No cue dropdown
 - **Disarm / End Mitti sync** — clear arm / release `time_source: mitti`
 - **Manual Mitti align** — test API without OSC

@@ -599,6 +599,7 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 	onTelemetryTick(position, duration) {
 		this.noteAvTransport(position, duration)
+		if (this.deferArmForWatch) return
 		if (!this.avArm) return
 		const arm = this.avArm
 
@@ -808,47 +809,57 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 
 	maybeConsumeAvWatch(reason) {
 		if (this.config?.followWatchColumn === false) return
-		if (this.avArm || this.watchConsumeInFlight) return
+		if (this.watchConsumeInFlight) return
+		this.watchConsumeInFlight = true
+		this.deferArmForWatch = true
 		this.consumeAvWatchColumn(reason).catch((err) => {
 			this.log('error', `AV next-cue failed: ${err.message}`)
 		})
 	}
 
-	/** Next AV-Playout play uses the single checked rundown row. Does not replace Arm+Play. */
+	/** Next AV-Playout play loads the checked rundown row, even if another cue is already loaded. */
 	async consumeAvWatchColumn(reason) {
-		if (this.avArm || this.watchConsumeInFlight) return
 		const eventId = this.normalizeEventId(this.config?.eventId)
-		if (!eventId) return
-		this.watchConsumeInFlight = true
+		if (!eventId) {
+			this.deferArmForWatch = false
+			this.watchConsumeInFlight = false
+			return
+		}
 		try {
 			await this.fetchData()
 			const item = (this.scheduleItems || []).find(
 				(row) => row?.avWatch === true || row?.av_watch === true
 			)
 			if (!item) {
+				this.deferArmForWatch = false
 				this.log('info', `AV-Playout started (${reason}) — no rundown row is checked as next`)
 				return
 			}
-			const isSub = this.isScheduleItemSubCue(item)
-			this.log(
-				'info',
-				`AV-Playout started (${reason}) — using checked row ${this.formatCueDisplay(item.customFields?.cue, item.id)}`
-			)
-			await this.runArmAvPlayoutSync(
-				{
-					itemId: String(item.id),
-					cueIndex: 0,
-					triggerOnArm: false,
-				},
-				{ requireSubCue: isSub }
-			)
+			const label = this.formatCueDisplay(item.customFields?.cue, item.id)
+			if (!(this.avArm && String(this.avArm.itemId) === String(item.id))) {
+				this.stopPeriodicAlign()
+				this.alignInFlight = false
+				this.avArm = null
+				this.log('info', `AV-Playout started (${reason}) — loading checked row ${label}`)
+				const isSub = this.isScheduleItemSubCue(item)
+				await this.runArmAvPlayoutSync(
+					{
+						itemId: String(item.id),
+						cueIndex: 0,
+						triggerOnArm: false,
+					},
+					{ requireSubCue: isSub }
+				)
+			}
 			await this.apiPatch(`/api/run-of-show-data/${eventId}/av-watch`, {
 				item_id: parseInt(item.id, 10),
 				enabled: false,
 			})
-			this.log('info', 'Cleared AV next-cue check so the following play waits for a new row')
+			this.deferArmForWatch = false
+			this.log('info', `${label} is now the loaded AV cue. Next-cue check cleared.`)
 		} finally {
 			this.watchConsumeInFlight = false
+			this.deferArmForWatch = false
 		}
 	}
 
