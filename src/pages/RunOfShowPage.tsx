@@ -2839,6 +2839,10 @@ const RunOfShowPage: React.FC = () => {
   const saveRetryRef = useRef(false);
   /** Settings/column edits must still save when no cue row changed. */
   const settingsSaveRequestedRef = useRef(false);
+  /** Rows this browser changed, kept even if a sync snapshot arrives before the save lands. */
+  const dirtyRowSnapshotsRef = useRef<Map<number, any>>(new Map());
+  /** Add, delete, or reorder — those still save the cue list. */
+  const structureDirtyRef = useRef(false);
 
   useEffect(() => {
     rowLocksRef.current = rowLocks;
@@ -2848,7 +2852,28 @@ const RunOfShowPage: React.FC = () => {
     isUserEditingRef.current = isUserEditing;
   }, [isUserEditing]);
 
-  useEffect(() => { scheduleRef.current = schedule; }, [schedule]);
+  useEffect(() => {
+    const prev = scheduleRef.current || [];
+    if (applyingRemoteRunOfShowRef.current || prev.length === 0) {
+      scheduleRef.current = schedule;
+      return;
+    }
+    const prevIds = prev.map((item: any) => Number(item.id)).join(',');
+    const nextIds = (schedule || []).map((item: any) => Number(item.id)).join(',');
+    if (prevIds !== nextIds) {
+      structureDirtyRef.current = true;
+    } else {
+      const prevById = new Map(prev.map((item: any) => [Number(item.id), item]));
+      for (const item of schedule || []) {
+        const id = Number(item.id);
+        const old = prevById.get(id);
+        if (!old || scheduleItemSignature(old) !== scheduleItemSignature(item)) {
+          dirtyRowSnapshotsRef.current.set(id, item);
+        }
+      }
+    }
+    scheduleRef.current = schedule;
+  }, [schedule]);
   useEffect(() => { customColumnsRef.current = customColumns; }, [customColumns]);
 
   // Load account-level filter prefs from Neon only when account sync is on
@@ -2984,6 +3009,15 @@ const RunOfShowPage: React.FC = () => {
     if (data.version != null && !Number.isNaN(Number(data.version))) {
       scheduleVersionRef.current = Number(data.version);
     }
+  }, []);
+
+  const overlayDirtyRows = useCallback((items: any[]) => {
+    const dirty = dirtyRowSnapshotsRef.current;
+    if (!dirty || dirty.size === 0 || !Array.isArray(items)) return items;
+    return items.map((item) => {
+      const snap = dirty.get(Number(item.id));
+      return snap ? { ...item, ...snap } : item;
+    });
   }, []);
 
   /** Keep locally-edited / self-locked rows when applying a remote schedule snapshot. */
@@ -8474,23 +8508,27 @@ const RunOfShowPage: React.FC = () => {
       if (allowEmpty) allowEmptyScheduleOnceRef.current = false;
 
       const originals = originalDurationsRef.current || {};
-      const localIds = scheduleWithDurationSeconds.map((item) => Number(item.id));
-      const syncedIds = lastSynced.map((item: any) => Number(item.id));
-      const structureChange =
-        allowEmpty ||
-        lastSynced.length === 0 ||
-        localIds.length !== syncedIds.length ||
-        localIds.some((id, index) => id !== syncedIds[index]);
-      const syncedById = new Map(lastSynced.map((item: any) => [Number(item.id), item]));
-      const editedItemIds = structureChange
-        ? []
-        : scheduleWithDurationSeconds
-            .filter((item) => {
-              const prev = syncedById.get(Number(item.id));
-              if (!prev) return true;
-              return scheduleItemSignature(prev) !== scheduleItemSignature(item);
-            })
-            .map((item) => Number(item.id));
+      const structureChange = allowEmpty || structureDirtyRef.current || lastSynced.length === 0;
+      const dirty = dirtyRowSnapshotsRef.current;
+      const editedItemIds = structureChange ? [] : Array.from(dirty.keys());
+      const dirtyById = new Map(
+        editedItemIds.map((id) => {
+          const snap = dirty.get(id);
+          return [id, snap];
+        })
+      );
+      if (!structureChange && dirtyById.size > 0) {
+        const base = lastSynced.length > 0 ? lastSynced : scheduleWithDurationSeconds;
+        const seen = new Set<number>();
+        scheduleWithDurationSeconds = base.map((item: any) => {
+          const id = Number(item.id);
+          seen.add(id);
+          return dirtyById.get(id) || item;
+        });
+        for (const [id, snap] of dirtyById) {
+          if (!seen.has(id) && snap) scheduleWithDurationSeconds.push(snap);
+        }
+      }
       const rowPatch = !structureChange;
       const settingsSave = settingsSaveRequestedRef.current;
       settingsSaveRequestedRef.current = false;
@@ -8550,6 +8588,27 @@ const RunOfShowPage: React.FC = () => {
 
       if (result) {
         rememberSyncedSchedule(result);
+        if (structureChange) structureDirtyRef.current = false;
+        let savedItems = result.schedule_items;
+        if (typeof savedItems === 'string') {
+          try {
+            savedItems = JSON.parse(savedItems);
+          } catch {
+            savedItems = [];
+          }
+        }
+        const savedById = new Map(
+          (Array.isArray(savedItems) ? savedItems : []).map((item: any) => [Number(item.id), item])
+        );
+        for (const id of editedItemIds) {
+          const snap = dirty.get(id);
+          const saved = savedById.get(id);
+          const current = dirtyRowSnapshotsRef.current.get(id);
+          const landed = snap && saved && scheduleItemSignature(saved) === scheduleItemSignature(snap);
+          if (landed && (!current || scheduleItemSignature(current) === scheduleItemSignature(snap))) {
+            dirtyRowSnapshotsRef.current.delete(id);
+          }
+        }
         console.log('✅ Schedule saved', result?.version != null ? `(version ${result.version})` : '');
       }
     } catch (error: any) {
@@ -8599,16 +8658,18 @@ const RunOfShowPage: React.FC = () => {
           }
           const serverById = new Map(items.map((item: any) => [Number(item.id), item]));
           const localById = new Map(localItems.map((item: any) => [Number(item.id), item]));
-          const merged = !structureNow
-            ? items.map((item: any) => {
-                const id = Number(item.id);
-                if (editedNow.includes(id) && localById.has(id)) return localById.get(id);
-                return serverById.get(id) || item;
-              })
-            : mergeSchedulePreservingLocalEdits(
-                normalizeScheduleVoCues(items, localItems, false),
-                localItems
-              );
+          const merged = overlayDirtyRows(
+            !structureNow
+              ? items.map((item: any) => {
+                  const id = Number(item.id);
+                  if (editedNow.includes(id) && localById.has(id)) return localById.get(id);
+                  return serverById.get(id) || item;
+                })
+              : mergeSchedulePreservingLocalEdits(
+                  normalizeScheduleVoCues(items, localItems, false),
+                  localItems
+                )
+          );
           applyingRemoteRunOfShowRef.current = true;
           setTimeout(() => {
             applyingRemoteRunOfShowRef.current = false;
@@ -8995,10 +9056,16 @@ const RunOfShowPage: React.FC = () => {
         // Update data without affecting timers
         // Force a new array reference to ensure React detects the change
         // Prefer local timerIds; do not invent new ones on poll (avoids ID churn)
-        const newSchedule = normalizeScheduleVoCues(
-          data.schedule_items,
-          scheduleRef.current,
-          false
+        applyingRemoteRunOfShowRef.current = true;
+        setTimeout(() => {
+          applyingRemoteRunOfShowRef.current = false;
+        }, 0);
+        const newSchedule = overlayDirtyRows(
+          normalizeScheduleVoCues(
+            data.schedule_items,
+            scheduleRef.current,
+            false
+          )
         );
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
@@ -9181,9 +9248,11 @@ const RunOfShowPage: React.FC = () => {
             }
           }
           if (scheduleItems && Array.isArray(scheduleItems)) {
-            const merged = mergeSchedulePreservingLocalEdits(
-              normalizeScheduleVoCues(scheduleItems, scheduleRef.current, false),
-              scheduleRef.current
+            const merged = overlayDirtyRows(
+              mergeSchedulePreservingLocalEdits(
+                normalizeScheduleVoCues(scheduleItems, scheduleRef.current, false),
+                scheduleRef.current
+              )
             );
             setSchedule(merged);
             rememberSyncedSchedule(data);
