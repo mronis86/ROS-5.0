@@ -8,7 +8,7 @@ Experimental Companion module: sync Run of Show timers from **Mitti** via OSC fe
 - **Arm Mitti sync (sub-cue)** — load parent, arm sub-cue
 - **Set Mitti next cue (one row)** — checks that rundown row and clears every other row. Does not load the timer yet
 - **Clear Mitti next cue** — unchecks every Mitti next-cue row. No cue dropdown
-- **Watch next Mitti play (pick ROS cue)** — load the ROS cue and wait. Does not send play. Timer starts when Mitti actually starts (switcher cut / play)
+- **Watch next Mitti play (pick ROS cue)** — checks that rundown row for everyone, loads the ROS cue, and waits. Does not send play. Timer starts when Mitti actually starts
 - **Watch next Mitti play (loaded ROS cue)** — same wait, using whatever cue is already loaded in ROS (no dropdown)
 - **Watch next Mitti play (sub-cue)** — same wait for an indented row
 - **Disarm / End Mitti sync** — clear arm / release `time_source: mitti`

@@ -678,6 +678,9 @@ class RunOfShowMittiInstance extends InstanceBase {
 				watchNextPlay,
 			})
 			await this.notifyMittiArm(armTrackItemId, { isSubCue: requireSubCue })
+			if (watchNextPlay) {
+				await this.markMittiWatchCue(armTrackItemId, true)
+			}
 			if (triggerOnArm) {
 				this.sendMittiTrigger({ triggerMode, cueNumber })
 			}

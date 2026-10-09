@@ -2736,13 +2736,15 @@ const RunOfShowPage: React.FC = () => {
   const [mittiWatchColumnEnabled, setMittiWatchColumnEnabled] = useState(false);
   /** Per event. Hidden until Operator Actions turns the AV column on. */
   const [avWatchColumnEnabled, setAvWatchColumnEnabled] = useState(false);
+  const showMittiWatchColumn = mittiWatchColumnEnabled && visibleColumns.mittiWatch !== false;
+  const showAvWatchColumn = avWatchColumnEnabled && visibleColumns.avWatch !== false;
   const scrollVisibleColumns = useMemo(
     () => ({
       ...scrollVisibleColumnsBase,
-      mittiWatch: mittiWatchColumnEnabled,
-      avWatch: avWatchColumnEnabled,
+      mittiWatch: showMittiWatchColumn,
+      avWatch: showAvWatchColumn,
     }),
-    [scrollVisibleColumnsBase, mittiWatchColumnEnabled, avWatchColumnEnabled]
+    [scrollVisibleColumnsBase, showMittiWatchColumn, showAvWatchColumn]
   );
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
@@ -8993,15 +8995,45 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
 
     console.log('🔌 Setting up WebSocket-only real-time connections for event:', event.id);
-    
+
+    const applyExternalWatchFromRemote = (data: any) => {
+      let items = data?.schedule_items;
+      if (typeof items === 'string') {
+        try {
+          items = JSON.parse(items);
+        } catch {
+          items = null;
+        }
+      }
+      if (Array.isArray(items)) {
+        const byId = new Map(items.map((item: any) => [Number(item.id), item]));
+        setSchedule((prev) =>
+          prev.map((row) => {
+            const remote = byId.get(Number(row.id));
+            if (!remote) return row;
+            const mittiWatch = remote.mittiWatch === true;
+            const avWatch = remote.avWatch === true;
+            if (!!row.mittiWatch === mittiWatch && !!row.avWatch === avWatch) return row;
+            return { ...row, mittiWatch, avWatch };
+          })
+        );
+      }
+      if (data?.settings?.mittiWatchColumn !== undefined) {
+        setMittiWatchColumnEnabled(data.settings.mittiWatchColumn === true);
+      }
+      if (data?.settings?.avWatchColumn !== undefined) {
+        setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
+      }
+    };
+
     const callbacks = {
       onRunOfShowDataUpdated: (data: any) => {
         
         // Skip if this update was made by the current user (prevent save loops)
         if (data && data.last_modified_by === user?.id) {
           console.log('⏭️ Skipping WebSocket schedule apply - change made by current user');
-          // Still adopt version so we don't drift
           rememberSyncedSchedule(data);
+          applyExternalWatchFromRemote(data);
           return;
         }
         
@@ -16295,7 +16327,7 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
-                      {mittiWatchColumnEnabled && (
+                      {showMittiWatchColumn && (
                         <div
                           className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
                           style={{ width: 88, order: (scrollColumnFlexOrder.recording ?? 6) + 0.5 }}
@@ -16304,7 +16336,7 @@ const RunOfShowPage: React.FC = () => {
                           <span className="text-white font-bold text-sm">Mitti</span>
                         </div>
                       )}
-                      {avWatchColumnEnabled && (
+                      {showAvWatchColumn && (
                         <div
                           className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
                           style={{ width: 72, order: (scrollColumnFlexOrder.recording ?? 6) + 0.6 }}
@@ -17474,7 +17506,7 @@ const RunOfShowPage: React.FC = () => {
                       />
                     </div>
                   )}
-                  {mittiWatchColumnEnabled && (
+                  {showMittiWatchColumn && (
                     <div
                       className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
                       style={{ width: 88, order: (scrollColumnFlexOrder.recording ?? 6) + 0.5 }}
@@ -17483,7 +17515,7 @@ const RunOfShowPage: React.FC = () => {
                       <span className="text-white font-bold text-sm">Mitti</span>
                     </div>
                   )}
-                  {avWatchColumnEnabled && (
+                  {showAvWatchColumn && (
                     <div
                       className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
                       style={{ width: 72, order: (scrollColumnFlexOrder.recording ?? 6) + 0.6 }}

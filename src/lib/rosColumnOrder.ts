@@ -7,6 +7,8 @@ export const BUILTIN_SCROLL_COLUMNS = [
   'shotType',
   'pptQA',
   'recording',
+  'mittiWatch',
+  'avWatch',
   'notes',
   'assets',
   'speakers',
@@ -24,6 +26,8 @@ export const BUILTIN_COLUMN_LABELS: Record<BuiltinScrollColumn, string> = {
   shotType: 'Shot Type',
   pptQA: 'PPT/Q&A',
   recording: 'Recording',
+  mittiWatch: 'Mitti',
+  avWatch: 'AV',
   notes: 'Notes',
   assets: 'Assets',
   speakers: 'Speakers',
@@ -45,6 +49,8 @@ export type RosVisibleColumns = {
   shotType: boolean;
   pptQA: boolean;
   recording: boolean;
+  mittiWatch: boolean;
+  avWatch: boolean;
   notes: boolean;
   assets: boolean;
   participants: boolean;
@@ -62,6 +68,8 @@ export const DEFAULT_ROS_VISIBLE_COLUMNS: RosVisibleColumns = {
   shotType: true,
   pptQA: true,
   recording: true,
+  mittiWatch: true,
+  avWatch: true,
   notes: true,
   assets: true,
   participants: false,
