@@ -169,12 +169,12 @@ const ExtendEventControlsPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-10 text-slate-300">Loading Extend Event Controls…</div>
+      <div className="mx-auto max-w-6xl px-4 pb-10 pt-[calc(var(--app-header-height)+2.5rem)] text-slate-300">Loading Extend Event Controls…</div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
+    <div className="mx-auto max-w-6xl px-4 pb-6 pt-[calc(var(--app-header-height)+1.5rem)]">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <button

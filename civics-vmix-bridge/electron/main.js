@@ -26,7 +26,7 @@ const bridge = new BridgeController({
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 820,
-    height: 720,
+    height: 920,
     minWidth: 680,
     minHeight: 560,
     title: 'ROS Civics vMix Bridge',
@@ -79,8 +79,20 @@ ipcMain.handle('bridge:resync', async () => {
   bridge.lastKey = '';
   try {
     await bridge.pollOnce();
-    return { ok: true, message: bridge.lastOk };
+    return { ok: true, message: bridge.lastOk, url: bridge.lastVmixUrl };
   } catch (err) {
-    return { ok: false, message: err.message || String(err) };
+    return { ok: false, message: err.message || String(err), url: err.url || bridge.lastVmixUrl };
   }
+});
+ipcMain.handle('bridge:testSelect', async (_e, bindingId) => {
+  try {
+    const result = await bridge.testSelectBinding(bindingId);
+    return { ok: true, message: bridge.lastOk, url: result.url, value: result.value };
+  } catch (err) {
+    return { ok: false, message: err.message || String(err), url: err.url, tried: err.tried };
+  }
+});
+ipcMain.handle('bridge:listDataSources', async () => {
+  const cfg = loadConfig();
+  return vmix.listDataSources(cfg.vmixHost, cfg.vmixPort);
 });

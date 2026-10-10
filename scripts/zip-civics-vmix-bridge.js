@@ -10,18 +10,20 @@ const projectRoot = path.resolve(__dirname, '..');
 const bridgeRoot = path.join(projectRoot, 'civics-vmix-bridge');
 
 function findUnpacked() {
-  const candidates = [
-    path.join(bridgeRoot, 'dist-ready', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist', 'win-unpacked'),
-  ];
   const readyDirs = fs.existsSync(bridgeRoot)
     ? fs
         .readdirSync(bridgeRoot, { withFileTypes: true })
         .filter((d) => d.isDirectory() && /^dist-ready/.test(d.name))
-        .map((d) => path.join(bridgeRoot, d.name, 'win-unpacked'))
-        .filter((p) => fs.existsSync(p))
+        .map((d) => ({
+          path: path.join(bridgeRoot, d.name, 'win-unpacked'),
+          mtime: fs.statSync(path.join(bridgeRoot, d.name)).mtimeMs,
+        }))
+        .filter((d) => fs.existsSync(d.path))
+        .sort((a, b) => b.mtime - a.mtime)
     : [];
-  return [...readyDirs, ...candidates].find((p) => fs.existsSync(p)) || null;
+  if (readyDirs[0]) return readyDirs[0].path;
+  const fallback = path.join(bridgeRoot, 'dist', 'win-unpacked');
+  return fs.existsSync(fallback) ? fallback : null;
 }
 
 const unpackedDir = findUnpacked();

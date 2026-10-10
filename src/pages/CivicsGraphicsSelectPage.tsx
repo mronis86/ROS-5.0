@@ -15,6 +15,22 @@ import { DatabaseService } from '../services/database';
 
 const TIERS: CivicsBeeTier[] = ['top25', 'top10', 'top5'];
 
+const TIER_RANK: Record<CivicsBeeTier, number> = {
+  top25: 1,
+  top10: 2,
+  top5: 3,
+};
+
+/** Next round exists, and this student did not advance into it. Top 5 has no later round. */
+function isEliminatedOnTierPage(
+  entryTier: CivicsBeeTier | null,
+  pageTier: CivicsBeeTier,
+  anyAdvanced: boolean
+): boolean {
+  if (!anyAdvanced || pageTier === 'top5' || !entryTier) return false;
+  return TIER_RANK[entryTier] <= TIER_RANK[pageTier];
+}
+
 function normalizeTierParam(raw: string | null): CivicsBeeTier {
   if (raw === 'top10' || raw === 'top5' || raw === 'top25') return raw;
   return 'top25';
@@ -75,6 +91,11 @@ const CivicsGraphicsSelectPage: React.FC = () => {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [roster.entries, tier]);
 
+  const anyAdvanced = useMemo(() => {
+    if (tier === 'top5') return false;
+    return buttons.some((e) => e.tier != null && TIER_RANK[e.tier] > TIER_RANK[tier]);
+  }, [buttons, tier]);
+
   const setTier = (next: CivicsBeeTier) => {
     const qs = new URLSearchParams();
     if (eventId) qs.set('eventId', eventId);
@@ -119,13 +140,13 @@ const CivicsGraphicsSelectPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 px-4 py-10 text-slate-300">Loading Civics graphics…</div>
+      <div className="min-h-screen bg-slate-950 px-4 pb-10 pt-[calc(var(--app-header-height)+2.5rem)] text-slate-300">Loading Civics graphics…</div>
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto max-w-6xl px-4 py-5">
+      <div className="mx-auto max-w-6xl px-4 pb-5 pt-[calc(var(--app-header-height)+1.25rem)]">
         <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <button
@@ -201,6 +222,8 @@ const CivicsGraphicsSelectPage: React.FC = () => {
         <p className="mb-3 text-xs text-slate-500">
           Separate from ROS cues. The Civics bridge on the vMix PC watches this selection and calls
           DataSourceSelectRow on the matching Top 25 / 10 / 5 Data Source.
+          {anyAdvanced && tier === 'top25' && ' Grey buttons did not move on to the Top 10.'}
+          {anyAdvanced && tier === 'top10' && ' Grey buttons did not move on to the Top 5.'}
         </p>
 
         {buttons.length === 0 ? (
@@ -211,6 +234,7 @@ const CivicsGraphicsSelectPage: React.FC = () => {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {buttons.map((entry) => {
               const shortName = formatCivicsBeeShortDisplayName(entry.studentName);
+              const eliminated = isEliminatedOnTierPage(entry.tier, tier, anyAdvanced);
               const active =
                 selection?.code === entry.code &&
                 selection?.filter === tier &&
@@ -225,16 +249,25 @@ const CivicsGraphicsSelectPage: React.FC = () => {
                   className={`flex min-h-[7.5rem] flex-col items-center justify-center rounded-2xl border-2 px-3 py-4 text-center shadow-lg transition ${
                     active
                       ? 'border-emerald-400 bg-emerald-500 text-slate-950'
-                      : 'border-slate-600 bg-slate-800 text-white hover:border-slate-400 hover:bg-slate-700'
+                      : eliminated
+                        ? 'border-slate-700 bg-slate-900/80 text-slate-500 hover:border-slate-600'
+                        : 'border-slate-600 bg-slate-800 text-white hover:border-slate-400 hover:bg-slate-700'
                   } disabled:opacity-60`}
                 >
-                  <span className="text-lg font-bold leading-tight">{shortName || '—'}</span>
+                  <span className={`text-lg font-bold leading-tight ${eliminated ? 'line-through decoration-slate-600' : ''}`}>
+                    {shortName || '—'}
+                  </span>
                   <span className={`mt-2 text-xs font-semibold uppercase tracking-wide ${active ? 'text-emerald-950/80' : 'text-slate-400'}`}>
                     {entry.code}
                   </span>
                   <span className={`mt-0.5 text-[11px] ${active ? 'text-emerald-950/70' : 'text-slate-500'}`}>
                     {entry.name}
                   </span>
+                  {eliminated && (
+                    <span className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Eliminated
+                    </span>
+                  )}
                   {busy && <span className="mt-2 text-[10px] opacity-80">Sending…</span>}
                 </button>
               );
