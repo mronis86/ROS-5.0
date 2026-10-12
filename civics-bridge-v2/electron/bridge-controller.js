@@ -1,4 +1,4 @@
-const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture, blankButtonPng } = require('./button-painter');
+const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture } = require('./button-painter');
 const { setButtonStyle } = require('./companion-client');
 const { loadConfig, normalizeBaseUrl, stateLabelFor } = require('./config-store');
 
@@ -6,20 +6,33 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function postLog(cfg, message) {
+async function postLog(cfg, message, status) {
   try {
     const base = normalizeBaseUrl(cfg && cfg.apiBaseUrl);
     const eventId = String((cfg && cfg.eventId) || '').trim();
     const text = String(message || '').trim().slice(0, 500);
-    if (!base || !eventId || !text) return;
+    if (!base || !eventId || (!text && !status)) return;
+    const body = { eventId };
+    if (text) body.message = text;
+    if (status) body.status = status;
     await fetch(`${base}/api/civics-bee/bridge-log`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ eventId, message: text }),
+      body: JSON.stringify(body),
     });
   } catch {
     /* the button job still finishes if the log page is unreachable */
   }
+}
+
+function bridgeStatus(cfg) {
+  const comp = (cfg && cfg.companion) || {};
+  return {
+    host: comp.host || '',
+    port: comp.port || 0,
+    page: comp.page || 0,
+    version: comp.apiVersion || '',
+  };
 }
 
 function replyOf(result) {
@@ -86,6 +99,7 @@ class BridgeController {
     const body = await res.json();
     const build = body?.build;
     const folder = ensureButtonPictureDir();
+    await postLog(cfg, '', bridgeStatus(cfg));
     if (!build?.requestedAt) {
       this.lastOk = `Waiting for a push from the Companion buttons tab. Pictures folder: ${folder}`;
       this.lastError = '';
@@ -223,18 +237,9 @@ class BridgeController {
             apiMode = cleared.api;
             this.companionApi = cleared.api;
           }
-          const replaced = await setButtonStyle(
-            comp.host,
-            comp.port,
-            comp.page,
-            row,
-            column,
-            { text: '', png64: blankButtonPng(), pngalignment: 'center:center' },
-            apiMode
-          );
           await postLog(
             cfg,
-            `Cleared button ${i + 1} page ${comp.page} ${where}. Companion said "${replyOf(cleared)}" then "${replyOf(replaced)}".`
+            `Removed picture on button ${i + 1} page ${comp.page} ${where}. Companion said "${replyOf(cleared)}".`
           );
           await sleep(150);
         }

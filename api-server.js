@@ -4189,20 +4189,41 @@ app.get('/api/civics-bee/button-build', async (req, res) => {
 
 const civicsBridgeLogs = new Map();
 
+function bridgeLogRecord(eventId) {
+  const current = civicsBridgeLogs.get(eventId);
+  if (current && Array.isArray(current.lines)) return current;
+  if (Array.isArray(current)) return { lines: current, status: null };
+  return { lines: [], status: null };
+}
+
 app.get('/api/civics-bee/bridge-log', (req, res) => {
   const eventId = String(req.query.eventId || '').trim();
   if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+  const record = bridgeLogRecord(eventId);
   res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache', Expires: '0' });
-  return res.json({ eventId, lines: civicsBridgeLogs.get(eventId) || [] });
+  return res.json({ eventId, lines: record.lines, status: record.status });
 });
 
 app.post('/api/civics-bee/bridge-log', (req, res) => {
   const eventId = String(req.body?.eventId || '').trim();
   const message = String(req.body?.message || '').trim().slice(0, 500);
-  if (!eventId || !message) return res.status(400).json({ error: 'eventId and message are required' });
-  const lines = civicsBridgeLogs.get(eventId) || [];
-  lines.unshift({ at: new Date().toISOString(), message });
-  civicsBridgeLogs.set(eventId, lines.slice(0, 40));
+  const status = req.body?.status;
+  if (!eventId || (!message && !status)) return res.status(400).json({ error: 'eventId and message are required' });
+  const record = bridgeLogRecord(eventId);
+  if (status && typeof status === 'object') {
+    record.status = {
+      at: new Date().toISOString(),
+      host: String(status.host || '').slice(0, 80),
+      port: Number(status.port) || 0,
+      page: Number(status.page) || 0,
+      version: String(status.version || '').slice(0, 20),
+    };
+  }
+  if (message) {
+    record.lines.unshift({ at: new Date().toISOString(), message });
+    record.lines = record.lines.slice(0, 40);
+  }
+  civicsBridgeLogs.set(eventId, record);
   return res.json({ ok: true });
 });
 

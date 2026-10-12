@@ -21,6 +21,7 @@ type Props = {
 };
 
 type BridgeLogLine = { at: string; message: string };
+type BridgeStatus = { at: string; host?: string; port?: number; page?: number; version?: string };
 
 const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing, onPush }) => {
   const [pictureStyle, setPictureStyle] = useState<CivicsButtonPictureStyle>(
@@ -29,6 +30,8 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
   const [flagOutline, setFlagOutline] = useState(roster.buttonBuild?.flagOutline === true);
   const [message, setMessage] = useState<string | null>(null);
   const [bridgeLog, setBridgeLog] = useState<BridgeLogLine[]>([]);
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!eventId) return undefined;
@@ -42,6 +45,8 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
         if (!res.ok) return;
         const body = await res.json();
         if (!stop && Array.isArray(body.lines)) setBridgeLog(body.lines);
+        if (!stop) setBridgeStatus(body.status && body.status.at ? body.status : null);
+        if (!stop) setNow(Date.now());
       } catch {
         /* keep the last log on screen */
       }
@@ -55,8 +60,12 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
   }, [eventId]);
 
   const slots = useMemo(() => buildCivicsCompanionSlots(roster.entries), [roster.entries]);
-  const showFlag = pictureStyle === 'abbrev-name-flag' || pictureStyle === 'flag-state-name';
+  const generated = roster.buttonBuild?.action === 'build';
+  const showFlag = generated && (pictureStyle === 'abbrev-name-flag' || pictureStyle === 'flag-state-name');
   const showAbbrev = pictureStyle === 'abbrev-name' || pictureStyle === 'abbrev-name-flag';
+  const seenAt = bridgeStatus?.at || bridgeLog[0]?.at || '';
+  const seenAge = seenAt ? now - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY;
+  const bridgeSeen = Number.isFinite(seenAge) && seenAge < 15000;
 
   const push = async (action: 'build' | 'clear') => {
     setMessage(null);
@@ -75,7 +84,7 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
       ok
         ? action === 'clear'
           ? 'Clear sent. Civics Bridge V2 will remove the pictures from Companion.'
-          : `Pushed ${slots.length} button${slots.length === 1 ? '' : 's'}. Still-in pictures are transparent. Eliminated pictures are grey.`
+          : `Generated ${slots.length} button${slots.length === 1 ? '' : 's'}. Still-in pictures are transparent. Eliminated pictures are grey.`
         : action === 'clear'
           ? 'Clear failed.'
           : 'Push failed.'
@@ -87,8 +96,15 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
       <div>
         <h2 className="text-lg font-semibold text-white">Companion buttons</h2>
         <p className="mt-1 text-sm text-slate-400">
-          Top 10, sorted by state. Still-in pictures are transparent. A picture is filled grey only when that student is eliminated.
-          Clear removes the pictures from Companion.
+          Pictures stay off this page until you click Generate buttons. Clear puts them back to not generated and removes the pictures from Companion.
+        </p>
+        <p className={`mt-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${bridgeSeen ? 'bg-emerald-900 text-emerald-200' : 'bg-slate-800 text-slate-400'}`}>
+          <span className={`h-2 w-2 rounded-full ${bridgeSeen ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+          {bridgeSeen
+            ? `Bridge seen${bridgeStatus ? ` at ${bridgeStatus.host}:${bridgeStatus.port}, page ${bridgeStatus.page}` : ''}`
+            : seenAt
+              ? 'Bridge not seen. The last message is in the log below.'
+              : 'Bridge not seen. Start Civics Bridge V2 on the show computer.'}
         </p>
       </div>
 
@@ -128,30 +144,38 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
             <div
               key={`${slot.state}-${index}`}
               className={`flex min-h-[7.5rem] flex-col items-center justify-center rounded-2xl border px-3 py-4 text-center ${
-                slot.eliminated
-                  ? 'border-neutral-500 bg-neutral-500 text-white'
-                  : 'border-dashed border-slate-500 text-white'
+                !generated
+                  ? 'border-dashed border-slate-600 bg-transparent text-slate-500'
+                  : slot.eliminated
+                    ? 'border-neutral-500 bg-neutral-500 text-white'
+                    : 'border-dashed border-slate-500 text-white'
               }`}
               style={
-                slot.eliminated
-                  ? undefined
-                  : {
+                generated && !slot.eliminated
+                  ? {
                       backgroundColor: 'transparent',
                       backgroundImage:
                         'linear-gradient(45deg, rgba(148,163,184,0.28) 25%, transparent 25%), linear-gradient(-45deg, rgba(148,163,184,0.28) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(148,163,184,0.28) 75%), linear-gradient(-45deg, transparent 75%, rgba(148,163,184,0.28) 75%)',
                       backgroundSize: '14px 14px',
                       backgroundPosition: '0 0, 0 7px, 7px -7px, -7px 0',
                     }
+                  : undefined
               }
             >
               <span className="text-[10px] uppercase tracking-wide text-slate-500">Button {index + 1}</span>
-              {showFlag && <span className="mt-1 text-[10px] text-slate-400">Flag</span>}
-              <span className={`mt-1 text-lg font-bold ${slot.eliminated ? 'line-through' : ''}`}>
-                {showAbbrev ? slot.code : slot.stateLabel}
-              </span>
-              {showAbbrev && <span className="mt-1 text-xs text-slate-300">{slot.name}</span>}
-              {slot.eliminated && (
-                <span className="mt-2 text-[10px] font-semibold uppercase tracking-wide">Eliminated</span>
+              {generated ? (
+                <>
+                  {showFlag && <span className="mt-1 text-[10px] text-slate-400">Flag</span>}
+                  <span className={`mt-1 text-lg font-bold ${slot.eliminated ? 'line-through' : ''}`}>
+                    {showAbbrev ? slot.code : slot.stateLabel}
+                  </span>
+                  {showAbbrev && <span className="mt-1 text-xs text-slate-300">{slot.name}</span>}
+                  {slot.eliminated && (
+                    <span className="mt-2 text-[10px] font-semibold uppercase tracking-wide">Eliminated</span>
+                  )}
+                </>
+              ) : (
+                <span className="mt-2 text-xs uppercase tracking-wide">Not generated</span>
               )}
             </div>
           ))}
@@ -165,7 +189,7 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
           onClick={() => void push('build')}
           className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {pushing ? 'Working…' : 'Push pictures to bridge'}
+          {pushing ? 'Working…' : 'Generate buttons'}
         </button>
         <button
           type="button"
@@ -176,7 +200,9 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
           Clear buttons on Companion
         </button>
         {roster.buttonBuild?.requestedAt && (
-          <span className="text-xs text-slate-500">Last push {roster.buttonBuild.requestedAt}</span>
+          <span className="text-xs text-slate-500">
+            {generated ? 'Generated' : 'Not generated'} {roster.buttonBuild.requestedAt}
+          </span>
         )}
       </div>
       {message && <p className="text-sm text-emerald-300">{message}</p>}

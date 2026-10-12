@@ -1,6 +1,6 @@
 {
   "name": "ros-civics-bridge-v2",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "Civics Bridge V2 writes Companion button pictures to a folder. It does not talk to vMix.",
   "private": true,
   "main": "electron/main.js",
