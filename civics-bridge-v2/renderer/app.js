@@ -5,37 +5,68 @@ function readForm() {
   return {
     apiBaseUrl: $('apiBaseUrl').value.trim(),
     eventId: $('eventId').value.trim(),
-    pictureFolder: $('pictureFolder').value.trim(),
     pollSeconds: parseFloat($('pollSeconds').value) || 2,
+    companion: {
+      enabled: $('companionEnabled').checked === true,
+      buttonImages: $('companionButtonImages').checked !== false,
+      pictureFolder: $('companionPictureFolder').value.trim(),
+      useShortStateNames: $('companionUseShortStateNames').checked === true,
+      shortStateNames: $('companionShortStateNames').value,
+      host: $('companionHost').value.trim() || '127.0.0.1',
+      port: parseInt($('companionPort').value, 10) || 8000,
+      apiVersion: $('companionApiVersion').value || 'auto',
+      page: parseInt($('companionPage').value, 10) || 1,
+      firstBank: parseInt($('companionFirstBank').value, 10) || 1,
+      count: parseInt($('companionCount').value, 10) || 10,
+      startRow: parseInt($('companionStartRow').value, 10) || 0,
+      startColumn: parseInt($('companionStartColumn').value, 10) || 0,
+      columns: parseInt($('companionColumns').value, 10) || 10,
+    },
   };
 }
 
 function fillForm(cfg) {
+  const comp = cfg.companion || {};
   $('apiBaseUrl').value = cfg.apiBaseUrl || '';
   $('eventId').value = cfg.eventId || '';
-  $('pictureFolder').value = cfg.pictureFolder || '';
   $('pollSeconds').value = String(cfg.pollSeconds || 2);
+  $('companionEnabled').checked = comp.enabled !== false;
+  $('companionButtonImages').checked = comp.buttonImages !== false;
+  $('companionPictureFolder').value = comp.pictureFolder || '';
+  $('companionUseShortStateNames').checked = comp.useShortStateNames === true;
+  $('companionShortStateNames').value = comp.shortStateNames || '';
+  $('companionHost').value = comp.host || '127.0.0.1';
+  $('companionPort').value = String(comp.port || 8000);
+  $('companionApiVersion').value = comp.apiVersion === 'v2' || comp.apiVersion === 'v3' ? comp.apiVersion : 'auto';
+  $('companionPage').value = String(comp.page || 1);
+  $('companionFirstBank').value = String(comp.firstBank || 1);
+  $('companionCount').value = String(comp.count || 10);
+  $('companionStartRow').value = String(comp.startRow ?? 0);
+  $('companionStartColumn').value = String(comp.startColumn ?? 0);
+  $('companionColumns').value = String(comp.columns || 10);
 }
 
 function showStatus(status) {
-  $('runState').textContent = status?.running ? 'Watching for a push' : 'Stopped';
+  const el = $('status');
   const lines = [];
   if (status?.lastOk) lines.push(status.lastOk);
   if (status?.lastError) lines.push(status.lastError);
-  if (status?.pictureFolder) lines.push(status.pictureFolder);
-  $('status').textContent = lines.join('\n') || '—';
+  el.textContent = lines.join('\n') || '—';
+  el.className = status?.lastError ? 'err' : 'ok';
+  $('runState').textContent = status?.running ? 'Watching for a website push' : 'Stopped';
 }
 
 async function init() {
   fillForm(await api.getConfig());
   api.onStatus(showStatus);
-  $('btnFolder').onclick = async () => {
+  $('btnPictureFolder').onclick = async () => {
     const picked = await api.pickFolder();
-    if (picked) $('pictureFolder').value = picked;
+    if (picked) $('companionPictureFolder').value = picked;
   };
   $('btnSave').onclick = async () => {
     fillForm(await api.saveConfig(readForm()));
     $('status').textContent = 'Saved.';
+    $('status').className = 'ok';
   };
   $('btnStart').onclick = async () => {
     await api.saveConfig(readForm());

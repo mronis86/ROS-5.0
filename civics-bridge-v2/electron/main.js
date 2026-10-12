@@ -20,7 +20,7 @@ const bridge = new BridgeController({
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 720,
-    height: 640,
+    height: 980,
     title: 'Civics Bridge V2',
     autoHideMenuBar: true,
     backgroundColor: '#0f172a',

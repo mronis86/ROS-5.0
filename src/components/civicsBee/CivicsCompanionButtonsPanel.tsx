@@ -29,7 +29,7 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, pushing, onPush 
   const showFlag = pictureStyle === 'abbrev-name-flag' || pictureStyle === 'flag-state-name';
   const showAbbrev = pictureStyle === 'abbrev-name' || pictureStyle === 'abbrev-name-flag';
 
-  const push = async () => {
+  const push = async (action: 'build' | 'clear') => {
     setMessage(null);
     const next: CivicsBeeRoster = {
       ...roster,
@@ -38,13 +38,18 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, pushing, onPush 
         pictureStyle,
         flagOutline: showFlag && flagOutline,
         slots,
+        action,
       },
     };
     const ok = await onPush(next);
     setMessage(
       ok
-        ? `Pushed ${slots.length} button${slots.length === 1 ? '' : 's'}. Civics Bridge V2 will write 01.png through 10.png into its picture folder.`
-        : 'Push failed.'
+        ? action === 'clear'
+          ? 'Clear sent. Civics Bridge V2 will remove the pictures from Companion.'
+          : `Pushed ${slots.length} button${slots.length === 1 ? '' : 's'}. Still-in pictures are transparent. Eliminated pictures are grey.`
+        : action === 'clear'
+          ? 'Clear failed.'
+          : 'Push failed.'
     );
   };
 
@@ -53,8 +58,8 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, pushing, onPush 
       <div>
         <h2 className="text-lg font-semibold text-white">Companion buttons</h2>
         <p className="mt-1 text-sm text-slate-400">
-          These are the Top 10 pictures, sorted by state. Push sends this set to Civics Bridge V2.
-          The bridge writes the PNG files into the folder you chose. It does not talk to vMix.
+          Top 10, sorted by state. Still-in pictures are transparent. A picture is filled grey only when that student is eliminated.
+          Clear removes the pictures from Companion.
         </p>
       </div>
 
@@ -95,9 +100,20 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, pushing, onPush 
               key={`${slot.state}-${index}`}
               className={`flex min-h-[7.5rem] flex-col items-center justify-center rounded-2xl border px-3 py-4 text-center ${
                 slot.eliminated
-                  ? 'border-slate-700 bg-slate-900 text-slate-500'
-                  : 'border-slate-600 bg-slate-800 text-white'
+                  ? 'border-neutral-500 bg-neutral-500 text-white'
+                  : 'border-dashed border-slate-500 text-white'
               }`}
+              style={
+                slot.eliminated
+                  ? undefined
+                  : {
+                      backgroundColor: 'transparent',
+                      backgroundImage:
+                        'linear-gradient(45deg, rgba(148,163,184,0.28) 25%, transparent 25%), linear-gradient(-45deg, rgba(148,163,184,0.28) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(148,163,184,0.28) 75%), linear-gradient(-45deg, transparent 75%, rgba(148,163,184,0.28) 75%)',
+                      backgroundSize: '14px 14px',
+                      backgroundPosition: '0 0, 0 7px, 7px -7px, -7px 0',
+                    }
+              }
             >
               <span className="text-[10px] uppercase tracking-wide text-slate-500">Button {index + 1}</span>
               {showFlag && <span className="mt-1 text-[10px] text-slate-400">Flag</span>}
@@ -117,10 +133,18 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, pushing, onPush 
         <button
           type="button"
           disabled={pushing || slots.length === 0}
-          onClick={() => void push()}
+          onClick={() => void push('build')}
           className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {pushing ? 'Pushing…' : 'Push pictures to bridge'}
+          {pushing ? 'Working…' : 'Push pictures to bridge'}
+        </button>
+        <button
+          type="button"
+          disabled={pushing}
+          onClick={() => void push('clear')}
+          className="rounded-lg border border-slate-500 px-4 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Clear buttons on Companion
         </button>
         {roster.buttonBuild?.requestedAt && (
           <span className="text-xs text-slate-500">Last push {roster.buttonBuild.requestedAt}</span>

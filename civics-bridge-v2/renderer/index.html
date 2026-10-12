@@ -2,43 +2,133 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
     <title>Civics Bridge V2</title>
     <style>
-      body { margin: 0; font-family: Segoe UI, sans-serif; background: #0f172a; color: #e2e8f0; padding: 18px; }
-      h1 { font-size: 1.3rem; margin: 0 0 6px; }
-      p { color: #94a3b8; font-size: 0.85rem; }
-      label { display: block; font-size: 0.75rem; color: #94a3b8; margin: 10px 0 4px; }
-      input { width: 100%; box-sizing: border-box; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; }
-      .row { display: flex; gap: 8px; margin-top: 8px; }
-      .row input { flex: 1; }
-      button { border: 0; border-radius: 8px; padding: 9px 14px; font-weight: 600; cursor: pointer; background: #334155; color: #e2e8f0; }
+      :root { color-scheme: dark; --bg: #0f172a; --card: #1e293b; --line: #334155; --text: #e2e8f0; --muted: #94a3b8; --ok: #34d399; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: Segoe UI, system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 18px; }
+      h1 { font-size: 1.25rem; margin: 0 0 4px; }
+      p.sub { margin: 0 0 16px; color: var(--muted); font-size: 0.85rem; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+      label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
+      input[type="text"], input[type="number"], input:not([type]), select, textarea {
+        width: 100%; background: #0f172a; border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 8px 10px; margin-bottom: 10px;
+      }
+      .check { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0 12px; font-size: 0.8rem; color: var(--muted); }
+      .check input { width: auto; margin: 3px 0 0; }
+      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+      .folder-row { display: flex; gap: 8px; align-items: center; }
+      .folder-row input { flex: 1; }
+      .folder-row button { white-space: nowrap; }
+      button { border: 0; border-radius: 8px; padding: 9px 14px; font-weight: 600; cursor: pointer; background: #334155; color: var(--text); }
       button.primary { background: #0891b2; color: #041016; }
+      button.danger { background: #7f1d1d; }
       button.ok { background: #065f46; }
-      #status { white-space: pre-wrap; min-height: 4rem; font-size: 0.85rem; }
-      .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px; margin-top: 12px; }
+      #status { font-size: 0.85rem; white-space: pre-wrap; min-height: 3.5rem; }
+      .ok { color: var(--ok); }
+      .err { color: #f87171; }
+      .hint { font-size: 0.75rem; color: var(--muted); margin: 0 0 10px; }
     </style>
   </head>
   <body>
     <h1>Civics Bridge V2</h1>
-    <p>Writes button pictures into a folder for Companion to import. This app does not talk to vMix.</p>
+    <p class="sub">
+      Waits for a push from the Companion buttons tab, then draws those pictures and sends them to Companion.
+      This app does not talk to vMix.
+    </p>
+
     <div class="card">
-      <label>API base URL</label>
+      <label>API Base URL</label>
       <input id="apiBaseUrl" />
-      <label>Event ID</label>
+      <label>Event ID (UUID from the Civics page URL)</label>
       <input id="eventId" />
-      <label>Picture folder</label>
-      <div class="row">
-        <input id="pictureFolder" placeholder="Folder Companion imports from" />
-        <button type="button" id="btnFolder">Choose folder</button>
-      </div>
-      <label>Check for a new push every (seconds)</label>
+      <label>Check for a push every (seconds)</label>
       <input id="pollSeconds" type="number" min="1" step="1" />
-      <div class="row">
-        <button class="primary" id="btnSave" type="button">Save</button>
-        <button class="ok" id="btnStart" type="button">Start</button>
-        <button id="btnStop" type="button">Stop</button>
+    </div>
+
+    <div class="card">
+      <strong>Companion buttons</strong>
+      <p class="hint">
+        Set the Companion page here. Version 2.4 uses page and bank. Bank 1 is the first button on that page.
+        Version 3 and 5 use page, row, and column. Turn on Companion’s HTTP API.
+        A push from the website is the only time buttons are created or replaced.
+      </p>
+      <label class="check">
+        <input id="companionEnabled" type="checkbox" />
+        <span>Send pictures to Companion when the website pushes</span>
+      </label>
+      <label class="check">
+        <input id="companionButtonImages" type="checkbox" />
+        <span>Draw a picture on each button</span>
+      </label>
+      <label>Picture folder</label>
+      <div class="folder-row">
+        <input id="companionPictureFolder" type="text" placeholder="button-pictures next to this program" />
+        <button type="button" id="btnPictureFolder">Choose folder</button>
       </div>
-      <p id="runState">Stopped</p>
+      <p class="hint">Files are 01.png through 10.png. Still-in pictures are transparent and do not change the Companion background. Eliminated pictures are filled grey.</p>
+      <label class="check">
+        <input id="companionUseShortStateNames" type="checkbox" />
+        <span>Use short names below when the picture is State name or Flag and state name</span>
+      </label>
+      <label>Short names (one per line)</label>
+      <textarea id="companionShortStateNames" rows="6"></textarea>
+      <div class="grid2">
+        <div>
+          <label>Companion host</label>
+          <input id="companionHost" />
+        </div>
+        <div>
+          <label>HTTP port</label>
+          <input id="companionPort" type="number" />
+        </div>
+      </div>
+      <label>Companion version</label>
+      <select id="companionApiVersion">
+        <option value="auto">Auto (2.4, 3, or 5)</option>
+        <option value="v2">2.4 (page and bank)</option>
+        <option value="v3">3 or 5 (page, row, column)</option>
+      </select>
+      <div class="grid3">
+        <div>
+          <label>Page</label>
+          <input id="companionPage" type="number" min="1" />
+        </div>
+        <div>
+          <label>First bank (2.4, button 1)</label>
+          <input id="companionFirstBank" type="number" min="1" />
+        </div>
+        <div>
+          <label>Buttons</label>
+          <input id="companionCount" type="number" min="1" max="32" />
+        </div>
+      </div>
+      <div class="grid3">
+        <div>
+          <label>Start row (3/5, 0 = top)</label>
+          <input id="companionStartRow" type="number" min="0" />
+        </div>
+        <div>
+          <label>Start column (3/5, 0 = left)</label>
+          <input id="companionStartColumn" type="number" min="0" />
+        </div>
+        <div>
+          <label>Buttons per row (3/5)</label>
+          <input id="companionColumns" type="number" min="1" max="32" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button class="primary" id="btnSave" type="button">Save config</button>
+        <button class="ok" id="btnStart" type="button">Start</button>
+        <button class="danger" id="btnStop" type="button">Stop</button>
+      </div>
+      <p class="hint" id="runState">Stopped</p>
       <div id="status"></div>
     </div>
     <script src="app.js"></script>

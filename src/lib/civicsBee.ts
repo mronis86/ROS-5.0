@@ -49,6 +49,8 @@ export type CivicsButtonBuild = {
   pictureStyle: CivicsButtonPictureStyle;
   flagOutline: boolean;
   slots: CivicsButtonSlot[];
+  /** clear removes the Companion pictures. build draws them. */
+  action?: 'build' | 'clear';
 };
 
 export type CivicsBeeRoster = {
@@ -229,6 +231,7 @@ export function parseCivicsButtonBuild(raw: unknown): CivicsButtonBuild | null {
     pictureStyle,
     flagOutline: src.flagOutline === true,
     slots,
+    action: src.action === 'clear' ? 'clear' : 'build',
   };
 }
 

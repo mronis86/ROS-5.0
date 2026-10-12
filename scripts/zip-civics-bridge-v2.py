@@ -17,12 +17,14 @@ endlocal
 readme = """Civics Bridge V2
 
 1. Unzip and run START.bat
-2. Set the Event ID and the folder Companion imports pictures from.
+2. Set Event ID, Companion host, version, and page.
+   Companion 2.4: set First bank (button 1).
+   Companion 3 or 5: set start row, start column, and buttons per row.
 3. Start.
-4. On the website, open Extend Event Controls, Companion buttons, and click Push pictures to bridge.
+4. On the website, open the Companion buttons tab and click Push pictures to bridge.
 
-This app does not talk to vMix. It writes 01.png through 10.png into the folder you chose.
-The website API must be deployed before a push can be seen.
+The bridge draws the pictures and sends them to Companion only after that push.
+It does not talk to vMix.
 """
 
 with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as archive:

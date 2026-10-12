@@ -205,11 +205,11 @@ const ExtendEventControlsPage: React.FC = () => {
 
       {!error && modules.length > 0 && (
         <>
-          <div className="mb-4 flex flex-wrap gap-2 border-b border-slate-700 pb-3">
+          <div className="mb-5 flex flex-wrap gap-2 border-b border-slate-700">
             <button
               type="button"
               onClick={() => setActiveTab('civicsBee')}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              className={`rounded-t-lg px-4 py-2.5 text-sm font-semibold ${
                 activeTab === 'civicsBee'
                   ? 'bg-slate-100 text-slate-900'
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -221,10 +221,10 @@ const ExtendEventControlsPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setActiveTab('companionButtons')}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                className={`rounded-t-lg px-4 py-2.5 text-sm font-semibold ${
                   activeTab === 'companionButtons'
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    ? 'bg-cyan-400 text-slate-950'
+                    : 'bg-cyan-950 text-cyan-100 hover:bg-cyan-900'
                 }`}
               >
                 Companion buttons
@@ -249,20 +249,13 @@ const ExtendEventControlsPage: React.FC = () => {
           </div>
 
           {activeTab === 'civicsBee' && eventHasExtendModule(event, 'civicsBee') && (
-            <div className="space-y-8">
-              <CivicsBeeStudentsPanel
-                roster={roster}
-                eventId={String(eventId)}
-                saving={saving}
-                onChange={handleRosterChange}
-                onSave={() => void saveCivicsBee()}
-              />
-              <CivicsCompanionButtonsPanel
-                roster={roster}
-                pushing={saving}
-                onPush={(next) => persistCivicsBee(next)}
-              />
-            </div>
+            <CivicsBeeStudentsPanel
+              roster={roster}
+              eventId={String(eventId)}
+              saving={saving}
+              onChange={handleRosterChange}
+              onSave={() => void saveCivicsBee()}
+            />
           )}
           {activeTab === 'companionButtons' && eventHasExtendModule(event, 'civicsBee') && (
             <CivicsCompanionButtonsPanel

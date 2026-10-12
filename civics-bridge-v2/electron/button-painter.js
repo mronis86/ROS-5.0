@@ -73,7 +73,7 @@ const BY_CODE = new Map(JURISDICTIONS.map(([code]) => [code, code]));
 const BUTTON_W = 72;
 const BUTTON_H = 58;
 
-const PAGE = `<!doctype html><meta charset="utf-8"><canvas id="c" width="72" height="58"></canvas><canvas id="big" width="72" height="58"></canvas>
+const PAGE = `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:transparent}</style><canvas id="c" width="72" height="58"></canvas><canvas id="big" width="72" height="58"></canvas>
 <script>
 window.drawButton = function (spec) {
   const w = spec.width || 72;
@@ -108,37 +108,13 @@ window.drawButton = function (spec) {
     if (line) lines.push(line);
     return lines;
   }
-  function brightFlag(img) {
-    const probe = document.createElement('canvas');
-    probe.width = Math.max(1, img.width);
-    probe.height = Math.max(1, img.height);
-    const px = probe.getContext('2d');
-    px.drawImage(img, 0, 0);
-    let sum = 0;
-    let n = 0;
-    try {
-      const data = px.getImageData(0, 0, probe.width, probe.height).data;
-      for (let i = 0; i < data.length; i += 16) {
-        sum += data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
-        n += 1;
-      }
-    } catch (e) {
-      return img;
-    }
-    if (!n || sum / n >= 110) return img;
-    px.clearRect(0, 0, probe.width, probe.height);
-    px.filter = 'brightness(1.9) saturate(1.45) contrast(1.05)';
-    px.drawImage(img, 0, 0);
-    return probe;
-  }
   function drawFlag(img) {
-    const shown = brightFlag(img);
-    const ratio = shown.width / Math.max(1, shown.height);
+    const ratio = img.width / Math.max(1, img.height);
     const fh = 16;
     const fw = Math.min(w - 8, Math.round(fh * ratio));
     const x = Math.round((w - fw) / 2);
     const y = 2;
-    ctx.drawImage(shown, x, y, fw, fh);
+    ctx.drawImage(img, x, y, fw, fh);
     if (spec.flagOutline) {
       ctx.save();
       ctx.strokeStyle = '#ffffff';
@@ -149,6 +125,10 @@ window.drawButton = function (spec) {
   }
   function paint(flagImg) {
     ctx.clearRect(0, 0, w, h);
+    if (spec.eliminated) {
+      ctx.fillStyle = spec.bgColor || '#808080';
+      ctx.fillRect(0, 0, w, h);
+    }
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -223,7 +203,50 @@ window.drawButton = function (spec) {
       ctx.fillText(label, w / 2, by + bh / 2);
       ctx.restore();
     }
-    return c.toDataURL('image/png');
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        const image = ctx.getImageData(0, 0, w, h);
+        const d = image.data;
+        if (spec.eliminated !== true) {
+          const corners = [0, (w - 1) * 4, (h - 1) * w * 4, ((h - 1) * w + (w - 1)) * 4];
+          const filled = corners.filter(function (i) { return d[i + 3] > 16; });
+          if (filled.length) {
+            let br = 0;
+            let bg = 0;
+            let bb = 0;
+            filled.forEach(function (i) {
+              br += d[i];
+              bg += d[i + 1];
+              bb += d[i + 2];
+            });
+            br /= filled.length;
+            bg /= filled.length;
+            bb /= filled.length;
+            for (let i = 0; i < d.length; i += 4) {
+              if (d[i + 3] < 16) continue;
+              if (Math.abs(d[i] - br) <= 22 && Math.abs(d[i + 1] - bg) <= 22 && Math.abs(d[i + 2] - bb) <= 22) {
+                d[i] = 0;
+                d[i + 1] = 0;
+                d[i + 2] = 0;
+                d[i + 3] = 0;
+              }
+            }
+            ctx.putImageData(image, 0, 0);
+          }
+        }
+        const after = ctx.getImageData(0, 0, w, h).data;
+        const corners = [0, (w - 1) * 4, (h - 1) * w * 4, ((h - 1) * w + (w - 1)) * 4];
+        const cornersClear = corners.every(function (i) { return after[i + 3] === 0; });
+        let clear = 0;
+        for (let i = 3; i < after.length; i += 4) if (after[i] === 0) clear += 1;
+        resolve({
+          dataUrl: c.toDataURL('image/png'),
+          cornersClear: cornersClear,
+          clearPct: Math.round((100 * clear) / (w * h)),
+          stillIn: spec.eliminated !== true,
+        });
+      }, 250);
+    });
   }
   const wantsFlag = spec.layout === 'abbrev-name-flag' || spec.layout === 'flag-state-name' || spec.flag;
   if (!spec.flag || !wantsFlag) return paint(null);
@@ -295,6 +318,9 @@ function ensureWindow() {
       show: false,
       width: 160,
       height: 160,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
       skipTaskbar: true,
       webPreferences: {
         contextIsolation: true,
@@ -386,9 +412,10 @@ async function renderButtonPng(spec) {
   const flag = wantsFlag ? await flagDataUrl(abbrev) : null;
   const eliminated = spec.eliminated === true;
   const flagOutline = spec.flagOutline === true;
+  const bgColor = spec.bgColor || '#808080';
   return withPainter(async () => {
     const win = await ensureWindow();
-    const dataUrl = await win.webContents.executeJavaScript(
+    const drawn = await win.webContents.executeJavaScript(
       `window.drawButton(${JSON.stringify({
         width,
         height,
@@ -399,12 +426,19 @@ async function renderButtonPng(spec) {
         flag,
         eliminated,
         flagOutline,
+        bgColor,
       })})`
     );
-    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/png') && pngCornerIsClear(dataUrl)) {
-      return dataUrl;
+    const dataUrl = drawn && typeof drawn.dataUrl === 'string' ? drawn.dataUrl : '';
+    if (!dataUrl.startsWith('data:image/png')) {
+      throw new Error('Button picture was not created');
     }
-    throw new Error('Button picture was not transparent');
+    if (!eliminated && drawn.cornersClear !== true) {
+      throw new Error(
+        `Still-in picture is not transparent (${Number(drawn.clearPct) || 0}% clear). Not sent to Companion.`
+      );
+    }
+    return dataUrl;
   });
 }
 
@@ -578,6 +612,40 @@ function isOldFill(r, g, b) {
   );
 }
 
+function isBakedBlack(r, g, b, a) {
+  if (a < 180) return false;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  return max < 45 && max - min < 18;
+}
+
+/** Non-eliminated pictures stay transparent. A baked black fill is removed. Eliminated pictures keep their grey. */
+function prepareButtonPicture(dataUrl, eliminated) {
+  if (!dataUrl || eliminated) return dataUrl;
+  const buf = Buffer.from(String(dataUrl).split(',')[1] || '', 'base64');
+  const decoded = decodeRgba(buf);
+  if (!decoded) return dataUrl;
+  const { rgba, width, height } = decoded;
+  const corners = [
+    0,
+    (width - 1) * 4,
+    (height - 1) * width * 4,
+    ((height - 1) * width + (width - 1)) * 4,
+  ];
+  if (!corners.every((i) => isBakedBlack(rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]))) {
+    return dataUrl;
+  }
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (!isBakedBlack(rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])) continue;
+    rgba[i] = 0;
+    rgba[i + 1] = 0;
+    rgba[i + 2] = 0;
+    rgba[i + 3] = 0;
+  }
+  const out = encodeRgbaPng(width, height, rgba);
+  return `data:image/png;base64,${out.toString('base64')}`;
+}
+
 function scrubOldFills(dataUrl) {
   const buf = Buffer.from(String(dataUrl).split(',')[1] || '', 'base64');
   const decoded = decodeRgba(buf);
@@ -621,8 +689,7 @@ async function saveOneButtonPicture(index, dataUrl, dirOverride) {
     return dir;
   }
   const file = path.join(dir, name);
-  const clean = scrubOldFills(dataUrl);
-  fs.writeFileSync(file, Buffer.from(String(clean).split(',')[1], 'base64'));
+  fs.writeFileSync(file, Buffer.from(String(dataUrl).split(',')[1], 'base64'));
   const largeFile = path.join(dir, large);
   if (fs.existsSync(largeFile)) fs.unlinkSync(largeFile);
   return file;
@@ -673,4 +740,5 @@ module.exports = {
   setButtonPictureDir,
   pngCornerIsClear,
   transparencyReport,
+  prepareButtonPicture,
 };
