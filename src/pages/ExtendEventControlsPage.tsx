@@ -249,13 +249,20 @@ const ExtendEventControlsPage: React.FC = () => {
           </div>
 
           {activeTab === 'civicsBee' && eventHasExtendModule(event, 'civicsBee') && (
-            <CivicsBeeStudentsPanel
-              roster={roster}
-              eventId={String(eventId)}
-              saving={saving}
-              onChange={handleRosterChange}
-              onSave={() => void saveCivicsBee()}
-            />
+            <div className="space-y-8">
+              <CivicsBeeStudentsPanel
+                roster={roster}
+                eventId={String(eventId)}
+                saving={saving}
+                onChange={handleRosterChange}
+                onSave={() => void saveCivicsBee()}
+              />
+              <CivicsCompanionButtonsPanel
+                roster={roster}
+                pushing={saving}
+                onPush={(next) => persistCivicsBee(next)}
+              />
+            </div>
           )}
           {activeTab === 'companionButtons' && eventHasExtendModule(event, 'civicsBee') && (
             <CivicsCompanionButtonsPanel

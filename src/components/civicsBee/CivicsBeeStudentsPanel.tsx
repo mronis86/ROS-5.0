@@ -203,39 +203,6 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
         </div>
       )}
 
-      {eventId && (
-        <div className="rounded-lg border border-cyan-800/50 bg-cyan-950/30 px-4 py-3 space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-white">Civics vMix graphics control</h3>
-              <p className="text-xs text-slate-400">
-                Graphic control is off. These buttons do not select a vMix row.
-                Open the Companion buttons tab to preview Top 10 pictures and push them to Civics Bridge V2.
-              </p>
-            </div>
-            <a
-              href="/ros-civics-vmix-bridge.zip"
-              download="ros-civics-vmix-bridge.zip"
-              className="shrink-0 rounded-md border border-cyan-600/70 bg-cyan-900/40 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-800/50"
-            >
-              Download Civics vMix Bridge
-            </a>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(['top25', 'top10', 'top5'] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                disabled
-                className="cursor-not-allowed rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-slate-400"
-              >
-                {CIVICS_BEE_FILTER_LABELS[t]} buttons off
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-3 space-y-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
