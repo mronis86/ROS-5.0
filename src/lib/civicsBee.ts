@@ -49,8 +49,12 @@ export type CivicsButtonBuild = {
   pictureStyle: CivicsButtonPictureStyle;
   flagOutline: boolean;
   slots: CivicsButtonSlot[];
-  /** clear removes the Companion pictures. build draws them. */
-  action?: 'build' | 'clear';
+  /**
+   * generate draws pictures in the bridge folder only. import sends the pictures from generateId to
+   * Companion. clear removes them. legacy is an old request the bridge ignores.
+   */
+  action?: 'generate' | 'import' | 'clear' | 'legacy';
+  generateId?: string;
 };
 
 export type CivicsBeeRoster = {
@@ -231,7 +235,9 @@ export function parseCivicsButtonBuild(raw: unknown): CivicsButtonBuild | null {
     pictureStyle,
     flagOutline: src.flagOutline === true,
     slots,
-    action: src.action === 'clear' ? 'clear' : 'build',
+    action:
+      src.action === 'generate' || src.action === 'import' || src.action === 'clear' ? src.action : 'legacy',
+    generateId: typeof src.generateId === 'string' ? src.generateId : undefined,
   };
 }
 

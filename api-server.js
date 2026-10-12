@@ -4191,37 +4191,65 @@ const civicsBridgeLogs = new Map();
 
 function bridgeLogRecord(eventId) {
   const current = civicsBridgeLogs.get(eventId);
-  if (current && Array.isArray(current.lines)) return current;
-  if (Array.isArray(current)) return { lines: current, status: null };
-  return { lines: [], status: null };
+  if (current && Array.isArray(current.lines) && current.bridges) return current;
+  return { lines: [], bridges: {}, result: null };
 }
 
 app.get('/api/civics-bee/bridge-log', (req, res) => {
   const eventId = String(req.query.eventId || '').trim();
   if (!eventId) return res.status(400).json({ error: 'eventId is required' });
   const record = bridgeLogRecord(eventId);
+  const cutoff = Date.now() - 30000;
+  const bridges = Object.entries(record.bridges)
+    .filter(([, s]) => new Date(s.at).getTime() >= cutoff)
+    .map(([instanceId, s]) => ({ instanceId, ...s }));
   res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache', Expires: '0' });
-  return res.json({ eventId, lines: record.lines, status: record.status });
+  return res.json({ eventId, now: new Date().toISOString(), lines: record.lines, bridges, result: record.result });
 });
 
 app.post('/api/civics-bee/bridge-log', (req, res) => {
   const eventId = String(req.body?.eventId || '').trim();
+  const instanceId = String(req.body?.instanceId || 'unknown').slice(0, 40);
   const message = String(req.body?.message || '').trim().slice(0, 500);
   const status = req.body?.status;
-  if (!eventId || (!message && !status)) return res.status(400).json({ error: 'eventId and message are required' });
+  const result = req.body?.result;
+  if (!eventId) return res.status(400).json({ error: 'eventId is required' });
   const record = bridgeLogRecord(eventId);
+  const at = new Date().toISOString();
   if (status && typeof status === 'object') {
-    record.status = {
-      at: new Date().toISOString(),
+    record.bridges[instanceId] = {
+      at,
       host: String(status.host || '').slice(0, 80),
       port: Number(status.port) || 0,
       page: Number(status.page) || 0,
       version: String(status.version || '').slice(0, 20),
+      perRow: Number(status.perRow) || 0,
+      count: Number(status.count) || 0,
+      spots: Array.isArray(status.spots) ? status.spots.slice(0, 32).map((s) => String(s).slice(0, 40)) : [],
+      layoutError: String(status.layoutError || '').slice(0, 200),
+      bridgeVersion: String(status.bridgeVersion || '').slice(0, 20),
+    };
+  }
+  if (result && typeof result === 'object') {
+    record.result = {
+      at,
+      instanceId,
+      requestedAt: String(result.requestedAt || ''),
+      action: String(result.action || ''),
+      done: result.done === true,
+      buttons: Array.isArray(result.buttons)
+        ? result.buttons.slice(0, 32).map((b) => ({
+            n: Number(b.n) || 0,
+            where: String(b.where || '').slice(0, 40),
+            state: String(b.state || '').slice(0, 20),
+            message: String(b.message || '').slice(0, 200),
+          }))
+        : [],
     };
   }
   if (message) {
-    record.lines.unshift({ at: new Date().toISOString(), message });
-    record.lines = record.lines.slice(0, 40);
+    record.lines.unshift({ at, message: instanceId === 'unknown' ? message : `[${instanceId}] ${message}` });
+    record.lines = record.lines.slice(0, 60);
   }
   civicsBridgeLogs.set(eventId, record);
   return res.json({ ok: true });

@@ -7,20 +7,18 @@ function readForm() {
     eventId: $('eventId').value.trim(),
     pollSeconds: parseFloat($('pollSeconds').value) || 2,
     companion: {
-      enabled: $('companionEnabled').checked === true,
-      buttonImages: $('companionButtonImages').checked !== false,
       pictureFolder: $('companionPictureFolder').value.trim(),
       useShortStateNames: $('companionUseShortStateNames').checked === true,
       shortStateNames: $('companionShortStateNames').value,
       host: $('companionHost').value.trim() || '10.162.4.100',
       port: parseInt($('companionPort').value, 10) || 8888,
-      apiVersion: $('companionApiVersion').value || 'auto',
+      apiVersion: $('companionApiVersion').value === 'v3' ? 'v3' : 'v2',
       page: parseInt($('companionPage').value, 10) || 1,
       firstBank: parseInt($('companionFirstBank').value, 10) || 1,
       count: parseInt($('companionCount').value, 10) || 10,
       startRow: parseInt($('companionStartRow').value, 10) || 0,
       startColumn: parseInt($('companionStartColumn').value, 10) || 0,
-      columns: parseInt($('companionColumns').value, 10) || 10,
+      columns: parseInt($('companionColumns').value, 10) || 5,
     },
   };
 }
@@ -30,20 +28,18 @@ function fillForm(cfg) {
   $('apiBaseUrl').value = cfg.apiBaseUrl || '';
   $('eventId').value = cfg.eventId || '';
   $('pollSeconds').value = String(cfg.pollSeconds || 2);
-  $('companionEnabled').checked = comp.enabled !== false;
-  $('companionButtonImages').checked = comp.buttonImages !== false;
   $('companionPictureFolder').value = comp.pictureFolder || '';
   $('companionUseShortStateNames').checked = comp.useShortStateNames === true;
   $('companionShortStateNames').value = comp.shortStateNames || '';
   $('companionHost').value = comp.host || '10.162.4.100';
   $('companionPort').value = String(comp.port || 8888);
-  $('companionApiVersion').value = comp.apiVersion === 'v2' || comp.apiVersion === 'v3' ? comp.apiVersion : 'auto';
+  $('companionApiVersion').value = comp.apiVersion === 'v3' ? 'v3' : 'v2';
   $('companionPage').value = String(comp.page || 1);
   $('companionFirstBank').value = String(comp.firstBank || 1);
   $('companionCount').value = String(comp.count || 10);
   $('companionStartRow').value = String(comp.startRow ?? 0);
   $('companionStartColumn').value = String(comp.startColumn ?? 0);
-  $('companionColumns').value = String(comp.columns || 10);
+  $('companionColumns').value = String(comp.columns || 5);
 }
 
 function showStatus(status) {

@@ -1,64 +1,98 @@
-const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture, blankButtonPng } = require('./button-painter');
+const crypto = require('crypto');
+const { app } = require('electron');
+const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture } = require('./button-painter');
 const { setButtonStyle } = require('./companion-client');
 const { loadConfig, normalizeBaseUrl, stateLabelFor } = require('./config-store');
+
+const INSTANCE_ID = crypto.randomBytes(4).toString('hex');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function postLog(cfg, message, status) {
+function bridgeVersion() {
+  try {
+    return app.getVersion();
+  } catch {
+    return '';
+  }
+}
+
+async function postReport(cfg, payload) {
   try {
     const base = normalizeBaseUrl(cfg && cfg.apiBaseUrl);
     const eventId = String((cfg && cfg.eventId) || '').trim();
-    const text = String(message || '').trim().slice(0, 500);
-    if (!base || !eventId || (!text && !status)) return;
-    const body = { eventId };
-    if (text) body.message = text;
-    if (status) body.status = status;
+    if (!base || !eventId) return;
     await fetch(`${base}/api/civics-bee/bridge-log`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ eventId, instanceId: INSTANCE_ID, ...payload }),
     });
   } catch {
     /* the button job still finishes if the log page is unreachable */
   }
 }
 
+function postLog(cfg, message) {
+  return postReport(cfg, { message: String(message || '').slice(0, 500) });
+}
+
 /**
- * Companion 2.4 pages are 8 banks wide. First bank is the top-left button of the block,
- * and buttons per row wraps the block, so 10 buttons at 5 per row from bank 1 use banks 1-5 and 9-13.
+ * Companion 2.4 pages are 8 banks wide. First bank is the top-left button of the block and
+ * buttons per row wraps it, so 10 buttons at 5 per row from bank 1 use banks 1-5 and 9-13.
+ * Companion 3 and 5 use start row and start column instead of first bank.
  */
 function buttonPosition(comp, i) {
   const perRow = Math.max(1, comp.columns || 1);
-  if (comp.apiVersion === 'v2') {
+  if (comp.apiVersion !== 'v3') {
     const start = Math.max(1, comp.firstBank || 1) - 1;
     const row = Math.floor(start / 8) + Math.floor(i / perRow);
     const column = (start % 8) + (i % perRow);
     if (column > 7) {
       throw new Error(
-        `Button ${i + 1} would be past column 8. On Companion 2.4 the first bank column plus buttons per row must fit in 8.`
+        `Button ${i + 1} would be past the 8th column. First bank column plus buttons per row must fit in 8.`
       );
     }
-    return { row, column, bank: row * 8 + column + 1 };
+    const bank = row * 8 + column + 1;
+    return { row, column, bank, where: `bank ${bank}` };
   }
   const row = comp.startRow + Math.floor(i / perRow);
   const column = comp.startColumn + (i % perRow);
-  return { row, column, bank: 0 };
+  return { row, column, bank: 0, where: `row ${row} column ${column}` };
+}
+
+function layoutOf(comp) {
+  const spots = [];
+  let error = '';
+  for (let i = 0; i < comp.count; i += 1) {
+    try {
+      spots.push(buttonPosition(comp, i).where);
+    } catch (err) {
+      error = err.message || String(err);
+      break;
+    }
+  }
+  return { spots, error };
 }
 
 function bridgeStatus(cfg) {
-  const comp = (cfg && cfg.companion) || {};
+  const comp = cfg.companion;
+  const layout = layoutOf(comp);
   return {
-    host: comp.host || '',
-    port: comp.port || 0,
-    page: comp.page || 0,
-    version: comp.apiVersion || '',
+    host: comp.host,
+    port: comp.port,
+    page: comp.page,
+    version: comp.apiVersion === 'v3' ? '3 or 5' : '2.4',
+    perRow: comp.columns,
+    count: comp.count,
+    spots: layout.spots,
+    layoutError: layout.error,
+    bridgeVersion: bridgeVersion(),
   };
 }
 
-function replyOf(result) {
-  return String((result && result.body) || 'ok').replace(/\s+/g, ' ').trim().slice(0, 80);
+function apiModeOf(comp) {
+  return comp.apiVersion === 'v3' ? 'v3' : 'v2';
 }
 
 class BridgeController {
@@ -66,10 +100,11 @@ class BridgeController {
     this.onStatus = typeof onStatus === 'function' ? onStatus : () => {};
     this.running = false;
     this.timer = null;
-    this.lastBuilt = '';
+    this.lastSeen = null;
+    this.busy = false;
+    this.generated = null;
     this.lastOk = '';
     this.lastError = '';
-    this.companionApi = null;
   }
 
   emit() {
@@ -78,27 +113,30 @@ class BridgeController {
       lastOk: this.lastOk,
       lastError: this.lastError,
       pictureFolder: buttonPictureDir(),
-      lastBuilt: this.lastBuilt,
     });
   }
 
   start(cfg) {
     this.stop();
     this.running = true;
+    this.lastSeen = null;
     const wait = Math.max(1000, ((cfg || loadConfig()).pollSeconds || 2) * 1000);
-    this.timer = setInterval(() => {
-      this.pollOnce().catch((err) => {
-        this.lastError = err.message || String(err);
-        this.emit();
-        void postLog(loadConfig(), `Bridge error: ${this.lastError}`);
-      });
-    }, wait);
-    this.pollOnce().catch((err) => {
-      this.lastError = err.message || String(err);
-      this.emit();
-      void postLog(loadConfig(), `Bridge error: ${this.lastError}`);
-    });
-    void postLog(cfg || loadConfig(), 'Bridge is watching for a website push or clear.');
+    const tick = () => {
+      if (this.busy) return;
+      this.busy = true;
+      this.pollOnce()
+        .catch((err) => {
+          this.lastError = err.message || String(err);
+          this.emit();
+          void postLog(loadConfig(), `Bridge error: ${this.lastError}`);
+        })
+        .finally(() => {
+          this.busy = false;
+        });
+    };
+    this.timer = setInterval(tick, wait);
+    tick();
+    void postLog(cfg || loadConfig(), 'Bridge started. It only acts on a new Generate, Import, or Clear from the website.');
     this.emit();
   }
 
@@ -115,174 +153,172 @@ class BridgeController {
     const comp = cfg.companion;
     setButtonPictureDir(comp.pictureFolder || '');
     const base = normalizeBaseUrl(cfg.apiBaseUrl);
-    const url = `${base}/api/civics-bee/button-build?eventId=${encodeURIComponent(cfg.eventId)}`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${base}/api/civics-bee/button-build?eventId=${encodeURIComponent(cfg.eventId)}`, {
+      headers: { Accept: 'application/json' },
+    });
     if (!res.ok) throw new Error(`Build feed HTTP ${res.status}`);
     const body = await res.json();
-    const build = body?.build;
-    const folder = ensureButtonPictureDir();
-    await postLog(cfg, '', bridgeStatus(cfg));
-    if (!build?.requestedAt) {
-      this.lastOk = `Waiting for a push from the Companion buttons tab. Pictures folder: ${folder}`;
+    const build = body && body.build;
+    await postReport(cfg, { status: bridgeStatus(cfg) });
+    const requestedAt = (build && build.requestedAt) || '';
+
+    if (this.lastSeen === null) {
+      this.lastSeen = requestedAt;
+      this.lastOk = 'Waiting for a new request from the website.';
       this.lastError = '';
       this.emit();
       return;
     }
-    if (build.requestedAt === this.lastBuilt) {
-      this.lastOk = `Buttons are current (${build.requestedAt}). Pictures folder: ${folder}`;
-      this.lastError = '';
-      this.emit();
-      return;
-    }
-    if (build.action === 'clear') {
-      await postLog(
-        cfg,
-        `Clear requested ${build.requestedAt}. Companion ${comp.host}:${comp.port} ${comp.apiVersion} page ${comp.page}.`
-      );
-      await this.clearButtons(cfg, build);
-      return;
-    }
-    await postLog(cfg, `Push ${build.requestedAt}. ${Array.isArray(build.slots) ? build.slots.length : 0} students.`);
-    await this.applyBuild(cfg, build);
+    if (!requestedAt || requestedAt === this.lastSeen) return;
+    this.lastSeen = requestedAt;
+
+    if (build.action === 'generate') return this.generate(cfg, build);
+    if (build.action === 'import') return this.importToCompanion(cfg, build);
+    if (build.action === 'clear') return this.clear(cfg, build);
+    await postLog(cfg, `Ignored a request the bridge does not know (${build.action || 'none'}). Nothing was changed.`);
   }
 
-  async applyBuild(cfg, build) {
-    const comp = cfg.companion;
-    const count = comp.count;
-    const slots = Array.isArray(build.slots) ? build.slots : [];
-    const layout = build.pictureStyle || comp.pictureStyle || 'abbrev-name';
-    const flagOutline = build.flagOutline === true || (build.flagOutline == null && comp.flagOutline === true);
-    const folder = ensureButtonPictureDir();
-    let apiMode = comp.apiVersion === 'v2' || comp.apiVersion === 'v3' ? comp.apiVersion : this.companionApi || 'auto';
-    const failures = [];
-    const sent = [];
+  async report(cfg, build, buttons, done) {
+    await postReport(cfg, {
+      result: { requestedAt: build.requestedAt, action: build.action, done, buttons },
+    });
+  }
 
-    for (let i = 0; i < count; i += 1) {
+  async generate(cfg, build) {
+    const comp = cfg.companion;
+    const slots = Array.isArray(build.slots) ? build.slots : [];
+    const layout = build.pictureStyle || 'abbrev-name';
+    const flagOutline = build.flagOutline === true;
+    const folder = ensureButtonPictureDir();
+    const buttons = [];
+    await postLog(cfg, `Generate ${build.requestedAt}: drawing ${comp.count} pictures into ${folder}. Companion is not touched.`);
+    const made = [];
+    for (let i = 0; i < comp.count; i += 1) {
       const slot = slots[i] || null;
       const hasStudent = !!(slot && (slot.state || slot.name));
-      const stateLabel = hasStudent ? stateLabelFor(slot.stateLabel || slot.state || '', comp) : '';
-      let png = '';
+      const entry = { n: i + 1, where: '', state: 'created', message: '' };
       try {
-        const { row, column, bank } = buttonPosition(comp, i);
-        const where = comp.apiVersion === 'v2' ? `bank ${bank}` : `row ${row} column ${column}`;
-        const eliminated = hasStudent && slot.eliminated === true;
-        if (hasStudent && comp.buttonImages !== false) {
+        entry.where = buttonPosition(comp, i).where;
+        let png = '';
+        if (hasStudent) {
           png = await renderButtonPng({
             state: slot.state || '',
-            stateLabel,
+            stateLabel: stateLabelFor(slot.stateLabel || slot.state || '', comp),
             name: slot.name || '',
-            eliminated,
+            eliminated: slot.eliminated === true,
             flagOutline,
             layout,
             bgColor: '#808080',
           });
         }
         await saveOneButtonPicture(i, png, folder);
-        const uploaded = png ? readButtonPicture(i, folder) || png : '';
-        if (comp.enabled !== false && comp.buttonImages !== false) {
-          const resultClear = await setButtonStyle(
-            comp.host,
-            comp.port,
-            comp.page,
-            row,
-            column,
-            { text: '', png64: '' },
-            apiMode
-          );
-          if (apiMode === 'auto' && resultClear.api) {
-            apiMode = resultClear.api;
-            this.companionApi = resultClear.api;
-          }
-          await sleep(300);
-          const fields = {
-            text: '',
-            size: '14',
-            png64: uploaded,
-            alignment: 'center:center',
-            pngalignment: 'center:center',
-          };
-          if (eliminated) fields.bgcolor = '#808080';
-          const result = await setButtonStyle(comp.host, comp.port, comp.page, row, column, fields, apiMode);
-          if (apiMode === 'auto' && result.api) {
-            apiMode = result.api;
-            this.companionApi = result.api;
-          }
-          sent.push(
-            `button ${i + 1} ${where}${hasStudent ? ' ' + (slot.state || '') : ' cleared'} ${eliminated ? 'grey' : 'transparent'}`
-          );
-        }
+        made.push({ hasStudent, eliminated: hasStudent && slot.eliminated === true });
+        entry.message = hasStudent
+          ? `${slot.state || slot.name}${slot.eliminated ? ' (grey, eliminated)' : ' (transparent)'}`
+          : 'no student, stays empty';
       } catch (err) {
-        failures.push(`button ${i + 1}: ${err.message || err}`);
+        made.push(null);
+        entry.state = 'failed';
+        entry.message = err.message || String(err);
       }
+      buttons.push(entry);
+      await this.report(cfg, build, buttons, false);
     }
-
-    this.lastBuilt = build.requestedAt;
-    this.lastError = failures.join(' | ');
-    const where = comp.apiVersion === 'v2' || this.companionApi === 'v2' ? 'Companion 2.4 page/bank' : 'Companion page';
-    this.lastOk = [
-      sent.length ? `${where}: ${sent.join(', ')}` : 'No Companion buttons were updated.',
-      `Pictures folder: ${folder}`,
-      `Page ${comp.page}, ${comp.columns} per row.`,
-    ].join(' · ');
+    this.generated = { requestedAt: build.requestedAt, made };
+    await this.report(cfg, build, buttons, true);
+    const failed = buttons.filter((b) => b.state === 'failed').length;
+    this.lastOk = `Generated ${buttons.length - failed} of ${buttons.length} pictures. Waiting for Import from the website.`;
+    this.lastError = failed ? `${failed} picture(s) failed.` : '';
     this.emit();
-    await postLog(cfg, this.lastError ? `Push finished with errors: ${this.lastError}` : this.lastOk);
   }
 
-  async clearButtons(cfg, build) {
+  async importToCompanion(cfg, build) {
     const comp = cfg.companion;
-    const count = comp.count;
     const folder = ensureButtonPictureDir();
-    let apiMode = comp.apiVersion === 'v2' || comp.apiVersion === 'v3' ? comp.apiVersion : this.companionApi || 'auto';
-    const failures = [];
-    const sent = [];
-    for (let i = 0; i < count; i += 1) {
-      try {
-        const { row, column, bank } = buttonPosition(comp, i);
-        const useBank = comp.apiVersion === 'v2';
-        await saveOneButtonPicture(i, '', folder);
-        if (comp.enabled !== false) {
-          const where = useBank ? `bank ${bank}` : `row ${row} column ${column}`;
-          const cleared = await setButtonStyle(
-            comp.host,
-            comp.port,
-            comp.page,
-            row,
-            column,
-            { text: '', png64: '' },
-            apiMode
-          );
-          if (apiMode === 'auto' && cleared.api) {
-            apiMode = cleared.api;
-            this.companionApi = cleared.api;
-          }
-          const blanked = await setButtonStyle(
-            comp.host,
-            comp.port,
-            comp.page,
-            row,
-            column,
-            { text: '', png64: blankButtonPng(), pngalignment: 'center:center' },
-            apiMode
-          );
-          await postLog(
-            cfg,
-            `Removed picture on button ${i + 1} page ${comp.page} ${where}. Companion said "${replyOf(cleared)}" then "${replyOf(blanked)}".`
-          );
-          await sleep(150);
-        }
-        sent.push(`button ${i + 1} cleared`);
-      } catch (err) {
-        const note = `button ${i + 1}: ${err.message || err}`;
-        failures.push(note);
-        await postLog(cfg, `Clear failed. ${note}`);
-      }
+    const buttons = [];
+    if (!this.generated || this.generated.requestedAt !== build.generateId) {
+      buttons.push({
+        n: 0,
+        where: '',
+        state: 'failed',
+        message: 'These pictures were not generated by this bridge. Click Generate first.',
+      });
+      await this.report(cfg, build, buttons, true);
+      await postLog(cfg, 'Import refused. Generate has to run on this bridge first.');
+      return;
     }
-    this.lastBuilt = build.requestedAt;
-    this.lastError = failures.join(' | ');
-    this.lastOk = [
-      sent.length ? `Cleared ${sent.length} Companion button picture${sent.length === 1 ? '' : 's'}.` : 'No Companion buttons were cleared.',
-      `Pictures folder: ${folder}`,
-    ].join(' ');
+    await postLog(cfg, `Import ${build.requestedAt}: sending to Companion ${comp.host}:${comp.port} page ${comp.page}.`);
+    const mode = apiModeOf(comp);
+    for (let i = 0; i < comp.count; i += 1) {
+      const entry = { n: i + 1, where: '', state: 'imported', message: '' };
+      try {
+        const pos = buttonPosition(comp, i);
+        entry.where = pos.where;
+        const made = this.generated.made[i];
+        if (made === null) throw new Error('This picture failed during Generate.');
+        await setButtonStyle(comp.host, comp.port, comp.page, pos.row, pos.column, { text: '', png64: '' }, mode);
+        await sleep(150);
+        if (made && made.hasStudent) {
+          const png = readButtonPicture(i, folder);
+          if (!png) throw new Error(`Picture file ${String(i + 1).padStart(2, '0')}.png is missing.`);
+          const fields = { text: '', png64: png, pngalignment: 'center:center' };
+          if (made.eliminated) fields.bgcolor = '#808080';
+          await setButtonStyle(comp.host, comp.port, comp.page, pos.row, pos.column, fields, mode);
+          entry.message = made.eliminated ? 'grey eliminated picture' : 'transparent picture';
+        } else {
+          entry.state = 'cleared';
+          entry.message = 'no student, picture removed';
+        }
+      } catch (err) {
+        entry.state = 'failed';
+        entry.message = err.message || String(err);
+      }
+      buttons.push(entry);
+      await this.report(cfg, build, buttons, false);
+      await sleep(100);
+    }
+    await this.report(cfg, build, buttons, true);
+    const failed = buttons.filter((b) => b.state === 'failed').length;
+    this.lastOk = `Imported ${buttons.length - failed} of ${buttons.length} buttons to Companion page ${comp.page}.`;
+    this.lastError = failed ? `${failed} button(s) failed.` : '';
+    this.emit();
+  }
+
+  async clear(cfg, build) {
+    const comp = cfg.companion;
+    const folder = ensureButtonPictureDir();
+    const buttons = [];
+    const mode = apiModeOf(comp);
+    await postLog(cfg, `Clear ${build.requestedAt}: Companion ${comp.host}:${comp.port} page ${comp.page}.`);
+    for (let i = 0; i < comp.count; i += 1) {
+      const entry = { n: i + 1, where: '', state: 'cleared', message: '' };
+      try {
+        const pos = buttonPosition(comp, i);
+        entry.where = pos.where;
+        await saveOneButtonPicture(i, '', folder);
+        await setButtonStyle(
+          comp.host,
+          comp.port,
+          comp.page,
+          pos.row,
+          pos.column,
+          { text: '', png64: '', bgcolor: '#000000' },
+          mode
+        );
+        entry.message = 'picture removed, background black';
+      } catch (err) {
+        entry.state = 'failed';
+        entry.message = err.message || String(err);
+      }
+      buttons.push(entry);
+      await this.report(cfg, build, buttons, false);
+      await sleep(100);
+    }
+    this.generated = null;
+    await this.report(cfg, build, buttons, true);
+    const failed = buttons.filter((b) => b.state === 'failed').length;
+    this.lastOk = `Cleared ${buttons.length - failed} of ${buttons.length} buttons on Companion page ${comp.page}.`;
+    this.lastError = failed ? `${failed} button(s) failed.` : '';
     this.emit();
   }
 }

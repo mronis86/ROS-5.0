@@ -36,8 +36,8 @@
   <body>
     <h1>Civics Bridge V2</h1>
     <p class="sub">
-      Waits for a push from the Companion buttons tab, then draws those pictures and sends them to Companion.
-      This app does not talk to vMix.
+      Does nothing on its own. On the website Companion buttons tab: Generate draws the pictures here,
+      Import sends them to Companion, and Clear removes them. This app does not talk to vMix.
     </p>
 
     <div class="card">
@@ -45,25 +45,17 @@
       <input id="apiBaseUrl" />
       <label>Event ID (UUID from the Civics page URL)</label>
       <input id="eventId" />
-      <label>Check for a push every (seconds)</label>
+      <label>Check the website every (seconds)</label>
       <input id="pollSeconds" type="number" min="1" step="1" />
     </div>
 
     <div class="card">
       <strong>Companion buttons</strong>
       <p class="hint">
-        Set the Companion page here. Version 2.4 uses page and bank. Bank 1 is the first button on that page.
-        Version 3 and 5 use page, row, and column. Turn on Companion’s HTTP API.
-        A push from the website is the only time buttons are created or replaced.
+        Version 2.4 pages are 8 buttons wide. First bank is the top-left button of your block.
+        Example: first bank 1, 10 buttons, 5 per row uses banks 1-5 and 9-13.
+        The website shows the exact banks this bridge will use before you import or clear.
       </p>
-      <label class="check">
-        <input id="companionEnabled" type="checkbox" />
-        <span>Send pictures to Companion when the website pushes</span>
-      </label>
-      <label class="check">
-        <input id="companionButtonImages" type="checkbox" />
-        <span>Draw a picture on each button</span>
-      </label>
       <label>Picture folder</label>
       <div class="folder-row">
         <input id="companionPictureFolder" type="text" placeholder="button-pictures next to this program" />
@@ -88,7 +80,6 @@
       </div>
       <label>Companion version</label>
       <select id="companionApiVersion">
-        <option value="auto">Auto (2.4, 3, or 5)</option>
         <option value="v2">2.4 (page and bank)</option>
         <option value="v3">3 or 5 (page, row, column)</option>
       </select>
