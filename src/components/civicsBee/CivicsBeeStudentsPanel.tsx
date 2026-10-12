@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   applyCivicsBeePeoplesChoice,
   applyCivicsBeePlace,
@@ -210,8 +209,8 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
             <div>
               <h3 className="text-sm font-semibold text-white">Civics vMix graphics control</h3>
               <p className="text-xs text-slate-400">
-                StreamDeck-style pages pick a student Name for vMix (not tied to ROS cues). Run the
-                Civics bridge on the vMix PC in parallel with the everyday DataSource bridge.
+                Graphic control is off. These buttons do not select a vMix row.
+                Open the Companion buttons tab to preview Top 10 pictures and push them to Civics Bridge V2.
               </p>
             </div>
             <a
@@ -224,13 +223,14 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           </div>
           <div className="flex flex-wrap gap-2">
             {(['top25', 'top10', 'top5'] as const).map((t) => (
-              <Link
+              <button
                 key={t}
-                to={`/civics-graphics/${t}?eventId=${encodeURIComponent(eventId)}`}
-                className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-white"
+                type="button"
+                disabled
+                className="cursor-not-allowed rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-slate-400"
               >
-                {CIVICS_BEE_FILTER_LABELS[t]} buttons
-              </Link>
+                {CIVICS_BEE_FILTER_LABELS[t]} buttons off
+              </button>
             ))}
           </div>
         </div>

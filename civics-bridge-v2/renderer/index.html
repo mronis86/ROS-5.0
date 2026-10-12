@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Civics Bridge V2</title>
+    <style>
+      body { margin: 0; font-family: Segoe UI, sans-serif; background: #0f172a; color: #e2e8f0; padding: 18px; }
+      h1 { font-size: 1.3rem; margin: 0 0 6px; }
+      p { color: #94a3b8; font-size: 0.85rem; }
+      label { display: block; font-size: 0.75rem; color: #94a3b8; margin: 10px 0 4px; }
+      input { width: 100%; box-sizing: border-box; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; }
+      .row { display: flex; gap: 8px; margin-top: 8px; }
+      .row input { flex: 1; }
+      button { border: 0; border-radius: 8px; padding: 9px 14px; font-weight: 600; cursor: pointer; background: #334155; color: #e2e8f0; }
+      button.primary { background: #0891b2; color: #041016; }
+      button.ok { background: #065f46; }
+      #status { white-space: pre-wrap; min-height: 4rem; font-size: 0.85rem; }
+      .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Civics Bridge V2</h1>
+    <p>Writes button pictures into a folder for Companion to import. This app does not talk to vMix.</p>
+    <div class="card">
+      <label>API base URL</label>
+      <input id="apiBaseUrl" />
+      <label>Event ID</label>
+      <input id="eventId" />
+      <label>Picture folder</label>
+      <div class="row">
+        <input id="pictureFolder" placeholder="Folder Companion imports from" />
+        <button type="button" id="btnFolder">Choose folder</button>
+      </div>
+      <label>Check for a new push every (seconds)</label>
+      <input id="pollSeconds" type="number" min="1" step="1" />
+      <div class="row">
+        <button class="primary" id="btnSave" type="button">Save</button>
+        <button class="ok" id="btnStart" type="button">Start</button>
+        <button id="btnStop" type="button">Stop</button>
+      </div>
+      <p id="runState">Stopped</p>
+      <div id="status"></div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

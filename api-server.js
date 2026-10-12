@@ -4158,6 +4158,35 @@ app.put('/api/civics-bee/selection', async (req, res) => {
   }
 });
 
+/** Public poll target for Civics Bridge V2. Pictures are built only after a web push. */
+app.get('/api/civics-bee/button-build', async (req, res) => {
+  try {
+    const eventId = String(req.query.eventId || '').trim();
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    const config = await loadExtendEventControls(pool, eventId);
+    const roster = config.moduleData?.civicsBee;
+    const build =
+      roster && typeof roster === 'object' && roster.buttonBuild && typeof roster.buttonBuild === 'object'
+        ? roster.buttonBuild
+        : null;
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    return res.json({
+      eventId,
+      build,
+      updatedAt: build?.requestedAt || roster?.updatedAt || null,
+    });
+  } catch (error) {
+    console.error('Error in civics-bee/button-build:', error);
+    return res.status(500).json({ error: 'Failed to load Companion button build' });
+  }
+});
+
 // Soft-delete calendar event by default; admins may pass ?permanent=1 to purge fully
 app.delete('/api/calendar-events/:id', async (req, res) => {
   try {

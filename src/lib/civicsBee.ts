@@ -30,11 +30,34 @@ export type CivicsBeeGraphicsSelection = {
   updatedAt: string;
 };
 
+export type CivicsButtonPictureStyle =
+  | 'abbrev-name'
+  | 'abbrev-name-flag'
+  | 'state-name'
+  | 'flag-state-name';
+
+export type CivicsButtonSlot = {
+  state: string;
+  code: string;
+  name: string;
+  stateLabel: string;
+  eliminated: boolean;
+};
+
+export type CivicsButtonBuild = {
+  requestedAt: string;
+  pictureStyle: CivicsButtonPictureStyle;
+  flagOutline: boolean;
+  slots: CivicsButtonSlot[];
+};
+
 export type CivicsBeeRoster = {
   entries: CivicsBeeEntry[];
   updatedAt?: string;
   /** Current graphics pick for the Civics vMix bridge. */
   graphicsSelection?: CivicsBeeGraphicsSelection | null;
+  /** Last Companion button picture push for Civics Bridge V2. */
+  buttonBuild?: CivicsButtonBuild | null;
 };
 
 /** 50 states + DC + five inhabited territories commonly used in national student competitions. */
@@ -175,7 +198,57 @@ export function parseCivicsBeeRoster(raw: unknown): CivicsBeeRoster {
     }),
     updatedAt: typeof src.updatedAt === 'string' ? src.updatedAt : undefined,
     graphicsSelection,
+    buttonBuild: parseCivicsButtonBuild(src.buttonBuild),
   };
+}
+
+export function parseCivicsButtonBuild(raw: unknown): CivicsButtonBuild | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const src = raw as Record<string, unknown>;
+  const requestedAt = typeof src.requestedAt === 'string' ? src.requestedAt : '';
+  if (!requestedAt) return null;
+  const style = src.pictureStyle;
+  const pictureStyle: CivicsButtonPictureStyle =
+    style === 'abbrev-name-flag' || style === 'state-name' || style === 'flag-state-name' || style === 'abbrev-name'
+      ? style
+      : 'abbrev-name';
+  const slots = Array.isArray(src.slots)
+    ? src.slots.slice(0, 10).map((row) => {
+        const slot = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+        return {
+          state: String(slot.state || ''),
+          code: String(slot.code || ''),
+          name: String(slot.name || ''),
+          stateLabel: String(slot.stateLabel || slot.state || ''),
+          eliminated: slot.eliminated === true,
+        };
+      })
+    : [];
+  return {
+    requestedAt,
+    pictureStyle,
+    flagOutline: src.flagOutline === true,
+    slots,
+  };
+}
+
+export function buildCivicsCompanionSlots(entries: CivicsBeeEntry[]): CivicsButtonSlot[] {
+  const top10 = entries
+    .filter((entry) => entryMeetsFilter(entry, 'top10') && entry.studentName.trim())
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 10);
+  const top5 = new Set(
+    entries.filter((entry) => entryMeetsFilter(entry, 'top5')).map((entry) => entry.name.toLowerCase())
+  );
+  const anyAdvanced = top5.size > 0;
+  return top10.map((entry) => ({
+    state: entry.name,
+    code: entry.code,
+    name: formatCivicsBeeShortDisplayName(entry.studentName),
+    stateLabel: entry.name,
+    eliminated: anyAdvanced && !top5.has(entry.name.toLowerCase()),
+  }));
 }
 
 export function parseCivicsBeeGraphicsSelection(raw: unknown): CivicsBeeGraphicsSelection | null {

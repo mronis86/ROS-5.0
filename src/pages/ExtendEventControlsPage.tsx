@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import CivicsBeeStudentsPanel from '../components/civicsBee/CivicsBeeStudentsPanel';
+import CivicsCompanionButtonsPanel from '../components/civicsBee/CivicsCompanionButtonsPanel';
 import {
   createDefaultCivicsBeeRoster,
   CivicsBeeRoster,
@@ -14,19 +15,20 @@ import {
 import { DatabaseService } from '../services/database';
 import { Event } from '../types/Event';
 
-type TabId = ExtendEventControlModule;
+type TabId = ExtendEventControlModule | 'companionButtons';
 
 const ExtendEventControlsPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const eventIdParam = searchParams.get('eventId') || '';
+  const initialTab = searchParams.get('tab') === 'companion' ? 'companionButtons' : 'civicsBee';
   const eventFromState = (location.state as { event?: Event } | null)?.event;
 
   const [event, setEvent] = useState<Event | null>(eventFromState || null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>('civicsBee');
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   const [roster, setRoster] = useState<CivicsBeeRoster>(() => createDefaultCivicsBeeRoster());
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -96,7 +98,9 @@ const ExtendEventControlsPage: React.FC = () => {
         autoSaveTimerRef.current = null;
       }
       setRoster(parseCivicsBeeRoster(ext.moduleData?.civicsBee));
-      setActiveTab((moduleList[0] || 'civicsBee') as TabId);
+      setActiveTab((current) =>
+        current === 'companionButtons' ? current : ((moduleList[0] || 'civicsBee') as TabId)
+      );
     } catch (e) {
       console.error(e);
       setError('Failed to load event controls.');
@@ -201,9 +205,34 @@ const ExtendEventControlsPage: React.FC = () => {
 
       {!error && modules.length > 0 && (
         <>
-          {modules.length > 1 && (
-            <div className="mb-4 flex flex-wrap gap-2 border-b border-slate-700 pb-3">
-              {modules.map((mod) => (
+          <div className="mb-4 flex flex-wrap gap-2 border-b border-slate-700 pb-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab('civicsBee')}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                activeTab === 'civicsBee'
+                  ? 'bg-slate-100 text-slate-900'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              {EXTEND_MODULE_LABELS.civicsBee}
+            </button>
+            {eventHasExtendModule(event, 'civicsBee') && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('companionButtons')}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                  activeTab === 'companionButtons'
+                    ? 'bg-slate-100 text-slate-900'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                Companion buttons
+              </button>
+            )}
+            {modules
+              .filter((mod) => mod !== 'civicsBee')
+              .map((mod) => (
                 <button
                   key={mod}
                   type="button"
@@ -217,8 +246,7 @@ const ExtendEventControlsPage: React.FC = () => {
                   {EXTEND_MODULE_LABELS[mod]}
                 </button>
               ))}
-            </div>
-          )}
+          </div>
 
           {activeTab === 'civicsBee' && eventHasExtendModule(event, 'civicsBee') && (
             <CivicsBeeStudentsPanel
@@ -227,6 +255,13 @@ const ExtendEventControlsPage: React.FC = () => {
               saving={saving}
               onChange={handleRosterChange}
               onSave={() => void saveCivicsBee()}
+            />
+          )}
+          {activeTab === 'companionButtons' && eventHasExtendModule(event, 'civicsBee') && (
+            <CivicsCompanionButtonsPanel
+              roster={roster}
+              pushing={saving}
+              onPush={(next) => persistCivicsBee(next)}
             />
           )}
         </>

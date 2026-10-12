@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  buildCivicsBeeGraphicsSelection,
   CivicsBeeGraphicsSelection,
   CivicsBeeRoster,
   CivicsBeeTier,
@@ -105,38 +104,11 @@ const CivicsGraphicsSelectPage: React.FC = () => {
     navigate(`/civics-graphics/${next}?${qs.toString()}`, { replace: true });
   };
 
-  const selectStudent = async (code: string) => {
-    if (!eventId) return;
-    const entry = roster.entries.find((e) => e.code === code);
-    if (!entry) return;
-    const next = buildCivicsBeeGraphicsSelection(entry, tier);
-    setBusyCode(code);
-    setStatus(null);
-    const ok = await DatabaseService.setCivicsBeeSelection(eventId, next);
-    setBusyCode(null);
-    if (!ok) {
-      setStatus('Could not set selection — try again.');
-      return;
-    }
-    setSelection(next);
-    setStatus(`On air: ${next.name} · ${next.state} (${CIVICS_BEE_FILTER_LABELS[tier]})`);
-  };
-
-  const clearSelection = async () => {
-    if (!eventId) return;
-    setBusyCode('__clear__');
-    const ok = await DatabaseService.setCivicsBeeSelection(eventId, null);
-    setBusyCode(null);
-    if (!ok) {
-      setStatus('Could not clear selection.');
-      return;
-    }
-    setSelection(null);
-    setStatus('Selection cleared.');
+  const selectStudent = async (_code: string) => {
+    setStatus('Graphic control is off. Change Top 25 / 10 / 5 on the roster. vMix row color is handled by the bridge.');
   };
 
   const extendUrl = `/extend-event-controls?eventId=${encodeURIComponent(eventId)}`;
-  const bridgeZipHref = '/ros-civics-vmix-bridge.zip';
 
   if (loading) {
     return (
@@ -161,26 +133,22 @@ const CivicsGraphicsSelectPage: React.FC = () => {
             </h1>
             <p className="text-sm text-slate-400">
               {eventName}
-              {selection
-                ? ` · Selected: ${selection.name} (${selection.state})`
-                : ' · Tap a student to select in vMix'}
+              {' · Online graphic buttons are off'}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={bridgeZipHref}
-              download="ros-civics-vmix-bridge.zip"
+            <Link
+              to={`${extendUrl}${extendUrl.includes('?') ? '&' : '?'}tab=companion`}
               className="rounded-lg border border-cyan-600/60 bg-cyan-950/50 px-3 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-900/50"
             >
-              Download Civics vMix Bridge
-            </a>
+              Companion button pictures
+            </Link>
             <button
               type="button"
-              onClick={() => void clearSelection()}
-              disabled={busyCode === '__clear__' || !selection}
-              className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+              disabled
+              className="cursor-not-allowed rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-500"
             >
-              Clear selection
+              Clear selection off
             </button>
           </div>
         </div>
@@ -220,10 +188,7 @@ const CivicsGraphicsSelectPage: React.FC = () => {
         </div>
 
         <p className="mb-3 text-xs text-slate-500">
-          Separate from ROS cues. The Civics bridge on the vMix PC watches this selection and calls
-          DataSourceSelectRow on the matching Top 25 / 10 / 5 Data Source.
-          {anyAdvanced && tier === 'top25' && ' Grey buttons did not move on to the Top 10.'}
-          {anyAdvanced && tier === 'top10' && ' Grey buttons did not move on to the Top 5.'}
+          These buttons are disabled. They do not send a selection. Build Companion pictures from the Companion buttons tab.
         </p>
 
         {buttons.length === 0 ? (
@@ -244,7 +209,7 @@ const CivicsGraphicsSelectPage: React.FC = () => {
                 <button
                   key={entry.code}
                   type="button"
-                  disabled={!!busyCode}
+                  disabled
                   onClick={() => void selectStudent(entry.code)}
                   className={`flex min-h-[7.5rem] flex-col items-center justify-center rounded-2xl border-2 px-3 py-4 text-center shadow-lg transition ${
                     active
