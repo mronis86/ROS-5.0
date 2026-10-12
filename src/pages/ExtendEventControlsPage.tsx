@@ -260,6 +260,7 @@ const ExtendEventControlsPage: React.FC = () => {
           {activeTab === 'companionButtons' && eventHasExtendModule(event, 'civicsBee') && (
             <CivicsCompanionButtonsPanel
               roster={roster}
+              eventId={String(eventId)}
               pushing={saving}
               onPush={(next) => persistCivicsBee(next)}
             />

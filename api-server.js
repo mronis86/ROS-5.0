@@ -4187,6 +4187,25 @@ app.get('/api/civics-bee/button-build', async (req, res) => {
   }
 });
 
+const civicsBridgeLogs = new Map();
+
+app.get('/api/civics-bee/bridge-log', (req, res) => {
+  const eventId = String(req.query.eventId || '').trim();
+  if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+  res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache', Expires: '0' });
+  return res.json({ eventId, lines: civicsBridgeLogs.get(eventId) || [] });
+});
+
+app.post('/api/civics-bee/bridge-log', (req, res) => {
+  const eventId = String(req.body?.eventId || '').trim();
+  const message = String(req.body?.message || '').trim().slice(0, 500);
+  if (!eventId || !message) return res.status(400).json({ error: 'eventId and message are required' });
+  const lines = civicsBridgeLogs.get(eventId) || [];
+  lines.unshift({ at: new Date().toISOString(), message });
+  civicsBridgeLogs.set(eventId, lines.slice(0, 40));
+  return res.json({ ok: true });
+});
+
 // Soft-delete calendar event by default; admins may pass ?permanent=1 to purge fully
 app.delete('/api/calendar-events/:id', async (req, res) => {
   try {

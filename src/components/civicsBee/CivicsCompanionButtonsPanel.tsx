@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   buildCivicsCompanionSlots,
   CivicsBeeRoster,
   CivicsButtonPictureStyle,
 } from '../../lib/civicsBee';
+import { getApiBaseUrl } from '../../services/api-client';
 
 const STYLES: Array<{ value: CivicsButtonPictureStyle; label: string }> = [
   { value: 'abbrev-name', label: 'State abbreviation and student name' },
@@ -14,16 +15,44 @@ const STYLES: Array<{ value: CivicsButtonPictureStyle; label: string }> = [
 
 type Props = {
   roster: CivicsBeeRoster;
+  eventId: string;
   pushing: boolean;
   onPush: (next: CivicsBeeRoster) => Promise<boolean>;
 };
 
-const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, pushing, onPush }) => {
+type BridgeLogLine = { at: string; message: string };
+
+const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing, onPush }) => {
   const [pictureStyle, setPictureStyle] = useState<CivicsButtonPictureStyle>(
     roster.buttonBuild?.pictureStyle || 'abbrev-name'
   );
   const [flagOutline, setFlagOutline] = useState(roster.buttonBuild?.flagOutline === true);
   const [message, setMessage] = useState<string | null>(null);
+  const [bridgeLog, setBridgeLog] = useState<BridgeLogLine[]>([]);
+
+  useEffect(() => {
+    if (!eventId) return undefined;
+    let stop = false;
+    const loadLog = async () => {
+      try {
+        const res = await fetch(
+          `${getApiBaseUrl()}/api/civics-bee/bridge-log?eventId=${encodeURIComponent(eventId)}`,
+          { cache: 'no-store' }
+        );
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!stop && Array.isArray(body.lines)) setBridgeLog(body.lines);
+      } catch {
+        /* keep the last log on screen */
+      }
+    };
+    void loadLog();
+    const timer = window.setInterval(() => void loadLog(), 2000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [eventId]);
 
   const slots = useMemo(() => buildCivicsCompanionSlots(roster.entries), [roster.entries]);
   const showFlag = pictureStyle === 'abbrev-name-flag' || pictureStyle === 'flag-state-name';
@@ -151,6 +180,24 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, pushing, onPush 
         )}
       </div>
       {message && <p className="text-sm text-emerald-300">{message}</p>}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-200">Bridge log</h3>
+        <p className="mt-1 text-xs text-slate-500">
+          Civics Bridge V2 writes here after you start it. A clear replaces each Companion picture with a blank image.
+        </p>
+        <div className="mt-2 max-h-56 overflow-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-300">
+          {bridgeLog.length === 0 ? (
+            <p className="text-slate-500">No bridge messages yet. Start Civics Bridge V2, then push or clear.</p>
+          ) : (
+            bridgeLog.map((line, index) => (
+              <p key={`${line.at}-${index}`} className="whitespace-pre-wrap py-1">
+                <span className="text-slate-500">{line.at.replace('T', ' ').replace('Z', ' UTC')} </span>
+                {line.message}
+              </p>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 };

@@ -1,9 +1,29 @@
-const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture } = require('./button-painter');
+const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture, blankButtonPng } = require('./button-painter');
 const { setButtonStyle } = require('./companion-client');
 const { loadConfig, normalizeBaseUrl, stateLabelFor } = require('./config-store');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postLog(cfg, message) {
+  try {
+    const base = normalizeBaseUrl(cfg && cfg.apiBaseUrl);
+    const eventId = String((cfg && cfg.eventId) || '').trim();
+    const text = String(message || '').trim().slice(0, 500);
+    if (!base || !eventId || !text) return;
+    await fetch(`${base}/api/civics-bee/bridge-log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ eventId, message: text }),
+    });
+  } catch {
+    /* the button job still finishes if the log page is unreachable */
+  }
+}
+
+function replyOf(result) {
+  return String((result && result.body) || 'ok').replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
 class BridgeController {
@@ -35,12 +55,15 @@ class BridgeController {
       this.pollOnce().catch((err) => {
         this.lastError = err.message || String(err);
         this.emit();
+        void postLog(loadConfig(), `Bridge error: ${this.lastError}`);
       });
     }, wait);
     this.pollOnce().catch((err) => {
       this.lastError = err.message || String(err);
       this.emit();
+      void postLog(loadConfig(), `Bridge error: ${this.lastError}`);
     });
+    void postLog(cfg || loadConfig(), 'Bridge is watching for a website push or clear.');
     this.emit();
   }
 
@@ -76,9 +99,14 @@ class BridgeController {
       return;
     }
     if (build.action === 'clear') {
+      await postLog(
+        cfg,
+        `Clear requested ${build.requestedAt}. Companion ${comp.host}:${comp.port} ${comp.apiVersion} page ${comp.page}.`
+      );
       await this.clearButtons(cfg, build);
       return;
     }
+    await postLog(cfg, `Push ${build.requestedAt}. ${Array.isArray(build.slots) ? build.slots.length : 0} students.`);
     await this.applyBuild(cfg, build);
   }
 
@@ -163,6 +191,7 @@ class BridgeController {
       `Page ${comp.page}. ${comp.apiVersion === 'v2' ? `2.4 banks ${comp.firstBank}-${comp.firstBank + count - 1}.` : `Start row ${comp.startRow}, start column ${comp.startColumn}.`}`,
     ].join(' · ');
     this.emit();
+    await postLog(cfg, this.lastError ? `Push finished with errors: ${this.lastError}` : this.lastOk);
   }
 
   async clearButtons(cfg, build) {
@@ -180,7 +209,8 @@ class BridgeController {
       try {
         await saveOneButtonPicture(i, '', folder);
         if (comp.enabled !== false) {
-          const result = await setButtonStyle(
+          const where = useBank ? `bank ${bank}` : `row ${row} column ${column}`;
+          const cleared = await setButtonStyle(
             comp.host,
             comp.port,
             comp.page,
@@ -189,15 +219,30 @@ class BridgeController {
             { text: '', png64: '' },
             apiMode
           );
-          if (apiMode === 'auto' && result.api) {
-            apiMode = result.api;
-            this.companionApi = result.api;
+          if (apiMode === 'auto' && cleared.api) {
+            apiMode = cleared.api;
+            this.companionApi = cleared.api;
           }
+          const replaced = await setButtonStyle(
+            comp.host,
+            comp.port,
+            comp.page,
+            row,
+            column,
+            { text: '', png64: blankButtonPng(), pngalignment: 'center:center' },
+            apiMode
+          );
+          await postLog(
+            cfg,
+            `Cleared button ${i + 1} page ${comp.page} ${where}. Companion said "${replyOf(cleared)}" then "${replyOf(replaced)}".`
+          );
           await sleep(150);
         }
         sent.push(`button ${i + 1} cleared`);
       } catch (err) {
-        failures.push(`button ${i + 1}: ${err.message || err}`);
+        const note = `button ${i + 1}: ${err.message || err}`;
+        failures.push(note);
+        await postLog(cfg, `Clear failed. ${note}`);
       }
     }
     this.lastBuilt = build.requestedAt;

@@ -729,6 +729,14 @@ function pngCornerIsClear(dataUrl) {
   return transparencyReport(dataUrl).ok;
 }
 
+let blankPng = '';
+function blankButtonPng() {
+  if (blankPng) return blankPng;
+  const png = encodeRgbaPng(BUTTON_W, BUTTON_H, Buffer.alloc(BUTTON_W * BUTTON_H * 4));
+  blankPng = `data:image/png;base64,${png.toString('base64')}`;
+  return blankPng;
+}
+
 module.exports = {
   renderButtonPng,
   stateAbbrev,
@@ -741,4 +749,5 @@ module.exports = {
   pngCornerIsClear,
   transparencyReport,
   prepareButtonPicture,
+  blankButtonPng,
 };
