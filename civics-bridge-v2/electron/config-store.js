@@ -33,6 +33,10 @@ function defaultCompanion() {
     flagOutline: false,
     bgStillIn: '#000000',
     bgEliminated: '#000000',
+    pressColors: false,
+    pressListenPort: 3921,
+    pressSelectedColor: '#2563eb',
+    pressDefaultColor: '#000000',
   };
 }
 
@@ -79,6 +83,10 @@ function normalizeCompanion(raw) {
     flagOutline: src.flagOutline === true,
     bgStillIn: hexColor(src.bgStillIn, base.bgStillIn),
     bgEliminated: hexColor(src.bgEliminated, base.bgEliminated),
+    pressColors: src.pressColors === true,
+    pressListenPort: Math.min(65535, Math.max(1, parseInt(String(src.pressListenPort), 10) || base.pressListenPort)),
+    pressSelectedColor: hexColor(src.pressSelectedColor, base.pressSelectedColor),
+    pressDefaultColor: hexColor(src.pressDefaultColor, base.pressDefaultColor),
   };
 }
 

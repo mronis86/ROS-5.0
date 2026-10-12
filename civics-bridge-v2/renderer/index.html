@@ -31,6 +31,7 @@
       .ok { color: var(--ok); }
       .err { color: #f87171; }
       .hint { font-size: 0.75rem; color: var(--muted); margin: 0 0 10px; }
+      #pressUrls { white-space: pre-wrap; }
       .hint.ok { color: var(--ok); }
       .hint.err { color: #f87171; font-weight: 600; }
     </style>
@@ -114,6 +115,34 @@
         </div>
       </div>
       <p class="hint" id="companionLayout"></p>
+    </div>
+
+    <div class="card">
+      <strong>Press colors</strong>
+      <p class="hint">
+        Off by default. When on, a press sets that button to the selected color and the other configured buttons to the default color.
+        Only the background color is sent. Pictures are not replaced, and Generate, Import, and Clear are unchanged.
+        Still-in pictures are transparent, so the color shows through. Eliminated pictures are filled grey, so they cover this color.
+      </p>
+      <label class="check">
+        <input id="pressColors" type="checkbox" />
+        <span>Update background color when one of these buttons is pressed</span>
+      </label>
+      <div class="grid3">
+        <div>
+          <label>Listen port</label>
+          <input id="pressListenPort" type="number" min="1" max="65535" />
+        </div>
+        <div>
+          <label>Selected color</label>
+          <input id="pressSelectedColor" type="color" />
+        </div>
+        <div>
+          <label>Default color</label>
+          <input id="pressDefaultColor" type="color" />
+        </div>
+      </div>
+      <p class="hint" id="pressUrls"></p>
     </div>
 
     <div class="card">

@@ -1,5 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const http = require('http');
+const os = require('os');
 const path = require('path');
 const { app } = require('electron');
 const {
@@ -112,6 +114,18 @@ function apiModeOf(comp) {
   return comp.apiVersion === 'v3' ? 'v3' : 'v2';
 }
 
+function lanAddresses() {
+  const ips = [];
+  const nets = os.networkInterfaces();
+  Object.keys(nets).forEach((name) => {
+    (nets[name] || []).forEach((net) => {
+      const v4 = net.family === 'IPv4' || net.family === 4;
+      if (v4 && !net.internal) ips.push(net.address);
+    });
+  });
+  return ips;
+}
+
 function targetKey(comp) {
   return JSON.stringify([comp.host, comp.port, comp.page, apiModeOf(comp), layoutOf(comp).spots]);
 }
@@ -157,6 +171,8 @@ class BridgeController {
     this.busy = false;
     this.lastOk = '';
     this.lastError = '';
+    this.pressServer = null;
+    this.pressChain = Promise.resolve();
   }
 
   emit() {
@@ -165,6 +181,7 @@ class BridgeController {
       lastOk: this.lastOk,
       lastError: this.lastError,
       pictureFolder: buttonPictureDir(),
+      pressListening: !!this.pressServer,
     });
   }
 
@@ -189,6 +206,90 @@ class BridgeController {
     this.timer = setInterval(tick, wait);
     tick();
     void postLog(cfg || loadConfig(), `Bridge ${bridgeVersion()} started. It only acts on a new Generate, Import, or Clear from the website.`);
+    this.refreshPressListener();
+    this.emit();
+  }
+
+  stopPressListener() {
+    if (!this.pressServer) return;
+    this.pressServer.close();
+    this.pressServer = null;
+  }
+
+  refreshPressListener() {
+    this.stopPressListener();
+    if (!this.running) return;
+    const comp = loadConfig().companion;
+    if (!comp.pressColors) {
+      if (String(this.lastOk).startsWith('Press colors')) this.lastOk = 'Press colors are off.';
+      this.emit();
+      return;
+    }
+    const port = comp.pressListenPort;
+    const server = http.createServer((req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const match = String(req.url || '').match(/^\/press\/(\d+)(?:\?|$)/);
+      if (!match) {
+        res.statusCode = 404;
+        res.end('not found');
+        return;
+      }
+      const n = parseInt(match[1], 10);
+      const run = this.pressChain.then(() => this.applyPress(n));
+      this.pressChain = run.then(
+        () => {},
+        () => {}
+      );
+      run.then(
+        () => {
+          res.end('ok');
+        },
+        (err) => {
+          res.statusCode = 500;
+          res.end(err.message || String(err));
+        }
+      );
+    });
+    server.on('error', (err) => {
+      this.pressServer = null;
+      this.lastError = `Press colors could not listen on port ${port}. ${err.message || err}`;
+      this.emit();
+    });
+    server.listen(port, '0.0.0.0', () => {
+      this.pressServer = server;
+      const ips = lanAddresses();
+      const where = ips.length ? ips.map((ip) => `${ip}:${port}`).join(', ') : `port ${port}`;
+      this.lastOk = `Press colors are listening at ${where}. A press changes background color only.`;
+      this.lastError = '';
+      this.emit();
+    });
+  }
+
+  /** Background color only. Pictures and text are left as they are. */
+  async applyPress(n) {
+    const comp = loadConfig().companion;
+    if (!comp.pressColors) return;
+    const layout = layoutOf(comp);
+    if (layout.error) throw new Error(layout.error);
+    if (n < 1 || n > comp.count) throw new Error(`Press ${n} is outside the ${comp.count} configured buttons.`);
+    const mode = apiModeOf(comp);
+    const failures = [];
+    for (let i = 0; i < comp.count; i += 1) {
+      const pos = buttonPosition(comp, i);
+      const bgcolor = i + 1 === n ? comp.pressSelectedColor : comp.pressDefaultColor;
+      try {
+        await setButtonStyle(comp.host, comp.port, comp.page, pos.row, pos.column, { bgcolor }, mode);
+      } catch (err) {
+        failures.push(`${pos.where}: ${err.message || err}`);
+      }
+    }
+    if (failures.length) {
+      this.lastError = `Press ${n} color update failed. ${failures.join(' | ')}`;
+      this.emit();
+      throw new Error(this.lastError);
+    }
+    this.lastOk = `Button ${n} selected on page ${comp.page}. Background color only. Pictures were not changed.`;
+    this.lastError = '';
     this.emit();
   }
 
@@ -196,6 +297,7 @@ class BridgeController {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.running = false;
+    this.stopPressListener();
     this.emit();
   }
 

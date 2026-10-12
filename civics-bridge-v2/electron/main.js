@@ -20,7 +20,7 @@ const bridge = new BridgeController({
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 720,
-    height: 980,
+    height: 1180,
     title: 'Civics Bridge V2',
     autoHideMenuBar: true,
     backgroundColor: '#0f172a',
@@ -43,7 +43,11 @@ app.on('window-all-closed', () => {
 });
 
 ipcMain.handle('config:get', () => loadConfig());
-ipcMain.handle('config:save', (_e, cfg) => saveConfig(cfg || {}));
+ipcMain.handle('config:save', (_e, cfg) => {
+  const saved = saveConfig(cfg || {});
+  bridge.refreshPressListener();
+  return saved;
+});
 ipcMain.handle('bridge:start', () => {
   bridge.start(loadConfig());
   return { ok: true };
