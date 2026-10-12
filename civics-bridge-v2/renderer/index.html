@@ -120,19 +120,16 @@
     <div class="card">
       <strong>Press colors</strong>
       <p class="hint">
-        Off by default. When on, a press sets that button to the selected color and the other configured buttons to the default color.
-        Only the background color is sent. Pictures are not replaced, and Generate, Import, and Clear are unchanged.
+        Off by default. When on, the bridge connects to the Companion host above and watches the configured buttons.
+        Pressing one sets that button to the selected color and the others to the default color.
+        Only the background color is sent. No press actions need to be added in Companion.
         Still-in pictures are transparent, so the color shows through. Eliminated pictures are filled grey, so they cover this color.
       </p>
       <label class="check">
         <input id="pressColors" type="checkbox" />
         <span>Update background color when one of these buttons is pressed</span>
       </label>
-      <div class="grid3">
-        <div>
-          <label>Listen port</label>
-          <input id="pressListenPort" type="number" min="1" max="65535" />
-        </div>
+      <div class="grid2">
         <div>
           <label>Selected color</label>
           <input id="pressSelectedColor" type="color" />

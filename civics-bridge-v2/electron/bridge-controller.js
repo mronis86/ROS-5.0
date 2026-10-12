@@ -1,9 +1,8 @@
 const crypto = require('crypto');
 const fs = require('fs');
-const http = require('http');
-const os = require('os');
 const path = require('path');
 const { app } = require('electron');
+const { io } = require('socket.io-client');
 const {
   renderButtonPng,
   saveOneButtonPicture,
@@ -114,16 +113,14 @@ function apiModeOf(comp) {
   return comp.apiVersion === 'v3' ? 'v3' : 'v2';
 }
 
-function lanAddresses() {
-  const ips = [];
-  const nets = os.networkInterfaces();
-  Object.keys(nets).forEach((name) => {
-    (nets[name] || []).forEach((net) => {
-      const v4 = net.family === 'IPv4' || net.family === 4;
-      if (v4 && !net.internal) ips.push(net.address);
-    });
-  });
-  return ips;
+function pressIndex(comp, page, bank) {
+  if (page !== comp.page) return 0;
+  for (let i = 0; i < comp.count; i += 1) {
+    const pos = buttonPosition(comp, i);
+    const posBank = pos.bank || pos.row * 8 + pos.column + 1;
+    if (posBank === bank) return i + 1;
+  }
+  return 0;
 }
 
 function targetKey(comp) {
@@ -171,7 +168,7 @@ class BridgeController {
     this.busy = false;
     this.lastOk = '';
     this.lastError = '';
-    this.pressServer = null;
+    this.pressSocket = null;
     this.pressChain = Promise.resolve();
   }
 
@@ -181,7 +178,7 @@ class BridgeController {
       lastOk: this.lastOk,
       lastError: this.lastError,
       pictureFolder: buttonPictureDir(),
-      pressListening: !!this.pressServer,
+      pressListening: !!(this.pressSocket && this.pressSocket.connected),
     });
   }
 
@@ -211,9 +208,10 @@ class BridgeController {
   }
 
   stopPressListener() {
-    if (!this.pressServer) return;
-    this.pressServer.close();
-    this.pressServer = null;
+    if (!this.pressSocket) return;
+    this.pressSocket.removeAllListeners();
+    this.pressSocket.close();
+    this.pressSocket = null;
   }
 
   refreshPressListener() {
@@ -225,43 +223,42 @@ class BridgeController {
       this.emit();
       return;
     }
-    const port = comp.pressListenPort;
-    const server = http.createServer((req, res) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      const match = String(req.url || '').match(/^\/press\/(\d+)(?:\?|$)/);
-      if (!match) {
-        res.statusCode = 404;
-        res.end('not found');
+    const socket = io(`http://${comp.host}:${comp.port}`, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      timeout: 8000,
+    });
+    this.pressSocket = socket;
+    socket.on('connect', () => {
+      this.lastOk = `Press colors are watching Companion at ${comp.host}:${comp.port}.`;
+      this.lastError = '';
+      this.emit();
+    });
+    socket.on('disconnect', () => {
+      this.lastError = `Press colors lost the connection to Companion at ${comp.host}:${comp.port}. Reconnecting.`;
+      this.emit();
+    });
+    socket.on('connect_error', (err) => {
+      this.lastError = `Press colors could not reach Companion at ${comp.host}:${comp.port}. ${err.message || err}`;
+      this.emit();
+    });
+    socket.on('log', (_now, _source, _level, message) => {
+      const match = String(message || '').match(/^Button (\d+)\.(\d+) pressed$/);
+      if (!match) return;
+      const cfg = loadConfig().companion;
+      if (!cfg.pressColors) return;
+      let n = 0;
+      try {
+        n = pressIndex(cfg, parseInt(match[1], 10), parseInt(match[2], 10));
+      } catch {
         return;
       }
-      const n = parseInt(match[1], 10);
+      if (!n) return;
       const run = this.pressChain.then(() => this.applyPress(n));
       this.pressChain = run.then(
         () => {},
         () => {}
       );
-      run.then(
-        () => {
-          res.end('ok');
-        },
-        (err) => {
-          res.statusCode = 500;
-          res.end(err.message || String(err));
-        }
-      );
-    });
-    server.on('error', (err) => {
-      this.pressServer = null;
-      this.lastError = `Press colors could not listen on port ${port}. ${err.message || err}`;
-      this.emit();
-    });
-    server.listen(port, '0.0.0.0', () => {
-      this.pressServer = server;
-      const ips = lanAddresses();
-      const where = ips.length ? ips.map((ip) => `${ip}:${port}`).join(', ') : `port ${port}`;
-      this.lastOk = `Press colors are listening at ${where}. A press changes background color only.`;
-      this.lastError = '';
-      this.emit();
     });
   }
 
@@ -319,7 +316,7 @@ class BridgeController {
 
     if (this.lastSeen === null) {
       this.lastSeen = requestedAt;
-      this.lastOk = 'Waiting for a new request from the website.';
+      if (!this.pressSocket) this.lastOk = 'Waiting for a new request from the website.';
       this.lastError = '';
       this.emit();
       return;

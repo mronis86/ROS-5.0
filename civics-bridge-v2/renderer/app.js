@@ -20,7 +20,6 @@ function readForm() {
       startColumn: parseInt($('companionStartColumn').value, 10) || 0,
       columns: parseInt($('companionColumns').value, 10) || 5,
       pressColors: $('pressColors').checked === true,
-      pressListenPort: parseInt($('pressListenPort').value, 10) || 3921,
       pressSelectedColor: $('pressSelectedColor').value || '#2563eb',
       pressDefaultColor: $('pressDefaultColor').value || '#000000',
     },
@@ -45,7 +44,6 @@ function fillForm(cfg) {
   $('companionStartColumn').value = String(comp.startColumn ?? 0);
   $('companionColumns').value = String(comp.columns || 5);
   $('pressColors').checked = comp.pressColors === true;
-  $('pressListenPort').value = String(comp.pressListenPort || 3921);
   $('pressSelectedColor').value = comp.pressSelectedColor || '#2563eb';
   $('pressDefaultColor').value = comp.pressDefaultColor || '#000000';
 }
@@ -83,12 +81,11 @@ function showLayout() {
   el.className = 'hint ok';
   const press = $('pressUrls');
   if (!comp.pressColors) {
-    press.textContent = 'Press colors are off. Companion is not called when a button is pressed.';
+    press.textContent = 'Press colors are off.';
     press.className = 'hint';
     return;
   }
-  const lines = spots.map((spot, i) => `Button ${i + 1} (${comp.apiVersion === 'v3' ? spot : `bank ${spot}`}): http://THIS-COMPUTER:${comp.pressListenPort}/press/${i + 1}`);
-  press.textContent = `In Companion, add one HTTP GET press action on each button. Use this computer's address, not 127.0.0.1.\n${lines.join('\n')}`;
+  press.textContent = `Watches Companion ${comp.host}:${comp.port}, page ${comp.page}, ${comp.apiVersion === 'v3' ? spots.join(', ') : `banks ${spots.join(', ')}`}. A press on one of those buttons recolors the set. Other buttons are ignored.`;
   press.className = 'hint ok';
 }
 

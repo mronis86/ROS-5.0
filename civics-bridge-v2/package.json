@@ -1,6 +1,6 @@
 {
   "name": "ros-civics-bridge-v2",
-  "version": "2.1.11",
+  "version": "2.1.12",
   "description": "Civics Bridge V2 writes Companion button pictures to a folder. It does not talk to vMix.",
   "private": true,
   "main": "electron/main.js",
@@ -15,8 +15,26 @@
   "build": {
     "appId": "com.sinor.ros.civics-bridge-v2",
     "productName": "Civics Bridge V2",
-    "directories": { "output": "dist-ready" },
-    "files": ["electron/**/*", "renderer/**/*", "package.json"],
-    "win": { "target": [{ "target": "dir", "arch": ["x64"] }] }
+    "directories": {
+      "output": "dist-ready"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.1"
   }
 }
