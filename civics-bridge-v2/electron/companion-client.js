@@ -7,8 +7,8 @@
 const V2_COLUMNS = 8;
 
 function companionBase(host, port) {
-  const h = String(host || '127.0.0.1').trim() || '127.0.0.1';
-  const p = Math.max(1, parseInt(String(port), 10) || 8000);
+  const h = String(host || '10.162.4.100').trim() || '10.162.4.100';
+  const p = Math.max(1, parseInt(String(port), 10) || 8888);
   return `http://${h}:${p}`;
 }
 

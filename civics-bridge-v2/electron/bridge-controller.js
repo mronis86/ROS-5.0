@@ -1,4 +1,4 @@
-const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture } = require('./button-painter');
+const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture, blankButtonPng } = require('./button-painter');
 const { setButtonStyle } = require('./companion-client');
 const { loadConfig, normalizeBaseUrl, stateLabelFor } = require('./config-store');
 
@@ -23,6 +23,28 @@ async function postLog(cfg, message, status) {
   } catch {
     /* the button job still finishes if the log page is unreachable */
   }
+}
+
+/**
+ * Companion 2.4 pages are 8 banks wide. First bank is the top-left button of the block,
+ * and buttons per row wraps the block, so 10 buttons at 5 per row from bank 1 use banks 1-5 and 9-13.
+ */
+function buttonPosition(comp, i) {
+  const perRow = Math.max(1, comp.columns || 1);
+  if (comp.apiVersion === 'v2') {
+    const start = Math.max(1, comp.firstBank || 1) - 1;
+    const row = Math.floor(start / 8) + Math.floor(i / perRow);
+    const column = (start % 8) + (i % perRow);
+    if (column > 7) {
+      throw new Error(
+        `Button ${i + 1} would be past column 8. On Companion 2.4 the first bank column plus buttons per row must fit in 8.`
+      );
+    }
+    return { row, column, bank: row * 8 + column + 1 };
+  }
+  const row = comp.startRow + Math.floor(i / perRow);
+  const column = comp.startColumn + (i % perRow);
+  return { row, column, bank: 0 };
 }
 
 function bridgeStatus(cfg) {
@@ -137,14 +159,12 @@ class BridgeController {
 
     for (let i = 0; i < count; i += 1) {
       const slot = slots[i] || null;
-      const useBank = comp.apiVersion === 'v2';
-      const bank = (comp.firstBank || 1) + i;
-      const row = useBank ? Math.floor((bank - 1) / 8) : comp.startRow + Math.floor(i / comp.columns);
-      const column = useBank ? (bank - 1) % 8 : comp.startColumn + (i % comp.columns);
       const hasStudent = !!(slot && (slot.state || slot.name));
       const stateLabel = hasStudent ? stateLabelFor(slot.stateLabel || slot.state || '', comp) : '';
       let png = '';
       try {
+        const { row, column, bank } = buttonPosition(comp, i);
+        const where = comp.apiVersion === 'v2' ? `bank ${bank}` : `row ${row} column ${column}`;
         const eliminated = hasStudent && slot.eliminated === true;
         if (hasStudent && comp.buttonImages !== false) {
           png = await renderButtonPng({
@@ -188,7 +208,7 @@ class BridgeController {
             this.companionApi = result.api;
           }
           sent.push(
-            `button ${i + 1}${hasStudent ? ' ' + (slot.state || '') : ' cleared'} ${eliminated ? 'grey' : 'transparent'}`
+            `button ${i + 1} ${where}${hasStudent ? ' ' + (slot.state || '') : ' cleared'} ${eliminated ? 'grey' : 'transparent'}`
           );
         }
       } catch (err) {
@@ -202,7 +222,7 @@ class BridgeController {
     this.lastOk = [
       sent.length ? `${where}: ${sent.join(', ')}` : 'No Companion buttons were updated.',
       `Pictures folder: ${folder}`,
-      `Page ${comp.page}. ${comp.apiVersion === 'v2' ? `2.4 banks ${comp.firstBank}-${comp.firstBank + count - 1}.` : `Start row ${comp.startRow}, start column ${comp.startColumn}.`}`,
+      `Page ${comp.page}, ${comp.columns} per row.`,
     ].join(' · ');
     this.emit();
     await postLog(cfg, this.lastError ? `Push finished with errors: ${this.lastError}` : this.lastOk);
@@ -216,11 +236,9 @@ class BridgeController {
     const failures = [];
     const sent = [];
     for (let i = 0; i < count; i += 1) {
-      const useBank = comp.apiVersion === 'v2';
-      const bank = (comp.firstBank || 1) + i;
-      const row = useBank ? Math.floor((bank - 1) / 8) : comp.startRow + Math.floor(i / comp.columns);
-      const column = useBank ? (bank - 1) % 8 : comp.startColumn + (i % comp.columns);
       try {
+        const { row, column, bank } = buttonPosition(comp, i);
+        const useBank = comp.apiVersion === 'v2';
         await saveOneButtonPicture(i, '', folder);
         if (comp.enabled !== false) {
           const where = useBank ? `bank ${bank}` : `row ${row} column ${column}`;
@@ -237,9 +255,18 @@ class BridgeController {
             apiMode = cleared.api;
             this.companionApi = cleared.api;
           }
+          const blanked = await setButtonStyle(
+            comp.host,
+            comp.port,
+            comp.page,
+            row,
+            column,
+            { text: '', png64: blankButtonPng(), pngalignment: 'center:center' },
+            apiMode
+          );
           await postLog(
             cfg,
-            `Removed picture on button ${i + 1} page ${comp.page} ${where}. Companion said "${replyOf(cleared)}".`
+            `Removed picture on button ${i + 1} page ${comp.page} ${where}. Companion said "${replyOf(cleared)}" then "${replyOf(blanked)}".`
           );
           await sleep(150);
         }
@@ -260,4 +287,4 @@ class BridgeController {
   }
 }
 
-module.exports = { BridgeController };
+module.exports = { BridgeController, buttonPosition };

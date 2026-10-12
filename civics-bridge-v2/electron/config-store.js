@@ -16,8 +16,8 @@ function defaultShortStateNamesText() {
 function defaultCompanion() {
   return {
     enabled: true,
-    host: '127.0.0.1',
-    port: 8000,
+    host: '10.162.4.100',
+    port: 8888,
     page: 1,
     firstBank: 1,
     startRow: 0,

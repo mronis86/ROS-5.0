@@ -12,8 +12,8 @@ function readForm() {
       pictureFolder: $('companionPictureFolder').value.trim(),
       useShortStateNames: $('companionUseShortStateNames').checked === true,
       shortStateNames: $('companionShortStateNames').value,
-      host: $('companionHost').value.trim() || '127.0.0.1',
-      port: parseInt($('companionPort').value, 10) || 8000,
+      host: $('companionHost').value.trim() || '10.162.4.100',
+      port: parseInt($('companionPort').value, 10) || 8888,
       apiVersion: $('companionApiVersion').value || 'auto',
       page: parseInt($('companionPage').value, 10) || 1,
       firstBank: parseInt($('companionFirstBank').value, 10) || 1,
@@ -35,8 +35,8 @@ function fillForm(cfg) {
   $('companionPictureFolder').value = comp.pictureFolder || '';
   $('companionUseShortStateNames').checked = comp.useShortStateNames === true;
   $('companionShortStateNames').value = comp.shortStateNames || '';
-  $('companionHost').value = comp.host || '127.0.0.1';
-  $('companionPort').value = String(comp.port || 8000);
+  $('companionHost').value = comp.host || '10.162.4.100';
+  $('companionPort').value = String(comp.port || 8888);
   $('companionApiVersion').value = comp.apiVersion === 'v2' || comp.apiVersion === 'v3' ? comp.apiVersion : 'auto';
   $('companionPage').value = String(comp.page || 1);
   $('companionFirstBank').value = String(comp.firstBank || 1);
