@@ -35,7 +35,7 @@ type BridgeInfo = {
   layoutError?: string;
   bridgeVersion?: string;
 };
-type ButtonResult = { n: number; where: string; state: string; message: string };
+type ButtonResult = { n: number; where: string; state: string; message: string; png?: string };
 type BridgeResult = {
   at: string;
   instanceId: string;
@@ -47,6 +47,9 @@ type BridgeResult = {
 
 const RESULT_LABEL: Record<string, string> = {
   created: 'Created',
+  empty: 'Empty',
+  checked: 'Checked',
+  removed: 'Old removed',
   imported: 'Imported',
   cleared: 'Cleared',
   failed: 'Failed',
@@ -54,10 +57,25 @@ const RESULT_LABEL: Record<string, string> = {
 
 const RESULT_CLASS: Record<string, string> = {
   created: 'bg-sky-900 text-sky-200',
+  empty: 'bg-slate-800 text-slate-300',
+  checked: 'bg-sky-900 text-sky-200',
+  removed: 'bg-amber-900 text-amber-200',
   imported: 'bg-emerald-900 text-emerald-200',
   cleared: 'bg-amber-900 text-amber-200',
   failed: 'bg-red-900 text-red-200',
 };
+
+const MIN_BRIDGE_VERSION = [2, 1, 10];
+
+function isCurrentBridge(version?: string) {
+  const parts = String(version || '')
+    .split('.')
+    .map((p) => parseInt(p, 10) || 0);
+  for (let i = 0; i < MIN_BRIDGE_VERSION.length; i += 1) {
+    if ((parts[i] || 0) !== MIN_BRIDGE_VERSION[i]) return (parts[i] || 0) > MIN_BRIDGE_VERSION[i];
+  }
+  return true;
+}
 
 const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing, onPush }) => {
   const [pictureStyle, setPictureStyle] = useState<CivicsButtonPictureStyle>(
@@ -71,6 +89,10 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
   const [bridges, setBridges] = useState<BridgeInfo[]>([]);
   const [result, setResult] = useState<BridgeResult | null>(null);
   const [serverNow, setServerNow] = useState(0);
+  const [pictures, setPictures] = useState<{ generateId: string; byButton: Record<number, string> }>({
+    generateId: '',
+    byButton: {},
+  });
 
   useEffect(() => {
     if (!eventId) return undefined;
@@ -86,7 +108,15 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
         if (stop) return;
         setBridgeLog(Array.isArray(body.lines) ? body.lines : []);
         setBridges(Array.isArray(body.bridges) ? body.bridges : []);
-        setResult(body.result && typeof body.result === 'object' ? body.result : null);
+        const nextResult: BridgeResult | null = body.result && typeof body.result === 'object' ? body.result : null;
+        setResult(nextResult);
+        if (nextResult?.action === 'generate' && Array.isArray(nextResult.buttons)) {
+          const byButton: Record<number, string> = {};
+          nextResult.buttons.forEach((b) => {
+            if (b.png) byButton[b.n] = b.png;
+          });
+          setPictures({ generateId: nextResult.requestedAt, byButton });
+        }
         setServerNow(body.now ? new Date(body.now).getTime() : Date.now());
       } catch {
         /* keep the last log on screen */
@@ -105,16 +135,23 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
   const showAbbrev = pictureStyle === 'abbrev-name' || pictureStyle === 'abbrev-name-flag';
   const currentKey = JSON.stringify([pictureStyle, hasFlag && flagOutline, slots]);
   const previewed = previewKey === currentKey;
+  const build = roster.buttonBuild || null;
 
-  const liveBridges = bridges.filter((b) => serverNow - new Date(b.at).getTime() < 15000);
+  const seenBridges = bridges.filter((b) => serverNow - new Date(b.at).getTime() < 15000);
+  const liveBridges = seenBridges.filter((b) => isCurrentBridge(b.bridgeVersion));
+  const oldBridges = seenBridges.filter((b) => !isCurrentBridge(b.bridgeVersion));
   const bridge = liveBridges[0] || null;
+  const pictureSetId = build?.action === 'import' ? build.generateId || '' : build?.requestedAt || '';
+  const bridgePictures =
+    build && build.action !== 'clear' && pictures.generateId && pictures.generateId === pictureSetId
+      ? pictures.byButton
+      : {};
   const bridgeSeen = !!bridge;
   const tooManyBridges = liveBridges.length > 1;
   const spots = bridge?.spots || [];
   const spotText = spots.length ? spots.join(', ') : '';
   const where = bridge ? `Companion ${bridge.host}:${bridge.port}, page ${bridge.page}` : 'Companion';
 
-  const build = roster.buttonBuild || null;
   const currentResult = result && build && result.requestedAt === build.requestedAt ? result : null;
   const resultByButton = new Map<number, ButtonResult>();
   currentResult?.buttons.forEach((b) => resultByButton.set(b.n, b));
@@ -190,7 +227,7 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
           <span className={`h-2 w-2 rounded-full ${bridgeSeen ? 'bg-emerald-400' : 'bg-slate-500'}`} />
           {bridgeSeen
             ? `Bridge ${bridge?.bridgeVersion || ''} seen. ${where}, Companion ${bridge?.version || ''}`
-            : 'Bridge not seen. Start Civics Bridge V2 on the show computer.'}
+            : 'Bridge not seen. Start Civics Bridge V2 2.1.10 or newer on the show computer.'}
         </p>
         {bridgeSeen && spotText && (
           <p className="mt-2 text-xs text-slate-400">
@@ -201,6 +238,13 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
           <p className="mt-2 text-sm text-red-300">
             {liveBridges.length} copies of Civics Bridge V2 are running ({liveBridges.map((b) => b.instanceId).join(', ')}).
             Close all but one, or they will both change Companion.
+          </p>
+        )}
+        {oldBridges.length > 0 && (
+          <p className="mt-2 text-sm text-amber-300">
+            An older Civics Bridge is still open
+            {oldBridges.map((b) => (b.bridgeVersion ? ` (${b.bridgeVersion})` : ' (2.1.7 or earlier)')).join(',')}.
+            The website no longer sends it requests, but close it so only 2.1.10 or newer is running.
           </p>
         )}
         {bridge?.layoutError && <p className="mt-2 text-sm text-red-300">{bridge.layoutError}</p>}
@@ -266,7 +310,19 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
                   Button {index + 1}
                   {spots[index] ? ` · ${spots[index]}` : ''}
                 </span>
-                {previewed ? (
+                {bridgePictures[index + 1] ? (
+                  <>
+                    <img
+                      src={bridgePictures[index + 1]}
+                      alt={`Button ${index + 1} picture from the bridge`}
+                      width={144}
+                      height={116}
+                      className="mt-1 rounded"
+                      style={{ imageRendering: 'pixelated', backgroundColor: slot.eliminated ? undefined : '#000' }}
+                    />
+                    <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-300">Bridge picture</span>
+                  </>
+                ) : previewed ? (
                   <>
                     {hasFlag && <span className="mt-1 text-[10px] text-slate-400">Flag</span>}
                     <span className={`mt-1 text-lg font-bold ${slot.eliminated ? 'line-through' : ''}`}>
@@ -351,7 +407,11 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
           {askImport && (
             <>
               <p className="mt-2">
-                Import these pictures to {where}?{spotText ? ` Buttons: ${spotText}.` : ''}
+                Check the bridge pictures on the buttons above. These exact files are what will load.
+              </p>
+              <p className="mt-2">
+                Import them to {where}?{spotText ? ` Buttons: ${spotText}.` : ''} The bridge checks every picture first,
+                removes every one of those buttons, and only then loads the new pictures.
               </p>
               <div className="mt-3 flex gap-3">
                 <button

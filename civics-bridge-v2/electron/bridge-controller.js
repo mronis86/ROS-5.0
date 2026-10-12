@@ -1,10 +1,23 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { app } = require('electron');
-const { renderButtonPng, saveOneButtonPicture, setButtonPictureDir, ensureButtonPictureDir, buttonPictureDir, readButtonPicture } = require('./button-painter');
+const {
+  renderButtonPng,
+  saveOneButtonPicture,
+  setButtonPictureDir,
+  ensureButtonPictureDir,
+  buttonPictureDir,
+  readButtonPicture,
+  pictureStats,
+} = require('./button-painter');
 const { setButtonStyle } = require('./companion-client');
 const { loadConfig, normalizeBaseUrl, stateLabelFor } = require('./config-store');
 
 const INSTANCE_ID = crypto.randomBytes(4).toString('hex');
+const MANIFEST = 'generated-buttons.json';
+const MAX_FILES = 32;
+const RENDER_TRIES = 3;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,6 +29,10 @@ function bridgeVersion() {
   } catch {
     return '';
   }
+}
+
+function sha(text) {
+  return crypto.createHash('sha256').update(String(text || '')).digest('hex');
 }
 
 async function postReport(cfg, payload) {
@@ -50,7 +67,7 @@ function buttonPosition(comp, i) {
     const column = (start % 8) + (i % perRow);
     if (column > 7) {
       throw new Error(
-        `Button ${i + 1} would be past the 8th column. First bank column plus buttons per row must fit in 8.`
+        `Buttons per row is ${perRow} starting at bank ${start + 1}, which runs past the 8 buttons in a Companion 2.4 row. Set buttons per row to ${Math.max(1, 8 - (start % 8))} or less.`
       );
     }
     const bank = row * 8 + column + 1;
@@ -95,6 +112,42 @@ function apiModeOf(comp) {
   return comp.apiVersion === 'v3' ? 'v3' : 'v2';
 }
 
+function targetKey(comp) {
+  return JSON.stringify([comp.host, comp.port, comp.page, apiModeOf(comp), layoutOf(comp).spots]);
+}
+
+function manifestPath(folder) {
+  return path.join(folder, MANIFEST);
+}
+
+function readManifest(folder) {
+  try {
+    return JSON.parse(fs.readFileSync(manifestPath(folder), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function removeOldPictures(folder) {
+  for (let i = 0; i < MAX_FILES; i += 1) {
+    for (const suffix of ['.png', '-large.png']) {
+      const file = path.join(folder, `${String(i + 1).padStart(2, '0')}${suffix}`);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    }
+  }
+  if (fs.existsSync(manifestPath(folder))) fs.unlinkSync(manifestPath(folder));
+}
+
+function checkPicture(png, eliminated) {
+  if (!png || !png.startsWith('data:image/png')) return 'The picture file is missing or not a PNG.';
+  const stats = pictureStats(png);
+  if (!stats) return '';
+  if (stats.width !== 72 || stats.height !== 58) return `The picture is ${stats.width}x${stats.height}, not 72x58.`;
+  if (!eliminated && stats.clearPct < 30) return `The still-in picture is only ${stats.clearPct}% transparent.`;
+  if (eliminated && stats.clearPct > 5) return 'The eliminated picture is missing its grey background.';
+  return '';
+}
+
 class BridgeController {
   constructor({ onStatus } = {}) {
     this.onStatus = typeof onStatus === 'function' ? onStatus : () => {};
@@ -102,7 +155,6 @@ class BridgeController {
     this.timer = null;
     this.lastSeen = null;
     this.busy = false;
-    this.generated = null;
     this.lastOk = '';
     this.lastError = '';
   }
@@ -136,7 +188,7 @@ class BridgeController {
     };
     this.timer = setInterval(tick, wait);
     tick();
-    void postLog(cfg || loadConfig(), 'Bridge started. It only acts on a new Generate, Import, or Clear from the website.');
+    void postLog(cfg || loadConfig(), `Bridge ${bridgeVersion()} started. It only acts on a new Generate, Import, or Clear from the website.`);
     this.emit();
   }
 
@@ -153,9 +205,10 @@ class BridgeController {
     const comp = cfg.companion;
     setButtonPictureDir(comp.pictureFolder || '');
     const base = normalizeBaseUrl(cfg.apiBaseUrl);
-    const res = await fetch(`${base}/api/civics-bee/button-build?eventId=${encodeURIComponent(cfg.eventId)}`, {
-      headers: { Accept: 'application/json' },
-    });
+    const res = await fetch(
+      `${base}/api/civics-bee/button-build?eventId=${encodeURIComponent(cfg.eventId)}&protocol=2`,
+      { headers: { Accept: 'application/json' } }
+    );
     if (!res.ok) throw new Error(`Build feed HTTP ${res.status}`);
     const body = await res.json();
     const build = body && body.build;
@@ -172,6 +225,15 @@ class BridgeController {
     if (!requestedAt || requestedAt === this.lastSeen) return;
     this.lastSeen = requestedAt;
 
+    const layout = layoutOf(comp);
+    if (layout.error) {
+      await this.report(cfg, build, [{ n: 0, where: '', state: 'failed', message: layout.error }], true);
+      await postLog(cfg, `Refused ${build.action}. Nothing was sent to Companion. ${layout.error}`);
+      this.lastError = `Refused: ${layout.error}`;
+      this.emit();
+      return;
+    }
+
     if (build.action === 'generate') return this.generate(cfg, build);
     if (build.action === 'import') return this.importToCompanion(cfg, build);
     if (build.action === 'clear') return this.clear(cfg, build);
@@ -184,90 +246,77 @@ class BridgeController {
     });
   }
 
-  async generate(cfg, build) {
-    const comp = cfg.companion;
-    const slots = Array.isArray(build.slots) ? build.slots : [];
-    const layout = build.pictureStyle || 'abbrev-name';
-    const flagOutline = build.flagOutline === true;
-    const folder = ensureButtonPictureDir();
-    const buttons = [];
-    await postLog(cfg, `Generate ${build.requestedAt}: drawing ${comp.count} pictures into ${folder}. Companion is not touched.`);
-    const made = [];
-    for (let i = 0; i < comp.count; i += 1) {
-      const slot = slots[i] || null;
-      const hasStudent = !!(slot && (slot.state || slot.name));
-      const entry = { n: i + 1, where: '', state: 'created', message: '' };
-      try {
-        entry.where = buttonPosition(comp, i).where;
-        let png = '';
-        if (hasStudent) {
-          png = await renderButtonPng({
-            state: slot.state || '',
-            stateLabel: stateLabelFor(slot.stateLabel || slot.state || '', comp),
-            name: slot.name || '',
-            eliminated: slot.eliminated === true,
-            flagOutline,
-            layout,
-            bgColor: '#808080',
-          });
-        }
-        await saveOneButtonPicture(i, png, folder);
-        made.push({ hasStudent, eliminated: hasStudent && slot.eliminated === true });
-        entry.message = hasStudent
-          ? `${slot.state || slot.name}${slot.eliminated ? ' (grey, eliminated)' : ' (transparent)'}`
-          : 'no student, stays empty';
-      } catch (err) {
-        made.push(null);
-        entry.state = 'failed';
-        entry.message = err.message || String(err);
-      }
-      buttons.push(entry);
-      await this.report(cfg, build, buttons, false);
-    }
-    this.generated = { requestedAt: build.requestedAt, made };
-    await this.report(cfg, build, buttons, true);
+  finish(buttons, okText) {
     const failed = buttons.filter((b) => b.state === 'failed').length;
-    this.lastOk = `Generated ${buttons.length - failed} of ${buttons.length} pictures. Waiting for Import from the website.`;
-    this.lastError = failed ? `${failed} picture(s) failed.` : '';
+    this.lastOk = failed ? '' : okText;
+    this.lastError = failed ? `${failed} button(s) failed. See the website for each one.` : '';
     this.emit();
   }
 
-  async importToCompanion(cfg, build) {
-    const comp = cfg.companion;
-    const folder = ensureButtonPictureDir();
-    const buttons = [];
-    if (!this.generated || this.generated.requestedAt !== build.generateId) {
-      buttons.push({
-        n: 0,
-        where: '',
-        state: 'failed',
-        message: 'These pictures were not generated by this bridge. Click Generate first.',
-      });
-      await this.report(cfg, build, buttons, true);
-      await postLog(cfg, 'Import refused. Generate has to run on this bridge first.');
-      return;
-    }
-    await postLog(cfg, `Import ${build.requestedAt}: sending to Companion ${comp.host}:${comp.port} page ${comp.page}.`);
-    const mode = apiModeOf(comp);
-    for (let i = 0; i < comp.count; i += 1) {
-      const entry = { n: i + 1, where: '', state: 'imported', message: '' };
+  async renderWithRetry(spec) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= RENDER_TRIES; attempt += 1) {
       try {
-        const pos = buttonPosition(comp, i);
-        entry.where = pos.where;
-        const made = this.generated.made[i];
-        if (made === null) throw new Error('This picture failed during Generate.');
-        await setButtonStyle(comp.host, comp.port, comp.page, pos.row, pos.column, { text: '', png64: '' }, mode);
-        await sleep(150);
-        if (made && made.hasStudent) {
-          const png = readButtonPicture(i, folder);
-          if (!png) throw new Error(`Picture file ${String(i + 1).padStart(2, '0')}.png is missing.`);
-          const fields = { text: '', png64: png, pngalignment: 'center:center' };
-          if (made.eliminated) fields.bgcolor = '#808080';
-          await setButtonStyle(comp.host, comp.port, comp.page, pos.row, pos.column, fields, mode);
-          entry.message = made.eliminated ? 'grey eliminated picture' : 'transparent picture';
+        const png = await renderButtonPng(spec);
+        const problem = checkPicture(png, spec.eliminated);
+        if (problem) throw new Error(problem);
+        return png;
+      } catch (err) {
+        lastErr = err;
+        await sleep(400);
+      }
+    }
+    throw lastErr || new Error('The picture could not be drawn.');
+  }
+
+  /** Draws every picture into the folder. Companion is never touched here. */
+  async generate(cfg, build) {
+    const comp = cfg.companion;
+    const slots = Array.isArray(build.slots) ? build.slots : [];
+    const pictureStyle = build.pictureStyle || 'abbrev-name';
+    const flagOutline = build.flagOutline === true;
+    const folder = ensureButtonPictureDir();
+    await postLog(
+      cfg,
+      `Generate: style ${pictureStyle}${flagOutline ? ' with flag outline' : ''}, ${comp.count} buttons, into ${folder}. Companion is not touched.`
+    );
+    removeOldPictures(folder);
+
+    try {
+      await renderButtonPng({ state: 'CA', stateLabel: 'California', name: 'Warm up', layout: 'abbrev-name' });
+    } catch {
+      /* the first real picture reports its own error */
+    }
+
+    const buttons = [];
+    const manifestButtons = [];
+    for (let i = 0; i < comp.count; i += 1) {
+      const slot = slots[i] || null;
+      const hasStudent = !!(slot && (slot.state || slot.name));
+      const eliminated = hasStudent && slot.eliminated === true;
+      const pos = buttonPosition(comp, i);
+      const entry = { n: i + 1, where: pos.where, state: 'created', message: '', png: '' };
+      try {
+        if (hasStudent) {
+          const png = await this.renderWithRetry({
+            state: slot.state || '',
+            stateLabel: stateLabelFor(slot.stateLabel || slot.state || '', comp),
+            name: slot.name || '',
+            eliminated,
+            flagOutline,
+            layout: pictureStyle,
+            bgColor: '#808080',
+          });
+          await saveOneButtonPicture(i, png, folder);
+          const saved = readButtonPicture(i, folder);
+          if (saved !== png) throw new Error('The saved picture file does not match what was drawn.');
+          entry.png = png;
+          entry.message = `${slot.state || slot.name}${eliminated ? ', grey eliminated' : ', transparent'}`;
+          manifestButtons.push({ n: i + 1, where: pos.where, hasStudent: true, eliminated, sha: sha(png) });
         } else {
-          entry.state = 'cleared';
-          entry.message = 'no student, picture removed';
+          entry.state = 'empty';
+          entry.message = 'No student. This button will be left blank.';
+          manifestButtons.push({ n: i + 1, where: pos.where, hasStudent: false, eliminated: false, sha: '' });
         }
       } catch (err) {
         entry.state = 'failed';
@@ -275,27 +324,148 @@ class BridgeController {
       }
       buttons.push(entry);
       await this.report(cfg, build, buttons, false);
-      await sleep(100);
+    }
+
+    const failed = buttons.filter((b) => b.state === 'failed').length;
+    if (!failed) {
+      fs.writeFileSync(
+        manifestPath(folder),
+        JSON.stringify(
+          {
+            generateId: build.requestedAt,
+            pictureStyle,
+            flagOutline,
+            target: targetKey(comp),
+            buttons: manifestButtons,
+          },
+          null,
+          2
+        )
+      );
     }
     await this.report(cfg, build, buttons, true);
-    const failed = buttons.filter((b) => b.state === 'failed').length;
-    this.lastOk = `Imported ${buttons.length - failed} of ${buttons.length} buttons to Companion page ${comp.page}.`;
-    this.lastError = failed ? `${failed} button(s) failed.` : '';
-    this.emit();
+    await postLog(
+      cfg,
+      failed
+        ? `Generate finished with ${failed} failed picture(s). Import is blocked until Generate succeeds.`
+        : `Generate finished. ${manifestButtons.filter((b) => b.hasStudent).length} pictures are ready. Waiting for Import.`
+    );
+    this.finish(buttons, `Generated ${buttons.length} pictures. Waiting for Import from the website.`);
+  }
+
+  /**
+   * Checks every picture first. Only when all of them pass does it delete every target button,
+   * and only after all deletes succeed does it load the new pictures.
+   */
+  async importToCompanion(cfg, build) {
+    const comp = cfg.companion;
+    const folder = ensureButtonPictureDir();
+    const mode = apiModeOf(comp);
+    const refuse = async (message) => {
+      await this.report(cfg, build, [{ n: 0, where: '', state: 'failed', message }], true);
+      await postLog(cfg, `Import refused. Nothing was sent to Companion. ${message}`);
+      this.lastError = `Import refused: ${message}`;
+      this.emit();
+    };
+
+    const manifest = readManifest(folder);
+    if (!manifest || manifest.generateId !== build.generateId) {
+      return refuse('These pictures are not the ones from your last Generate. Click Preview and Generate again.');
+    }
+    if (manifest.target !== targetKey(comp)) {
+      return refuse('The bridge Companion settings changed after Generate. Generate again.');
+    }
+    if (!Array.isArray(manifest.buttons) || manifest.buttons.length !== comp.count) {
+      return refuse('The number of buttons changed after Generate. Generate again.');
+    }
+
+    const plan = [];
+    for (let i = 0; i < comp.count; i += 1) {
+      const item = manifest.buttons[i];
+      const pos = buttonPosition(comp, i);
+      let png = '';
+      if (item.hasStudent) {
+        png = readButtonPicture(i, folder);
+        const problem = checkPicture(png, item.eliminated) || (sha(png) !== item.sha ? 'The picture file changed after Generate.' : '');
+        if (problem) return refuse(`Button ${i + 1}: ${problem}`);
+      }
+      plan.push({ i, pos, item, png });
+    }
+    await postLog(
+      cfg,
+      `Import: all ${plan.length} pictures checked. Removing ${plan.map((p) => p.pos.where).join(', ')} on page ${comp.page}, then loading.`
+    );
+
+    const buttons = plan.map((p) => ({ n: p.i + 1, where: p.pos.where, state: 'checked', message: 'Picture checked' }));
+    await this.report(cfg, build, buttons, false);
+
+    for (const p of plan) {
+      const entry = buttons[p.i];
+      try {
+        await setButtonStyle(
+          comp.host,
+          comp.port,
+          comp.page,
+          p.pos.row,
+          p.pos.column,
+          { text: '', png64: '', bgcolor: '#000000' },
+          mode
+        );
+        entry.state = 'removed';
+        entry.message = 'Old button removed';
+      } catch (err) {
+        entry.state = 'failed';
+        entry.message = `Could not remove the old button: ${err.message || err}`;
+      }
+      await this.report(cfg, build, buttons, false);
+      await sleep(100);
+    }
+    if (buttons.some((b) => b.state === 'failed')) {
+      await this.report(cfg, build, buttons, true);
+      await postLog(cfg, 'Import stopped. Some old buttons could not be removed, so no new pictures were loaded.');
+      this.finish(buttons, '');
+      return;
+    }
+
+    await sleep(500);
+
+    for (const p of plan) {
+      const entry = buttons[p.i];
+      try {
+        if (p.item.hasStudent) {
+          const fields = { text: '', png64: p.png, pngalignment: 'center:center' };
+          if (p.item.eliminated) fields.bgcolor = '#808080';
+          await setButtonStyle(comp.host, comp.port, comp.page, p.pos.row, p.pos.column, fields, mode);
+          entry.state = 'imported';
+          entry.message = p.item.eliminated ? 'Grey eliminated picture loaded' : 'Transparent picture loaded';
+        } else {
+          entry.state = 'cleared';
+          entry.message = 'No student. Left blank.';
+        }
+      } catch (err) {
+        entry.state = 'failed';
+        entry.message = err.message || String(err);
+      }
+      await this.report(cfg, build, buttons, false);
+      await sleep(150);
+    }
+    await this.report(cfg, build, buttons, true);
+    await postLog(cfg, `Import finished on page ${comp.page}.`);
+    this.finish(buttons, `Imported ${buttons.length} buttons to Companion page ${comp.page}.`);
   }
 
   async clear(cfg, build) {
     const comp = cfg.companion;
     const folder = ensureButtonPictureDir();
-    const buttons = [];
     const mode = apiModeOf(comp);
-    await postLog(cfg, `Clear ${build.requestedAt}: Companion ${comp.host}:${comp.port} page ${comp.page}.`);
+    const spots = layoutOf(comp).spots;
+    await postLog(cfg, `Clear: Companion ${comp.host}:${comp.port} page ${comp.page}, ${spots.join(', ')}.`);
+    removeOldPictures(folder);
+    const buttons = [];
     for (let i = 0; i < comp.count; i += 1) {
-      const entry = { n: i + 1, where: '', state: 'cleared', message: '' };
+      const pos = buttonPosition(comp, i);
+      const entry = { n: i + 1, where: pos.where, state: 'cleared', message: '' };
       try {
-        const pos = buttonPosition(comp, i);
-        entry.where = pos.where;
-        await saveOneButtonPicture(i, '', folder);
         await setButtonStyle(
           comp.host,
           comp.port,
@@ -305,7 +475,7 @@ class BridgeController {
           { text: '', png64: '', bgcolor: '#000000' },
           mode
         );
-        entry.message = 'picture removed, background black';
+        entry.message = 'Picture removed, background black';
       } catch (err) {
         entry.state = 'failed';
         entry.message = err.message || String(err);
@@ -314,12 +484,9 @@ class BridgeController {
       await this.report(cfg, build, buttons, false);
       await sleep(100);
     }
-    this.generated = null;
     await this.report(cfg, build, buttons, true);
-    const failed = buttons.filter((b) => b.state === 'failed').length;
-    this.lastOk = `Cleared ${buttons.length - failed} of ${buttons.length} buttons on Companion page ${comp.page}.`;
-    this.lastError = failed ? `${failed} button(s) failed.` : '';
-    this.emit();
+    await postLog(cfg, `Clear finished on page ${comp.page}.`);
+    this.finish(buttons, `Cleared ${buttons.length} buttons on Companion page ${comp.page}.`);
   }
 }
 

@@ -205,44 +205,19 @@ window.drawButton = function (spec) {
     }
     return new Promise(function (resolve) {
       setTimeout(function () {
-        const image = ctx.getImageData(0, 0, w, h);
-        const d = image.data;
-        if (spec.eliminated !== true) {
-          const corners = [0, (w - 1) * 4, (h - 1) * w * 4, ((h - 1) * w + (w - 1)) * 4];
-          const filled = corners.filter(function (i) { return d[i + 3] > 16; });
-          if (filled.length) {
-            let br = 0;
-            let bg = 0;
-            let bb = 0;
-            filled.forEach(function (i) {
-              br += d[i];
-              bg += d[i + 1];
-              bb += d[i + 2];
-            });
-            br /= filled.length;
-            bg /= filled.length;
-            bb /= filled.length;
-            for (let i = 0; i < d.length; i += 4) {
-              if (d[i + 3] < 16) continue;
-              if (Math.abs(d[i] - br) <= 22 && Math.abs(d[i + 1] - bg) <= 22 && Math.abs(d[i + 2] - bb) <= 22) {
-                d[i] = 0;
-                d[i + 1] = 0;
-                d[i + 2] = 0;
-                d[i + 3] = 0;
-              }
-            }
-            ctx.putImageData(image, 0, 0);
-          }
-        }
         const after = ctx.getImageData(0, 0, w, h).data;
-        const corners = [0, (w - 1) * 4, (h - 1) * w * 4, ((h - 1) * w + (w - 1)) * 4];
-        const cornersClear = corners.every(function (i) { return after[i + 3] === 0; });
         let clear = 0;
-        for (let i = 3; i < after.length; i += 4) if (after[i] === 0) clear += 1;
+        let ink = 0;
+        for (let i = 3; i < after.length; i += 4) {
+          if (after[i] === 0) clear += 1;
+          else ink += 1;
+        }
         resolve({
           dataUrl: c.toDataURL('image/png'),
-          cornersClear: cornersClear,
+          width: c.width,
+          height: c.height,
           clearPct: Math.round((100 * clear) / (w * h)),
+          inkPct: Math.round((100 * ink) / (w * h)),
           stillIn: spec.eliminated !== true,
         });
       }, 250);
@@ -350,9 +325,18 @@ const FLAG_URLS = {
   VI: ['https://flagcdn.com/w320/vi.png'],
 };
 
+const MIN_FLAG_BYTES = 200;
+
 function flagUrls(code) {
   if (FLAG_URLS[code]) return FLAG_URLS[code];
-  return [`https://flagcdn.com/w320/us-${code.toLowerCase()}.png`];
+  const name = (JURISDICTIONS.find(([c]) => c === code) || [])[1];
+  const urls = [`https://flagcdn.com/w320/us-${code.toLowerCase()}.png`];
+  if (name) {
+    urls.push(
+      `https://commons.wikimedia.org/wiki/Special:FilePath/Flag_of_${encodeURIComponent(name.replace(/ /g, '_'))}.svg?width=320`
+    );
+  }
+  return urls;
 }
 
 function isPng(buf) {
@@ -371,7 +355,7 @@ async function flagDataUrl(code) {
   try {
     if (fs.existsSync(file)) {
       const cached = fs.readFileSync(file);
-      if (isPng(cached) && cached.length > 800) {
+      if (isPng(cached) && cached.length > MIN_FLAG_BYTES) {
         const url = `data:image/png;base64,${cached.toString('base64')}`;
         flagCache.set(key, url);
         return url;
@@ -388,7 +372,7 @@ async function flagDataUrl(code) {
       });
       if (!res.ok) continue;
       const buf = Buffer.from(await res.arrayBuffer());
-      if (!isPng(buf) || buf.length < 800) continue;
+      if (!isPng(buf) || buf.length < MIN_FLAG_BYTES) continue;
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, buf);
       const dataUrl = `data:image/png;base64,${buf.toString('base64')}`;
@@ -410,6 +394,9 @@ async function renderButtonPng(spec) {
   const layout = spec.layout || (spec.flag ? 'abbrev-name-flag' : 'abbrev-name');
   const wantsFlag = layout === 'abbrev-name-flag' || layout === 'flag-state-name';
   const flag = wantsFlag ? await flagDataUrl(abbrev) : null;
+  if (wantsFlag && !flag) {
+    throw new Error(`The ${abbrev || stateName} flag could not be downloaded, so this picture would be missing its flag.`);
+  }
   const eliminated = spec.eliminated === true;
   const flagOutline = spec.flagOutline === true;
   const bgColor = spec.bgColor || '#808080';
@@ -433,10 +420,14 @@ async function renderButtonPng(spec) {
     if (!dataUrl.startsWith('data:image/png')) {
       throw new Error('Button picture was not created');
     }
-    if (!eliminated && drawn.cornersClear !== true) {
-      throw new Error(
-        `Still-in picture is not transparent (${Number(drawn.clearPct) || 0}% clear). Not sent to Companion.`
-      );
+    if (drawn.width !== width || drawn.height !== height) {
+      throw new Error(`Picture came out ${drawn.width}x${drawn.height} instead of ${width}x${height}.`);
+    }
+    if ((Number(drawn.inkPct) || 0) < 2) {
+      throw new Error('Picture came out empty.');
+    }
+    if (!eliminated && (Number(drawn.clearPct) || 0) < 30) {
+      throw new Error(`Still-in picture is only ${Number(drawn.clearPct) || 0}% transparent. It should have no background.`);
     }
     return dataUrl;
   });
@@ -725,6 +716,21 @@ function transparencyReport(dataUrl) {
   return { ok, clearPct, oldFill, message };
 }
 
+function pictureStats(dataUrl) {
+  const buf = Buffer.from(String(dataUrl || '').split(',')[1] || '', 'base64');
+  let decoded = null;
+  try {
+    decoded = decodeRgba(buf);
+  } catch {
+    decoded = null;
+  }
+  if (!decoded) return null;
+  const { width, height, rgba } = decoded;
+  let clear = 0;
+  for (let i = 3; i < rgba.length; i += 4) if (rgba[i] === 0) clear += 1;
+  return { width, height, clearPct: Math.round((100 * clear) / Math.max(1, width * height)) };
+}
+
 function pngCornerIsClear(dataUrl) {
   return transparencyReport(dataUrl).ok;
 }
@@ -748,6 +754,7 @@ module.exports = {
   setButtonPictureDir,
   pngCornerIsClear,
   transparencyReport,
+  pictureStats,
   prepareButtonPicture,
   blankButtonPng,
 };

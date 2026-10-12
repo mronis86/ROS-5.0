@@ -52,8 +52,33 @@ function showStatus(status) {
   $('runState').textContent = status?.running ? 'Watching for a website push' : 'Stopped';
 }
 
+function showLayout() {
+  const comp = readForm().companion;
+  const el = $('companionLayout');
+  const perRow = Math.max(1, comp.columns);
+  const spots = [];
+  for (let i = 0; i < comp.count; i += 1) {
+    if (comp.apiVersion === 'v3') {
+      spots.push(`row ${comp.startRow + Math.floor(i / perRow)} col ${comp.startColumn + (i % perRow)}`);
+      continue;
+    }
+    const start = Math.max(1, comp.firstBank) - 1;
+    const column = (start % 8) + (i % perRow);
+    if (column > 7) {
+      el.textContent = `Not allowed: ${perRow} per row from bank ${start + 1} runs past the 8 buttons in a Companion 2.4 row. Use ${Math.max(1, 8 - (start % 8))} or less. The bridge will refuse to change Companion.`;
+      el.className = 'hint err';
+      return;
+    }
+    spots.push(String((Math.floor(start / 8) + Math.floor(i / perRow)) * 8 + column + 1));
+  }
+  el.textContent = `Uses page ${comp.page}, ${comp.apiVersion === 'v3' ? '' : 'banks '}${spots.join(', ')}. Nothing else on the page is touched.`;
+  el.className = 'hint ok';
+}
+
 async function init() {
   fillForm(await api.getConfig());
+  showLayout();
+  document.querySelectorAll('input, select').forEach((el) => el.addEventListener('input', showLayout));
   api.onStatus(showStatus);
   $('btnPictureFolder').onclick = async () => {
     const picked = await api.pickFolder();
@@ -61,6 +86,7 @@ async function init() {
   };
   $('btnSave').onclick = async () => {
     fillForm(await api.saveConfig(readForm()));
+    showLayout();
     $('status').textContent = 'Saved.';
     $('status').className = 'ok';
   };

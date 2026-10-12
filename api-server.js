@@ -4167,10 +4167,12 @@ app.get('/api/civics-bee/button-build', async (req, res) => {
     }
     const config = await loadExtendEventControls(pool, eventId);
     const roster = config.moduleData?.civicsBee;
-    const build =
+    const stored =
       roster && typeof roster === 'object' && roster.buttonBuild && typeof roster.buttonBuild === 'object'
         ? roster.buttonBuild
         : null;
+    // Bridges before 2.1.10 upload on any request, so they only get a build when they ask for protocol 2.
+    const build = String(req.query.protocol || '') === '2' ? stored : null;
     res.set({
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       Pragma: 'no-cache',
@@ -4243,6 +4245,10 @@ app.post('/api/civics-bee/bridge-log', (req, res) => {
             where: String(b.where || '').slice(0, 40),
             state: String(b.state || '').slice(0, 20),
             message: String(b.message || '').slice(0, 200),
+            png:
+              typeof b.png === 'string' && b.png.startsWith('data:image/png;base64,') && b.png.length < 120000
+                ? b.png
+                : '',
           }))
         : [],
     };
