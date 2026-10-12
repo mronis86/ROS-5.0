@@ -4048,6 +4048,15 @@ app.put('/api/extend-controls/:eventId/modules/:moduleKey', async (req, res) => 
 // Civics Bee students CSV for custom graphics (First Name, Last Initial, State)
 app.get('/api/civics-bee.csv', async (req, res) => {
   try {
+    // The old Civics vMix Bridge (Electron, default "node" user agent) redrew Companion buttons
+    // whenever this list changed. Companion buttons now come only from Civics Bridge V2.
+    const userAgent = String(req.get('user-agent') || '').trim().toLowerCase();
+    if (userAgent === 'node' || userAgent === 'undici') {
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      return res
+        .status(410)
+        .send('Error,The old Civics vMix Bridge is turned off. Use Civics Bridge V2 and the Companion buttons tab.\n');
+    }
     const eventId = req.query.eventId;
     if (!eventId) {
       res.set('Content-Type', 'text/csv; charset=utf-8');
