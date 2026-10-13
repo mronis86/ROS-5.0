@@ -15192,6 +15192,22 @@ const RunOfShowPage: React.FC = () => {
                               onClick={() => {
                                 setShowMenuDropdown(false);
                                 setShowOperatorActionsSubmenu(false);
+                                const producerUrl = `/producer-go?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(producerUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Cue the next timer with Go or the space bar"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Producer Go
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
                                 const photoViewUrl = `/photo-view?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}&eventDate=${encodeURIComponent(event?.date || '')}&eventLocation=${encodeURIComponent(event?.location || '')}`;
                                 window.open(photoViewUrl, '_blank');
                               }}
