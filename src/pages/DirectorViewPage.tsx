@@ -1817,6 +1817,22 @@ const DirectorViewPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const url = `/director-control?eventId=${encodeURIComponent(eventId)}&eventName=${encodeURIComponent(eventName)}`;
+                  const popup = window.open(
+                    url,
+                    'director-show-control',
+                    'popup=yes,width=460,height=560,menubar=no,toolbar=no,location=no,status=no'
+                  );
+                  popup?.focus();
+                }}
+                className="px-2.5 py-1 text-sm rounded border border-emerald-600/70 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/50 whitespace-nowrap"
+                title="Open a small window to roll the next cue with Go or the space bar"
+              >
+                Show control
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   void loadSchedule();
                   void loadNotes();
                   void loadActiveTimer();
@@ -1999,6 +2015,22 @@ const DirectorViewPage: React.FC = () => {
                   title="Show current cue + timer in the bottom-right dock"
                 >
                   Dock clock {dockClockVisible ? 'on' : 'off'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `/director-control?eventId=${encodeURIComponent(eventId)}&eventName=${encodeURIComponent(eventName)}`;
+                    const popup = window.open(
+                      url,
+                      'director-show-control',
+                      'popup=yes,width=460,height=560,menubar=no,toolbar=no,location=no,status=no'
+                    );
+                    popup?.focus();
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold rounded border border-emerald-600/70 bg-emerald-950/40 text-emerald-100 whitespace-nowrap"
+                  title="Open a small window to roll the next cue with Go or the space bar"
+                >
+                  Show control
                 </button>
                 <button
                   type="button"
