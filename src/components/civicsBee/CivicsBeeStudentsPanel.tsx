@@ -49,15 +49,20 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [graphicsNotice, setGraphicsNotice] = useState<string | null>(null);
   const [awardCsvOpen, setAwardCsvOpen] = useState(false);
+  const [fullLastName, setFullLastName] = useState(false);
 
   const graphicsFilter: CivicsBeeCsvFilter = filter === 'all' ? 'participating' : filter;
 
   const graphicsCsvUrlFor = useCallback(
     (csvFilter: CivicsBeeCsvFilter) => {
       if (!eventId) return '';
-      return `${GRAPHICS_API_BASE}/api/civics-bee.csv?eventId=${encodeURIComponent(eventId)}&filter=${encodeURIComponent(csvFilter)}`;
+      const full =
+        fullLastName && !['1st', '2nd', '3rd', 'peoplesChoice'].includes(csvFilter)
+          ? '&fullName=1'
+          : '';
+      return `${GRAPHICS_API_BASE}/api/civics-bee.csv?eventId=${encodeURIComponent(eventId)}&filter=${encodeURIComponent(csvFilter)}${full}`;
     },
-    [eventId]
+    [eventId, fullLastName]
   );
 
   const graphicsCsvUrl = useMemo(
@@ -80,7 +85,9 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
   };
 
   const downloadCsv = (csvFilter: CivicsBeeCsvFilter, fileSlug?: string) => {
-    const csv = buildCivicsBeeGraphicsCsv(roster.entries, csvFilter);
+    const useFull =
+      fullLastName && !['1st', '2nd', '3rd', 'peoplesChoice'].includes(csvFilter);
+    const csv = buildCivicsBeeGraphicsCsv(roster.entries, csvFilter, { fullLastName: useFull });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -208,12 +215,22 @@ const CivicsBeeStudentsPanel: React.FC<CivicsBeeStudentsPanelProps> = ({
           <div>
             <h3 className="text-sm font-semibold text-white">Graphics CSV</h3>
             <p className="text-xs text-slate-400">
-              Columns: Name, State — Top feeds use short name (Bob S); filtered to{' '}
+              Columns: Name, State —{' '}
+              {fullLastName ? 'full name (Bob Smith)' : 'short name (Bob S)'}; filtered to{' '}
               {CIVICS_BEE_CSV_FILTER_LABELS[graphicsFilter] || graphicsFilter}
               {filter === 'all' ? ' (All view uses Participating for the feed)' : ''}.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-xs text-slate-200">
+              <input
+                type="checkbox"
+                checked={fullLastName}
+                onChange={(e) => setFullLastName(e.target.checked)}
+                className="rounded border-slate-500"
+              />
+              Full last name
+            </label>
             <button
               type="button"
               onClick={() => downloadCsv(graphicsFilter)}

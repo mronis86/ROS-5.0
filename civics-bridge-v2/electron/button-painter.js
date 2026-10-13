@@ -159,6 +159,46 @@ window.drawButton = function (spec) {
       });
       return finish();
     }
+    if (layout === 'state-student' || layout === 'flag-state-student') {
+      if (flagImg) drawFlag(flagImg);
+      const top = flagImg ? 20 : 2;
+      let nameSize = 9;
+      let nameLines = name ? wrapLines(name, w - 6, nameSize) : [];
+      while (name && nameLines.length > 2 && nameSize > 7) {
+        nameSize -= 1;
+        nameLines = wrapLines(name, w - 6, nameSize);
+      }
+      if (nameLines.length > 2) nameLines = nameLines.slice(0, 2);
+      const nameBlock = name ? nameLines.length * (nameSize + 1) : 0;
+      const bandBottom = h - 2 - nameBlock;
+      const band = Math.max(8, bandBottom - top);
+      let size = flagImg ? 10 : 12;
+      let lines = wrapLines(stateName, w - 6, size);
+      while ((lines.length * (size + 1) > band || lines.some(function (line) {
+        ctx.font = '700 ' + size + 'px "Segoe UI", Arial, sans-serif';
+        return ctx.measureText(line).width > w - 6;
+      })) && size > 8) {
+        size -= 1;
+        lines = wrapLines(stateName, w - 6, size);
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 ' + size + 'px "Segoe UI", Arial, sans-serif';
+      const block = lines.length * size;
+      let y = top + Math.max(0, (band - block) / 2) + size / 2;
+      lines.forEach(function (line) {
+        ctx.fillText(line, w / 2, y);
+        y += size + 1;
+      });
+      if (name) {
+        ctx.font = '600 ' + nameSize + 'px "Segoe UI", Arial, sans-serif';
+        let ny = bandBottom + nameSize / 2;
+        nameLines.forEach(function (line) {
+          ctx.fillText(line, w / 2, ny);
+          ny += nameSize + 1;
+        });
+      }
+      return finish();
+    }
     if (flagImg) {
       drawFlag(flagImg);
       fitFont(abbrev, 18, 12, w - 8);
@@ -223,7 +263,7 @@ window.drawButton = function (spec) {
       }, 250);
     });
   }
-  const wantsFlag = spec.layout === 'abbrev-name-flag' || spec.layout === 'flag-state-name' || spec.flag;
+  const wantsFlag = spec.layout === 'abbrev-name-flag' || spec.layout === 'flag-state-name' || spec.layout === 'flag-state-student' || spec.flag;
   if (!spec.flag || !wantsFlag) return paint(null);
   return new Promise(function (resolve) {
     const img = new Image();
@@ -392,7 +432,7 @@ async function renderButtonPng(spec) {
   const name = String(spec.name || '').trim();
   const stateName = String(spec.stateLabel || spec.state || '').trim();
   const layout = spec.layout || (spec.flag ? 'abbrev-name-flag' : 'abbrev-name');
-  const wantsFlag = layout === 'abbrev-name-flag' || layout === 'flag-state-name';
+  const wantsFlag = layout === 'abbrev-name-flag' || layout === 'flag-state-name' || layout === 'flag-state-student';
   const flag = wantsFlag ? await flagDataUrl(abbrev) : null;
   if (wantsFlag && !flag) {
     throw new Error(`The ${abbrev || stateName} flag could not be downloaded, so this picture would be missing its flag.`);

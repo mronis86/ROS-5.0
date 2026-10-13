@@ -4064,7 +4064,13 @@ app.get('/api/civics-bee.csv', async (req, res) => {
     }
 
     const config = await loadExtendEventControls(pool, eventId);
-    const csv = buildCivicsBeeGraphicsCsv(config.moduleData?.civicsBee, req.query.filter);
+    const fullLastName =
+      req.query.fullName === '1' ||
+      req.query.fullName === 'true' ||
+      req.query.fullLastName === '1';
+    const csv = buildCivicsBeeGraphicsCsv(config.moduleData?.civicsBee, req.query.filter, {
+      fullLastName,
+    });
 
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',

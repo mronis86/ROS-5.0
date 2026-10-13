@@ -34,7 +34,9 @@ export type CivicsButtonPictureStyle =
   | 'abbrev-name'
   | 'abbrev-name-flag'
   | 'state-name'
-  | 'flag-state-name';
+  | 'flag-state-name'
+  | 'state-student'
+  | 'flag-state-student';
 
 export type CivicsButtonSlot = {
   state: string;
@@ -215,7 +217,12 @@ export function parseCivicsButtonBuild(raw: unknown): CivicsButtonBuild | null {
   if (!requestedAt) return null;
   const style = src.pictureStyle;
   const pictureStyle: CivicsButtonPictureStyle =
-    style === 'abbrev-name-flag' || style === 'state-name' || style === 'flag-state-name' || style === 'abbrev-name'
+    style === 'abbrev-name-flag' ||
+    style === 'state-name' ||
+    style === 'flag-state-name' ||
+    style === 'state-student' ||
+    style === 'flag-state-student' ||
+    style === 'abbrev-name'
       ? style
       : 'abbrev-name';
   const slots = Array.isArray(src.slots)
@@ -241,7 +248,10 @@ export function parseCivicsButtonBuild(raw: unknown): CivicsButtonBuild | null {
   };
 }
 
-export function buildCivicsCompanionSlots(entries: CivicsBeeEntry[]): CivicsButtonSlot[] {
+export function buildCivicsCompanionSlots(
+  entries: CivicsBeeEntry[],
+  options?: { fullStudentName?: boolean }
+): CivicsButtonSlot[] {
   const top10 = entries
     .filter((entry) => entryMeetsFilter(entry, 'top10') && entry.studentName.trim())
     .slice()
@@ -254,7 +264,9 @@ export function buildCivicsCompanionSlots(entries: CivicsBeeEntry[]): CivicsButt
   return top10.map((entry) => ({
     state: entry.name,
     code: entry.code,
-    name: formatCivicsBeeShortDisplayName(entry.studentName),
+    name: options?.fullStudentName
+      ? entry.studentName.trim().replace(/\s+/g, ' ')
+      : formatCivicsBeeShortDisplayName(entry.studentName),
     stateLabel: entry.name,
     eliminated: anyAdvanced && !top5.has(entry.name.toLowerCase()),
   }));
@@ -609,11 +621,13 @@ export function formatCivicsBeeShortDisplayName(studentName: string): string {
  */
 export function buildCivicsBeeGraphicsCsv(
   entries: CivicsBeeEntry[],
-  filter: CivicsBeeCsvFilter = 'participating'
+  filter: CivicsBeeCsvFilter = 'participating',
+  options?: { fullLastName?: boolean }
 ): string {
+  const fullLastName = options?.fullLastName === true;
   const lines = ['Name,State'];
 
-  if (isCivicsBeeAwardCsvFilter(filter)) {
+  if (isCivicsBeeAwardCsvFilter(filter) || fullLastName) {
     for (const entry of entries) {
       if (!entryMeetsCsvFilter(entry, filter)) continue;
       const fullName = String(entry.studentName || '').trim().replace(/\s+/g, ' ');

@@ -48,7 +48,7 @@ function hexColor(value, fallback) {
 }
 
 function pictureStyleOf(src) {
-  const allowed = ['abbrev-name', 'abbrev-name-flag', 'state-name', 'flag-state-name'];
+  const allowed = ['abbrev-name', 'abbrev-name-flag', 'state-name', 'flag-state-name', 'state-student', 'flag-state-student'];
   if (allowed.includes(src.pictureStyle)) return src.pictureStyle;
   return 'abbrev-name';
 }

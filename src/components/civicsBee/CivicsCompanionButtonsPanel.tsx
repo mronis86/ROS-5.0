@@ -8,8 +8,10 @@ import {
 import { getApiBaseUrl } from '../../services/api-client';
 
 const STYLES: Array<{ value: CivicsButtonPictureStyle; label: string }> = [
-  { value: 'abbrev-name', label: 'State abbreviation and student name' },
-  { value: 'abbrev-name-flag', label: 'Flag, abbreviation, and student name' },
+  { value: 'abbrev-name', label: 'Abbreviation and first name + last initial' },
+  { value: 'abbrev-name-flag', label: 'Flag, abbreviation, and first name + last initial' },
+  { value: 'state-student', label: 'Full state name and full student name' },
+  { value: 'flag-state-student', label: 'Flag, full state name, and full student name' },
   { value: 'state-name', label: 'State name only' },
   { value: 'flag-state-name', label: 'Flag and state name' },
 ];
@@ -130,9 +132,17 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
     };
   }, [eventId]);
 
-  const slots = useMemo(() => buildCivicsCompanionSlots(roster.entries), [roster.entries]);
-  const hasFlag = pictureStyle === 'abbrev-name-flag' || pictureStyle === 'flag-state-name';
+  const fullStudent = pictureStyle === 'state-student' || pictureStyle === 'flag-state-student';
+  const slots = useMemo(
+    () => buildCivicsCompanionSlots(roster.entries, { fullStudentName: fullStudent }),
+    [roster.entries, fullStudent]
+  );
+  const hasFlag =
+    pictureStyle === 'abbrev-name-flag' ||
+    pictureStyle === 'flag-state-name' ||
+    pictureStyle === 'flag-state-student';
   const showAbbrev = pictureStyle === 'abbrev-name' || pictureStyle === 'abbrev-name-flag';
+  const showStudent = showAbbrev || fullStudent;
   const currentKey = JSON.stringify([pictureStyle, hasFlag && flagOutline, slots]);
   const previewed = previewKey === currentKey;
   const build = roster.buttonBuild || null;
@@ -328,7 +338,7 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
                     <span className={`mt-1 text-lg font-bold ${slot.eliminated ? 'line-through' : ''}`}>
                       {showAbbrev ? slot.code : slot.stateLabel}
                     </span>
-                    {showAbbrev && <span className="mt-1 text-xs text-slate-300">{slot.name}</span>}
+                    {showStudent && <span className="mt-1 text-xs text-slate-300">{slot.name}</span>}
                     {slot.eliminated && (
                       <span className="mt-2 text-[10px] font-semibold uppercase tracking-wide">Eliminated</span>
                     )}
