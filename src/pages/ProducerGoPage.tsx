@@ -5,6 +5,7 @@ import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
 import { stripHtmlNotes } from '../lib/eventGuestLinks';
+import { displaySpeakersText } from '../lib/guestRosHelpers';
 import { getStoredOperatorName, operatorUserId } from '../lib/pinNotesOperator';
 
 type Row = {
@@ -12,14 +13,30 @@ type Row = {
   day?: number;
   segmentName?: string;
   programType?: string;
+  shotType?: string;
   durationHours?: number;
   durationMinutes?: number;
   durationSeconds?: number;
   notes?: string;
+  assets?: string;
+  speakers?: string;
+  speakersText?: string;
   customFields?: Record<string, unknown>;
   mittiWatch?: boolean;
   avWatch?: boolean;
 };
+
+type Column = { id: string; name: string };
+
+const BUILTIN_COLUMNS: Column[] = [
+  { id: 'programType', name: 'Program Type' },
+  { id: 'shotType', name: 'Shot Type' },
+  { id: 'speakers', name: 'Speakers' },
+  { id: 'notes', name: 'Notes' },
+  { id: 'assets', name: 'Assets' },
+  { id: 'mittiWatch', name: 'Mitti' },
+  { id: 'avWatch', name: 'AV' },
+];
 
 function itemSeconds(item: Row): number {
   return (
@@ -66,6 +83,33 @@ function itemIdOf(timer: any): number | null {
   return Number.isFinite(id) ? id : null;
 }
 
+function columnText(item: Row | null, column: Column): string {
+  if (!item) return '';
+  switch (column.id) {
+    case 'programType':
+      return item.programType || '';
+    case 'shotType':
+      return item.shotType || '';
+    case 'speakers':
+      return (
+        displaySpeakersText(item.speakersText || '') ||
+        displaySpeakersText(typeof item.speakers === 'string' ? item.speakers : '')
+      );
+    case 'notes':
+      return stripHtmlNotes(item.notes || '');
+    case 'assets':
+      return stripHtmlNotes(item.assets || '');
+    case 'mittiWatch':
+      return item.mittiWatch ? 'Armed' : '';
+    case 'avWatch':
+      return item.avWatch ? 'Armed' : '';
+    default: {
+      const raw = item.customFields?.[column.id] ?? item.customFields?.[column.name];
+      return raw == null ? '' : stripHtmlNotes(String(raw)).trim();
+    }
+  }
+}
+
 const ProducerGoPage: React.FC = () => {
   const location = useLocation();
   const { user } = useAuth();
@@ -73,6 +117,7 @@ const ProducerGoPage: React.FC = () => {
   const eventName = new URLSearchParams(location.search).get('eventName') || 'Producer Go';
 
   const [schedule, setSchedule] = useState<Row[]>([]);
+  const [customColumns, setCustomColumns] = useState<Column[]>([]);
   const [day, setDay] = useState(1);
   const [timer, setTimer] = useState<any | null>(null);
   const [clockOffset, setClockOffset] = useState(0);
@@ -132,6 +177,14 @@ const ProducerGoPage: React.FC = () => {
     try {
       const data = await DatabaseService.getRunOfShowData(eventId);
       setSchedule(Array.isArray(data?.schedule_items) ? data.schedule_items : []);
+      setCustomColumns(
+        Array.isArray(data?.custom_columns)
+          ? data.custom_columns.map((col: { id?: string; name?: string }) => ({
+              id: String(col.id),
+              name: String(col.name || col.id),
+            }))
+          : []
+      );
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load the rundown.');
@@ -210,14 +263,25 @@ const ProducerGoPage: React.FC = () => {
     return () => window.clearInterval(id);
   }, []);
 
-  const remainingLabel = useMemo(() => {
-    if (!current || !timer?.started_at) return formatDuration(current ? itemSeconds(current) : 0);
+  const remaining = useMemo(() => {
+    const total = current ? Number(timer?.duration_seconds) || itemSeconds(current) : 0;
+    if (!current || !timer?.started_at) {
+      return { label: current ? formatDuration(total) : '—:—', overtime: false, pct: current ? 100 : 0 };
+    }
     const startMs = new Date(timer.started_at).getTime();
-    if (!Number.isFinite(startMs)) return formatDuration(itemSeconds(current));
+    if (!Number.isFinite(startMs)) {
+      return { label: formatDuration(total), overtime: false, pct: 100 };
+    }
     const elapsed = Math.floor((Date.now() + clockOffset - startMs) / 1000);
-    const total = Number(timer.duration_seconds) || itemSeconds(current);
-    return formatRemaining(total, elapsed);
+    const left = total - elapsed;
+    return {
+      label: formatRemaining(total, elapsed),
+      overtime: left < 0,
+      pct: total > 0 ? Math.max(0, Math.min(100, (left / total) * 100)) : 0,
+    };
   }, [current, timer, clockOffset, tick]);
+
+  const columns = useMemo(() => [...BUILTIN_COLUMNS, ...customColumns], [customColumns]);
 
   const go = useCallback(async () => {
     if (!eventId || !user?.id || !next || going.current) return;
@@ -296,42 +360,42 @@ const ProducerGoPage: React.FC = () => {
     }
   };
 
-  const card = (label: string, item: Row | null, live: boolean) => {
-    const seconds = item ? itemSeconds(item) : 0;
+  const pane = (label: string, item: Row | null, live: boolean) => {
     const note = item ? (drafts[item.id] ?? notes[item.id] ?? '') : '';
+    const accent = live ? 'text-emerald-400' : 'text-sky-400';
     return (
-      <section className={`flex min-h-0 flex-1 flex-col rounded-2xl border p-5 ${live ? 'border-emerald-600 bg-emerald-950/40' : 'border-slate-700 bg-slate-900'}`}>
-        <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">{label}</div>
-        {item ? (
-          <>
-            <div className="mt-2 text-sm text-slate-400">
-              {cueOf(item) ? `Cue ${cueOf(item)}` : 'No cue number'}
-              {item.programType ? ` · ${item.programType}` : ''}
-            </div>
-            <h2 className="mt-1 text-3xl font-semibold text-white">{item.segmentName || 'Untitled'}</h2>
-            <div className={`mt-4 font-mono text-6xl tabular-nums ${live && remainingLabel.startsWith('+') ? 'text-red-400' : 'text-white'}`}>
-              {live ? remainingLabel : formatDuration(seconds)}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
+      <section className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${live ? 'bg-emerald-950/20' : 'bg-slate-950'}`}>
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-slate-700 px-3 py-1.5">
+          <h2 className={`text-sm font-semibold uppercase tracking-wide ${accent}`}>{label}</h2>
+          {item ? (
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-sm tabular-nums text-slate-300">
+                {live ? remaining.label : formatDuration(itemSeconds(item))}
+              </span>
               <button
                 type="button"
                 onClick={() => void arm(item, 'mitti')}
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${item.mittiWatch ? 'bg-amber-500 text-slate-950' : 'border border-slate-600 text-slate-200'}`}
+                className={`rounded px-2 py-0.5 text-[11px] font-semibold ${item.mittiWatch ? 'bg-amber-500 text-slate-950' : 'border border-slate-600 text-slate-200'}`}
               >
                 {item.mittiWatch ? 'Mitti armed' : 'Arm Mitti'}
               </button>
               <button
                 type="button"
                 onClick={() => void arm(item, 'av')}
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${item.avWatch ? 'bg-sky-500 text-slate-950' : 'border border-slate-600 text-slate-200'}`}
+                className={`rounded px-2 py-0.5 text-[11px] font-semibold ${item.avWatch ? 'bg-sky-500 text-slate-950' : 'border border-slate-600 text-slate-200'}`}
               >
                 {item.avWatch ? 'AV armed' : 'Arm AV'}
               </button>
             </div>
-            {item.notes ? (
-              <p className="mt-4 whitespace-pre-wrap text-sm text-slate-300">{stripHtmlNotes(item.notes)}</p>
-            ) : null}
-            <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+          ) : null}
+        </div>
+        {item ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+            <p className="text-[10px] uppercase tracking-wide text-slate-500">
+              {cueOf(item) ? `Cue ${cueOf(item)}` : 'No cue number'}
+            </p>
+            <h3 className="mt-0.5 truncate text-xl font-semibold text-white">{item.segmentName || 'Untitled'}</h3>
+            <label className="mt-3 flex min-h-0 flex-1 flex-col text-xs font-semibold uppercase tracking-wide text-slate-500">
               Personal note
               <textarea
                 value={note}
@@ -343,60 +407,120 @@ const ProducerGoPage: React.FC = () => {
                   void saveNote(item.id);
                 }}
                 onChange={(e) => setDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                rows={4}
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-100"
+                className="mt-1 min-h-0 w-full flex-1 resize-none rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-100"
                 placeholder="Only you see this note."
               />
             </label>
-          </>
+          </div>
         ) : (
-          <p className="mt-6 text-slate-500">{live ? 'Nothing is running.' : 'No next cue with a duration.'}</p>
+          <p className="p-4 text-sm text-slate-500">{live ? 'Nothing is running.' : 'No next cue with a duration.'}</p>
         )}
       </section>
     );
   };
 
   return (
-    <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="flex flex-wrap items-center gap-3 border-b border-slate-800 px-5 py-3">
-        <div>
-          <div className="text-xs uppercase tracking-widest text-slate-500">Producer Go</div>
-          <div className="text-lg font-semibold">{eventName}</div>
+    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-slate-950 text-slate-100">
+      <header className="flex flex-shrink-0 items-center gap-3 border-b border-slate-700 bg-slate-900/95 px-3 py-1.5">
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold text-white">Producer Go · {eventName}</h1>
         </div>
-        {days.length > 1 && (
-          <select
-            value={day}
-            onChange={(e) => setDay(Number(e.target.value))}
-            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
-          >
-            {days.map((n) => (
-              <option key={n} value={n}>
-                Day {n}
-              </option>
-            ))}
-          </select>
-        )}
-        <button
-          type="button"
-          disabled={!next || !user}
-          onClick={() => void go()}
-          className="ml-auto rounded-xl bg-emerald-500 px-8 py-3 text-lg font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Go
-        </button>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          {days.length > 1
+            ? days.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setDay(n)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${day === n ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                >
+                  Day {n}
+                </button>
+              ))
+            : null}
+          <span className={`max-w-[16rem] truncate text-xs ${error ? 'text-red-300' : 'text-emerald-300'}`}>
+            {error || status}
+          </span>
+        </div>
       </header>
+
+      <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900/90 px-3 py-2">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="mb-0.5 text-[10px] uppercase tracking-wide text-slate-500">Current cue</p>
+            <p className="truncate text-base font-semibold text-white">
+              {current ? `${cueOf(current) ? `${cueOf(current)} · ` : ''}${current.segmentName || 'Untitled'}` : 'No cue running'}
+            </p>
+            <p className="mt-0.5 truncate text-xs text-slate-400">
+              {next ? `Next · ${cueOf(next) ? `${cueOf(next)} · ` : ''}${next.segmentName || 'Untitled'}` : 'No next cue'}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-4">
+            <div className="text-right">
+              <p className={`text-sm font-bold ${current ? (remaining.overtime ? 'text-red-400' : 'text-emerald-400') : 'text-slate-500'}`}>
+                {current ? (remaining.overtime ? 'Overtime' : 'Running') : 'Standby'}
+              </p>
+              <p className={`mt-0.5 font-mono text-4xl font-bold tabular-nums leading-none ${remaining.overtime ? 'text-red-400' : 'text-white'}`}>
+                {remaining.label}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={!next || !user}
+              onClick={() => void go()}
+              className="rounded-xl bg-emerald-500 px-8 py-4 text-2xl font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Go
+            </button>
+          </div>
+        </div>
+        <div className="relative mt-2 h-2 w-full overflow-hidden rounded-full border border-slate-600 bg-slate-700">
+          <div
+            className={`absolute right-0 top-0 h-full ${remaining.overtime ? 'bg-red-500' : 'bg-emerald-500'}`}
+            style={{ width: `${remaining.pct}%` }}
+          />
+        </div>
+      </div>
+
       {loading ? (
-        <p className="p-6 text-slate-400">Loading the rundown…</p>
+        <div className="flex flex-1 items-center justify-center text-slate-400">Loading the rundown…</div>
       ) : (
-        <div className="grid min-h-0 flex-1 gap-4 p-4 md:grid-cols-2">
-          {card('Now', current, true)}
-          {card('Next', next, false)}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            {pane('Now', current, true)}
+            <div className="w-px flex-shrink-0 bg-slate-700" />
+            {pane('Next', next, false)}
+          </div>
+
+          <section className="flex h-[34%] min-h-[10rem] flex-shrink-0 flex-col overflow-hidden border-t border-slate-700 bg-slate-900/95 px-3 py-2">
+            <div className="mb-1.5 flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-amber-300">Columns · Now & Next</h2>
+              <span className="text-xs text-slate-500">Space bar is Go, except while a note is focused.</span>
+            </div>
+            <div className="grid min-h-0 flex-1 gap-2 overflow-x-auto overflow-y-hidden" style={{ gridTemplateColumns: `repeat(${Math.max(columns.length, 1)}, minmax(11rem, 1fr))` }}>
+              {columns.map((col) => (
+                <div key={col.id} className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-slate-600 bg-slate-950/80 p-2">
+                  <div className="mb-1 truncate text-[11px] font-bold uppercase tracking-wide text-sky-400">{col.name}</div>
+                  <div className="grid min-h-0 flex-1 grid-rows-2 gap-1 overflow-hidden">
+                    <div className="min-h-0 overflow-y-auto">
+                      <div className="text-[10px] font-semibold uppercase text-emerald-400">Now</div>
+                      <div className="whitespace-pre-wrap break-words text-sm text-white">
+                        {columnText(current, col) || <span className="text-slate-600">—</span>}
+                      </div>
+                    </div>
+                    <div className="min-h-0 overflow-y-auto border-t border-slate-800 pt-1">
+                      <div className="text-[10px] font-semibold uppercase text-amber-400/90">Next</div>
+                      <div className="whitespace-pre-wrap break-words text-sm text-slate-200">
+                        {columnText(next, col) || <span className="text-slate-600">—</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       )}
-      <footer className="flex items-center justify-between gap-3 border-t border-slate-800 px-5 py-2 text-sm">
-        <span className="text-slate-500">Space bar does the same as Go, except while a note is focused.</span>
-        <span className={error ? 'text-red-300' : 'text-emerald-300'}>{error || status}</span>
-      </footer>
     </div>
   );
 };
