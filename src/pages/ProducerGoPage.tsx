@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService } from '../services/database';
-import { apiClient } from '../services/api-client';
+import { apiClient, type UserEventNoteOperator } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
 import { stripHtmlNotes } from '../lib/eventGuestLinks';
 import { displaySpeakersText, ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
-import { getStoredOperatorName, operatorUserId } from '../lib/pinNotesOperator';
+import { getStoredOperatorName, operatorUserId, personColumnLabel } from '../lib/pinNotesOperator';
 
 type Row = {
   id: number;
@@ -27,17 +27,36 @@ type Row = {
   avWatch?: boolean;
 };
 
-type Column = { id: string; name: string };
+type Watch =
+  | { kind: 'field'; id: string; name: string }
+  | { kind: 'custom'; id: string; name: string }
+  | { kind: 'person'; id: string; name: string };
 
-const BUILTIN_COLUMNS: Column[] = [
-  { id: 'programType', name: 'Program Type' },
-  { id: 'shotType', name: 'Shot Type' },
-  { id: 'speakers', name: 'Speakers' },
-  { id: 'notes', name: 'Notes' },
-  { id: 'assets', name: 'Assets' },
-  { id: 'mittiWatch', name: 'Mitti' },
-  { id: 'avWatch', name: 'AV' },
+const WATCH_KEY = 'producer-go-columns';
+const MAX_WATCH = 3;
+
+const FIELD_WATCH: Watch[] = [
+  { kind: 'field', id: 'notes', name: 'Notes' },
+  { kind: 'field', id: 'shotType', name: 'Shot' },
+  { kind: 'field', id: 'speakers', name: 'Speakers' },
+  { kind: 'field', id: 'assets', name: 'Assets' },
 ];
+
+function watchKey(watch: Watch): string {
+  return `${watch.kind}:${watch.id}`;
+}
+
+function loadWatchKeys(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WATCH_KEY) || '');
+    if (Array.isArray(raw) && raw.every((item) => typeof item === 'string') && raw.length > 0) {
+      return raw.slice(0, MAX_WATCH);
+    }
+  } catch {
+    /* keep the default */
+  }
+  return ['field:notes'];
+}
 
 function itemSeconds(item: Row): number {
   return (
@@ -86,7 +105,7 @@ function itemIdOf(timer: any): number | null {
 
 function ProgramTypeBadge({ type }: { type?: string }) {
   const label = String(type || '').trim();
-  if (!label) return <span className="text-slate-600">—</span>;
+  if (!label) return null;
   const surface = programTypeSurfaceStyle(label, ROS_PROGRAM_TYPE_COLORS, '#64748B');
   const hex = String(surface.backgroundColor || '#64748B').replace('#', '');
   const r = parseInt(hex.slice(0, 2), 16);
@@ -98,7 +117,7 @@ function ProgramTypeBadge({ type }: { type?: string }) {
       : '#ffffff';
   return (
     <span
-      className="inline-flex max-w-full truncate rounded-md border border-white/15 px-2 py-0.5 text-xs font-semibold leading-none"
+      className="inline-flex max-w-[14rem] truncate rounded-md border border-white/15 px-2 py-0.5 text-xs font-semibold leading-none"
       style={{ ...surface, color: text }}
       title={label}
     >
@@ -107,11 +126,10 @@ function ProgramTypeBadge({ type }: { type?: string }) {
   );
 }
 
-function columnText(item: Row | null, column: Column): string {
-  if (!item) return '';
-  switch (column.id) {
-    case 'programType':
-      return item.programType || '';
+function fieldText(item: Row, id: string): string {
+  switch (id) {
+    case 'notes':
+      return stripHtmlNotes(item.notes || '');
     case 'shotType':
       return item.shotType || '';
     case 'speakers':
@@ -119,18 +137,10 @@ function columnText(item: Row | null, column: Column): string {
         displaySpeakersText(item.speakersText || '') ||
         displaySpeakersText(typeof item.speakers === 'string' ? item.speakers : '')
       );
-    case 'notes':
-      return stripHtmlNotes(item.notes || '');
     case 'assets':
       return stripHtmlNotes(item.assets || '');
-    case 'mittiWatch':
-      return item.mittiWatch ? 'Armed' : '';
-    case 'avWatch':
-      return item.avWatch ? 'Armed' : '';
-    default: {
-      const raw = item.customFields?.[column.id] ?? item.customFields?.[column.name];
-      return raw == null ? '' : stripHtmlNotes(String(raw)).trim();
-    }
+    default:
+      return '';
   }
 }
 
@@ -141,13 +151,15 @@ const ProducerGoPage: React.FC = () => {
   const eventName = new URLSearchParams(location.search).get('eventName') || 'Producer Go';
 
   const [schedule, setSchedule] = useState<Row[]>([]);
-  const [customColumns, setCustomColumns] = useState<Column[]>([]);
+  const [customColumns, setCustomColumns] = useState<{ id: string; name: string }[]>([]);
+  const [operators, setOperators] = useState<UserEventNoteOperator[]>([]);
+  const [peopleNotes, setPeopleNotes] = useState<Record<string, Record<number, string>>>({});
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [watchKeys, setWatchKeys] = useState<string[]>(loadWatchKeys);
   const [day, setDay] = useState(1);
   const [timer, setTimer] = useState<any | null>(null);
   const [clockOffset, setClockOffset] = useState(0);
   const [tick, setTick] = useState(0);
-  const [notes, setNotes] = useState<Record<number, string>>({});
-  const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -178,7 +190,7 @@ const ProducerGoPage: React.FC = () => {
 
   const next = useMemo(() => {
     if (runningId != null) {
-      const list = (current && (current.day || 1) === day ? dayRows : schedule);
+      const list = current && (current.day || 1) === day ? dayRows : schedule;
       const idx = list.findIndex((row) => row.id === runningId);
       for (let i = idx + 1; i < list.length; i += 1) {
         if (itemSeconds(list[i]) > 0) return list[i];
@@ -191,6 +203,34 @@ const ProducerGoPage: React.FC = () => {
     }
     return dayRows.find((row) => itemSeconds(row) > 0) || null;
   }, [runningId, loadedId, current, day, dayRows, schedule]);
+
+  const catalog = useMemo(() => {
+    const people: Watch[] = operators.map((op) => ({
+      kind: 'person' as const,
+      id: op.user_id,
+      name: personColumnLabel(op.user_name?.trim() || op.user_id.replace(/^operator:/, '').replace(/-/g, ' ')),
+    }));
+    if (operatorId && !people.some((person) => person.id === operatorId)) {
+      const mine = getStoredOperatorName();
+      people.unshift({
+        kind: 'person',
+        id: operatorId,
+        name: mine ? personColumnLabel(mine) : 'My notes',
+      });
+    }
+    return [
+      ...FIELD_WATCH,
+      ...customColumns.map((col) => ({ kind: 'custom' as const, id: col.id, name: col.name })),
+      ...people,
+    ];
+  }, [customColumns, operators, operatorId]);
+
+  const selected = useMemo(
+    () => watchKeys.map((key) => catalog.find((watch) => watchKey(watch) === key)).filter(Boolean) as Watch[],
+    [watchKeys, catalog]
+  );
+
+  const textSize = selected.length <= 1 ? 'text-2xl leading-snug' : selected.length === 2 ? 'text-xl leading-snug' : 'text-lg leading-snug';
 
   const loadSchedule = useCallback(async () => {
     if (!eventId) {
@@ -217,20 +257,33 @@ const ProducerGoPage: React.FC = () => {
     }
   }, [eventId]);
 
-  const loadNotes = useCallback(async () => {
-    if (!eventId || !operatorId) return;
+  const loadOperators = useCallback(async () => {
+    if (!eventId) return;
     try {
-      const res = await apiClient.getUserEventNotes(eventId, operatorId);
-      const map: Record<number, string> = {};
-      for (const row of res.notes || []) {
-        if ((row.column_key || 'personal') !== 'personal') continue;
-        map[Number(row.schedule_item_id)] = String(row.content || '');
-      }
-      setNotes(map);
+      const res = await apiClient.listUserEventNoteOperators(eventId);
+      setOperators(res.operators || []);
     } catch {
-      setNotes({});
+      setOperators([]);
     }
-  }, [eventId, operatorId]);
+  }, [eventId]);
+
+  const loadPerson = useCallback(
+    async (userId: string) => {
+      if (!eventId || !userId) return;
+      try {
+        const res = await apiClient.getUserEventNotes(eventId, userId);
+        const map: Record<number, string> = {};
+        for (const row of res.notes || []) {
+          if ((row.column_key || 'personal') !== 'personal') continue;
+          map[Number(row.schedule_item_id)] = String(row.content || '');
+        }
+        setPeopleNotes((prev) => ({ ...prev, [userId]: map }));
+      } catch {
+        setPeopleNotes((prev) => ({ ...prev, [userId]: {} }));
+      }
+    },
+    [eventId]
+  );
 
   const applyTimer = useCallback((raw: any) => {
     setTimer(pickActiveTimer(raw));
@@ -238,11 +291,23 @@ const ProducerGoPage: React.FC = () => {
 
   useEffect(() => {
     void loadSchedule();
-  }, [loadSchedule]);
+    void loadOperators();
+  }, [loadSchedule, loadOperators]);
 
   useEffect(() => {
-    void loadNotes();
-  }, [loadNotes]);
+    const people = selected.filter((watch) => watch.kind === 'person').map((watch) => watch.id);
+    people.forEach((id) => {
+      if (!peopleNotes[id]) void loadPerson(id);
+    });
+  }, [selected, peopleNotes, loadPerson]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WATCH_KEY, JSON.stringify(watchKeys));
+    } catch {
+      /* ignore */
+    }
+  }, [watchKeys]);
 
   useEffect(() => {
     if (!eventId) return undefined;
@@ -265,6 +330,7 @@ const ProducerGoPage: React.FC = () => {
         onActiveTimersUpdated: (data: any) => applyTimer(data),
         onRunOfShowDataUpdated: () => {
           void loadSchedule();
+          void loadOperators();
         },
         onServerTime: (data: any) => {
           const serverMs = data?.serverTime ? new Date(data.serverTime).getTime() : NaN;
@@ -280,7 +346,7 @@ const ProducerGoPage: React.FC = () => {
         /* already closed */
       }
     };
-  }, [eventId, applyTimer, loadSchedule]);
+  }, [eventId, applyTimer, loadSchedule, loadOperators]);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 250);
@@ -304,8 +370,6 @@ const ProducerGoPage: React.FC = () => {
       pct: total > 0 ? Math.max(0, Math.min(100, (left / total) * 100)) : 0,
     };
   }, [current, timer, clockOffset, tick]);
-
-  const columns = useMemo(() => [...BUILTIN_COLUMNS, ...customColumns], [customColumns]);
 
   const go = useCallback(async () => {
     if (!eventId || !user?.id || !next || going.current) return;
@@ -351,7 +415,7 @@ const ProducerGoPage: React.FC = () => {
 
   const saveNote = async (itemId: number) => {
     if (!eventId || !operatorId) return;
-    const content = drafts[itemId] ?? notes[itemId] ?? '';
+    const content = drafts[itemId] ?? peopleNotes[operatorId]?.[itemId] ?? '';
     try {
       await apiClient.saveUserEventNote({
         event_id: eventId,
@@ -361,7 +425,10 @@ const ProducerGoPage: React.FC = () => {
         column_key: 'personal',
         content,
       });
-      setNotes((prev) => ({ ...prev, [itemId]: content }));
+      setPeopleNotes((prev) => ({
+        ...prev,
+        [operatorId]: { ...(prev[operatorId] || {}), [itemId]: content },
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save the note.');
     }
@@ -384,140 +451,110 @@ const ProducerGoPage: React.FC = () => {
     }
   };
 
-  const pane = (label: string, item: Row | null, live: boolean) => {
-    const note = item ? (drafts[item.id] ?? notes[item.id] ?? '') : '';
-    const accent = live ? 'text-emerald-400' : 'text-sky-400';
+  const toggleWatch = (watch: Watch) => {
+    const key = watchKey(watch);
+    setWatchKeys((prev) => {
+      if (prev.includes(key)) return prev.filter((item) => item !== key);
+      if (prev.length >= MAX_WATCH) return prev;
+      return [...prev, key];
+    });
+  };
+
+  const readWatch = (item: Row | null, watch: Watch): string => {
+    if (!item) return '';
+    if (watch.kind === 'field') return fieldText(item, watch.id);
+    if (watch.kind === 'custom') {
+      const raw = item.customFields?.[watch.id] ?? item.customFields?.[watch.name];
+      return raw == null ? '' : stripHtmlNotes(String(raw)).trim();
+    }
+    return drafts[item.id] != null && watch.id === operatorId
+      ? drafts[item.id]
+      : peopleNotes[watch.id]?.[item.id] || '';
+  };
+
+  const noteBody = (item: Row | null, watch: Watch) => {
+    const value = readWatch(item, watch);
+    const mine = watch.kind === 'person' && watch.id === operatorId && item;
+    if (mine) {
+      return (
+        <textarea
+          value={drafts[item.id] ?? peopleNotes[operatorId]?.[item.id] ?? ''}
+          onFocus={() => {
+            focusedNote.current = true;
+          }}
+          onBlur={() => {
+            focusedNote.current = false;
+            void saveNote(item.id);
+          }}
+          onChange={(e) => setDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+          className={`min-h-[8rem] w-full flex-1 resize-none bg-transparent font-normal text-slate-100 outline-none placeholder:text-slate-600 ${textSize}`}
+          placeholder="Write a note for this cue."
+        />
+      );
+    }
     return (
-      <section className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${live ? 'bg-emerald-950/20' : 'bg-slate-950'}`}>
-        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-slate-700 px-3 py-1.5">
-          <h2 className={`text-sm font-semibold uppercase tracking-wide ${accent}`}>{label}</h2>
-          {item ? (
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-sm tabular-nums text-slate-300">
-                {live ? remaining.label : formatDuration(itemSeconds(item))}
-              </span>
-              <button
-                type="button"
-                onClick={() => void arm(item, 'mitti')}
-                className={`rounded px-2 py-0.5 text-[11px] font-semibold ${item.mittiWatch ? 'bg-amber-500 text-slate-950' : 'border border-slate-600 text-slate-200'}`}
-              >
-                {item.mittiWatch ? 'Mitti armed' : 'Arm Mitti'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void arm(item, 'av')}
-                className={`rounded px-2 py-0.5 text-[11px] font-semibold ${item.avWatch ? 'bg-sky-500 text-slate-950' : 'border border-slate-600 text-slate-200'}`}
-              >
-                {item.avWatch ? 'AV armed' : 'Arm AV'}
-              </button>
-            </div>
-          ) : null}
-        </div>
-        {item ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-baseline gap-1 rounded border border-slate-600 bg-slate-800/90 px-2 py-0.5 text-xs">
-                <span className="font-semibold tracking-wide text-slate-400">CUE</span>
-                <span className="font-mono font-bold text-white">{cueOf(item) || '—'}</span>
-              </span>
-              <span className="text-slate-500">:</span>
-              <ProgramTypeBadge type={item.programType} />
-            </div>
-            <h3 className="mt-1 truncate text-xl font-semibold text-white">{item.segmentName || 'Untitled'}</h3>
-            <label className="mt-3 flex min-h-0 flex-1 flex-col text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Personal note
-              <textarea
-                value={note}
-                onFocus={() => {
-                  focusedNote.current = true;
-                }}
-                onBlur={() => {
-                  focusedNote.current = false;
-                  void saveNote(item.id);
-                }}
-                onChange={(e) => setDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                className="mt-1 min-h-0 w-full flex-1 resize-none rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-100"
-                placeholder="Only you see this note."
-              />
-            </label>
-          </div>
-        ) : (
-          <p className="p-4 text-sm text-slate-500">{live ? 'Nothing is running.' : 'No next cue with a duration.'}</p>
-        )}
-      </section>
+      <div className={`whitespace-pre-wrap break-words text-slate-100 ${textSize}`}>
+        {value || <span className="text-slate-600">—</span>}
+      </div>
     );
   };
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-slate-950 text-slate-100">
-      <header className="flex flex-shrink-0 items-center gap-3 border-b border-slate-700 bg-slate-900/95 px-3 py-1.5">
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold text-white">Producer Go · {eventName}</h1>
+      <header className="flex flex-shrink-0 items-center gap-3 border-b border-slate-800 px-4 py-2">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-white">Producer Go</div>
+          <div className="truncate text-xs text-slate-500">{eventName}</div>
         </div>
-        <div className="flex flex-shrink-0 items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {days.length > 1
             ? days.map((n) => (
                 <button
                   key={n}
                   type="button"
                   onClick={() => setDay(n)}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${day === n ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${day === n ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}
                 >
                   Day {n}
                 </button>
               ))
             : null}
-          <span className={`max-w-[16rem] truncate text-xs ${error ? 'text-red-300' : 'text-emerald-300'}`}>
-            {error || status}
-          </span>
         </div>
+        <span className={`ml-auto truncate text-xs ${error ? 'text-red-300' : 'text-slate-500'}`}>{error || status}</span>
       </header>
 
-      <div className="flex-shrink-0 border-b border-slate-700 bg-slate-900/90 px-3 py-2">
-        <div className="flex items-center justify-between gap-4">
+      <div className="flex-shrink-0 border-b border-slate-800 px-4 py-3">
+        <div className="flex items-center gap-5">
           <div className="min-w-0 flex-1">
-            <p className="mb-0.5 text-[10px] uppercase tracking-wide text-slate-500">Current cue</p>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-400/90">
+              {current ? (remaining.overtime ? 'Overtime' : 'On now') : 'Standby'}
+            </div>
             {current ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="inline-flex items-baseline gap-1 rounded border border-slate-600 bg-slate-800/90 px-2 py-0.5 text-xs">
-                  <span className="font-semibold tracking-wide text-slate-400">CUE</span>
+              <div className="mb-1 flex items-center gap-1.5">
+                <span className="inline-flex items-baseline gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs">
+                  <span className="font-semibold text-slate-500">CUE</span>
                   <span className="font-mono font-bold text-white">{cueOf(current) || '—'}</span>
                 </span>
-                <span className="text-slate-500">:</span>
                 <ProgramTypeBadge type={current.programType} />
               </div>
             ) : null}
-            <p className="mt-1 truncate text-base font-semibold text-white">
-              {current ? current.segmentName || 'Untitled' : 'No cue running'}
-            </p>
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">Next</span>
-              {next ? <ProgramTypeBadge type={next.programType} /> : null}
-              <span className="truncate text-xs text-slate-400">
-                {next ? `${cueOf(next) ? `${cueOf(next)} · ` : ''}${next.segmentName || 'Untitled'}` : 'No next cue'}
-              </span>
-            </div>
+            <h1 className="truncate text-2xl font-semibold tracking-tight text-white">
+              {current?.segmentName || 'Nothing is running'}
+            </h1>
           </div>
-          <div className="flex shrink-0 items-center gap-4">
-            <div className="text-right">
-              <p className={`text-sm font-bold ${current ? (remaining.overtime ? 'text-red-400' : 'text-emerald-400') : 'text-slate-500'}`}>
-                {current ? (remaining.overtime ? 'Overtime' : 'Running') : 'Standby'}
-              </p>
-              <p className={`mt-0.5 font-mono text-4xl font-bold tabular-nums leading-none ${remaining.overtime ? 'text-red-400' : 'text-white'}`}>
-                {remaining.label}
-              </p>
-            </div>
-            <button
-              type="button"
-              disabled={!next || !user}
-              onClick={() => void go()}
-              className="rounded-xl bg-emerald-500 px-8 py-4 text-2xl font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Go
-            </button>
+          <div className={`font-mono text-5xl font-semibold tabular-nums leading-none ${remaining.overtime ? 'text-red-400' : 'text-white'}`}>
+            {remaining.label}
           </div>
+          <button
+            type="button"
+            disabled={!next || !user}
+            onClick={() => void go()}
+            className="rounded-full bg-emerald-500 px-8 py-3 text-lg font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Go
+          </button>
         </div>
-        <div className="relative mt-2 h-2 w-full overflow-hidden rounded-full border border-slate-600 bg-slate-700">
+        <div className="relative mt-3 h-1 w-full overflow-hidden rounded-full bg-slate-800">
           <div
             className={`absolute right-0 top-0 h-full ${remaining.overtime ? 'bg-red-500' : 'bg-emerald-500'}`}
             style={{ width: `${remaining.pct}%` }}
@@ -525,49 +562,105 @@ const ProducerGoPage: React.FC = () => {
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex flex-1 items-center justify-center text-slate-400">Loading the rundown…</div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            {pane('Now', current, true)}
-            <div className="w-px flex-shrink-0 bg-slate-700" />
-            {pane('Next', next, false)}
-          </div>
+      <div className="flex flex-shrink-0 items-center gap-2 overflow-x-auto border-b border-slate-800 px-4 py-2">
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Show</span>
+        {catalog.map((watch, index) => {
+          const on = watchKeys.includes(watchKey(watch));
+          const blocked = !on && watchKeys.length >= MAX_WATCH;
+          const previous = catalog[index - 1];
+          const breakBefore = previous && previous.kind !== watch.kind;
+          return (
+            <React.Fragment key={watchKey(watch)}>
+              {breakBefore ? <span className="mx-1 h-4 w-px shrink-0 bg-slate-700" /> : null}
+              <button
+                type="button"
+                disabled={blocked}
+                onClick={() => toggleWatch(watch)}
+                title={blocked ? `Pick up to ${MAX_WATCH}` : watch.name}
+                className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
+                  on
+                    ? 'bg-slate-100 text-slate-950'
+                    : 'bg-slate-900 text-slate-400 ring-1 ring-slate-700 disabled:opacity-30'
+                }`}
+              >
+                {watch.name}
+              </button>
+            </React.Fragment>
+          );
+        })}
+      </div>
 
-          <section className="flex h-[34%] min-h-[10rem] flex-shrink-0 flex-col overflow-hidden border-t border-slate-700 bg-slate-900/95 px-3 py-2">
-            <div className="mb-1.5 flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-amber-300">Columns · Now & Next</h2>
-              <span className="text-xs text-slate-500">Space bar is Go, except while a note is focused.</span>
-            </div>
-            <div className="grid min-h-0 flex-1 gap-2 overflow-x-auto overflow-y-hidden" style={{ gridTemplateColumns: `repeat(${Math.max(columns.length, 1)}, minmax(11rem, 1fr))` }}>
-              {columns.map((col) => (
-                <div key={col.id} className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-slate-600 bg-slate-950/80 p-2">
-                  <div className="mb-1 truncate text-[11px] font-bold uppercase tracking-wide text-sky-400">{col.name}</div>
-                  <div className="grid min-h-0 flex-1 grid-rows-2 gap-1 overflow-hidden">
-                    <div className="min-h-0 overflow-y-auto">
-                      <div className="text-[10px] font-semibold uppercase text-emerald-400">Now</div>
-                      <div className="whitespace-pre-wrap break-words text-sm text-white">
-                        {col.id === 'programType' ? (
-                          <ProgramTypeBadge type={current?.programType} />
-                        ) : (
-                          columnText(current, col) || <span className="text-slate-600">—</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="min-h-0 overflow-y-auto border-t border-slate-800 pt-1">
-                      <div className="text-[10px] font-semibold uppercase text-amber-400/90">Next</div>
-                      <div className="whitespace-pre-wrap break-words text-sm text-slate-200">
-                        {col.id === 'programType' ? (
-                          <ProgramTypeBadge type={next?.programType} />
-                        ) : (
-                          columnText(next, col) || <span className="text-slate-600">—</span>
-                        )}
-                      </div>
-                    </div>
+      {loading ? (
+        <div className="flex flex-1 items-center justify-center text-slate-500">Loading the rundown…</div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="px-6 pt-4 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Now</div>
+            <div className="min-h-0 flex-1 space-y-6 overflow-auto px-6 py-4">
+              {selected.length === 0 ? (
+                <p className="text-sm text-slate-500">Choose Notes, a custom column, or a person above.</p>
+              ) : (
+                selected.map((watch) => (
+                  <div key={watchKey(watch)}>
+                    {selected.length > 1 ? (
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">{watch.name}</div>
+                    ) : null}
+                    {noteBody(current, watch)}
                   </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          <div className="w-px bg-slate-800" />
+
+          <section className="flex min-w-0 flex-1 flex-col overflow-hidden bg-slate-900/40">
+            <div className="flex items-start justify-between gap-3 px-6 pt-4">
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-400/90">Next</div>
+                {next ? (
+                  <>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <span className="font-mono text-xs text-slate-400">{cueOf(next) ? `CUE ${cueOf(next)}` : 'No cue'}</span>
+                      <ProgramTypeBadge type={next.programType} />
+                      <span className="font-mono text-xs text-slate-400">{formatDuration(itemSeconds(next))}</span>
+                    </div>
+                    <h2 className="mt-1 truncate text-lg font-semibold text-white">{next.segmentName || 'Untitled'}</h2>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm text-slate-500">No next cue with a duration.</p>
+                )}
+              </div>
+              {next ? (
+                <div className="flex shrink-0 gap-1.5 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => void arm(next, 'mitti')}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${next.mittiWatch ? 'bg-amber-400 text-slate-950' : 'text-slate-300 ring-1 ring-slate-600'}`}
+                  >
+                    {next.mittiWatch ? 'Mitti on' : 'Mitti'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void arm(next, 'av')}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${next.avWatch ? 'bg-sky-400 text-slate-950' : 'text-slate-300 ring-1 ring-slate-600'}`}
+                  >
+                    {next.avWatch ? 'AV on' : 'AV'}
+                  </button>
                 </div>
-              ))}
+              ) : null}
+            </div>
+            <div className="min-h-0 flex-1 space-y-6 overflow-auto px-6 py-4">
+              {next
+                ? selected.map((watch) => (
+                    <div key={watchKey(watch)}>
+                      {selected.length > 1 ? (
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">{watch.name}</div>
+                      ) : null}
+                      {noteBody(next, watch)}
+                    </div>
+                  ))
+                : null}
             </div>
           </section>
         </div>
