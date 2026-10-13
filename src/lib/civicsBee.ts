@@ -36,7 +36,9 @@ export type CivicsButtonPictureStyle =
   | 'state-name'
   | 'flag-state-name'
   | 'state-student'
-  | 'flag-state-student';
+  | 'flag-state-student'
+  | 'state-initial'
+  | 'flag-state-initial';
 
 export type CivicsButtonSlot = {
   state: string;
@@ -222,6 +224,8 @@ export function parseCivicsButtonBuild(raw: unknown): CivicsButtonBuild | null {
     style === 'flag-state-name' ||
     style === 'state-student' ||
     style === 'flag-state-student' ||
+    style === 'state-initial' ||
+    style === 'flag-state-initial' ||
     style === 'abbrev-name'
       ? style
       : 'abbrev-name';

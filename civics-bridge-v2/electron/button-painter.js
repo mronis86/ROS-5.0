@@ -159,7 +159,7 @@ window.drawButton = function (spec) {
       });
       return finish();
     }
-    if (layout === 'state-student' || layout === 'flag-state-student') {
+    if (layout === 'state-student' || layout === 'flag-state-student' || layout === 'state-initial' || layout === 'flag-state-initial') {
       if (flagImg) drawFlag(flagImg);
       const top = flagImg ? 20 : 2;
       let nameSize = 9;
@@ -263,7 +263,7 @@ window.drawButton = function (spec) {
       }, 250);
     });
   }
-  const wantsFlag = spec.layout === 'abbrev-name-flag' || spec.layout === 'flag-state-name' || spec.layout === 'flag-state-student' || spec.flag;
+  const wantsFlag = spec.layout === 'abbrev-name-flag' || spec.layout === 'flag-state-name' || spec.layout === 'flag-state-student' || spec.layout === 'flag-state-initial' || spec.flag;
   if (!spec.flag || !wantsFlag) return paint(null);
   return new Promise(function (resolve) {
     const img = new Image();
@@ -432,7 +432,7 @@ async function renderButtonPng(spec) {
   const name = String(spec.name || '').trim();
   const stateName = String(spec.stateLabel || spec.state || '').trim();
   const layout = spec.layout || (spec.flag ? 'abbrev-name-flag' : 'abbrev-name');
-  const wantsFlag = layout === 'abbrev-name-flag' || layout === 'flag-state-name' || layout === 'flag-state-student';
+  const wantsFlag = layout === 'abbrev-name-flag' || layout === 'flag-state-name' || layout === 'flag-state-student' || layout === 'flag-state-initial';
   const flag = wantsFlag ? await flagDataUrl(abbrev) : null;
   if (wantsFlag && !flag) {
     throw new Error(`The ${abbrev || stateName} flag could not be downloaded, so this picture would be missing its flag.`);

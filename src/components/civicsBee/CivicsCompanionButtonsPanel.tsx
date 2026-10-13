@@ -12,6 +12,8 @@ const STYLES: Array<{ value: CivicsButtonPictureStyle; label: string }> = [
   { value: 'abbrev-name-flag', label: 'Flag, abbreviation, and first name + last initial' },
   { value: 'state-student', label: 'Full state name and full student name' },
   { value: 'flag-state-student', label: 'Flag, full state name, and full student name' },
+  { value: 'state-initial', label: 'Full state over first + last initial (Maryland / John S)' },
+  { value: 'flag-state-initial', label: 'Flag, full state over first + last initial' },
   { value: 'state-name', label: 'State name only' },
   { value: 'flag-state-name', label: 'Flag and state name' },
 ];
@@ -140,9 +142,12 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
   const hasFlag =
     pictureStyle === 'abbrev-name-flag' ||
     pictureStyle === 'flag-state-name' ||
-    pictureStyle === 'flag-state-student';
+    pictureStyle === 'flag-state-student' ||
+    pictureStyle === 'flag-state-initial';
   const showAbbrev = pictureStyle === 'abbrev-name' || pictureStyle === 'abbrev-name-flag';
-  const showStudent = showAbbrev || fullStudent;
+  const showStateAndName =
+    fullStudent || pictureStyle === 'state-initial' || pictureStyle === 'flag-state-initial';
+  const showStudent = showAbbrev || showStateAndName;
   const currentKey = JSON.stringify([pictureStyle, hasFlag && flagOutline, slots]);
   const previewed = previewKey === currentKey;
   const build = roster.buttonBuild || null;
