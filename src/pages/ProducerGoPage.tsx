@@ -5,7 +5,8 @@ import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
 import { stripHtmlNotes } from '../lib/eventGuestLinks';
-import { displaySpeakersText } from '../lib/guestRosHelpers';
+import { displaySpeakersText, ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import { getStoredOperatorName, operatorUserId } from '../lib/pinNotesOperator';
 
 type Row = {
@@ -81,6 +82,29 @@ function pickActiveTimer(raw: any): any | null {
 function itemIdOf(timer: any): number | null {
   const id = Number(timer?.item_id ?? timer?.itemId);
   return Number.isFinite(id) ? id : null;
+}
+
+function ProgramTypeBadge({ type }: { type?: string }) {
+  const label = String(type || '').trim();
+  if (!label) return <span className="text-slate-600">—</span>;
+  const surface = programTypeSurfaceStyle(label, ROS_PROGRAM_TYPE_COLORS, '#64748B');
+  const hex = String(surface.backgroundColor || '#64748B').replace('#', '');
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const text =
+    Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && (r * 299 + g * 587 + b * 114) / 1000 > 160
+      ? '#0f172a'
+      : '#ffffff';
+  return (
+    <span
+      className="inline-flex max-w-full truncate rounded-md border border-white/15 px-2 py-0.5 text-xs font-semibold leading-none"
+      style={{ ...surface, color: text }}
+      title={label}
+    >
+      {label}
+    </span>
+  );
 }
 
 function columnText(item: Row | null, column: Column): string {
@@ -391,10 +415,15 @@ const ProducerGoPage: React.FC = () => {
         </div>
         {item ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
-            <p className="text-[10px] uppercase tracking-wide text-slate-500">
-              {cueOf(item) ? `Cue ${cueOf(item)}` : 'No cue number'}
-            </p>
-            <h3 className="mt-0.5 truncate text-xl font-semibold text-white">{item.segmentName || 'Untitled'}</h3>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-baseline gap-1 rounded border border-slate-600 bg-slate-800/90 px-2 py-0.5 text-xs">
+                <span className="font-semibold tracking-wide text-slate-400">CUE</span>
+                <span className="font-mono font-bold text-white">{cueOf(item) || '—'}</span>
+              </span>
+              <span className="text-slate-500">:</span>
+              <ProgramTypeBadge type={item.programType} />
+            </div>
+            <h3 className="mt-1 truncate text-xl font-semibold text-white">{item.segmentName || 'Untitled'}</h3>
             <label className="mt-3 flex min-h-0 flex-1 flex-col text-xs font-semibold uppercase tracking-wide text-slate-500">
               Personal note
               <textarea
@@ -448,12 +477,26 @@ const ProducerGoPage: React.FC = () => {
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0 flex-1">
             <p className="mb-0.5 text-[10px] uppercase tracking-wide text-slate-500">Current cue</p>
-            <p className="truncate text-base font-semibold text-white">
-              {current ? `${cueOf(current) ? `${cueOf(current)} · ` : ''}${current.segmentName || 'Untitled'}` : 'No cue running'}
+            {current ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-baseline gap-1 rounded border border-slate-600 bg-slate-800/90 px-2 py-0.5 text-xs">
+                  <span className="font-semibold tracking-wide text-slate-400">CUE</span>
+                  <span className="font-mono font-bold text-white">{cueOf(current) || '—'}</span>
+                </span>
+                <span className="text-slate-500">:</span>
+                <ProgramTypeBadge type={current.programType} />
+              </div>
+            ) : null}
+            <p className="mt-1 truncate text-base font-semibold text-white">
+              {current ? current.segmentName || 'Untitled' : 'No cue running'}
             </p>
-            <p className="mt-0.5 truncate text-xs text-slate-400">
-              {next ? `Next · ${cueOf(next) ? `${cueOf(next)} · ` : ''}${next.segmentName || 'Untitled'}` : 'No next cue'}
-            </p>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">Next</span>
+              {next ? <ProgramTypeBadge type={next.programType} /> : null}
+              <span className="truncate text-xs text-slate-400">
+                {next ? `${cueOf(next) ? `${cueOf(next)} · ` : ''}${next.segmentName || 'Untitled'}` : 'No next cue'}
+              </span>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-4">
             <div className="text-right">
@@ -505,13 +548,21 @@ const ProducerGoPage: React.FC = () => {
                     <div className="min-h-0 overflow-y-auto">
                       <div className="text-[10px] font-semibold uppercase text-emerald-400">Now</div>
                       <div className="whitespace-pre-wrap break-words text-sm text-white">
-                        {columnText(current, col) || <span className="text-slate-600">—</span>}
+                        {col.id === 'programType' ? (
+                          <ProgramTypeBadge type={current?.programType} />
+                        ) : (
+                          columnText(current, col) || <span className="text-slate-600">—</span>
+                        )}
                       </div>
                     </div>
                     <div className="min-h-0 overflow-y-auto border-t border-slate-800 pt-1">
                       <div className="text-[10px] font-semibold uppercase text-amber-400/90">Next</div>
                       <div className="whitespace-pre-wrap break-words text-sm text-slate-200">
-                        {columnText(next, col) || <span className="text-slate-600">—</span>}
+                        {col.id === 'programType' ? (
+                          <ProgramTypeBadge type={next?.programType} />
+                        ) : (
+                          columnText(next, col) || <span className="text-slate-600">—</span>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -41,6 +41,10 @@ Write-Host '========== Cloudflare Pages deploy folder =========='
 Write-Host 'Running npm run build...'
 Push-Location $ProjectRoot
 try { npm run build } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "npm run build failed (exit $LASTEXITCODE). Refusing to upload the previous dist."
+    exit $LASTEXITCODE
+}
 
 if (-not (Test-Path (Join-Path $DistDir 'index.html'))) {
     Write-Error 'dist/index.html still missing after build.'

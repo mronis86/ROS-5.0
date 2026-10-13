@@ -91,6 +91,10 @@ Corporate networks that block Electron downloads should use this package.
 `;
 
 const output = fs.createWriteStream(zipPath);
+output.on('error', (err) => {
+  console.warn(`Skipping vmix zip rewrite (${err.message}). Keeping the existing file.`);
+  process.exit(0);
+});
 const archive = archiver('zip', { zlib: { level: 9 } });
 archive.on('error', (err) => {
   console.error(err);
