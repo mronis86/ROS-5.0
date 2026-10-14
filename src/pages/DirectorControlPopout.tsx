@@ -68,6 +68,18 @@ function itemIdOf(timer: any): number | null {
   return Number.isFinite(id) ? id : null;
 }
 
+function rowId(row: Row): number {
+  const id = Number(row.id);
+  return Number.isFinite(id) ? id : -1;
+}
+
+function timerIsRunning(timer: any): boolean {
+  if (!timer || timer.cleared === true || timer.is_active === false) return false;
+  const state = String(timer.timer_state || timer.timerState || '').toLowerCase();
+  if (state === 'stopped' || state === 'loaded' || state === 'armed') return false;
+  return state === 'running' || timer.is_running === true || timer.is_running === 1;
+}
+
 function ProgramBadge({ type }: { type?: string }) {
   const label = String(type || '').trim();
   if (!label) return null;
@@ -104,6 +116,8 @@ const DirectorControlPopout: React.FC = () => {
   const [tick, setTick] = useState(0);
   const [error, setError] = useState('');
   const going = useRef(false);
+  const timerRev = useRef(0);
+  const lastRunningId = useRef<number | null>(null);
 
   const indented = useMemo(() => {
     const map: Record<number, boolean> = {};
@@ -124,35 +138,45 @@ const DirectorControlPopout: React.FC = () => {
     return Array.from(set).sort((a, b) => a - b);
   }, [schedule]);
 
-  const runningId = timer?.is_running ? itemIdOf(timer) : null;
+  const runningId = timerIsRunning(timer) ? itemIdOf(timer) : null;
+  const loadedId =
+    runningId == null && timer && timer.is_active !== false && String(timer.timer_state || '').toLowerCase() !== 'stopped'
+      ? itemIdOf(timer)
+      : null;
   const current = useMemo(
-    () => (runningId != null ? schedule.find((row) => row.id === runningId) || null : null),
+    () => (runningId != null ? schedule.find((row) => rowId(row) === runningId) || null : null),
     [schedule, runningId]
   );
 
-  const activeDay = current?.day || day;
-  const dayRows = useMemo(
-    () => schedule.filter((row) => (row.day || 1) === activeDay),
-    [schedule, activeDay]
-  );
-
   const next = useMemo(() => {
-    const list = dayRows;
-    if (current) {
-      const idx = list.findIndex((row) => row.id === current.id);
-      for (let i = Math.max(idx, -1) + 1; i < list.length; i += 1) {
-        if (playable(list[i])) return list[i];
+    const after = (anchorId: number | null) => {
+      if (anchorId == null) return null;
+      const idx = schedule.findIndex((row) => rowId(row) === anchorId);
+      if (idx < 0) return null;
+      for (let i = idx + 1; i < schedule.length; i += 1) {
+        if (playable(schedule[i])) return schedule[i];
       }
       return null;
+    };
+    if (current) return after(rowId(current));
+    if (loadedId != null) {
+      const loaded = schedule.find((row) => rowId(row) === loadedId);
+      if (loaded && playable(loaded)) return loaded;
+      const following = after(loadedId);
+      if (following) return following;
     }
-    return list.find((row) => playable(row)) || null;
-  }, [current, dayRows, playable]);
+    const followingLast = after(lastRunningId.current);
+    if (followingLast) return followingLast;
+    const onDay = schedule.filter((row) => (row.day || 1) === day);
+    return (onDay.length ? onDay : schedule).find((row) => playable(row)) || null;
+  }, [current, loadedId, schedule, playable, day]);
 
   const loadSchedule = useCallback(async () => {
     if (!eventId) return;
     try {
       const data = await DatabaseService.getRunOfShowData(eventId);
-      setSchedule(Array.isArray(data?.schedule_items) ? data.schedule_items : []);
+      const rows = Array.isArray(data?.schedule_items) ? data.schedule_items : [];
+      setSchedule(rows.map((row: Row) => ({ ...row, id: rowId(row) })));
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load the rundown.');
@@ -160,8 +184,32 @@ const DirectorControlPopout: React.FC = () => {
   }, [eventId]);
 
   const applyTimer = useCallback((raw: any) => {
-    setTimer(pickActiveTimer(raw));
+    const nextTimer = pickActiveTimer(raw);
+    if (timerIsRunning(nextTimer)) {
+      const id = itemIdOf(nextTimer);
+      if (id != null) lastRunningId.current = id;
+    }
+    setTimer(nextTimer);
   }, []);
+
+  const refreshTimer = useCallback(async () => {
+    const rev = timerRev.current;
+    try {
+      const row = await DatabaseService.getActiveTimer(eventId);
+      if (rev !== timerRev.current) return;
+      applyTimer(row);
+    } catch {
+      /* a newer socket update already has the position */
+    }
+  }, [eventId, applyTimer]);
+
+  const acceptSocketTimer = useCallback(
+    (raw: any) => {
+      timerRev.current += 1;
+      applyTimer(raw);
+    },
+    [applyTimer]
+  );
 
   useEffect(() => {
     void loadSchedule();
@@ -169,21 +217,38 @@ const DirectorControlPopout: React.FC = () => {
 
   useEffect(() => {
     if (!eventId) return undefined;
-    void DatabaseService.getActiveTimer(eventId).then(applyTimer).catch(() => undefined);
+    void refreshTimer();
     socketClient.connect(
       eventId,
       {
-        onInitialSync: async () => {
-          const row = await DatabaseService.getActiveTimer(eventId);
-          applyTimer(row);
+        onInitialSync: () => {
+          void refreshTimer();
         },
-        onTimerUpdated: (data: any) => applyTimer(data),
-        onTimerStarted: (data: any) => applyTimer({ ...data, is_running: true, is_active: true }),
-        onTimerStopped: () => {
-          void DatabaseService.getActiveTimer(eventId).then(applyTimer).catch(() => setTimer(null));
+        onTimerUpdated: (data: any) => acceptSocketTimer(data),
+        onTimerStarted: (data: any) =>
+          acceptSocketTimer({ ...data, is_running: true, is_active: true, timer_state: 'running' }),
+        onTimerStopped: (data: any) => {
+          timerRev.current += 1;
+          if (going.current) return;
+          const stoppedId = itemIdOf(data);
+          setTimer((prev) => {
+            const prevId = itemIdOf(prev);
+            if (prev && timerIsRunning(prev) && stoppedId != null && prevId !== stoppedId) return prev;
+            return null;
+          });
         },
-        onTimersStopped: () => setTimer(null),
-        onActiveTimersUpdated: (data: any) => applyTimer(data),
+        onTimersStopped: () => {
+          timerRev.current += 1;
+          if (going.current) return;
+          lastRunningId.current = null;
+          setTimer(null);
+        },
+        onResetAllStates: () => {
+          timerRev.current += 1;
+          lastRunningId.current = null;
+          setTimer(null);
+        },
+        onActiveTimersUpdated: (data: any) => acceptSocketTimer(data),
         onRunOfShowDataUpdated: () => {
           void loadSchedule();
         },
@@ -201,7 +266,7 @@ const DirectorControlPopout: React.FC = () => {
         /* already closed */
       }
     };
-  }, [eventId, applyTimer, loadSchedule]);
+  }, [eventId, acceptSocketTimer, refreshTimer, loadSchedule]);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 250);
@@ -220,9 +285,18 @@ const DirectorControlPopout: React.FC = () => {
   const go = useCallback(async () => {
     if (!eventId || !user?.id || !next || going.current) return;
     going.current = true;
+    timerRev.current += 1;
     setError('');
+    setTimer({
+      item_id: rowId(next),
+      is_running: true,
+      is_active: true,
+      timer_state: 'running',
+      duration_seconds: itemSeconds(next),
+      started_at: new Date(Date.now() + clockOffset).toISOString(),
+    });
     try {
-      if (runningId != null) {
+      if (runningId != null && runningId !== rowId(next)) {
         await DatabaseService.stopTimer(eventId, runningId, user.id, user.full_name, user.role);
       }
       const ok = await DatabaseService.startTimer(
@@ -234,13 +308,17 @@ const DirectorControlPopout: React.FC = () => {
         undefined,
         cueOf(next) || undefined
       );
-      if (!ok) setError('Go did not start the timer.');
+      if (ok) lastRunningId.current = rowId(next);
+      else {
+        setError('Go did not start the timer.');
+        void refreshTimer();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Go failed.');
     } finally {
       going.current = false;
     }
-  }, [eventId, user, next, runningId, clockOffset]);
+  }, [eventId, user, next, runningId, clockOffset, refreshTimer]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
