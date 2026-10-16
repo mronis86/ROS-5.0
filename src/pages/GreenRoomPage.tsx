@@ -986,7 +986,7 @@ const GreenRoomPage: React.FC = () => {
     };
 
     if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
-      socketClient.connect(event.id, callbacks);
+      socketClient.connect(event.id, callbacks, 'greenRoomTimer');
     }
 
     if (!hasShownModalOnce && connectionEnabledRef.current) {
@@ -997,17 +997,18 @@ const GreenRoomPage: React.FC = () => {
     const handleVisibilityChange = () => {
       if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
-        socketClient.disconnect(event.id);
-      } else if (!socketClient.isConnected()) {
-        socketClient.connect(event.id, callbacks);
-        callbacks.onInitialSync?.();
+        socketClient.disconnect(event.id, 'greenRoomTimer');
+      } else {
+        const wasConnected = socketClient.isConnected();
+        socketClient.connect(event.id, callbacks, 'greenRoomTimer');
+        if (!wasConnected) callbacks.onInitialSync?.();
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      socketClient.disconnect(event.id);
+      socketClient.disconnect(event.id, 'greenRoomTimer');
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
       if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
@@ -1495,16 +1496,17 @@ const GreenRoomPage: React.FC = () => {
     };
 
     if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
-      socketClient.connect(event.id, callbacks);
+      socketClient.connect(event.id, callbacks, 'greenRoomSchedule');
     }
 
     const handleScheduleVisibilityChange = () => {
       if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
-        socketClient.disconnect(event.id);
-      } else if (!socketClient.isConnected()) {
-        socketClient.connect(event.id, callbacks);
-        callbacks.onInitialSync?.();
+        socketClient.disconnect(event.id, 'greenRoomSchedule');
+      } else {
+        const wasConnected = socketClient.isConnected();
+        socketClient.connect(event.id, callbacks, 'greenRoomSchedule');
+        if (!wasConnected) callbacks.onInitialSync?.();
       }
     };
 
@@ -1512,7 +1514,7 @@ const GreenRoomPage: React.FC = () => {
 
     return () => {
       // Removed verbose logging to prevent console spam
-      socketClient.disconnect(event.id);
+      socketClient.disconnect(event.id, 'greenRoomSchedule');
       document.removeEventListener('visibilitychange', handleScheduleVisibilityChange);
     };
   }, [event?.id, reconnectKey]);
