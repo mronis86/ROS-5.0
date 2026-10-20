@@ -5669,6 +5669,12 @@ app.post('/api/run-of-show-data', async (req, res) => {
       if (incomingSettings?.rehearsal_baseline === undefined && current.rehearsal_baseline && typeof current.rehearsal_baseline === 'object') {
         settingsToSave = { ...settingsToSave, rehearsal_baseline: current.rehearsal_baseline };
       }
+      if (incomingSettings?.preshow_show_day === undefined && current.preshow_show_day && typeof current.preshow_show_day === 'object') {
+        settingsToSave = { ...settingsToSave, preshow_show_day: current.preshow_show_day };
+      }
+      if (incomingSettings?.auto_roll === undefined && current.auto_roll && typeof current.auto_roll === 'object') {
+        settingsToSave = { ...settingsToSave, auto_roll: current.auto_roll };
+      }
     }
 
     // Optimistic concurrency: if client sent a version, it must match the DB

@@ -24,6 +24,10 @@ import {
 import {
   buildAutoRollSlots,
   parseAutoRoll,
+  resolveAutoRoll,
+  readStoredAutoRoll,
+  writeStoredAutoRoll,
+  autoRollSettingsPatch,
   pickCurrentAutoRollSlot,
   pickNextAutoRollSlot,
   slotAllowedAfterArm,
@@ -1571,12 +1575,14 @@ const RunOfShowPage: React.FC = () => {
 
   useEffect(() => {
     if (!event?.id) return;
+    const stored = readStoredAutoRoll(event.id);
+    if (stored) setAutoRollArmed(stored);
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
       setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
       setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
-      setAutoRollArmed(parseAutoRoll(s.autoRoll));
+      setAutoRollArmed(resolveAutoRoll(s.autoRoll, event.id));
       if (s.lockedStartTimes && typeof s.lockedStartTimes === 'object') {
         const mapped: Record<number, string> = {};
         for (const [k, v] of Object.entries(s.lockedStartTimes)) {
@@ -3679,6 +3685,7 @@ const RunOfShowPage: React.FC = () => {
       : null;
     setAutoRollArmed(payload);
     autoRollArmedRef.current = payload;
+    writeStoredAutoRoll(event.id, payload);
     autoRollStartedKeyRef.current = null;
     autoRollInFlightRef.current = false;
     try {
@@ -5488,7 +5495,8 @@ const RunOfShowPage: React.FC = () => {
           numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
-          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
+          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
         }
       });
       console.log('✅ Schedule data backed up with settings');
@@ -5580,7 +5588,8 @@ const RunOfShowPage: React.FC = () => {
           numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
-          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
+          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
         }
       };
 
@@ -7936,7 +7945,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }) }
+          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }), ...autoRollSettingsPatch(autoRollArmedRef.current) }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -8747,6 +8756,7 @@ const RunOfShowPage: React.FC = () => {
               Object.entries(lockedStartTimesRef.current).map(([k, v]) => [String(k), v])
             ),
           }),
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
         },
         version: scheduleVersionRef.current,
         ...(allowEmpty ? { allow_empty_schedule: true } : {}),
@@ -10081,7 +10091,7 @@ const RunOfShowPage: React.FC = () => {
             setTrackWasDurations(s.trackWasDurations);
             setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
             setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
-            setAutoRollArmed(parseAutoRoll(s.autoRoll));
+            setAutoRollArmed(resolveAutoRoll(s.autoRoll, event.id));
           } catch (e) {
             console.warn('Initial sync: could not refetch show mode', e);
           }
@@ -10177,7 +10187,9 @@ const RunOfShowPage: React.FC = () => {
             setPreshowShowDayArmed(parsePreshowShowDay(data.preshowShowDay));
           }
           if (data.autoRoll !== undefined) {
-            setAutoRollArmed(parseAutoRoll(data.autoRoll));
+            const parsed = parseAutoRoll(data.autoRoll);
+            writeStoredAutoRoll(event.id, parsed);
+            setAutoRollArmed(parsed);
           }
         }
       },
@@ -10607,7 +10619,8 @@ const RunOfShowPage: React.FC = () => {
         settings: {
           ...((restoredData as any).settings || {}),
           show_mode: showMode,
-          track_was_durations: trackWasDurations
+          track_was_durations: trackWasDurations,
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
         },
         schedule_items: restoredData.scheduleData,
         custom_columns: restoredData.customColumnsData,
@@ -10697,7 +10710,7 @@ const RunOfShowPage: React.FC = () => {
     DatabaseService.saveRunOfShowData({
       event_id: event.id,
       event_name: event?.name || 'Event',
-      settings: { show_mode: showMode, track_was_durations: trackWasDurations, numberOfDays: event?.numberOfDays },
+      settings: { show_mode: showMode, track_was_durations: trackWasDurations, numberOfDays: event?.numberOfDays, ...autoRollSettingsPatch(autoRollArmedRef.current) },
       schedule_items: scheduleToSave,
       custom_columns: customColsToSave,
       event_date: event?.date ?? undefined
@@ -17527,7 +17540,8 @@ const RunOfShowPage: React.FC = () => {
                                  numberOfDays: event?.numberOfDays,
                                  show_mode: showMode,
                                  track_was_durations: trackWasDurations,
-                                 ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
+                                 ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+                                 ...autoRollSettingsPatch(autoRollArmedRef.current),
                                }
                              };
                              

@@ -42,6 +42,46 @@ export function parseAutoRoll(raw: unknown): AutoRollArmed | null {
   };
 }
 
+export function autoRollStorageKey(eventId: string): string {
+  return `rosAutoRoll:${eventId}`;
+}
+
+export function readStoredAutoRoll(eventId: string): AutoRollArmed | null {
+  if (!eventId || typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(autoRollStorageKey(eventId));
+    if (!raw) return null;
+    return parseAutoRoll(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function writeStoredAutoRoll(eventId: string, value: AutoRollArmed | null): void {
+  if (!eventId || typeof localStorage === 'undefined') return;
+  try {
+    const key = autoRollStorageKey(eventId);
+    if (!value) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+/** Prefer the API when it is armed; otherwise keep the local copy so refresh still holds. */
+export function resolveAutoRoll(apiValue: unknown, eventId: string): AutoRollArmed | null {
+  const fromApi = parseAutoRoll(apiValue);
+  if (fromApi) {
+    writeStoredAutoRoll(eventId, fromApi);
+    return fromApi;
+  }
+  return readStoredAutoRoll(eventId);
+}
+
+export function autoRollSettingsPatch(armed: AutoRollArmed | null): { auto_roll?: AutoRollArmed } {
+  return armed ? { auto_roll: armed } : {};
+}
+
 export function itemDurationSeconds(item: AutoRollCueLike | undefined): number {
   if (!item) return 0;
   return (
