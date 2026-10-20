@@ -803,7 +803,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {/* Notes column (after PPT/QA) — VO/BGM text is written into Notes */}
       {visibleColumns.notes && (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 transition-all duration-300 ease-in-out"
+          className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 min-w-0 overflow-hidden transition-all duration-300 ease-in-out"
           style={{ width: columnWidths.notes }}
         >
           {!isLockedByOther && currentUserRole !== 'VIEWER' && (
@@ -846,8 +846,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           >
             {item.notes ? (
               <div 
-                className="text-left w-full notes-display"
-                style={{ lineHeight: '1.4', overflow: 'visible', whiteSpace: 'pre-line' }}
+                className="text-left w-full min-w-0 notes-display"
+                style={{ lineHeight: '1.4', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
                 dangerouslySetInnerHTML={{ 
                   __html: String(item.notes)
                     .replace(/\r\n/g, '<br>') // Handle Windows line breaks

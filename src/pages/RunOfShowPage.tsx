@@ -6035,6 +6035,8 @@ const RunOfShowPage: React.FC = () => {
       tempDiv.style.fontFamily = 'system-ui, -apple-system, sans-serif';
       tempDiv.style.whiteSpace = 'pre-wrap';
       tempDiv.style.wordWrap = 'break-word';
+      tempDiv.style.overflowWrap = 'anywhere';
+      tempDiv.style.wordBreak = 'break-word';
       tempDiv.innerHTML = notes;
       
       document.body.appendChild(tempDiv);
@@ -6147,6 +6149,8 @@ const RunOfShowPage: React.FC = () => {
     tempDiv.style.fontFamily = 'system-ui, -apple-system, sans-serif';
     tempDiv.style.whiteSpace = 'pre-wrap';
     tempDiv.style.wordWrap = 'break-word';
+    tempDiv.style.overflowWrap = 'anywhere';
+    tempDiv.style.wordBreak = 'break-word';
     tempDiv.style.overflow = 'hidden';
     tempDiv.innerHTML = notes;
     
@@ -18683,10 +18687,12 @@ const RunOfShowPage: React.FC = () => {
               >
                 {modalForm.notes ? (
                   <div 
-                    className="text-sm notes-display" 
+                    className="text-sm min-w-0 notes-display" 
                     style={{
                       lineHeight: '1.4',
-                      overflow: 'visible'
+                      overflow: 'hidden',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
                     }}
                     dangerouslySetInnerHTML={{ __html: modalForm.notes }} 
                   />

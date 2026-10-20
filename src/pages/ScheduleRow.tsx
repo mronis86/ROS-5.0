@@ -1055,7 +1055,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {/* Notes column (after PPT/QA) — VO/BGM text is written into Notes; no chips */}
       {visibleColumns.notes && (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 transition-all duration-300 ease-in-out"
+          className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 min-w-0 overflow-hidden transition-all duration-300 ease-in-out"
           style={{ width: columnWidths.notes, order: flexOrder('notes') }}
         >
           {!isLockedByOther && currentUserRole !== 'VIEWER' && (
@@ -1222,13 +1222,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setEditingNotesItem && setEditingNotesItem(item.id);
               setShowNotesModal && setShowNotesModal(true);
             }}
-            className={`w-full px-3 py-2 border rounded text-base transition-colors text-white ${isLockedByOther ? 'bg-slate-700 border-slate-600 opacity-70 cursor-not-allowed' : 'bg-slate-700 border-slate-600 cursor-pointer hover:bg-slate-600'}`}
+            className={`w-full min-w-0 overflow-hidden px-3 py-2 border rounded text-base transition-colors text-white ${isLockedByOther ? 'bg-slate-700 border-slate-600 opacity-70 cursor-not-allowed' : 'bg-slate-700 border-slate-600 cursor-pointer hover:bg-slate-600'}`}
             title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot edit notes' : currentUserRole === 'OPERATOR' ? 'Click to view notes (read-only)' : 'Click to edit notes'}
           >
             {item.notes ? (
               <div 
-                className="text-left w-full notes-display text-white"
-                style={{ lineHeight: '1.45', overflow: 'visible', whiteSpace: 'pre-line' }}
+                className="text-left w-full min-w-0 notes-display text-white"
+                style={{ lineHeight: '1.45', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
                 dangerouslySetInnerHTML={{ 
                   __html: boostNotesContrastHtml(
                     String(item.notes)

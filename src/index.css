@@ -181,6 +181,17 @@ html.led-output-broadcast #root,
 #notes-editor,
 .notes-display {
   color: #f8fafc;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#notes-editor *,
+.notes-display * {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 /* Fix highlight (backColor) sizing - execCommand + font size causes short highlights.
