@@ -4368,6 +4368,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
         rehearsalBaseline: null,
         lockedStartTimes: null,
         preshowShowDay: null,
+        autoRoll: null,
         displaySyncEnabled: await loadDisplaySyncEnabled(pool, eventId),
       });
     }
@@ -4388,6 +4389,8 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       settings.preshow_show_day && typeof settings.preshow_show_day === 'object'
         ? settings.preshow_show_day
         : null;
+    const autoRoll =
+      settings.auto_roll && typeof settings.auto_roll === 'object' ? settings.auto_roll : null;
     const displaySyncEnabled = await loadDisplaySyncEnabled(pool, eventId);
     res.json({
       showMode,
@@ -4395,6 +4398,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       rehearsalBaseline,
       lockedStartTimes,
       preshowShowDay,
+      autoRoll,
       displaySyncEnabled,
     });
   } catch (error) {
@@ -4415,6 +4419,8 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       clearLockedStartTimes,
       preshowShowDay,
       clearPreshowShowDay,
+      autoRoll,
+      clearAutoRoll,
     } = req.body;
     const updates = {};
     if (showMode === 'rehearsal' || showMode === 'in-show') {
@@ -4432,6 +4438,16 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       updates.locked_start_times = null;
     } else if (lockedStartTimes && typeof lockedStartTimes === 'object') {
       updates.locked_start_times = lockedStartTimes;
+    }
+    if (clearAutoRoll === true) {
+      updates.auto_roll = null;
+    } else if (autoRoll && typeof autoRoll === 'object' && autoRoll.armed === true) {
+      updates.auto_roll = {
+        armed: true,
+        armedAt: String(autoRoll.armedAt || new Date().toISOString()),
+        armedBy: autoRoll.armedBy != null ? String(autoRoll.armedBy) : null,
+        armedByName: autoRoll.armedByName != null ? String(autoRoll.armedByName) : null,
+      };
     }
     if (clearPreshowShowDay === true) {
       updates.preshow_show_day = null;
@@ -4483,7 +4499,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({
         error:
-          'Provide showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, and/or preshowShowDay',
+          'Provide showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, preshowShowDay, and/or autoRoll',
       });
     }
     const result = await pool.query(
@@ -4513,6 +4529,8 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       settings.preshow_show_day && typeof settings.preshow_show_day === 'object'
         ? settings.preshow_show_day
         : null;
+    const currentAutoRoll =
+      settings.auto_roll && typeof settings.auto_roll === 'object' ? settings.auto_roll : null;
     // CRITICAL: Only include showMode in broadcast when we actually updated it.
     // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
     const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
@@ -4526,6 +4544,9 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (preshowShowDay || clearPreshowShowDay === true) {
       payload.preshowShowDay = currentPreshowShowDay;
     }
+    if (autoRoll || clearAutoRoll === true) {
+      payload.autoRoll = currentAutoRoll;
+    }
     broadcastUpdate(eventId, 'showModeUpdate', payload);
     res.json({
       showMode: currentShowMode,
@@ -4533,6 +4554,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       rehearsalBaseline: currentBaseline,
       lockedStartTimes: currentLockedStartTimes,
       preshowShowDay: currentPreshowShowDay,
+      autoRoll: currentAutoRoll,
     });
   } catch (error) {
     console.error('Error updating show mode:', error);

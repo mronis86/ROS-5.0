@@ -21,6 +21,14 @@ import {
   PRESHOW_MESSAGE_TYPE,
   PRESHOW_WARN_MINUTES_BEFORE,
 } from '../lib/preshowCountdown';
+import {
+  buildAutoRollSlots,
+  parseAutoRoll,
+  pickCurrentAutoRollSlot,
+  pickNextAutoRollSlot,
+  slotAllowedAfterArm,
+  type AutoRollArmed,
+} from '../lib/autoRoll';
 import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
 import {
   normalizeSchedulePreshowEndTypes,
@@ -1424,8 +1432,19 @@ const RunOfShowPage: React.FC = () => {
   const preshowAutoStartedKeyRef = useRef<string | null>(null);
   const preshowAutoStartInFlightRef = useRef(false);
   const loadCueRef = useRef<(itemId: number) => Promise<void>>(async () => {});
-  const toggleTimerRef = useRef<(itemId: number) => Promise<void>>(async () => {});
+  const toggleTimerRef = useRef<
+    (itemId: number, options?: { ignoreOtherRunning?: boolean }) => Promise<void>
+  >(async () => {});
   const preshowShowDayArmedRef = useRef<PreshowShowDayArmed | null>(null);
+  const [autoRollArmed, setAutoRollArmed] = useState<AutoRollArmed | null>(null);
+  const [autoRollHud, setAutoRollHud] = useState('');
+  const [autoRollBusy, setAutoRollBusy] = useState(false);
+  const autoRollArmedRef = useRef<AutoRollArmed | null>(null);
+  const autoRollStartedKeyRef = useRef<string | null>(null);
+  const autoRollInFlightRef = useRef(false);
+  useEffect(() => {
+    autoRollArmedRef.current = autoRollArmed;
+  }, [autoRollArmed]);
   useEffect(() => {
     preshowShowDayArmedRef.current = preshowShowDayArmed;
   }, [preshowShowDayArmed]);
@@ -1557,6 +1576,7 @@ const RunOfShowPage: React.FC = () => {
       setTrackWasDurations(s.trackWasDurations);
       setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
       setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
+      setAutoRollArmed(parseAutoRoll(s.autoRoll));
       if (s.lockedStartTimes && typeof s.lockedStartTimes === 'object') {
         const mapped: Record<number, string> = {};
         for (const [k, v] of Object.entries(s.lockedStartTimes)) {
@@ -3509,6 +3529,171 @@ const RunOfShowPage: React.FC = () => {
     const id = window.setInterval(() => setPreshowWarnTick((n) => n + 1), 1000);
     return () => window.clearInterval(id);
   }, [activePreshowWarn]);
+
+  // Auto Roll: load+start each playable cue at its Start-column time of day.
+  // Fires only from an Operator Run of Show tab. Pre-Show keeps its own auto-start.
+  useEffect(() => {
+    if (!event?.id || !autoRollArmed) {
+      setAutoRollHud('');
+      return;
+    }
+
+    const cueLabel = (item: { id: number; customFields?: { cue?: string } }) => {
+      const raw = item.customFields?.cue;
+      const formatted = formatCueDisplay(raw);
+      return formatted || `CUE ${item.id}`;
+    };
+
+    const tick = () => {
+      const armed = autoRollArmedRef.current;
+      if (!armed) {
+        setAutoRollHud('');
+        return;
+      }
+      const workingDay = resolvePreshowWorkingDay(
+        event.date,
+        event.numberOfDays,
+        selectedDay
+      );
+      const topPreshow = findTopPreshowCue(schedule, indentedCues, workingDay);
+      const synced = getSyncedNow(clockOffset);
+      const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+      const nowMs = synced.getTime();
+      const armedAtMs = Date.parse(armed.armedAt);
+      const useOvertime = showModeRef.current === 'in-show';
+
+      const slots = buildAutoRollSlots({
+        schedule,
+        indentedLookup: indentedCues,
+        day: workingDay,
+        skipItemId: topPreshow?.id ?? null,
+        resolveStart: (_item, index) => {
+          const startLabel = useOvertime
+            ? calculateStartTimeWithOvertime(index)
+            : calculateStartTime(index);
+          const startHHMM = normalizeCalloutTimeToHHMM(startLabel);
+          if (!startHHMM) return null;
+          const startMs = wallClockStartUtcMs(startHHMM, synced, tz);
+          if (startMs == null) return null;
+          return { startHHMM, startLabel, startMs };
+        },
+      });
+
+      const current = pickCurrentAutoRollSlot(slots, nowMs);
+      const next = pickNextAutoRollSlot(slots, nowMs);
+      const allowedCurrent =
+        current && slotAllowedAfterArm(current, Number.isFinite(armedAtMs) ? armedAtMs : null, nowMs)
+          ? current
+          : null;
+      const runningThisCue = !!(
+        allowedCurrent &&
+        (activeTimers[allowedCurrent.item.id] ||
+          (hybridTimerData?.activeTimer &&
+            Number(hybridTimerData.activeTimer.item_id) === allowedCurrent.item.id &&
+            (hybridTimerData.activeTimer.is_running ||
+              hybridTimerData.activeTimer.timer_state === 'running')))
+      );
+      const hudTarget = runningThisCue ? next : allowedCurrent || next;
+      setAutoRollHud(
+        hudTarget
+          ? `${runningThisCue && next ? 'next ' : ''}${cueLabel(hudTarget.item)} at ${hudTarget.startLabel}`
+          : 'waiting for a Start time'
+      );
+
+      if (currentUserRole !== 'OPERATOR' || !user) return;
+      if (!allowedCurrent) return;
+      if (runningThisCue) return;
+
+      const loadedId = activeItemId != null ? Number(activeItemId) : null;
+      if (loadedId != null) {
+        const currentIdx = slots.findIndex((s) => s.item.id === allowedCurrent.item.id);
+        const loadedIdx = slots.findIndex((s) => Number(s.item.id) === loadedId);
+        if (loadedIdx > currentIdx) return;
+      }
+
+      const key = `${event.id}:${allowedCurrent.item.id}:${allowedCurrent.startHHMM}`;
+      if (autoRollStartedKeyRef.current === key || autoRollInFlightRef.current) return;
+
+      autoRollInFlightRef.current = true;
+      autoRollStartedKeyRef.current = key;
+      void (async () => {
+        try {
+          console.log('🎬 Auto Roll load+start for cue', allowedCurrent.item.id, 'at', allowedCurrent.startHHMM);
+          await loadCueRef.current(allowedCurrent.item.id);
+          await toggleTimerRef.current(allowedCurrent.item.id, { ignoreOtherRunning: true });
+        } catch (err) {
+          console.error('❌ Auto Roll start failed:', err);
+          if (autoRollStartedKeyRef.current === key) autoRollStartedKeyRef.current = null;
+        } finally {
+          autoRollInFlightRef.current = false;
+        }
+      })();
+    };
+
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+    // calculateStartTime* close over overtime/start times; listed deps keep the tick current.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    autoRollArmed,
+    schedule,
+    indentedCues,
+    masterStartTime,
+    dayStartTimes,
+    overtimeMinutes,
+    showStartOvertime,
+    startCueId,
+    showMode,
+    eventTimezone,
+    clockOffset,
+    currentUserRole,
+    event?.id,
+    event?.date,
+    event?.numberOfDays,
+    selectedDay,
+    user,
+    activeTimers,
+    activeItemId,
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    hybridTimerData?.activeTimer?.timer_state,
+  ]);
+
+  const toggleAutoRoll = async () => {
+    if (!event?.id || !user) return;
+    if (currentUserRole !== 'OPERATOR') {
+      alert('Only Operators can turn Auto Roll on or off.');
+      return;
+    }
+    if (autoRollBusy) return;
+    const turningOn = !autoRollArmed;
+    setAutoRollBusy(true);
+    const payload: AutoRollArmed | null = turningOn
+      ? {
+          armed: true,
+          armedAt: new Date().toISOString(),
+          armedBy: user.id,
+          armedByName: user.full_name || user.email || 'Operator',
+        }
+      : null;
+    setAutoRollArmed(payload);
+    autoRollArmedRef.current = payload;
+    autoRollStartedKeyRef.current = null;
+    autoRollInFlightRef.current = false;
+    try {
+      const ok = await DatabaseService.saveShowModeWithBaseline(event.id, turningOn
+        ? { autoRoll: payload }
+        : { clearAutoRoll: true });
+      if (!ok) {
+        console.warn('Auto Roll saved locally; server persist failed.');
+      }
+    } catch (err) {
+      console.warn('Auto Roll persist failed:', err);
+    } finally {
+      setAutoRollBusy(false);
+    }
+  };
 
   // Reset draft fields when opening the VO/BGM modal
   useEffect(() => {
@@ -9892,6 +10077,7 @@ const RunOfShowPage: React.FC = () => {
             setTrackWasDurations(s.trackWasDurations);
             setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
             setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
+            setAutoRollArmed(parseAutoRoll(s.autoRoll));
           } catch (e) {
             console.warn('Initial sync: could not refetch show mode', e);
           }
@@ -9963,6 +10149,7 @@ const RunOfShowPage: React.FC = () => {
         rehearsalBaseline?: any;
         lockedStartTimes?: Record<string, string> | null;
         preshowShowDay?: unknown;
+        autoRoll?: unknown;
       }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
@@ -9984,6 +10171,9 @@ const RunOfShowPage: React.FC = () => {
           }
           if (data.preshowShowDay !== undefined) {
             setPreshowShowDayArmed(parsePreshowShowDay(data.preshowShowDay));
+          }
+          if (data.autoRoll !== undefined) {
+            setAutoRollArmed(parseAutoRoll(data.autoRoll));
           }
         }
       },
@@ -11527,7 +11717,7 @@ const RunOfShowPage: React.FC = () => {
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
-  const toggleTimer = async (itemId: number) => {
+  const toggleTimer = async (itemId: number, options?: { ignoreOtherRunning?: boolean }) => {
     if (!user || !event?.id) return;
 
     if (activeTimers[itemId]) {
@@ -11800,7 +11990,7 @@ const RunOfShowPage: React.FC = () => {
       // Timer stopped - no broadcast needed, real-time sync will handle it
     } else {
       // Don't allow starting a new timer if any timer is already running
-      if (Object.keys(activeTimers).length > 0) {
+      if (!options?.ignoreOtherRunning && Object.keys(activeTimers).length > 0) {
         return; // Exit early if any timer is running
       }
 
@@ -15143,8 +15333,29 @@ const RunOfShowPage: React.FC = () => {
                         {showOperatorActionsSubmenu && (
                           <div
                             ref={operatorActionsFlyoutRef}
-                            className="absolute top-0 z-[60] w-52 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
+                            className="absolute top-0 z-[60] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
                           >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void toggleAutoRoll();
+                              }}
+                              disabled={autoRollBusy}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole !== 'OPERATOR'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Keep this Run of Show tab open. At each cue's Start time, Auto Roll loads and starts that timer and stops the previous one."
+                            >
+                              <span className="w-4 text-center font-black">{autoRollArmed ? '☑' : '☐'}</span>
+                              <span className="flex-1">Auto Roll</span>
+                              {autoRollArmed ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
@@ -15748,6 +15959,19 @@ const RunOfShowPage: React.FC = () => {
             {/* Countdown Timer and Action Buttons - Top Right */}
             <div className="flex items-center gap-6">
               <div className="text-center">
+                {autoRollArmed ? (
+                  <div
+                    className="mb-1 inline-flex max-w-[20rem] items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/80 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-200"
+                    title="Auto Roll is on. This Run of Show tab loads and starts each cue at its Start time. Turn it off in Operator Actions."
+                  >
+                    Auto Roll
+                    {autoRollHud ? (
+                      <span className="truncate font-semibold normal-case tracking-normal text-emerald-100">
+                        · {autoRollHud}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {hybridActiveTimer ? (
                   <div className="flex flex-col items-center gap-0.5">
                   <div className="flex flex-col items-center gap-0.5">
