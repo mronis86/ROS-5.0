@@ -184,12 +184,16 @@ const durLabel = (item: ScheduleItem) => {
 };
 
 const clock = (sec: number) => {
-  if (!Number.isFinite(sec)) return '00:00:00';
+  if (!Number.isFinite(sec)) return '00:00';
   const n = sec < 0;
   const a = Math.abs(Math.floor(sec));
-  return `${n ? '-' : ''}${String(Math.floor(a / 3600)).padStart(2, '0')}:${String(
-    Math.floor((a % 3600) / 60)
-  ).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+  const h = Math.floor(a / 3600);
+  const m = Math.floor((a % 3600) / 60);
+  const s = a % 60;
+  if (h === 0) {
+    return `${n ? '-' : ''}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${n ? '-' : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
 const otLabel = (mins: number) => {

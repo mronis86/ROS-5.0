@@ -6967,7 +6967,7 @@ const RunOfShowPage: React.FC = () => {
     // Handle NaN, undefined, or invalid values
     if (isNaN(seconds) || seconds === undefined || seconds === null) {
       console.warn('⚠️ formatTime received invalid value:', seconds);
-      return '00:00:00';
+      return '00:00';
     }
     
     const isNegative = seconds < 0;
@@ -6976,6 +6976,9 @@ const RunOfShowPage: React.FC = () => {
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
     const sign = isNegative ? '-' : '';
+    if (hours === 0) {
+      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
     return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 

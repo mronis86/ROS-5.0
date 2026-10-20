@@ -1590,12 +1590,15 @@ const GreenRoomPage: React.FC = () => {
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
     const sign = isNegative ? '-' : '';
+    if (hours === 0) {
+      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
     return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   // Calculate remaining time from active timer (shows negative for overtime)
   const getRemainingTime = () => {
-    if (!activeItemId || !timerProgress[activeItemId]) return '00:00:00';
+    if (!activeItemId || !timerProgress[activeItemId]) return '00:00';
     
     const progress = timerProgress[activeItemId];
     
@@ -1605,7 +1608,7 @@ const GreenRoomPage: React.FC = () => {
     }
     
     // If timer is not running, show 00:00
-    if (timerState !== 'running') return '00:00:00';
+    if (timerState !== 'running') return '00:00';
 
     const remaining = progress.total - progress.elapsed; // Allow negative values
     

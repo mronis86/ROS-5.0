@@ -83,12 +83,15 @@ function formatCue(item: ScheduleItem): string {
 }
 
 function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return '00:00:00';
+  if (!Number.isFinite(seconds)) return '00:00';
   const isNegative = seconds < 0;
   const abs = Math.abs(Math.floor(seconds));
   const h = Math.floor(abs / 3600);
   const m = Math.floor((abs % 3600) / 60);
   const s = abs % 60;
+  if (h === 0) {
+    return `${isNegative ? '-' : ''}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
   return `${isNegative ? '-' : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 

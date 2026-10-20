@@ -210,6 +210,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     const minutes = Math.floor((abs % 3600) / 60);
     const seconds = abs % 60;
     const prefix = remaining < 0 ? '-' : '';
+    if (hours === 0) {
+      return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
     return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
@@ -615,6 +618,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
     const sign = isNegative ? '-' : '';
+    if (hours === 0) {
+      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
     return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -1005,13 +1011,16 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               } else if ((messageEnabled && message) || (supabaseMessage && supabaseMessage.enabled)) {
                 return 'text-3xl md:text-4xl';
               }
-              return 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+              const hours = Math.floor(Math.abs(remaining) / 3600);
+              return hours === 0
+                ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
             })()}`}
             style={{ lineHeight: '1' }}
           >
             {(() => {
               const currentSecondaryTimer = displaySecondaryTimer;
-              if (!currentSecondaryTimer) return '00:00:00';
+              if (!currentSecondaryTimer) return '00:00';
               
               // Use secondaryTimerUpdate to trigger re-calculation every second
               const _ = secondaryTimerUpdate;
@@ -1160,7 +1169,13 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           {/* Countdown Timer - Centered */}
           <div className="text-center">
             <div 
-              className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} text-[12rem] md:text-[13.5rem] lg:text-[18rem]`}
+              className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
+                const remaining = getRemainingTime();
+                const hours = Math.floor(Math.abs(remaining) / 3600);
+                return hours === 0
+                  ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                  : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+              })()}`}
               style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
             >
               {formatTime(getRemainingTime())}

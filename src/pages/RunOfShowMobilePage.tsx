@@ -259,15 +259,18 @@ function formatCountdown(totalSeconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }
 
-/** Desktop-style timer text: HH:MM:SS and supports negative overtime. */
+/** Desktop-style timer text: MM:SS, or HH:MM:SS when hours are on the clock. */
 function formatLiveClock(seconds: number): string {
-  if (!Number.isFinite(seconds)) return '00:00:00';
+  if (!Number.isFinite(seconds)) return '00:00';
   const isNegative = seconds < 0;
   const absSeconds = Math.abs(Math.floor(seconds));
   const h = Math.floor(absSeconds / 3600);
   const m = Math.floor((absSeconds % 3600) / 60);
   const s = absSeconds % 60;
   const sign = isNegative ? '-' : '';
+  if (h === 0) {
+    return `${sign}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
   return `${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 

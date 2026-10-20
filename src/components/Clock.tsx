@@ -879,6 +879,9 @@ const Clock: React.FC<ClockProps> = ({
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
     const sign = isNegative ? '-' : '';
+    if (hours === 0) {
+      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
     return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -1407,10 +1410,16 @@ const Clock: React.FC<ClockProps> = ({
             const minutes = Math.floor((absRemaining % 3600) / 60);
             const seconds = absRemaining % 60;
             const prefix = remaining < 0 ? '-' : '';
+            if (hours === 0) {
+              return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
             return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
           };
 
-          const largeTimeClass = 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+          const hours = Math.floor(Math.abs(remainingSeconds) / 3600);
+          const largeTimeClass = hours === 0
+            ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+            : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
 
           // Large (no message): same flex shell + progress-bar spacer as main timer → same Y axis
           if (!hasMessage) {
@@ -1622,7 +1631,12 @@ const Clock: React.FC<ClockProps> = ({
               ) : null}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} text-[12rem] md:text-[13.5rem] lg:text-[18rem]`}
+                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
+                    const hours = Math.floor(Math.abs(elapsedForDisplay) / 3600);
+                    return hours === 0
+                      ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                      : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+                  })()}`}
                   style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
                 >
                   {formatTime(elapsedForDisplay)}
@@ -1659,7 +1673,13 @@ const Clock: React.FC<ClockProps> = ({
               {/* Countdown Timer - Centered */}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} text-[12rem] md:text-[13.5rem] lg:text-[18rem]`}
+                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
+                    const remaining = getRemainingTime();
+                    const hours = Math.floor(Math.abs(remaining) / 3600);
+                    return hours === 0
+                      ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                      : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+                  })()}`}
                   style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
                 >
                   {formatTime(getRemainingTime())}
