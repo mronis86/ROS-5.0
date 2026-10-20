@@ -1108,7 +1108,7 @@ const PhotoViewPage: React.FC = () => {
   // Helper function to format time for sub-cue timers
   const formatSubCueTime = (seconds: number) => {
     if (isNaN(seconds) || seconds === undefined || seconds === null) {
-      return '00:00';
+      return '00:00:00';
     }
     
     const isNegative = seconds < 0;
@@ -1118,11 +1118,7 @@ const PhotoViewPage: React.FC = () => {
     const secs = absSeconds % 60;
     
     const sign = isNegative ? '-' : '';
-    if (hours > 0) {
-      return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    } else {
-      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
+    return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
 

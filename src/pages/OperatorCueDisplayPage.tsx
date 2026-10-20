@@ -1108,7 +1108,14 @@ const OperatorCueDisplayPage: React.FC = () => {
           <div className="min-w-0">
             <div className="text-2xl font-bold truncate">{event?.name || 'Event'}</div>
             <div className="text-sm text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
-              <span>{now.toLocaleTimeString()}</span>
+              <span>
+                {now.toLocaleTimeString('en-US', {
+                  hour12: true,
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+              </span>
               {days > 1 && (
                 <select
                   value={day}
