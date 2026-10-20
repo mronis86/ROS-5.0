@@ -100,6 +100,8 @@ import StartTimeColumnCell from '../components/StartTimeColumnCell';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  isKilledScheduleItem,
+  itemCountsTowardStartTime,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import {
@@ -6294,7 +6296,7 @@ const RunOfShowPage: React.FC = () => {
     
     schedule.forEach(item => {
       // Only count non-indented items (main items, not sub-items) for the selected day
-      if (!indentedCues[item.id] && (item.day || 1) === selectedDay) {
+      if (!indentedCues[item.id] && (item.day || 1) === selectedDay && !isKilledScheduleItem(item)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     });
@@ -13032,7 +13034,7 @@ const RunOfShowPage: React.FC = () => {
     for (let i = 0; i < index; i++) {
       const item = schedule[i];
       // Only count items from the same day and non-indented items
-      if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedCues)) {
+      if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedCues)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     }
@@ -13192,7 +13194,7 @@ const RunOfShowPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && !isIndentedScheduleItem(item, indentedCues)) {
+      if (itemDay === currentItemDay && itemCountsTowardStartTime(item, indentedCues)) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
@@ -13246,7 +13248,7 @@ const RunOfShowPage: React.FC = () => {
         const prevItemDay = prevItem.day || 1;
         
         // Only count overtime from the same day and non-indented items
-        if (prevItemDay === currentItemDay && !isIndentedScheduleItem(prevItem, indentedCues)) {
+        if (prevItemDay === currentItemDay && itemCountsTowardStartTime(prevItem, indentedCues)) {
           totalOvertime += overtimeMinutes[prevItem.id] || 0;
         }
       }

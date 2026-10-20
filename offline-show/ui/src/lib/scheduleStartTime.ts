@@ -4,6 +4,7 @@ import { resolveTimedMarkerDisplayTime } from './timedMarker';
 export interface ScheduleStartItem {
   id: number;
   day?: number;
+  programType?: string;
   isIndented?: boolean;
   /** Timed marker under a parent: start time only, no duration. */
   isTimedMarker?: boolean;
@@ -29,6 +30,20 @@ export function isIndentedScheduleItem(
   if (item.isIndented) return true;
   if (typeof indentedLookup === 'function') return indentedLookup(item.id);
   return Boolean(indentedLookup[item.id]);
+}
+
+export function isKilledScheduleItem(item?: { programType?: string } | null): boolean {
+  return String(item?.programType || '').trim().toUpperCase() === 'KILLED';
+}
+
+export function itemCountsTowardStartTime(
+  item: ScheduleStartItem | undefined,
+  indentedLookup: IndentedCueLookup
+): boolean {
+  if (!item) return false;
+  if (isKilledScheduleItem(item)) return false;
+  if (isIndentedScheduleItem(item, indentedLookup)) return false;
+  return true;
 }
 
 /** Index of the parent (non-indented) row for an indented item, or -1. */
@@ -121,7 +136,7 @@ export function calculateScheduleStartTime(
     let totalSeconds = 0;
     for (let i = 0; i < idx; i++) {
       const item = schedule[i];
-      if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedLookup)) {
+      if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedLookup)) {
         totalSeconds +=
           (Number(item.durationHours) || 0) * 3600 +
           (Number(item.durationMinutes) || 0) * 60 +

@@ -25,7 +25,7 @@ import {
   type GuestVisibleColumns,
 } from '../../lib/guestColumnPrefs';
 import { parseCustomColumnOrderKey } from '../../lib/rosColumnOrder';
-import { findParentScheduleIndex, isIndentedScheduleItem } from '../../lib/scheduleStartTime';
+import { findParentScheduleIndex, isIndentedScheduleItem, itemCountsTowardStartTime } from '../../lib/scheduleStartTime';
 
 export type GuestCustomColumn = { id: string; name: string };
 
@@ -150,7 +150,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
         let totalSeconds = 0;
         for (let i = 0; i < idx; i++) {
           const item = schedule[i];
-          if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedLookup)) {
+          if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedLookup)) {
             totalSeconds +=
               (Number(item.durationHours) || 0) * 3600 +
               (Number(item.durationMinutes) || 0) * 60 +

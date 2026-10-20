@@ -7,6 +7,8 @@ import { socketClient } from '../services/socket-client';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  isKilledScheduleItem,
+  itemCountsTowardStartTime,
 } from '../lib/scheduleStartTime';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
@@ -503,7 +505,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       let secs = 0;
       for (let i = 0; i < index; i++) {
         const it = full[i];
-        if ((it.day || 1) === d && !isIndentedScheduleItem(it, indented)) {
+        if ((it.day || 1) === d && itemCountsTowardStartTime(it, indented)) {
           secs += (it.durationHours || 0) * 3600 + (it.durationMinutes || 0) * 60 + (it.durationSeconds || 0);
         }
       }
@@ -523,7 +525,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       let total = 0;
       for (let i = from; i < index; i++) {
         const it = full[i];
-        if ((it.day || 1) === (item.day || 1) && !isIndentedScheduleItem(it, indented)) {
+        if ((it.day || 1) === (item.day || 1) && itemCountsTowardStartTime(it, indented)) {
           total += otMap[it.id] || 0;
         }
       }
@@ -1368,13 +1370,25 @@ const OperatorCueDisplayPage: React.FC = () => {
                 nextRows.map((item, i) => {
                   const zebra = i % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
                   const recRow = itemNeedsRecording(item);
+                  const killed = isKilledScheduleItem(item);
                   return (
                     <div
                       key={item.id}
                       className={`grid gap-2 px-3 text-sm items-center border-b border-slate-800 ${zebra} ${
                         spacious ? 'py-3' : 'py-2.5'
-                      } ${recRow ? 'border-l-2 border-l-red-500/80' : ''}`}
-                      style={{ gridTemplateColumns: nextGrid }}
+                      } ${recRow ? 'border-l-2 border-l-red-500/80' : ''} ${
+                        killed ? 'text-slate-400 opacity-75' : ''
+                      }`}
+                      style={{
+                        gridTemplateColumns: nextGrid,
+                        ...(killed
+                          ? {
+                              textDecoration: 'line-through',
+                              textDecorationThickness: '3px',
+                              textDecorationColor: '#DC2626',
+                            }
+                          : {}),
+                      }}
                     >
                       {nextCols.map((c) => (
                         <div key={c.id} className="min-w-0 flex items-center">

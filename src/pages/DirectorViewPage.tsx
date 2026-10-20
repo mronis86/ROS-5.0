@@ -21,7 +21,7 @@ import TeleprompterClockOverlay, {
 } from '../components/TeleprompterClockOverlay';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
-import { GUEST_VISIBLE_COLUMNS, ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
+import { cueFieldValue, GUEST_VISIBLE_COLUMNS, ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import {
   GUEST_COLUMN_LABELS,
   GUEST_COLUMN_TOGGLE_OPTIONS,
@@ -1293,7 +1293,7 @@ const DirectorViewPage: React.FC = () => {
     const align = opts?.align ?? 'left';
     const compact = !!opts?.compact;
     const emphasize = !!opts?.emphasize;
-    const cueText = liveCue?.cue ? String(liveCue.cue).trim() : '';
+    const cueText = cueFieldValue(liveCue?.cue);
     const programType = liveCue?.programType ? String(liveCue.programType).trim() : '';
     const badgeColor = programType ? ROS_PROGRAM_TYPE_COLORS[programType] || '#64748B' : '#64748B';
     const hex = badgeColor.replace('#', '');

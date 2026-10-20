@@ -51,6 +51,7 @@ interface ScheduleItem {
   id: number;
   segmentName: string;
   speakersText: string;
+  programType?: string;
   customFields?: Record<string, unknown>;
 }
 
@@ -567,6 +568,7 @@ const LedLayoutsPage: React.FC = () => {
                   const layout = layouts[item.id] ?? DEFAULT_LED_LAYOUT;
                   const rowNumber = index + 1;
                   const cueDisplay = formatCueDisplay(readCueField(item));
+                  const killed = String(item.programType || '').trim().toUpperCase() === 'KILLED';
                   return (
                     <button
                       key={item.id}
@@ -577,7 +579,17 @@ const LedLayoutsPage: React.FC = () => {
                       }}
                       className={`w-full text-left px-4 py-3 hover:bg-slate-700/60 transition-colors ${
                         item.id === selectedId ? 'bg-blue-900/40 border-l-4 border-blue-400' : ''
-                      }`}
+                      } ${killed ? 'text-slate-400' : ''}`}
+                      style={
+                        killed
+                          ? {
+                              textDecoration: 'line-through',
+                              textDecorationThickness: '3px',
+                              textDecorationColor: '#DC2626',
+                              opacity: 0.75,
+                            }
+                          : undefined
+                      }
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span
@@ -606,7 +618,19 @@ const LedLayoutsPage: React.FC = () => {
             {selectedItem ? (
               <>
                 <div className="lg:col-span-4 space-y-4 max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
-                  <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                  <div
+                    className="bg-slate-800 rounded-xl border border-slate-700 p-4"
+                    style={
+                      String(selectedItem.programType || '').trim().toUpperCase() === 'KILLED'
+                        ? {
+                            textDecoration: 'line-through',
+                            textDecorationThickness: '3px',
+                            textDecorationColor: '#DC2626',
+                            opacity: 0.8,
+                          }
+                        : undefined
+                    }
+                  >
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 mb-1">
                       <span
                         className={`text-base font-bold ${

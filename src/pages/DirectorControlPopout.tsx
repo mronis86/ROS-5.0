@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService } from '../services/database';
 import { apiClient } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
-import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
+import { formatCueDisplay, ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import { isIndentedScheduleItem } from '../lib/scheduleStartTime';
 
@@ -49,6 +49,10 @@ function formatRemaining(total: number, elapsed: number): string {
 function cueOf(item: Row): string {
   const cue = item.customFields?.cue;
   return cue == null ? '' : String(cue).trim();
+}
+
+function cueLabel(item: Row | null | undefined): string {
+  return item ? formatCueDisplay(cueOf(item)) : '';
 }
 
 function pickActiveTimer(raw: any): any | null {
@@ -306,7 +310,7 @@ const DirectorControlPopout: React.FC = () => {
         itemSeconds(next),
         new Date(Date.now() + clockOffset),
         undefined,
-        cueOf(next) || undefined
+        cueLabel(next) || undefined
       );
       if (ok) lastRunningId.current = rowId(next);
       else {
@@ -386,7 +390,7 @@ const DirectorControlPopout: React.FC = () => {
             {current ? (remaining.overtime ? 'Overtime' : 'On now') : 'Standby'}
           </div>
           <div className="mt-1 flex items-center gap-1.5">
-            <span className="font-mono text-xs text-slate-400">{current && cueOf(current) ? `CUE ${cueOf(current)}` : ''}</span>
+            <span className="font-mono text-xs text-slate-400">{cueLabel(current)}</span>
             <ProgramBadge type={current?.programType} />
           </div>
           <div className="mt-1 truncate text-lg font-semibold">{current?.segmentName || 'Nothing is running'}</div>
@@ -401,7 +405,7 @@ const DirectorControlPopout: React.FC = () => {
         {next ? (
           <>
             <div className="mt-1 flex items-center gap-1.5">
-              <span className="font-mono text-xs text-slate-400">{cueOf(next) ? `CUE ${cueOf(next)}` : 'No cue'}</span>
+              <span className="font-mono text-xs text-slate-400">{cueLabel(next) || 'No cue'}</span>
               <ProgramBadge type={next.programType} />
               <span className="font-mono text-xs text-slate-500">{formatDuration(itemSeconds(next))}</span>
             </div>

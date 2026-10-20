@@ -866,6 +866,7 @@ const MicManagerPage: React.FC = () => {
             const slots = speakersForSlots(item.speakersText);
             const canEdit = viewMode === 'plan';
 
+            const killed = item.programType === 'KILLED';
             return (
               <div
                 key={item.id}
@@ -874,7 +875,16 @@ const MicManagerPage: React.FC = () => {
                   compactView ? 'mb-1.5' : 'mb-3'
                 } last:mb-0 rounded-sm transition-opacity duration-150 ${
                   rowDimmed ? 'opacity-30 pointer-events-none' : ''
-                }`}
+                } ${killed ? 'opacity-75' : ''}`}
+                style={
+                  killed
+                    ? {
+                        textDecoration: 'line-through',
+                        textDecorationThickness: '3px',
+                        textDecorationColor: '#DC2626',
+                      }
+                    : undefined
+                }
               >
                 <div
                   className={`grid gap-0 ${highlight.bg}`}

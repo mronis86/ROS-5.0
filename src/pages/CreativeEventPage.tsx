@@ -374,10 +374,12 @@ const CreativeEventPage: React.FC = () => {
           minute: '2-digit',
           hour12: true,
         });
-        totalSeconds +=
-          (Number(item.durationHours) || 0) * 3600 +
-          (Number(item.durationMinutes) || 0) * 60 +
-          (Number(item.durationSeconds) || 0);
+        if (String(item.programType || '').trim().toUpperCase() !== 'KILLED') {
+          totalSeconds +=
+            (Number(item.durationHours) || 0) * 3600 +
+            (Number(item.durationMinutes) || 0) * 60 +
+            (Number(item.durationSeconds) || 0);
+        }
       } else {
         // Indented cues share parent start — leave blank unless previously set
       }

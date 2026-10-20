@@ -16,6 +16,8 @@ import { apiAuthFetch } from '../lib/sessionAuth';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  isKilledScheduleItem,
+  itemCountsTowardStartTime,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
@@ -441,7 +443,7 @@ const GreenRoomPage: React.FC = () => {
       
       const itemItemDay = item.day || 1;
       // Only count items from the same day and non-indented items
-      if (itemItemDay === itemDay && !isIndentedScheduleItem(item, currentIndentedCues)) {
+      if (itemItemDay === itemDay && itemCountsTowardStartTime(item, currentIndentedCues)) {
         const durationHours = item.durationHours || 0;
         const durationMinutes = item.durationMinutes || 0;
         const itemMinutes = (durationHours * 60) + durationMinutes;
@@ -524,7 +526,7 @@ const GreenRoomPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && !isIndentedScheduleItem(item, currentIndentedCues)) {
+      if (itemDay === currentItemDay && itemCountsTowardStartTime(item, currentIndentedCues)) {
         const itemOvertime = currentOvertimeMinutes[item.id] || 0;
         totalOvertimeMinutes += itemOvertime;
         // Removed verbose logging to prevent console spam
@@ -2003,6 +2005,7 @@ const GreenRoomPage: React.FC = () => {
               const programType = String(item.programType || '').trim();
               const programFill = programTypeSurfaceStyle(programType, ROS_PROGRAM_TYPE_COLORS, '#6B7280');
               const programTextDark = programType === 'Sub Cue' || programType === 'KILLED';
+              const killed = isKilledScheduleItem(item);
               
               return (
             <div
@@ -2018,11 +2021,19 @@ const GreenRoomPage: React.FC = () => {
                     ? 'bg-slate-800 border border-slate-600 text-slate-100'
                     : 'bg-gray-300 text-gray-700'
               }`}
-              style={
-                !isRunning && !isLoaded && programType
+              style={{
+                ...(!isRunning && !isLoaded && programType
                   ? { borderLeft: `4px solid ${programFill.backgroundColor}` }
-                  : undefined
-              }
+                  : {}),
+                ...(killed
+                  ? {
+                      textDecoration: 'line-through',
+                      textDecorationThickness: '3px',
+                      textDecorationColor: '#DC2626',
+                      opacity: 0.75,
+                    }
+                  : {}),
+              }}
             >
               <div className="flex items-start justify-between gap-3 mb-2">
                 <div className="font-bold text-xl uppercase min-w-0 flex-1 leading-snug">

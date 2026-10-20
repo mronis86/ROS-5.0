@@ -194,16 +194,18 @@ export function estimateRowHeightRem(
   return `${Math.min(maxHeight, 40)}rem`;
 }
 
-export function formatCueDisplay(cue?: string): string {
-  if (!cue) return '';
-  const trimmed = cue.trim();
-  if (/^cue\s/i.test(trimmed)) return trimmed;
-  return `CUE ${trimmed}`;
+/** Strip one or more leading "CUE" prefixes so "CUE CUE 16" and "CUE16" become "16". */
+export function cueFieldValue(cue?: string | number | null): string {
+  return String(cue ?? '')
+    .trim()
+    .replace(/^(cue[\s._-]*)+/i, '')
+    .trim();
 }
 
-export function cueFieldValue(cue?: string): string {
-  if (!cue) return '';
-  return cue.replace(/^CUE\s*/i, '').trim();
+/** Always one "CUE" + the number/body. */
+export function formatCueDisplay(cue?: string | number | null): string {
+  const body = cueFieldValue(cue);
+  return body ? `CUE ${body}` : '';
 }
 
 /** Map guest API rows into the shape ScheduleRow expects. */

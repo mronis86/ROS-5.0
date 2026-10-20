@@ -63,7 +63,7 @@ const ScheduleXMLPage: React.FC = () => {
       let totalSeconds = 0;
       for (let i = 0; i < itemIndex; i++) {
         const item = scheduleItems[i];
-        if (!item.isIndented) {
+        if (!item.isIndented && String(item.programType || '').trim().toUpperCase() !== 'KILLED') {
           totalSeconds += (item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds);
         }
       }

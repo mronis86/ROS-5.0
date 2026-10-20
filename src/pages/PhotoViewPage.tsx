@@ -10,6 +10,7 @@ import { socketClient } from '../services/socket-client';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  itemCountsTowardStartTime,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import {
@@ -237,7 +238,7 @@ const PhotoViewPage: React.FC = () => {
     for (let i = 0; i < index; i++) {
       const item = schedule[i];
       // Only count items from the same day and non-indented items
-      if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedCues)) {
+      if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedCues)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     }
@@ -301,7 +302,7 @@ const PhotoViewPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && !isIndentedScheduleItem(item, indentedCues)) {
+      if (itemDay === currentItemDay && itemCountsTowardStartTime(item, indentedCues)) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
