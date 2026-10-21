@@ -1543,13 +1543,6 @@ const RunOfShowPage: React.FC = () => {
     if (!Number.isFinite(id) || !Number.isFinite(ms) || started.getUTCFullYear() >= 2090) return;
     setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
   }, []);
-  useEffect(() => {
-    Object.entries(timerProgress).forEach(([id, row]) => {
-      if (row?.startedAt) {
-        noteCueActualStart({ item_id: id, started_at: row.startedAt });
-      }
-    });
-  }, [timerProgress, noteCueActualStart]);
   /** Re-evaluates the live Start projection while a cue runs over / between cues. */
   const [liveProjectionTick, setLiveProjectionTick] = useState(0);
   useEffect(() => {
@@ -1658,6 +1651,13 @@ const RunOfShowPage: React.FC = () => {
   const [activeJumpMenu, setActiveJumpMenu] = useState<number | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [timerProgress, setTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
+  useEffect(() => {
+    Object.entries(timerProgress).forEach(([id, row]) => {
+      if (row?.startedAt) {
+        noteCueActualStart({ item_id: id, started_at: row.startedAt });
+      }
+    });
+  }, [timerProgress, noteCueActualStart]);
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   
