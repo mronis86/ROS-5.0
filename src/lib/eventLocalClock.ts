@@ -60,6 +60,12 @@ function getZonedParts(date: Date, timeZone: string): ZonedParts {
   };
 }
 
+/** Seconds since midnight for epoch `ms` on the event wall clock. */
+export function eventLocalSecondsOfDay(ms: number, timeZone?: string | null): number {
+  const z = getZonedParts(new Date(ms), resolveShowTimezone(timeZone));
+  return z.hour * 3600 + z.minute * 60 + z.second;
+}
+
 /** "HH:MM" (24h) for `date` in `timeZone`. Never silently uses the browser zone when a tz was requested. */
 export function getEventLocalHHMM(date: Date, timeZone?: string | null): string {
   const tz = resolveShowTimezone(typeof timeZone === 'string' ? timeZone.trim() : null);

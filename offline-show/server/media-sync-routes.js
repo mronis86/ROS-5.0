@@ -564,7 +564,7 @@ function registerMediaSyncRoutes(app, db, helpers) {
       if (Number.isFinite(startedAtMs)) {
         const actualSeconds = Math.floor((Date.now() - startedAtMs) / 1000);
         const scheduledSeconds = Number(timerBeforeStop.duration_seconds) || 0;
-        const overtimeMinutes = Math.floor((actualSeconds - scheduledSeconds) / 60);
+        const overtimeMinutes = Math.round((actualSeconds - scheduledSeconds) / 60);
         if (Math.abs(overtimeMinutes) >= 1) {
           const numericItemId = Number(timerBeforeStop.item_id);
           const overtimeItemId = Number.isFinite(numericItemId)

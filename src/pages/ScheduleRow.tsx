@@ -78,6 +78,8 @@ export interface ScheduleRowProps {
   showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
   /** Frozen Start time from Enter In-Show — WAS under Start stays on this. */
   lockedStartTime?: string | null;
+  /** In-Show: when this cue actually started running — "ran" under Start. */
+  actualStartLabel?: string | null;
   /** Uploaded platform files for this cue (not stored in the assets text field). */
   platformFileCount?: number;
   isRowDimmed?: boolean;
@@ -154,6 +156,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   originalDuration,
   showWasUnderDuration = false,
   lockedStartTime = null,
+  actualStartLabel = null,
   platformFileCount = 0,
   isRowDimmed = false,
   rowLock = null,
@@ -359,6 +362,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           showStartOvertime={showStartOvertime}
           cumulativeOvertime={cumulativeOvertime}
           lockedStartTime={lockedStartTime}
+          actualStartLabel={actualStartLabel}
           calculateStartTime={calculateStartTime}
           calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
           isTimedMarker={item.isTimedMarker === true}
@@ -1634,6 +1638,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
 
   // Cumulative overtime change could affect the badge display
   if (prevProps.cumulativeOvertime !== nextProps.cumulativeOvertime) return false;
+  if ((prevProps.lockedStartTime ?? null) !== (nextProps.lockedStartTime ?? null)) return false;
+  if ((prevProps.actualStartLabel ?? null) !== (nextProps.actualStartLabel ?? null)) return false;
   if (prevProps.isRowDimmed !== nextProps.isRowDimmed) return false;
   if ((prevProps.rowLock?.userId ?? null) !== (nextProps.rowLock?.userId ?? null)) return false;
   if ((prevProps.rowLock?.userName ?? '') !== (nextProps.rowLock?.userName ?? '')) return false;

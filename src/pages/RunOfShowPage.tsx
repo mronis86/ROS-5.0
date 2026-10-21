@@ -78,7 +78,9 @@ import {
   normalizeCalloutTimeToHHMM,
   resolveShowTimezone,
   wallClockStartUtcMs,
+  eventLocalSecondsOfDay,
 } from '../lib/eventLocalClock';
+import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
@@ -1529,6 +1531,25 @@ const RunOfShowPage: React.FC = () => {
   const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
   const lockedStartTimesRef = useRef(lockedStartTimes);
   useEffect(() => { lockedStartTimesRef.current = lockedStartTimes; }, [lockedStartTimes]);
+  /** When each cue actually started running (item id → epoch ms) — "ran" under Start. */
+  const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
+  const noteCueActualStart = useCallback((timer: any) => {
+    if (!timer) return;
+    const running =
+      timer.timer_state === 'running' || (timer.is_running === true && timer.is_active !== false);
+    if (!running) return;
+    const id = normalizeScheduleItemId(timer.item_id);
+    const ms = new Date(timer.started_at).getTime();
+    if (id == null || !Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+    setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
+  }, []);
+  /** Re-evaluates the live Start projection while a cue runs over / between cues. */
+  const [liveProjectionTick, setLiveProjectionTick] = useState(0);
+  useEffect(() => {
+    if (showMode !== 'in-show') return;
+    const t = window.setInterval(() => setLiveProjectionTick((n) => n + 1), 15000);
+    return () => window.clearInterval(t);
+  }, [showMode]);
   const originalDurationsSetForEventRef = useRef<string | null>(null);
   useEffect(() => { originalDurationsSetForEventRef.current = null; }, [event?.id]);
   // Reset duration "was" capture when leaving in-show or unchecking track.
@@ -3584,7 +3605,7 @@ const RunOfShowPage: React.FC = () => {
         skipItemId: topPreshow?.id ?? null,
         resolveStart: (_item, index) => {
           const startLabel = useOvertime
-            ? calculateStartTimeWithOvertime(index)
+            ? calculatePlannedStartTimeWithOvertime(index)
             : calculateStartTime(index);
           const startHHMM = normalizeCalloutTimeToHHMM(startLabel);
           if (!startHHMM) return null;
@@ -7882,6 +7903,7 @@ const RunOfShowPage: React.FC = () => {
       }
     });
     
+    setCueActualStarts({});
     // Clear completed cues from database
     if (event?.id) {
       try {
@@ -9124,6 +9146,7 @@ const RunOfShowPage: React.FC = () => {
         const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
         setOvertimeMinutes(overtimeData);
         console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
+        setCueActualStarts(await DatabaseService.getCueActualStarts(event.id));
         
         // SECOND: Load show start overtime from separate table (if it exists)
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
@@ -9644,6 +9667,7 @@ const RunOfShowPage: React.FC = () => {
         setCompletedCues({});
         setOvertimeMinutes({}); // Clear overtime data
         setShowStartOvertime(0); // Clear show start overtime (FIXED!)
+        setCueActualStarts({});
         setActiveItemId(null);
         setStoppedItems(new Set());
         setLoadedCueDependents(new Set());
@@ -9693,6 +9717,7 @@ const RunOfShowPage: React.FC = () => {
             console.log('✅ RunOfShow: Timer cleared from timerUpdated:', numericItemId);
             return;
           }
+          noteCueActualStart(data);
           // Hybrid state (row colors / load-run-stop): skip elapsed-only ticks.
           // Countdown uses timerProgress below so it stays live.
           setHybridTimerData(prev => {
@@ -9957,6 +9982,7 @@ const RunOfShowPage: React.FC = () => {
             setActiveTimers({});
             console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
           } else if (timerData.is_active === true) {
+            noteCueActualStart(timerData);
             setHybridTimerData(prev => {
               const currentHybridTimer = prev?.activeTimer;
               const incomingId = normalizeScheduleItemId(timerData.item_id);
@@ -10112,6 +10138,7 @@ const RunOfShowPage: React.FC = () => {
             const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
             setOvertimeMinutes(overtimeData);
             console.log('✅ Initial sync: Overtime minutes reloaded on page return:', overtimeData);
+            setCueActualStarts(await DatabaseService.getCueActualStarts(event.id));
             
             // Load START cue overtime from separate table (same as initial load)
             const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
@@ -11828,7 +11855,7 @@ const RunOfShowPage: React.FC = () => {
       if (currentProgress && currentProgress.elapsed > 0) {
         const scheduledDuration = (currentProgress.total || 0) / 60; // Convert to minutes
         const actualDuration = (currentProgress.elapsed || 0) / 60; // Convert to minutes
-        const overtimeMinutes = Math.floor(actualDuration - scheduledDuration);
+        const overtimeMinutes = Math.round(actualDuration - scheduledDuration);
         
         // Only calculate overtime if there's a meaningful difference (at least 1 minute)
         if (Math.abs(overtimeMinutes) >= 1 && showModeRef.current === 'in-show') {
@@ -13193,8 +13220,88 @@ const RunOfShowPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * In-Show: rows after the live cue follow the real clock (actual start of the running cue,
+   * or now when nothing is running) instead of only the saved per-cue overtime.
+   */
+  const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
+    if (showMode !== 'in-show') return null;
+    const active = hybridTimerData?.activeTimer;
+    const activeRunning =
+      !!active && (active.timer_state === 'running' || (active.is_running === true && active.is_active !== false));
+    const runningId = activeRunning ? normalizeScheduleItemId(active.item_id) : null;
+    const runningStartMs =
+      runningId != null ? cueActualStarts[runningId] ?? new Date(active.started_at).getTime() : NaN;
+    const anchor = computeLiveStartAnchor({
+      schedule,
+      countsTowardStart: (row) => itemCountsTowardStartTime(row as ScheduleItem, indentedCues),
+      plannedStartSec: (index) => parseClockToSeconds(calculateStartTime(index)),
+      running:
+        runningId != null && Number.isFinite(runningStartMs)
+          ? {
+              itemId: runningId,
+              startedAtMs: runningStartMs,
+              durationSec: Number(active.duration_seconds) || 0,
+            }
+          : null,
+      actualStarts: cueActualStarts,
+      nowMs: getSyncedNow(clockOffset).getTime(),
+      timeZone: resolveShowTimezone(calendarTimezoneRef.current, eventTimezone),
+    });
+    if (!anchor) return null;
+    // Rows above ★ (pre-show loops) never push the show
+    const startCueIndex = startCueId ? schedule.findIndex((s) => s.id === startCueId) : -1;
+    if (
+      startCueIndex >= 0 &&
+      anchor.anchorIndex < startCueIndex &&
+      (schedule[startCueIndex].day || 1) === anchor.day
+    ) {
+      return null;
+    }
+    return anchor;
+  }, [
+    showMode,
+    hybridTimerData?.activeTimer,
+    cueActualStarts,
+    schedule,
+    indentedCues,
+    dayStartTimes,
+    masterStartTime,
+    startCueId,
+    clockOffset,
+    eventTimezone,
+    // Re-reads the clock while a cue runs over or the show sits between cues
+    liveProjectionTick,
+  ]);
+
+  /** "ran h:mm" labels on the event clock, In-Show only. */
+  const cueActualStartLabels = useMemo(() => {
+    const out: Record<number, string> = {};
+    if (showMode !== 'in-show') return out;
+    const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+    for (const [id, ms] of Object.entries(cueActualStarts)) {
+      out[Number(id)] = formatScheduleClock(eventLocalSecondsOfDay(ms, tz), startTimeDisplayMode);
+    }
+    return out;
+  }, [showMode, cueActualStarts, eventTimezone, startTimeDisplayMode]);
+
+  /** Planned Start for a row with the live anchor applied, or null when the anchor does not reach it. */
+  const liveAnchoredStartMinutes = (index: number): number | null => {
+    if (!liveStartAnchor) return null;
+    const row = schedule[index];
+    if (!row || index <= liveStartAnchor.anchorIndex || (row.day || 1) !== liveStartAnchor.day) return null;
+    return liveStartAnchor.offsetMinutes;
+  };
+
   // Calculate start time with automatic overtime adjustments
-  const calculateStartTimeWithOvertime = (index: number): string => {
+  const calculateStartTimeWithOvertime = (index: number): string =>
+    startTimeWithOvertime(index, true);
+
+  /** Saved-overtime cascade only — Auto Roll fires on these, not on live projection. */
+  const calculatePlannedStartTimeWithOvertime = (index: number): string =>
+    startTimeWithOvertime(index, false);
+
+  const startTimeWithOvertime = (index: number, useLive: boolean): string => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
 
@@ -13204,7 +13311,7 @@ const RunOfShowPage: React.FC = () => {
       const parentStart =
         parentIndex >= 0 &&
         normalizeMarkerTimeMode(currentItem.markerTimeMode) !== 'absolute'
-          ? calculateStartTimeWithOvertime(parentIndex)
+          ? startTimeWithOvertime(parentIndex, useLive)
           : parentIndex >= 0
             ? calculateStartTime(parentIndex)
             : '';
@@ -13214,12 +13321,19 @@ const RunOfShowPage: React.FC = () => {
     if (isIndentedScheduleItem(currentItem, indentedCues)) {
       const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
       if (parentIndex < 0) return '';
-      return calculateStartTimeWithOvertime(parentIndex);
+      return startTimeWithOvertime(parentIndex, useLive);
     }
 
     // Get the base start time
     const baseStartTime = calculateStartTime(index);
     if (!baseStartTime) return '';
+
+    const liveOffset = useLive ? liveAnchoredStartMinutes(index) : null;
+    if (liveOffset != null) {
+      const baseSec = parseClockToSeconds(baseStartTime);
+      if (baseSec == null) return baseStartTime;
+      return formatScheduleClock(baseSec + liveOffset * 60, startTimeDisplayMode);
+    }
     
     // Calculate total overtime from previous cues, but ignore rows ABOVE the STAR
     let totalOvertimeMinutes = 0;
@@ -13281,6 +13395,14 @@ const RunOfShowPage: React.FC = () => {
       }
       
       const currentItemDay = item.day || 1;
+      if (
+        liveStartAnchor &&
+        index > liveStartAnchor.anchorIndex &&
+        currentItemDay === liveStartAnchor.day
+      ) {
+        overtimeMap.set(item.id, liveStartAnchor.offsetMinutes);
+        return;
+      }
       const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
       
       // Only count overtime from START cue onwards (ignore rows above STAR)
@@ -13312,7 +13434,7 @@ const RunOfShowPage: React.FC = () => {
     });
 
     return overtimeMap;
-  }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime]);
+  }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime, liveStartAnchor]);
 
   // Get available days based on event duration
   const getAvailableDays = () => {
@@ -17782,6 +17904,7 @@ const RunOfShowPage: React.FC = () => {
                           showStartOvertime={showStartOvertime}
                           cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
                           lockedStartTime={lockedStartTimes[item.id] || null}
+                        actualStartLabel={cueActualStartLabels[item.id] || null}
                           calculateStartTime={calculateStartTime}
                           calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                           isTimedMarker={item.isTimedMarker === true}
@@ -18189,6 +18312,7 @@ const RunOfShowPage: React.FC = () => {
                         originalDuration={originalDurations[item.id]}
                         showWasUnderDuration={showMode === 'in-show' && trackWasDurations}
                         lockedStartTime={lockedStartTimes[item.id] || null}
+                        actualStartLabel={cueActualStartLabels[item.id] || null}
                         platformFileCount={platformFileCountByItem.get(item.id) || 0}
                         customColumns={customColumns}
                         visibleCustomColumns={visibleCustomColumns}

@@ -39,10 +39,50 @@ function registerRoutes(app, db, helpers) {
   const broadcastUpdateRaw = helpers.broadcastUpdate;
   const broadcastCloudMode = helpers.broadcastCloudMode;
 
+  /** Last recorded running started_at per `${eventId}:${itemId}` — skips duplicate writes on ticks. */
+  const cueActualStartCache = new Map();
+
+  /** Remember when a cue actually ran (web, Companion, OSC, media sync). */
+  function recordCueActualStart(eventId, row) {
+    try {
+      if (!eventId || !row) return;
+      const running =
+        row.timer_state === 'running' || (row.is_running === true && row.is_active !== false);
+      if (!running) return;
+      const itemId = parseInt(row.item_id, 10);
+      if (!Number.isFinite(itemId)) return;
+      const ms = new Date(row.started_at).getTime();
+      if (!Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+      const key = `${eventId}:${itemId}`;
+      if (cueActualStartCache.get(key) === ms) return;
+      cueActualStartCache.set(key, ms);
+      db.prepare(`
+        INSERT INTO cue_actual_starts (event_id, item_id, started_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(event_id, item_id) DO UPDATE SET started_at = excluded.started_at, updated_at = excluded.updated_at
+      `).run(String(eventId), String(itemId), new Date(ms).toISOString(), nowIso());
+    } catch (err) {
+      console.warn('⚠️ cue_actual_starts write skipped:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  function clearCueActualStarts(eventId) {
+    const prefix = `${eventId}:`;
+    for (const key of cueActualStartCache.keys()) {
+      if (key.startsWith(prefix)) cueActualStartCache.delete(key);
+    }
+    try {
+      db.prepare('DELETE FROM cue_actual_starts WHERE event_id = ?').run(String(eventId));
+    } catch {
+      // table may not exist in older DBs
+    }
+  }
+
   // Inject Resolume/Mitti armed/synced meta onto timer socket payloads (LAN)
   function broadcastUpdate(eventId, updateType, data) {
     let payload = data;
     if (updateType === 'timerUpdated' && data) {
+      recordCueActualStart(eventId, data);
       payload = applyMediaSyncMeta(eventId, data, { isSubCue: false });
     } else if (updateType === 'subCueTimerStarted' && data) {
       payload = applyMediaSyncMeta(eventId, data, { isSubCue: true });
@@ -638,6 +678,7 @@ function registerRoutes(app, db, helpers) {
     } catch {
       // table may not exist in older DBs
     }
+    clearCueActualStarts(event_id);
     broadcastUpdate(event_id, 'resetAllStates', { event_id });
     broadcastUpdate(event_id, 'timersStopped', { event_id, count: 1 });
     res.json({ success: true, event_id });
@@ -688,6 +729,7 @@ function registerRoutes(app, db, helpers) {
   app.delete('/api/completed-cues/:eventId', (req, res) => {
     const { eventId } = req.params;
     const r = db.prepare('DELETE FROM completed_cues WHERE event_id = ?').run(eventId);
+    clearCueActualStarts(eventId);
     broadcastUpdate(eventId, 'completedCuesUpdated', { cleared: true, count: r.changes });
     res.status(204).send();
   });
@@ -700,6 +742,18 @@ function registerRoutes(app, db, helpers) {
     );
     broadcastUpdate(event_id, 'completedCuesUpdated', { removed: true, item_id });
     res.status(204).send();
+  });
+
+  // ─── Cue actual starts ("ran h:mm" + live Start projection) ────────────────
+  app.get('/api/cue-actual-starts/:eventId', (req, res) => {
+    try {
+      const rows = db
+        .prepare('SELECT item_id, started_at FROM cue_actual_starts WHERE event_id = ?')
+        .all(req.params.eventId);
+      res.json(rows);
+    } catch {
+      res.json([]);
+    }
   });
 
   // ─── Overtime ───────────────────────────────────────────────────────────────

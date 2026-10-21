@@ -137,10 +137,11 @@ test('LAN Companion stop stores and broadcasts overtime', async () => {
     .prepare('SELECT overtime_minutes FROM overtime_minutes WHERE event_id = ? AND item_id = ?')
     .get('event-1', '101');
   assert.ok(overtime, 'expected overtime row for normalized Companion item ID');
-  assert.equal(overtime.overtime_minutes, 1);
+  // 120s run on a 30s cue = 90s over → nearest minute
+  assert.equal(overtime.overtime_minutes, 2);
   assert.ok(
     updates.some(
-      (update) => update.type === 'overtimeUpdate' && update.data.overtimeMinutes === 1
+      (update) => update.type === 'overtimeUpdate' && update.data.overtimeMinutes === 2
     )
   );
 });

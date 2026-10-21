@@ -117,6 +117,14 @@ function initDb() {
       PRIMARY KEY (event_id, item_id)
     );
 
+    CREATE TABLE IF NOT EXISTS cue_actual_starts (
+      event_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (event_id, item_id)
+    );
+
     CREATE TABLE IF NOT EXISTS show_start_overtime (
       event_id TEXT PRIMARY KEY,
       item_id TEXT,

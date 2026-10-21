@@ -383,7 +383,54 @@ async function ensureCalendarEventExists(eventId, eventName = 'Quick Mode') {
   return true;
 }
 
+/** Last recorded running started_at per `${eventId}:${itemId}` — skips duplicate writes on ticks. */
+const cueActualStartCache = new Map();
+
+/** Remember when a cue actually ran (any start path: web, Companion, OSC, media sync). */
+function recordCueActualStart(eventId, row) {
+  try {
+    if (!pool || !eventId || !row) return;
+    const running =
+      row.timer_state === 'running' || (row.is_running === true && row.is_active !== false);
+    if (!running) return;
+    const itemId = parseInt(row.item_id, 10);
+    if (!Number.isFinite(itemId)) return;
+    const ms = new Date(row.started_at).getTime();
+    if (!Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+    const key = `${eventId}:${itemId}`;
+    if (cueActualStartCache.get(key) === ms) return;
+    cueActualStartCache.set(key, ms);
+    pool
+      .query(
+        `INSERT INTO public.cue_actual_starts (event_id, item_id, started_at, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (event_id, item_id)
+         DO UPDATE SET started_at = EXCLUDED.started_at, updated_at = NOW()`,
+        [String(eventId), itemId, new Date(ms).toISOString()]
+      )
+      .catch((err) => {
+        cueActualStartCache.delete(key);
+        console.warn('⚠️ cue_actual_starts write skipped:', err.message || err);
+      });
+  } catch (err) {
+    console.warn('⚠️ recordCueActualStart failed:', err.message || err);
+  }
+}
+
+async function clearCueActualStarts(eventId) {
+  const prefix = `${eventId}:`;
+  for (const key of cueActualStartCache.keys()) {
+    if (key.startsWith(prefix)) cueActualStartCache.delete(key);
+  }
+  try {
+    await pool.query('DELETE FROM public.cue_actual_starts WHERE event_id = $1', [String(eventId)]);
+  } catch (err) {
+    console.warn('⚠️ cue_actual_starts clear skipped:', err.message || err);
+  }
+}
+
 function broadcastTimerUpdated(eventId, timerRow) {
+  recordCueActualStart(eventId, timerRow);
   let data = applyResolumeMeta(eventId, timerRow, { isSubCue: false });
   data = applyMittiMeta(eventId, data, { isSubCue: false });
   data = applyAvPlayoutMeta(eventId, data, { isSubCue: false });
@@ -1691,6 +1738,18 @@ async function runComplaintLineSyncTable(db) {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_complaint_line_event_created
       ON public.complaint_line_notes (event_id, created_at DESC)
+  `);
+}
+
+async function runCueActualStartsSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.cue_actual_starts (
+      event_id TEXT NOT NULL,
+      item_id INTEGER NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (event_id, item_id)
+    )
   `);
 }
 
@@ -5967,6 +6026,7 @@ app.delete('/api/completed-cues/:eventId', async (req, res) => {
       'DELETE FROM completed_cues WHERE event_id = $1 RETURNING *',
       [eventId]
     );
+    await clearCueActualStarts(eventId);
     
     console.log(`✅ Deleted ${result.rows.length} completed cues from Neon database for event: ${eventId}`);
     
@@ -7610,7 +7670,7 @@ app.put('/api/active-timers/stop', async (req, res) => {
       const stoppedAt = new Date();
       const actualSeconds = Math.floor((stoppedAt - startedAt) / 1000);
       const scheduledSeconds = timer.duration_seconds || 0;
-      const overtimeMinutes = Math.floor((actualSeconds - scheduledSeconds) / 60);
+      const overtimeMinutes = Math.round((actualSeconds - scheduledSeconds) / 60);
       
       if (Math.abs(overtimeMinutes) >= 1) {
         console.log(`⏰ Server: Overtime detected: ${overtimeMinutes} minutes for item ${item_id}`);
@@ -8463,6 +8523,21 @@ app.get('/api/overtime-minutes/:eventId', async (req, res) => {
   }
 });
 
+// When each cue actually started running (for "ran h:mm" + live Start projection)
+app.get('/api/cue-actual-starts/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const result = await pool.query(
+      'SELECT item_id, started_at FROM public.cue_actual_starts WHERE event_id = $1',
+      [String(eventId)]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('❌ Error fetching cue actual starts:', error);
+    res.status(500).json({ error: 'Failed to fetch cue actual starts', details: error.message });
+  }
+});
+
 // Delete all overtime minutes for an event (used during reset)
 app.delete('/api/overtime-minutes/:eventId', async (req, res) => {
   try {
@@ -8696,6 +8771,7 @@ app.get('/api/events/:eventId/stream', (req, res) => {
 
 // Helper function to broadcast updates via Socket.IO only (SSE disabled)
 function broadcastUpdate(eventId, updateType, data) {
+  if (updateType === 'timerUpdated') recordCueActualStart(eventId, data);
   const message = {
     type: updateType,
     eventId,
@@ -8907,7 +8983,7 @@ app.post('/api/timers/stop', async (req, res) => {
       const stoppedAt = new Date();
       const actualSeconds = Math.floor((stoppedAt - startedAt) / 1000);
       const scheduledSeconds = timer.duration_seconds || 0;
-      const overtimeMinutes = Math.floor((actualSeconds - scheduledSeconds) / 60);
+      const overtimeMinutes = Math.round((actualSeconds - scheduledSeconds) / 60);
       
       if (Math.abs(overtimeMinutes) >= 1) {
         console.log(`⏰ OSC: Overtime detected: ${overtimeMinutes} minutes for item ${item_id}`);
@@ -8982,6 +9058,7 @@ app.post('/api/timers/reset', async (req, res) => {
     } catch (e) {
       console.log('completed_cues table may not exist:', e.message);
     }
+    await clearCueActualStarts(event_id);
     
     // 3. Clear sub_cue_timers (if table exists)
     try {
@@ -11455,6 +11532,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ operator_countdowns table synced');
     } catch (err) {
       console.warn('⚠️ operator_countdowns sync skipped:', err.message || err);
+    }
+    try {
+      await runCueActualStartsSyncTable(pool);
+      console.log('✅ cue_actual_starts table synced');
+    } catch (err) {
+      console.warn('⚠️ cue_actual_starts sync skipped:', err.message || err);
     }
     try {
       await runCateringNotesSyncTable(pool);

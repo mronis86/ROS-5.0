@@ -1370,6 +1370,29 @@ export class DatabaseService {
   }
 
   // Clear all overtime minutes for an event
+  /** When each cue actually started running: item id → epoch ms. */
+  static async getCueActualStarts(eventId: string): Promise<Record<number, number>> {
+    try {
+      const response = await DatabaseService.apiFetch(`${apiBase()}/api/cue-actual-starts/${eventId}`, {
+        headers: apiJsonHeaders(),
+      });
+      if (!response.ok) return {};
+      const rows = await response.json();
+      const out: Record<number, number> = {};
+      if (Array.isArray(rows)) {
+        for (const row of rows) {
+          const id = Number(row?.item_id);
+          const ms = new Date(row?.started_at).getTime();
+          if (Number.isFinite(id) && Number.isFinite(ms)) out[id] = ms;
+        }
+      }
+      return out;
+    } catch (error) {
+      console.error('❌ Error loading cue actual starts:', error);
+      return {};
+    }
+  }
+
   static async clearOvertimeMinutes(eventId: string): Promise<boolean> {
     try {
       console.log('⏰ Clearing all overtime minutes from database via API:', { eventId });

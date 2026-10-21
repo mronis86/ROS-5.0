@@ -1,4 +1,5 @@
 import React from 'react';
+import { wallClockLabelToMinutes } from '../lib/eventLocalClock';
 
 export interface ScheduleRowProps {
   item: any;
@@ -54,6 +55,8 @@ export interface ScheduleRowProps {
   showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
   /** Frozen Start time from Enter In-Show — WAS under Start stays on this. */
   lockedStartTime?: string | null;
+  /** In-Show: when this cue actually started running — "ran" under Start. */
+  actualStartLabel?: string | null;
   isRowDimmed?: boolean;
   /** Lock held by another editor — row is read-only for everyone else. */
   rowLock?: { userId: string; userName: string } | null;
@@ -115,6 +118,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   originalDuration,
   showWasUnderDuration = false,
   lockedStartTime = null,
+  actualStartLabel = null,
   isRowDimmed = false,
   rowLock = null,
   currentUserId,
@@ -280,6 +284,17 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           wasStart &&
           displayedStart &&
           wasStart !== displayedStart;
+        const showActualStart = !isIndentedRow && showMode === 'in-show' && !!actualStartLabel;
+        const actualVsWasMinutes = (() => {
+          if (!showActualStart || !wasStart) return null;
+          const ran = wallClockLabelToMinutes(actualStartLabel!);
+          const was = wallClockLabelToMinutes(wasStart);
+          if (ran == null || was == null) return null;
+          let diff = ran - was;
+          if (diff > 720) diff -= 1440;
+          if (diff < -720) diff += 1440;
+          return diff;
+        })();
         return (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
@@ -296,6 +311,20 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             {startTimeRolled && wasStart && (
               <span className="text-xs text-slate-400">
                 was {wasStart}
+              </span>
+            )}
+            {showActualStart && (
+              <span
+                className={`text-xs font-semibold ${
+                  actualVsWasMinutes == null
+                    ? 'text-slate-300'
+                    : actualVsWasMinutes > 0
+                      ? 'text-red-400'
+                      : 'text-green-400'
+                }`}
+                title="When this cue actually started running"
+              >
+                ran {actualStartLabel}
               </span>
             )}
             {!isIndentedRow && showMode !== 'rehearsal' && (
@@ -1231,6 +1260,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
 
   // Cumulative overtime change could affect the badge display
   if (prevProps.cumulativeOvertime !== nextProps.cumulativeOvertime) return false;
+  if ((prevProps.lockedStartTime ?? null) !== (nextProps.lockedStartTime ?? null)) return false;
+  if ((prevProps.actualStartLabel ?? null) !== (nextProps.actualStartLabel ?? null)) return false;
   if (prevProps.isRowDimmed !== nextProps.isRowDimmed) return false;
   if ((prevProps.rowLock?.userId ?? null) !== (nextProps.rowLock?.userId ?? null)) return false;
   if ((prevProps.rowLock?.userName ?? '') !== (nextProps.rowLock?.userName ?? '')) return false;
