@@ -15,6 +15,36 @@ const mittiPendingByEvent = new Map();
 const avplayoutTimeSourceByEvent = new Map();
 const avplayoutPendingByEvent = new Map();
 
+function scheduleItemDurationSeconds(item) {
+  if (!item || typeof item !== 'object') return null;
+  const fromParts =
+    (Number(item.durationHours) || 0) * 3600 +
+    (Number(item.durationMinutes) || 0) * 60 +
+    (Number(item.durationSeconds) || 0);
+  if (fromParts > 0) return fromParts;
+  const fromSec = Number(item.duration_seconds);
+  if (Number.isFinite(fromSec) && fromSec > 0) return Math.floor(fromSec);
+  return fromParts === 0 ? 0 : null;
+}
+
+function resolveCueDurationSeconds(db, eventId, itemId, fallback) {
+  try {
+    const ros = db.prepare('SELECT schedule_items FROM run_of_show_data WHERE event_id = ?').get(String(eventId));
+    let items = ros?.schedule_items;
+    if (typeof items === 'string') items = JSON.parse(items || '[]');
+    if (!Array.isArray(items)) items = [];
+    const item = items.find((row) => String(row?.id) === String(itemId));
+    const fromSchedule = scheduleItemDurationSeconds(item);
+    if (fromSchedule != null && fromSchedule > 0) return fromSchedule;
+  } catch (err) {
+    console.warn('⚠️ resolveCueDurationSeconds failed:', err instanceof Error ? err.message : err);
+  }
+  if (fallback == null || fallback === '') return 300;
+  const raw = Number(fallback);
+  if (!Number.isFinite(raw)) return 300;
+  return Math.max(0, Math.floor(raw));
+}
+
 function applyResolumeMeta(eventId, timerRow, options = {}) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
   const wantsSubCue = options.isSubCue === true;
@@ -610,11 +640,7 @@ function registerMediaSyncRoutes(app, db, helpers) {
       }
       const ts = nowIso();
       const id = randomUUID();
-      const rawDuration = Number(duration_seconds);
-      const dur =
-        duration_seconds == null || !Number.isFinite(rawDuration)
-          ? 300
-          : Math.max(0, Math.floor(rawDuration));
+      const dur = resolveCueDurationSeconds(db, event_id, item_id, duration_seconds);
       db.prepare(`
         INSERT INTO active_timers (
           id, event_id, item_id, user_id, user_name, user_role, timer_state,

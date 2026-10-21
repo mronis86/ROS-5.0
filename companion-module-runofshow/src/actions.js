@@ -45,11 +45,12 @@ module.exports = function (self) {
 							self.log('warn', `Stop sub-timers before load: ${subErr.message}`)
 						}
 					}
+					if (self.fetchRunOfShow) {
+						await self.fetchRunOfShow(eventId, self.config?.day || 1)
+					}
 					const item = self.scheduleItems.find((s) => String(s.id) === String(itemId))
 					const cueIs = item?.customFields?.cue ?? `CUE ${itemId}`
-					const dur = item
-						? (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
-						: 300
+					const dur = self.itemDurationSeconds ? self.itemDurationSeconds(item) : 300
 					await self.apiPost('/api/cues/load', {
 						event_id: eventId,
 						item_id: parseInt(itemId),
@@ -173,8 +174,7 @@ module.exports = function (self) {
 						self.log('warn', 'Start Sub-Timer: Cue not found')
 						return
 					}
-					const dur = (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
-					const durationSeconds = (dur != null && dur >= 0 ? dur : 300)
+					const durationSeconds = self.itemDurationSeconds ? self.itemDurationSeconds(item) : 300
 					const rowNumber = self.scheduleItems.findIndex((s) => String(s.id) === String(itemId)) + 1
 					const cueDisplay = item.customFields?.cue ?? `CUE ${itemId}`
 					const timerId = item.timerId || `SUB${itemId}`
@@ -311,9 +311,7 @@ async function adjustTimerDuration(self, secondsDelta) {
 		}
 		const currentDur = self.activeTimer.duration_seconds ?? 300
 		const item = self.scheduleItems.find((s) => String(s.id) === String(itemId))
-		const fallbackDur = item
-			? (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
-			: 300
+		const fallbackDur = self.itemDurationSeconds ? self.itemDurationSeconds(item) : 300
 		const currentValue = Number(currentDur)
 		const fallbackValue = Number(fallbackDur)
 		const current = Number.isFinite(currentValue)

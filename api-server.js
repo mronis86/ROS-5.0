@@ -383,6 +383,39 @@ async function ensureCalendarEventExists(eventId, eventName = 'Quick Mode') {
   return true;
 }
 
+function scheduleItemDurationSeconds(item) {
+  if (!item || typeof item !== 'object') return null;
+  const fromParts =
+    (Number(item.durationHours) || 0) * 3600 +
+    (Number(item.durationMinutes) || 0) * 60 +
+    (Number(item.durationSeconds) || 0);
+  if (fromParts > 0) return fromParts;
+  const fromSec = Number(item.duration_seconds);
+  if (Number.isFinite(fromSec) && fromSec > 0) return Math.floor(fromSec);
+  return fromParts === 0 ? 0 : null;
+}
+
+async function resolveCueDurationSeconds(eventId, itemId, fallback) {
+  try {
+    const result = await pool.query(
+      'SELECT schedule_items FROM run_of_show_data WHERE event_id = $1',
+      [String(eventId)]
+    );
+    let items = result.rows[0]?.schedule_items;
+    if (typeof items === 'string') items = JSON.parse(items || '[]');
+    if (!Array.isArray(items)) items = [];
+    const item = items.find((row) => String(row?.id) === String(itemId));
+    const fromSchedule = scheduleItemDurationSeconds(item);
+    if (fromSchedule != null && fromSchedule > 0) return fromSchedule;
+  } catch (err) {
+    console.warn('⚠️ resolveCueDurationSeconds failed:', err.message || err);
+  }
+  if (fallback == null || fallback === '') return 300;
+  const raw = Number(fallback);
+  if (!Number.isFinite(raw)) return 300;
+  return Math.max(0, Math.floor(raw));
+}
+
 /** Last recorded running started_at per `${eventId}:${itemId}` — skips duplicate writes on ticks. */
 const cueActualStartCache = new Map();
 
@@ -8818,6 +8851,7 @@ app.post('/api/cues/load', async (req, res) => {
     
     console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}, Cue: ${cue_is}`);
     clearAllResolumeState(event_id);
+    const resolvedDuration = await resolveCueDurationSeconds(event_id, item_id, duration_seconds);
 
     if (preserve_running) {
       const existing = await pool.query(
@@ -8874,7 +8908,7 @@ app.post('/api/cues/load', async (req, res) => {
       'OSC User',
       'OPERATOR',
       cue_is || `CUE ${item_id}`, 
-      duration_seconds ?? 300
+      resolvedDuration
     ]);
     
     console.log(`✅ OSC: Cue loaded - Item ${item_id} written to active_timers table`);

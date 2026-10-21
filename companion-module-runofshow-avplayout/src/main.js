@@ -970,6 +970,17 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 		return this.scheduleItems
 	}
 
+	itemDurationSeconds(item) {
+		if (!item) return 300
+		const fromParts =
+			(Number(item.durationHours) || 0) * 3600 +
+			(Number(item.durationMinutes) || 0) * 60 +
+			(Number(item.durationSeconds) || 0)
+		if (fromParts > 0) return fromParts
+		const fromSec = Number(item.duration_seconds)
+		return Number.isFinite(fromSec) && fromSec > 0 ? Math.floor(fromSec) : 300
+	}
+
 	async fetchActiveTimer(eventId) {
 		try {
 			const data = await this.fetch(`/api/active-timers/${eventId}`)
@@ -1146,11 +1157,10 @@ class RunOfShowAvPlayoutInstance extends InstanceBase {
 				this.log('warn', `Stop before load: ${stopErr.message}`)
 			}
 		}
+		await this.fetchRunOfShow(eventId, this.config?.day || 1)
 		const item = this.scheduleItems.find((s) => String(s.id) === String(itemId))
 		const cueIs = item?.customFields?.cue ?? `CUE ${itemId}`
-		const dur = item
-			? (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0)
-			: 300
+		const dur = this.itemDurationSeconds(item)
 		await this.apiPost('/api/cues/load', {
 			event_id: eventId,
 			item_id: parseInt(itemId, 10),

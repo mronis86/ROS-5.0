@@ -114,6 +114,17 @@ class RunOfShowInstance extends InstanceBase {
 		return this.scheduleItems
 	}
 
+	itemDurationSeconds(item) {
+		if (!item) return 300
+		const fromParts =
+			(Number(item.durationHours) || 0) * 3600 +
+			(Number(item.durationMinutes) || 0) * 60 +
+			(Number(item.durationSeconds) || 0)
+		if (fromParts > 0) return fromParts
+		const fromSec = Number(item.duration_seconds)
+		return Number.isFinite(fromSec) && fromSec > 0 ? Math.floor(fromSec) : 300
+	}
+
 	async fetchActiveTimer(eventId) {
 		try {
 			const data = await this.fetch(`/api/active-timers/${eventId}`)

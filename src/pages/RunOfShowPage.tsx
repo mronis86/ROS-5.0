@@ -1538,9 +1538,12 @@ const RunOfShowPage: React.FC = () => {
     const running =
       timer.timer_state === 'running' || (timer.is_running === true && timer.is_active !== false);
     if (!running) return;
-    const id = normalizeScheduleItemId(timer.item_id);
-    const ms = new Date(timer.started_at).getTime();
-    if (id == null || !Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+    const id = parseInt(String(timer.item_id ?? timer.itemId ?? ''), 10);
+    const startedRaw = timer.started_at || timer.timer_started_at || timer.startedAt;
+    if (startedRaw == null || (typeof startedRaw === 'string' && startedRaw.startsWith('2099'))) return;
+    const started = startedRaw instanceof Date ? startedRaw : new Date(startedRaw);
+    const ms = started.getTime();
+    if (!Number.isFinite(id) || !Number.isFinite(ms) || started.getUTCFullYear() >= 2090) return;
     setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
   }, []);
   /** Re-evaluates the live Start projection while a cue runs over / between cues. */
@@ -4875,6 +4878,7 @@ const RunOfShowPage: React.FC = () => {
         }
         
         if (isRunningTimer && hasRealStart) {
+          noteCueActualStart(activeTimer);
           // Timer is running - set up with server timing
           console.log('🔄 Timer is running, setting up with server timing');
           const startedAt = new Date(startedAtRaw);
@@ -9158,7 +9162,8 @@ const RunOfShowPage: React.FC = () => {
         const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
         setOvertimeMinutes(overtimeData);
         console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
-        setCueActualStarts(await DatabaseService.getCueActualStarts(event.id));
+        const loadedActualStarts = await DatabaseService.getCueActualStarts(event.id);
+        setCueActualStarts((prev) => ({ ...prev, ...(loadedActualStarts || {}) }));
         
         // SECOND: Load show start overtime from separate table (if it exists)
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
@@ -9867,6 +9872,7 @@ const RunOfShowPage: React.FC = () => {
       onTimerStarted: (data: any) => {
         // Update timer state when started
         if (data && data.item_id) {
+          noteCueActualStart(data);
           setActiveTimers(prev => ({
             ...prev,
             [data.item_id]: true
@@ -10150,7 +10156,8 @@ const RunOfShowPage: React.FC = () => {
             const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
             setOvertimeMinutes(overtimeData);
             console.log('✅ Initial sync: Overtime minutes reloaded on page return:', overtimeData);
-            setCueActualStarts(await DatabaseService.getCueActualStarts(event.id));
+            const loadedActualStarts = await DatabaseService.getCueActualStarts(event.id);
+            setCueActualStarts((prev) => ({ ...prev, ...(loadedActualStarts || {}) }));
             
             // Load START cue overtime from separate table (same as initial load)
             const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
@@ -12177,6 +12184,13 @@ const RunOfShowPage: React.FC = () => {
             startedAt: now
           }
         }));
+        noteCueActualStart({
+          item_id: itemId,
+          timer_state: 'running',
+          is_running: true,
+          is_active: true,
+          started_at: now.toISOString(),
+        });
         
         // Start local timer immediately for UI updates (1 second intervals)
         const timer = setInterval(() => {
@@ -13291,11 +13305,24 @@ const RunOfShowPage: React.FC = () => {
     const out: Record<number, string> = {};
     if (showMode !== 'in-show') return out;
     const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+    const add = (id: number, ms: number) => {
+      if (!Number.isFinite(id) || !Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+      out[id] = formatScheduleClock(eventLocalSecondsOfDay(ms, tz), startTimeDisplayMode);
+    };
     for (const [id, ms] of Object.entries(cueActualStarts)) {
-      out[Number(id)] = formatScheduleClock(eventLocalSecondsOfDay(ms, tz), startTimeDisplayMode);
+      add(Number(id), ms);
+    }
+    const active = hybridTimerData?.activeTimer;
+    const activeRunning =
+      !!active && (active.timer_state === 'running' || (active.is_running === true && active.is_active !== false));
+    if (activeRunning) {
+      const liveId = parseInt(String(active.item_id ?? active.itemId ?? ''), 10);
+      const startedRaw = active.started_at || active.timer_started_at || active.startedAt;
+      const liveMs = startedRaw != null ? new Date(startedRaw).getTime() : NaN;
+      if (!out[liveId]) add(liveId, liveMs);
     }
     return out;
-  }, [showMode, cueActualStarts, eventTimezone, startTimeDisplayMode]);
+  }, [showMode, cueActualStarts, eventTimezone, startTimeDisplayMode, hybridTimerData?.activeTimer]);
 
   /** Planned Start for a row with the live anchor applied, or null when the anchor does not reach it. */
   const liveAnchoredStartMinutes = (index: number): number | null => {
@@ -17916,7 +17943,7 @@ const RunOfShowPage: React.FC = () => {
                           showStartOvertime={showStartOvertime}
                           cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
                           lockedStartTime={lockedStartTimes[item.id] || null}
-                        actualStartLabel={cueActualStartLabels[item.id] || null}
+                        actualStartLabel={cueActualStartLabels[Number(item.id)] || null}
                           calculateStartTime={calculateStartTime}
                           calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                           isTimedMarker={item.isTimedMarker === true}
@@ -18324,7 +18351,7 @@ const RunOfShowPage: React.FC = () => {
                         originalDuration={originalDurations[item.id]}
                         showWasUnderDuration={showMode === 'in-show' && trackWasDurations}
                         lockedStartTime={lockedStartTimes[item.id] || null}
-                        actualStartLabel={cueActualStartLabels[item.id] || null}
+                        actualStartLabel={cueActualStartLabels[Number(item.id)] || null}
                         platformFileCount={platformFileCountByItem.get(item.id) || 0}
                         customColumns={customColumns}
                         visibleCustomColumns={visibleCustomColumns}
