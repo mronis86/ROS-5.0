@@ -39,6 +39,7 @@ import {
   wallClockLabelToMinutes,
 } from '../lib/eventLocalClock';
 import {
+  formatOffsetMinutes,
   resolveStartTimeStatus,
   startTimeKindClass,
   startTimeKindTagClass,
@@ -581,16 +582,23 @@ const OperatorCueDisplayPage: React.FC = () => {
     liveProjectionTick,
   ]);
 
+  const labelFromStartMs = useCallback(
+    (ms: number) => {
+      if (!Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return '';
+      const sec = eventLocalSecondsOfDay(ms, resolveShowTimezone(eventTimezone));
+      return as12(Math.floor(sec / 3600), Math.floor((sec % 3600) / 60));
+    },
+    [eventTimezone]
+  );
+
   const cueActualStartLabels = useMemo(() => {
     const out: Record<number, string> = {};
-    if (showMode !== 'in-show') return out;
-    const tz = resolveShowTimezone(eventTimezone);
     for (const [id, ms] of Object.entries(cueActualStarts)) {
-      const sec = eventLocalSecondsOfDay(ms, tz);
-      out[Number(id)] = as12(Math.floor(sec / 3600), Math.floor((sec % 3600) / 60));
+      const label = labelFromStartMs(ms);
+      if (label) out[Number(id)] = label;
     }
     return out;
-  }, [showMode, cueActualStarts, eventTimezone]);
+  }, [cueActualStarts, labelFromStartMs]);
 
   const shiftClock = (base: string, minutes: number) => {
     const mins = wallClockLabelToMinutes(base);
@@ -724,7 +732,8 @@ const OperatorCueDisplayPage: React.FC = () => {
         event?.timezone ||
         'America/New_York';
       setEventTimezone(tz);
-      setCueActualStarts(await DatabaseService.getCueActualStarts(id));
+      const actualStarts = await DatabaseService.getCueActualStarts(id);
+      setCueActualStarts((prev) => ({ ...prev, ...(actualStarts || {}) }));
       setError('');
     } catch (e) {
       console.error(e);
@@ -757,7 +766,8 @@ const OperatorCueDisplayPage: React.FC = () => {
       const running =
         t.timer_state === 'running' || (t.is_running === true && t.is_active !== false);
       const id = Number(t.item_id);
-      const ms = new Date(t.started_at).getTime();
+      const startedRaw = t.started_at || t.timer_started_at || t.startedAt;
+      const ms = startedRaw != null ? new Date(startedRaw).getTime() : NaN;
       if (running && Number.isFinite(id) && Number.isFinite(ms) && new Date(ms).getUTCFullYear() < 2090) {
         setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
       }
@@ -892,10 +902,22 @@ const OperatorCueDisplayPage: React.FC = () => {
   const otNow = curIdx >= 0 ? cumOt(schedule, curIdx) : 0;
   const rowOt = current ? otMap[current.id] || 0 : 0;
   const isStart = !!(current && startCueId != null && current.id === startCueId);
+  const running =
+    !!(timer?.timer_state === 'running' || (timer?.is_running && timer?.is_active));
+  const startMode: 'rehearsal' | 'in-show' =
+    showMode === 'in-show' || running ? 'in-show' : showMode;
+  const currentActualLabel = (() => {
+    if (!current) return '';
+    const stored = cueActualStartLabels[Number(current.id)];
+    if (stored) return stored;
+    if (!running || Number(current.id) !== activeId) return '';
+    const startedRaw = timer?.started_at || timer?.timer_started_at || timer?.startedAt;
+    const ms = startedRaw != null ? new Date(startedRaw).getTime() : NaN;
+    return labelFromStartMs(ms);
+  })();
 
   const remaining = progress.total - progress.elapsed;
   const pct = progress.total > 0 ? Math.max(0, Math.min(100, (remaining / progress.total) * 100)) : 0;
-  const running = !!(timer?.timer_state === 'running' || (timer?.is_running && timer?.is_active));
   const loaded = !!timer && !running;
   const usePreshowRainbowColors = usePreshowRainbow(event?.id, {
     timer,
@@ -1024,19 +1046,16 @@ const OperatorCueDisplayPage: React.FC = () => {
     if (show('start')) {
       const startStatus = resolveStartTimeStatus({
         isIndented: !!(current && isIndentedScheduleItem(current, indented)),
-        showMode,
+        showMode: startMode,
         projectedLabel: startNow,
         wasLabel: startWas,
-        actualLabel: current ? cueActualStartLabels[current.id] : null,
+        actualLabel: currentActualLabel || null,
       });
-      const otBadge = isStart
-        ? showStartOt > 0
-          ? `${otLabel(showStartOt)} late`
-          : showStartOt < 0
-            ? `${otLabel(showStartOt)} early`
-            : null
-        : otNow !== 0
-          ? otLabel(otNow)
+      const badgeMinutes =
+        startStatus.clockVsWasMinutes ?? (isStart ? showStartOt : otNow);
+      const otBadge =
+        badgeMinutes != null && badgeMinutes !== 0
+          ? formatOffsetMinutes(badgeMinutes, isStart)
           : null;
       cells.push({
         id: 'start',
@@ -1057,7 +1076,7 @@ const OperatorCueDisplayPage: React.FC = () => {
             {otBadge && (
               <div
                 className={`mt-0.5 inline-block px-1.5 py-0.5 rounded text-xs font-bold ${
-                  (isStart ? showStartOt : otNow) > 0
+                  (badgeMinutes ?? 0) > 0
                     ? 'bg-red-900/40 text-red-300'
                     : 'bg-emerald-900/40 text-emerald-300'
                 }`}
@@ -1096,7 +1115,8 @@ const OperatorCueDisplayPage: React.FC = () => {
     show,
     startNow,
     startWas,
-    showMode,
+    startMode,
+    currentActualLabel,
     cueActualStartLabels,
     indented,
     otNow,
@@ -1192,11 +1212,12 @@ const OperatorCueDisplayPage: React.FC = () => {
         lockedStartTimes[item.id]?.trim() || (idx >= 0 ? baseStart(schedule, idx) : '');
       const startStatus = resolveStartTimeStatus({
         isIndented: isIndentedScheduleItem(item, indented),
-        showMode,
+        showMode: startMode,
         projectedLabel: st,
         wasLabel: was,
-        actualLabel: cueActualStartLabels[item.id],
+        actualLabel: cueActualStartLabels[Number(item.id)],
       });
+      const drift = startStatus.clockVsWasMinutes ?? ot;
       return (
         <span className="truncate leading-tight inline-flex flex-col">
           <span className={startTimeKindClass(startStatus.timeKind, startStatus.ranVsWasMinutes)}>
@@ -1206,8 +1227,10 @@ const OperatorCueDisplayPage: React.FC = () => {
               </span>
             ) : null}
             <span className="text-slate-200">{startStatus.clockLabel || '—'}</span>
-            {ot !== 0 && (
-              <span className={`ml-1 ${ot > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{otLabel(ot)}</span>
+            {drift !== 0 && (
+              <span className={`ml-1 ${drift > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                {formatOffsetMinutes(drift)}
+              </span>
             )}
           </span>
           {startStatus.showWas && (

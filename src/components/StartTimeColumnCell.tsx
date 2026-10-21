@@ -1,5 +1,5 @@
 import React from 'react';
-import { wallClockLabelToMinutes } from '../lib/eventLocalClock';
+import { formatOffsetMinutes, minutesBetweenClockLabels } from '../lib/startTimeStatus';
 
 export type StartTimeColumnCellProps = {
   itemId: number;
@@ -74,22 +74,22 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
     wasStart !== clockLabel;
   /** Upcoming adjusted Start is an estimate; once the cue starts we swap est → ran. */
   const timeKind: 'est' | 'ran' | null = hasRan ? 'ran' : startTimeRolled ? 'est' : null;
-  const actualVsWasMinutes = (() => {
-    if (!hasRan || !wasStart) return null;
-    const ran = wallClockLabelToMinutes(actualStartLabel!);
-    const was = wallClockLabelToMinutes(wasStart);
-    if (ran == null || was == null) return null;
-    let diff = ran - was;
-    if (diff > 720) diff -= 1440;
-    if (diff < -720) diff += 1440;
-    return diff;
-  })();
   const primaryLabel = clockLabel;
+  const clockVsWasMinutes = minutesBetweenClockLabels(primaryLabel, wasStart);
+  const actualVsWasMinutes = hasRan ? clockVsWasMinutes : null;
+  const badgeMinutes =
+    clockVsWasMinutes != null
+      ? clockVsWasMinutes
+      : itemId === startCueId
+        ? showStartOvertime || 0
+        : cumulativeOvertime;
 
   const showOtBadge =
     !isIndented &&
     showMode !== 'rehearsal' &&
-    (overtimeMinutes[itemId] ||
+    badgeMinutes !== 0 &&
+    (clockVsWasMinutes != null ||
+      overtimeMinutes[itemId] ||
       (itemId === startCueId && showStartOvertime !== 0) ||
       (calculateStartTime &&
         calculateStartTimeWithOvertime &&
@@ -150,49 +150,12 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
         )}
         {showOtBadge && (
           <span
-            className={`text-sm font-bold px-2 py-1 rounded text-center leading-tight ${(() => {
-              if (itemId === startCueId) {
-                return showStartOvertime > 0
-                  ? 'text-red-400 bg-red-900/30'
-                  : 'text-green-400 bg-green-900/30';
-              }
-              return cumulativeOvertime > 0
-                ? 'text-red-400 bg-red-900/30'
-                : 'text-green-400 bg-green-900/30';
-            })()}`}
-            title="Time adjusted due to overtime"
+            className={`text-sm font-bold px-2 py-1 rounded text-center leading-tight ${
+              badgeMinutes > 0 ? 'text-red-400 bg-red-900/30' : 'text-green-400 bg-green-900/30'
+            }`}
+            title="Difference from the locked Start time"
           >
-            {(() => {
-              if (itemId === startCueId) {
-                const showStartOT = showStartOvertime || 0;
-                if (showStartOT > 0) {
-                  const hours = Math.floor(showStartOT / 60);
-                  const minutes = showStartOT % 60;
-                  const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                  return `+${timeDisplay} late`;
-                }
-                if (showStartOT < 0) {
-                  const hours = Math.floor(Math.abs(showStartOT) / 60);
-                  const minutes = Math.abs(showStartOT) % 60;
-                  const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                  return `-${timeDisplay} early`;
-                }
-                return 'On time';
-              }
-              if (cumulativeOvertime > 0) {
-                const hours = Math.floor(cumulativeOvertime / 60);
-                const minutes = cumulativeOvertime % 60;
-                const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                return `+${timeDisplay}`;
-              }
-              if (cumulativeOvertime < 0) {
-                const hours = Math.floor(Math.abs(cumulativeOvertime) / 60);
-                const minutes = Math.abs(cumulativeOvertime) % 60;
-                const timeDisplay = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-                return `-${timeDisplay}`;
-              }
-              return '0m';
-            })()}
+            {formatOffsetMinutes(badgeMinutes, itemId === startCueId)}
           </span>
         )}
       </div>

@@ -8,7 +8,29 @@ export type StartTimeStatus = {
   wasLabel: string;
   showWas: boolean;
   ranVsWasMinutes: number | null;
+  /** Displayed clock (ran or est) minus was — what the team reads on the badge. */
+  clockVsWasMinutes: number | null;
 };
+
+export function minutesBetweenClockLabels(a?: string | null, b?: string | null): number | null {
+  const left = wallClockLabelToMinutes(String(a || '').trim());
+  const right = wallClockLabelToMinutes(String(b || '').trim());
+  if (left == null || right == null) return null;
+  let diff = left - right;
+  if (diff > 720) diff -= 1440;
+  if (diff < -720) diff += 1440;
+  return diff;
+}
+
+export function formatOffsetMinutes(minutes: number, lateEarly = false): string {
+  const abs = Math.abs(minutes);
+  const hours = Math.floor(abs / 60);
+  const mins = abs % 60;
+  const timeDisplay = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+  if (minutes > 0) return lateEarly ? `+${timeDisplay} late` : `+${timeDisplay}`;
+  if (minutes < 0) return lateEarly ? `-${timeDisplay} early` : `-${timeDisplay}`;
+  return lateEarly ? 'On time' : '0m';
+}
 
 /** Same est / ran / was rules as the ROS Start column. */
 export function resolveStartTimeStatus(opts: {
@@ -30,18 +52,9 @@ export function resolveStartTimeStatus(opts: {
     !!clockLabel &&
     wasLabel !== clockLabel;
   const timeKind: StartTimeKind = hasRan ? 'ran' : showWas ? 'est' : null;
-  let ranVsWasMinutes: number | null = null;
-  if (hasRan && wasLabel) {
-    const ran = wallClockLabelToMinutes(actual);
-    const was = wallClockLabelToMinutes(wasLabel);
-    if (ran != null && was != null) {
-      let diff = ran - was;
-      if (diff > 720) diff -= 1440;
-      if (diff < -720) diff += 1440;
-      ranVsWasMinutes = diff;
-    }
-  }
-  return { clockLabel, timeKind, wasLabel, showWas, ranVsWasMinutes };
+  const clockVsWasMinutes = minutesBetweenClockLabels(clockLabel, wasLabel);
+  const ranVsWasMinutes = hasRan ? clockVsWasMinutes : null;
+  return { clockLabel, timeKind, wasLabel, showWas, ranVsWasMinutes, clockVsWasMinutes };
 }
 
 export function startTimeKindClass(kind: StartTimeKind, ranVsWasMinutes?: number | null): string {
