@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
@@ -29,6 +29,18 @@ import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import { formatCueNumber, formatTimerCueStatus, resolveScheduleCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
+import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  eventLocalSecondsOfDay,
+  getSyncedNow,
+  resolveShowTimezone,
+  wallClockLabelToMinutes,
+} from '../lib/eventLocalClock';
+import {
+  resolveStartTimeStatus,
+  startTimeKindClass,
+  startTimeKindTagClass,
+} from '../lib/startTimeStatus';
 
 interface ScheduleItem {
   id: number;
@@ -462,6 +474,99 @@ const PhotoViewPage: React.FC = () => {
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   /** Frozen Enter In-Show starts for WAS under Start. */
   const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
+  const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
+  const [liveProjectionTick, setLiveProjectionTick] = useState(0);
+
+  useEffect(() => {
+    if (showMode !== 'in-show') return;
+    const t = window.setInterval(() => setLiveProjectionTick((n) => n + 1), 15000);
+    return () => window.clearInterval(t);
+  }, [showMode]);
+
+  const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
+    if (showMode !== 'in-show') return null;
+    const active = hybridTimerData?.activeTimer;
+    const activeRunning =
+      !!active && (active.timer_state === 'running' || (active.is_running === true && active.is_active !== false));
+    const runningId = activeRunning ? Number(active.item_id) : NaN;
+    const runningStartMs = Number.isFinite(runningId)
+      ? cueActualStarts[runningId] ?? new Date(active.started_at).getTime()
+      : NaN;
+    const anchor = computeLiveStartAnchor({
+      schedule,
+      countsTowardStart: (row) => itemCountsTowardStartTime(row as ScheduleItem, indentedCues),
+      plannedStartSec: (index) => {
+        const mins = wallClockLabelToMinutes(String(calculateStartTime(index) || ''));
+        return mins == null ? null : mins * 60;
+      },
+      running:
+        Number.isFinite(runningId) && Number.isFinite(runningStartMs)
+          ? {
+              itemId: runningId,
+              startedAtMs: runningStartMs,
+              durationSec: Number(active.duration_seconds) || 0,
+            }
+          : null,
+      actualStarts: cueActualStarts,
+      nowMs: getSyncedNow(clockOffset).getTime(),
+      timeZone: resolveShowTimezone(eventTimezone),
+    });
+    if (!anchor) return null;
+    const startCueIndex = startCueId ? schedule.findIndex((s) => s.id === startCueId) : -1;
+    if (
+      startCueIndex >= 0 &&
+      anchor.anchorIndex < startCueIndex &&
+      (schedule[startCueIndex].day || 1) === anchor.day
+    ) {
+      return null;
+    }
+    return anchor;
+  }, [
+    showMode,
+    hybridTimerData?.activeTimer,
+    cueActualStarts,
+    schedule,
+    indentedCues,
+    startCueId,
+    clockOffset,
+    eventTimezone,
+    masterStartTime,
+    dayStartTimes,
+    liveProjectionTick,
+  ]);
+
+  const cueActualStartLabels = useMemo(() => {
+    const out: Record<number, string> = {};
+    if (showMode !== 'in-show') return out;
+    const tz = resolveShowTimezone(eventTimezone);
+    for (const [id, ms] of Object.entries(cueActualStarts)) {
+      const sec = eventLocalSecondsOfDay(ms, tz);
+      const date = new Date();
+      date.setHours(Math.floor(sec / 3600), Math.floor((sec % 3600) / 60), 0, 0);
+      out[Number(id)] = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    }
+    return out;
+  }, [showMode, cueActualStarts, eventTimezone]);
+
+  const displayStartWithOvertime = (index: number) => {
+    const item = schedule[index];
+    if (
+      item &&
+      liveStartAnchor &&
+      index > liveStartAnchor.anchorIndex &&
+      (item.day || 1) === liveStartAnchor.day
+    ) {
+      const base = calculateStartTime(index);
+      const mins = wallClockLabelToMinutes(String(base || ''));
+      if (mins == null) return base;
+      const total = mins + liveStartAnchor.offsetMinutes;
+      const wrapped = ((total % 1440) + 1440) % 1440;
+      const date = new Date();
+      date.setHours(Math.floor(wrapped / 60), wrapped % 60, 0, 0);
+      return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    }
+    return calculateStartTimeWithOvertime(index);
+  };
 
   useEffect(() => {
     if (!event?.id) return;
@@ -505,6 +610,7 @@ const PhotoViewPage: React.FC = () => {
     setResolumeSyncPulse(false);
     setOvertimeMinutes({});
     setShowStartOvertime(0);
+    setCueActualStarts({});
     setSchedule(prev => prev.map(item => ({ ...item, isIndented: false })));
   };
 
@@ -1196,6 +1302,7 @@ const PhotoViewPage: React.FC = () => {
           }
 
           const overtimeData = await DatabaseService.getOvertimeMinutes(id);
+          setCueActualStarts(await DatabaseService.getCueActualStarts(id));
           const showStartOvertimeData = await DatabaseService.getShowStartOvertime(id);
           setOvertimeMinutes(overtimeData);
           const overtimeValue = showStartOvertimeData !== null
@@ -1388,6 +1495,15 @@ const PhotoViewPage: React.FC = () => {
         }
         // Update hybrid timer data directly from WebSocket (same pattern as RunOfShowPage)
         if (data && data.item_id) {
+          const running =
+            data.timer_state === 'running' || (data.is_running === true && data.is_active !== false);
+          const startedMs = new Date(data.started_at).getTime();
+          if (running && Number.isFinite(startedMs) && new Date(startedMs).getUTCFullYear() < 2090) {
+            const nid = parseInt(data.item_id, 10);
+            if (Number.isFinite(nid)) {
+              setCueActualStarts((prev) => (prev[nid] === startedMs ? prev : { ...prev, [nid]: startedMs }));
+            }
+          }
           setHybridTimerData(prev => {
             if (shouldKeepExistingRunningTimer(prev?.activeTimer, data)) {
               return prev;
@@ -3177,8 +3293,14 @@ const PhotoViewPage: React.FC = () => {
             const scheduledStart = calculateStartTime(itemIndex);
             const wasStart =
               lockedStartTimes[item.id]?.trim() || scheduledStart;
-            const startTime = showMode === 'rehearsal' ? scheduledStart : calculateStartTimeWithOvertime(itemIndex);
-            const startTimeRolled = showMode === 'in-show' && !indentedCues[item.id] && wasStart && startTime && String(wasStart) !== String(startTime);
+            const startTime = showMode === 'rehearsal' ? scheduledStart : displayStartWithOvertime(itemIndex);
+            const startStatus = resolveStartTimeStatus({
+              isIndented: !!indentedCues[item.id],
+              showMode,
+              projectedLabel: startTime,
+              wasLabel: wasStart,
+              actualLabel: cueActualStartLabels[item.id],
+            });
             
             // Format duration
             const duration = `${item.durationHours.toString().padStart(2, '0')}:${item.durationMinutes.toString().padStart(2, '0')}:${item.durationSeconds.toString().padStart(2, '0')}`;
@@ -3238,14 +3360,19 @@ const PhotoViewPage: React.FC = () => {
                     <div className="text-center">
                       <div className="mb-4">
                         <div className="text-gray-400 text-xs mb-1">START TIME</div>
-                        <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : 'text-white'}`}>
-                          {startTime || (indentedCues[item.id] ? '↘' : 'No Time')}
+                        <div className={`text-lg font-bold ${item.programType === 'KILLED' ? 'text-gray-400' : startTimeKindClass(startStatus.timeKind, startStatus.ranVsWasMinutes)}`}>
+                          {startStatus.timeKind ? (
+                            <span className={`mr-1.5 align-middle text-[10px] font-semibold uppercase tracking-wide ${startTimeKindTagClass(startStatus.timeKind)}`}>
+                              {startStatus.timeKind}
+                            </span>
+                          ) : null}
+                          {startStatus.clockLabel || (indentedCues[item.id] ? '↘' : 'No Time')}
                         </div>
-                        {startTimeRolled && wasStart && (
-                          <div className="text-xs text-slate-400">was {wasStart}</div>
+                        {startStatus.showWas && (
+                          <div className="text-xs text-slate-400">was {startStatus.wasLabel}</div>
                         )}
                         {/* Overtime indicator - only in in-show mode */}
-                        {showMode !== 'rehearsal' && !indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(itemIndex) !== calculateStartTimeWithOvertime(itemIndex)) && (
+                        {showMode !== 'rehearsal' && !indentedCues[item.id] && (overtimeMinutes[item.id] || (item.id === startCueId && showStartOvertime !== 0) || calculateStartTime(itemIndex) !== displayStartWithOvertime(itemIndex)) && (
                           <div className={`text-xs font-bold px-2 py-1 rounded mt-1 ${
                             (() => {
                               // For START cue: use show start overtime only for color

@@ -39,6 +39,18 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
+import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  eventLocalSecondsOfDay,
+  getSyncedNow,
+  resolveShowTimezone,
+  wallClockLabelToMinutes,
+} from '../lib/eventLocalClock';
+import {
+  resolveStartTimeStatus,
+  startTimeKindClass,
+  startTimeKindTagClass,
+} from '../lib/startTimeStatus';
 
 interface ScheduleItem {
   id: number;
@@ -64,6 +76,23 @@ interface ScheduleItem {
   startTime?: string;
   endTime?: string;
   duration?: string;
+}
+
+function parseLockedStartTimes(raw: unknown): Record<number, string> {
+  const locked: Record<number, string> = {};
+  if (!raw || typeof raw !== 'object') return locked;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const rowId = Number(k);
+    if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) locked[rowId] = v.trim();
+  }
+  return locked;
+}
+
+function formatClockFromMinutes(totalMinutes: number): string {
+  const wrapped = ((totalMinutes % 1440) + 1440) % 1440;
+  const date = new Date();
+  date.setHours(Math.floor(wrapped / 60), wrapped % 60, 0, 0);
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 const GreenRoomPage: React.FC = () => {
@@ -143,6 +172,9 @@ const GreenRoomPage: React.FC = () => {
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [syncCountdown, setSyncCountdown] = useState<number>(20);
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
+  const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
+  const [liveProjectionTick, setLiveProjectionTick] = useState(0);
 
   useEffect(() => {
     if (!event?.id) return;
@@ -358,6 +390,10 @@ const GreenRoomPage: React.FC = () => {
           ? new Date()
           : null;
 
+    if (nextState === 'running' && startedAt && !Number.isNaN(startedAt.getTime()) && startedAt.getUTCFullYear() < 2090) {
+      const ms = startedAt.getTime();
+      setCueActualStarts((prev) => (prev[itemId] === ms ? prev : { ...prev, [itemId]: ms }));
+    }
     setActiveItemId(itemId);
     setTimerState(nextState);
     setLastLoadedCueId(itemId);
@@ -579,6 +615,102 @@ const GreenRoomPage: React.FC = () => {
     return result;
   };
 
+  useEffect(() => {
+    if (showMode !== 'in-show') return;
+    const t = window.setInterval(() => setLiveProjectionTick((n) => n + 1), 15000);
+    return () => window.clearInterval(t);
+  }, [showMode]);
+
+  const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
+    if (showMode !== 'in-show') return null;
+    const running = timerState === 'running' && activeItemId != null;
+    const runningId = running ? Number(activeItemId) : NaN;
+    const runningRow = Number.isFinite(runningId) ? timerProgress[runningId] : undefined;
+    const runningStartMs = Number.isFinite(runningId)
+      ? cueActualStarts[runningId] ?? runningRow?.startedAt?.getTime() ?? NaN
+      : NaN;
+    const anchor = computeLiveStartAnchor({
+      schedule,
+      countsTowardStart: (row) => itemCountsTowardStartTime(row as ScheduleItem, indentedCues),
+      plannedStartSec: (index) => {
+        const mins = wallClockLabelToMinutes(String(calculateStartTime(index) || ''));
+        return mins == null ? null : mins * 60;
+      },
+      running:
+        Number.isFinite(runningId) && Number.isFinite(runningStartMs)
+          ? {
+              itemId: runningId,
+              startedAtMs: runningStartMs,
+              durationSec: Number(runningRow?.total) || 0,
+            }
+          : null,
+      actualStarts: cueActualStarts,
+      nowMs: getSyncedNow(clockOffset).getTime(),
+      timeZone: resolveShowTimezone(eventTimezone),
+    });
+    if (!anchor) return null;
+    const startCueIndex = startCueId != null ? schedule.findIndex((s) => s.id === startCueId) : -1;
+    if (
+      startCueIndex >= 0 &&
+      anchor.anchorIndex < startCueIndex &&
+      (schedule[startCueIndex].day || 1) === anchor.day
+    ) {
+      return null;
+    }
+    return anchor;
+  }, [
+    showMode,
+    timerState,
+    activeItemId,
+    timerProgress,
+    cueActualStarts,
+    schedule,
+    indentedCues,
+    startCueId,
+    clockOffset,
+    eventTimezone,
+    masterStartTime,
+    dayStartTimes,
+    liveProjectionTick,
+  ]);
+
+  const cueActualStartLabels = useMemo(() => {
+    const out: Record<number, string> = {};
+    if (showMode !== 'in-show') return out;
+    const tz = resolveShowTimezone(eventTimezone);
+    for (const [id, ms] of Object.entries(cueActualStarts)) {
+      const sec = eventLocalSecondsOfDay(ms, tz);
+      out[Number(id)] = formatClockFromMinutes(Math.floor(sec / 60));
+    }
+    return out;
+  }, [showMode, cueActualStarts, eventTimezone]);
+
+  const displayStartWithOvertime = (index: number) => {
+    const item = schedule[index];
+    if (
+      item &&
+      liveStartAnchor &&
+      index > liveStartAnchor.anchorIndex &&
+      (item.day || 1) === liveStartAnchor.day
+    ) {
+      const base = calculateStartTime(index);
+      const mins = wallClockLabelToMinutes(String(base || ''));
+      if (mins == null) return base;
+      return formatClockFromMinutes(mins + liveStartAnchor.offsetMinutes);
+    }
+    return calculateStartTimeWithOvertime(index);
+  };
+
+  const displayEndTime = (index: number) => {
+    for (let next = index + 1; next < schedule.length; next++) {
+      const nextItem = schedule[next];
+      if (!nextItem || isIndentedScheduleItem(nextItem, indentedCues)) continue;
+      const nextStart = showMode === 'rehearsal' ? calculateStartTime(next) : displayStartWithOvertime(next);
+      if (nextStart) return nextStart;
+    }
+    return '';
+  };
+
   // Load master start time and day start times from localStorage
   useEffect(() => {
     if (event?.id) {
@@ -648,12 +780,21 @@ const GreenRoomPage: React.FC = () => {
           
           // Reload overtime data and show mode (cache invalidated above)
           try {
-            const [overtimeData, showStartOvertimeData, indentedCuesData, showModeData] = await Promise.all([
+            const [overtimeData, showStartOvertimeData, indentedCuesData, showModeData, showSettings, actualStarts] = await Promise.all([
               DatabaseService.getOvertimeMinutes(id),
               DatabaseService.getShowStartOvertime(id),
               DatabaseService.getIndentedCues(id),
-              DatabaseService.getShowMode(id)
+              DatabaseService.getShowMode(id),
+              DatabaseService.getShowSettings(id),
+              DatabaseService.getCueActualStarts(id),
             ]);
+            setCueActualStarts(actualStarts || {});
+            const lockedFromSettings = parseLockedStartTimes(showSettings?.lockedStartTimes);
+            setLockedStartTimes(
+              Object.keys(lockedFromSettings).length > 0
+                ? lockedFromSettings
+                : parseLockedStartTimes(data.settings?.locked_start_times)
+            );
             const currentShowMode = modeFromRos || showModeData;
             setShowMode(currentShowMode);
             const overtimeDataMap = overtimeData || {};
@@ -949,6 +1090,8 @@ const GreenRoomPage: React.FC = () => {
         lastLoadedCueIdRef.current = null;
         setOvertimeMinutes({});
         setShowStartOvertime(0);
+        setCueActualStarts({});
+        setLockedStartTimes({});
         runDataSyncRef.current?.();
         setSyncCountdown(20);
       },
@@ -1082,12 +1225,21 @@ const GreenRoomPage: React.FC = () => {
       try {
         console.log('⏰ GreenRoom: Loading overtime data from dedicated endpoints...');
         apiClient.invalidateShowModeCache(currentEventId);
-        const [overtimeData, showStartOvertimeData, indentedCuesData, showModeData] = await Promise.all([
+        const [overtimeData, showStartOvertimeData, indentedCuesData, showModeData, showSettings, actualStarts] = await Promise.all([
           DatabaseService.getOvertimeMinutes(currentEventId),
           DatabaseService.getShowStartOvertime(currentEventId),
           DatabaseService.getIndentedCues(currentEventId),
           DatabaseService.getShowMode(currentEventId),
+          DatabaseService.getShowSettings(currentEventId),
+          DatabaseService.getCueActualStarts(currentEventId),
         ]);
+        setCueActualStarts(actualStarts || {});
+        const lockedFromSettings = parseLockedStartTimes(showSettings?.lockedStartTimes);
+        setLockedStartTimes(
+          Object.keys(lockedFromSettings).length > 0
+            ? lockedFromSettings
+            : parseLockedStartTimes(data?.settings?.locked_start_times)
+        );
         const modeFromRos =
           data?.settings?.show_mode === 'in-show' || data?.settings?.show_mode === 'rehearsal'
             ? data.settings.show_mode
@@ -1478,11 +1630,19 @@ const GreenRoomPage: React.FC = () => {
           runDataSyncRef.current?.();
         }
       },
-      onShowModeUpdate: (data: { event_id: string; showMode?: 'rehearsal' | 'in-show'; trackWasDurations?: boolean }) => {
+      onShowModeUpdate: (data: {
+        event_id: string;
+        showMode?: 'rehearsal' | 'in-show';
+        trackWasDurations?: boolean;
+        lockedStartTimes?: Record<string, string> | null;
+      }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') {
             setShowMode(data.showMode);
             apiClient.invalidateShowModeCache(event.id);
+          }
+          if (data.lockedStartTimes !== undefined) {
+            setLockedStartTimes(parseLockedStartTimes(data.lockedStartTimes));
           }
           runDataSyncRef.current?.();
         }
@@ -2006,6 +2166,24 @@ const GreenRoomPage: React.FC = () => {
               const programFill = programTypeSurfaceStyle(programType, ROS_PROGRAM_TYPE_COLORS, '#6B7280');
               const programTextDark = programType === 'Sub Cue' || programType === 'KILLED';
               const killed = isKilledScheduleItem(item);
+              const itemIndex = schedule.findIndex((s) => s.id === item.id);
+              const scheduledStart = itemIndex >= 0 ? calculateStartTime(itemIndex) : item.startTime || '';
+              const wasStart = lockedStartTimes[item.id]?.trim() || scheduledStart;
+              const projectedStart =
+                itemIndex < 0
+                  ? item.startTime || ''
+                  : showMode === 'rehearsal'
+                    ? scheduledStart
+                    : displayStartWithOvertime(itemIndex);
+              const startStatus = resolveStartTimeStatus({
+                isIndented: isIndentedScheduleItem(item, indentedCues),
+                showMode,
+                projectedLabel: projectedStart,
+                wasLabel: wasStart,
+                actualLabel: cueActualStartLabels[item.id],
+              });
+              const projectedEnd =
+                itemIndex >= 0 ? displayEndTime(itemIndex) || item.endTime : item.endTime;
               
               return (
             <div
@@ -2059,8 +2237,21 @@ const GreenRoomPage: React.FC = () => {
                 ) : null}
               </div>
               <div className={`text-sm space-y-1 ${isRos && !isRunning && !isLoaded ? 'text-slate-400' : ''}`}>
-                <div>Start: {item.startTime}</div>
-                <div>End: {item.endTime}</div>
+                <div className={startTimeKindClass(startStatus.timeKind, startStatus.ranVsWasMinutes)}>
+                  Start:{' '}
+                  {startStatus.timeKind ? (
+                    <span className={`mr-1 align-middle text-[10px] font-semibold uppercase tracking-wide ${startTimeKindTagClass(startStatus.timeKind)}`}>
+                      {startStatus.timeKind}
+                    </span>
+                  ) : null}
+                  {startStatus.clockLabel || item.startTime || '—'}
+                  {startStatus.showWas ? (
+                    <span className={`ml-1.5 text-xs ${isRos && !isRunning && !isLoaded ? 'text-slate-500' : 'text-white/70'}`}>
+                      was {startStatus.wasLabel}
+                    </span>
+                  ) : null}
+                </div>
+                <div>End: {projectedEnd || item.endTime || '—'}</div>
               </div>
             </div>
               );

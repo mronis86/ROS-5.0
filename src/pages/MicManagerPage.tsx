@@ -39,6 +39,23 @@ import {
   externalSyncStatusClass,
   formatExternalSyncStatusLine,
 } from '../lib/externalSyncLabel';
+import {
+  findParentScheduleIndex,
+  isIndentedScheduleItem,
+  itemCountsTowardStartTime,
+} from '../lib/scheduleStartTime';
+import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  eventLocalSecondsOfDay,
+  getSyncedNow,
+  resolveShowTimezone,
+  wallClockLabelToMinutes,
+} from '../lib/eventLocalClock';
+import {
+  resolveStartTimeStatus,
+  startTimeKindClass,
+  startTimeKindTagClass,
+} from '../lib/startTimeStatus';
 
 const MIC_TABLE_COLS =
   'minmax(4.5rem,0.85fr) minmax(9rem,1.5fr) repeat(7, minmax(0,1fr))';
@@ -55,6 +72,37 @@ type ScheduleItem = {
   durationSeconds?: number;
   customFields?: { cue?: string; [key: string]: unknown };
 };
+
+function parseLockedStartTimes(raw: unknown): Record<number, string> {
+  const locked: Record<number, string> = {};
+  if (!raw || typeof raw !== 'object') return locked;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const rowId = Number(k);
+    if (Number.isFinite(rowId) && typeof v === 'string' && v.trim()) locked[rowId] = v.trim();
+  }
+  return locked;
+}
+
+function as12(hours: number, minutes: number): string {
+  const date = new Date();
+  date.setHours(((hours % 24) + 24) % 24, ((minutes % 60) + 60) % 60, 0, 0);
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function mapMicScheduleItem(item: any): ScheduleItem {
+  const fromParts =
+    (Number(item.durationHours) || 0) * 3600 +
+    (Number(item.durationMinutes) || 0) * 60 +
+    (Number(item.durationSeconds) || 0);
+  const totalSec =
+    fromParts > 0 ? fromParts : Number(item.duration_seconds) > 0 ? Number(item.duration_seconds) : 0;
+  return {
+    ...item,
+    durationHours: Math.floor(totalSec / 3600),
+    durationMinutes: Math.floor((totalSec % 3600) / 60),
+    durationSeconds: totalSec % 60,
+  };
+}
 
 type ViewMode = 'plan' | 'follow';
 
@@ -174,6 +222,17 @@ const MicManagerPage: React.FC = () => {
   const [clockOffset, setClockOffset] = useState(0);
   /** Kept for AV / Mitti / Resolume LOADED·RUNNING feedback. */
   const [activeTimerMeta, setActiveTimerMeta] = useState<any | null>(null);
+  const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
+  const [showStartOvertime, setShowStartOvertime] = useState(0);
+  const [startCueId, setStartCueId] = useState<number | null>(null);
+  const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number }>>({});
+  const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
+  const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
+  const [liveProjectionTick, setLiveProjectionTick] = useState(0);
+  const [masterStartTime, setMasterStartTime] = useState('09:00');
+  const [dayStartTimes, setDayStartTimes] = useState<Record<string, string>>({});
+  const [eventTimezone, setEventTimezone] = useState('America/New_York');
 
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
@@ -222,6 +281,14 @@ const MicManagerPage: React.FC = () => {
     setTimerLoaded(loaded || running);
     const total = Number(enriched.duration_seconds || enriched.duration || 0);
     const start = enriched.started_at || enriched.created_at || null;
+    if (running && start && itemId != null) {
+      const started = new Date(start);
+      if (!Number.isNaN(started.getTime()) && started.getUTCFullYear() < 2090) {
+        const ms = started.getTime();
+        const id = Number(itemId);
+        setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
+      }
+    }
     setStartedAt(running ? start : null);
     if (running && start) {
       const syncedNow = Date.now() + clockOffset;
@@ -260,10 +327,16 @@ const MicManagerPage: React.FC = () => {
     setError(null);
     try {
       const data = await DatabaseService.getRunOfShowData(eventId, { bypassCache: true });
-      const items = Array.isArray(data?.schedule_items) ? data.schedule_items : [];
+      const items = Array.isArray(data?.schedule_items) ? data.schedule_items.map(mapMicScheduleItem) : [];
       setSchedule(items);
       const days = Number(data?.settings?.numberOfDays) || 1;
       setNumberOfDays(Math.max(1, days));
+      if (data?.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
+      else if (data?.settings?.dayStartTimes?.['1']) setMasterStartTime(data.settings.dayStartTimes['1']);
+      if (data?.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
+      if (data?.settings?.timezone) setEventTimezone(data.settings.timezone);
+      const startCueItem = items.find((row: any) => row.isStartCue === true);
+      setStartCueId(startCueItem ? startCueItem.id : null);
       setEvent((prev) =>
         prev
           ? {
@@ -274,6 +347,47 @@ const MicManagerPage: React.FC = () => {
             }
           : prev
       );
+
+      const [overtimeData, showStartOvertimeData, indentedCuesData, showSettings, actualStarts] = await Promise.all([
+        DatabaseService.getOvertimeMinutes(eventId),
+        DatabaseService.getShowStartOvertime(eventId),
+        DatabaseService.getIndentedCues(eventId),
+        DatabaseService.getShowSettings(eventId),
+        DatabaseService.getCueActualStarts(eventId),
+      ]);
+      const modeFromRos =
+        data?.settings?.show_mode === 'in-show' || data?.settings?.show_mode === 'rehearsal'
+          ? data.settings.show_mode
+          : null;
+      setShowMode(modeFromRos || showSettings.showMode);
+      setOvertimeMinutes(overtimeData || {});
+      const overtimeValue =
+        showStartOvertimeData != null
+          ? Number(
+              (showStartOvertimeData as any).show_start_overtime ??
+                (showStartOvertimeData as any).overtimeMinutes ??
+                0
+            ) || 0
+          : 0;
+      setShowStartOvertime(overtimeValue);
+      const startId =
+        (showStartOvertimeData as any)?.item_id ?? (showStartOvertimeData as any)?.itemId ?? null;
+      if (startId != null) setStartCueId(Number(startId));
+      if (startCueItem) setStartCueId(startCueItem.id);
+      const indentedMap: Record<number, { parentId: number }> = {};
+      (indentedCuesData || []).forEach((cue: any) => {
+        if (cue.item_id && cue.parent_item_id) {
+          indentedMap[cue.item_id] = { parentId: cue.parent_item_id };
+        }
+      });
+      setIndentedCues(indentedMap);
+      const lockedFromSettings = parseLockedStartTimes(showSettings.lockedStartTimes);
+      setLockedStartTimes(
+        Object.keys(lockedFromSettings).length > 0
+          ? lockedFromSettings
+          : parseLockedStartTimes(data?.settings?.locked_start_times)
+      );
+      setCueActualStarts(actualStarts || {});
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load schedule');
       setSchedule([]);
@@ -347,6 +461,25 @@ const MicManagerPage: React.FC = () => {
         applyActiveTimer(running);
       },
       onRunOfShowDataUpdated: () => {
+        if (eventIdRef.current && connectionEnabledRef.current) void loadSchedule(eventIdRef.current);
+      },
+      onShowModeUpdate: (data: {
+        event_id: string;
+        showMode?: 'rehearsal' | 'in-show';
+        lockedStartTimes?: Record<string, string> | null;
+      }) => {
+        if (data.event_id !== eventIdRef.current) return;
+        if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
+        if (data.lockedStartTimes !== undefined) {
+          setLockedStartTimes(parseLockedStartTimes(data.lockedStartTimes));
+        }
+        if (eventIdRef.current && connectionEnabledRef.current) void loadSchedule(eventIdRef.current);
+      },
+      onResetAllStates: () => {
+        setCueActualStarts({});
+        setLockedStartTimes({});
+        setOvertimeMinutes({});
+        setShowStartOvertime(0);
         if (eventIdRef.current && connectionEnabledRef.current) void loadSchedule(eventIdRef.current);
       },
       onMicAssignmentsUpdate: (data: any) => {
@@ -484,6 +617,142 @@ const MicManagerPage: React.FC = () => {
       return speakersWithNames(item.speakersText).length > 0;
     });
   }, [schedule, selectedDay, speakersOnly]);
+
+  const baseStart = useCallback(
+    (full: ScheduleItem[], index: number): string => {
+      const item = full[index];
+      if (!item) return '';
+      if (isIndentedScheduleItem(item, indentedCues)) {
+        const parent = findParentScheduleIndex(full, index, indentedCues);
+        return parent < 0 ? '' : baseStart(full, parent);
+      }
+      const day = item.day || 1;
+      const start = dayStartTimes[String(day)] || masterStartTime;
+      if (!start) return '';
+      let secs = 0;
+      for (let i = 0; i < index; i++) {
+        const it = full[i];
+        if ((it.day || 1) === day && itemCountsTowardStartTime(it, indentedCues)) {
+          secs +=
+            (it.durationHours || 0) * 3600 +
+            (it.durationMinutes || 0) * 60 +
+            (it.durationSeconds || 0);
+        }
+      }
+      const [hh, mm] = start.split(':').map(Number);
+      const total = (hh || 0) * 3600 + (mm || 0) * 60 + secs;
+      return as12(Math.floor(total / 3600) % 24, Math.floor((total % 3600) / 60));
+    },
+    [dayStartTimes, indentedCues, masterStartTime]
+  );
+
+  useEffect(() => {
+    if (showMode !== 'in-show') return;
+    const t = window.setInterval(() => setLiveProjectionTick((n) => n + 1), 15000);
+    return () => window.clearInterval(t);
+  }, [showMode]);
+
+  const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
+    if (showMode !== 'in-show') return null;
+    const runningId = timerRunning && activeItemId != null ? Number(activeItemId) : NaN;
+    const runningStartMs = Number.isFinite(runningId)
+      ? cueActualStarts[runningId] ?? (startedAt ? new Date(startedAt).getTime() : NaN)
+      : NaN;
+    const anchor = computeLiveStartAnchor({
+      schedule,
+      countsTowardStart: (row) => itemCountsTowardStartTime(row as ScheduleItem, indentedCues),
+      plannedStartSec: (index) => {
+        const mins = wallClockLabelToMinutes(baseStart(schedule, index));
+        return mins == null ? null : mins * 60;
+      },
+      running:
+        Number.isFinite(runningId) && Number.isFinite(runningStartMs)
+          ? {
+              itemId: runningId,
+              startedAtMs: runningStartMs,
+              durationSec: Number(timerProgress.total) || 0,
+            }
+          : null,
+      actualStarts: cueActualStarts,
+      nowMs: getSyncedNow(clockOffset).getTime(),
+      timeZone: resolveShowTimezone(eventTimezone),
+    });
+    if (!anchor) return null;
+    const startCueIndex = startCueId != null ? schedule.findIndex((s) => s.id === startCueId) : -1;
+    if (
+      startCueIndex >= 0 &&
+      anchor.anchorIndex < startCueIndex &&
+      (schedule[startCueIndex].day || 1) === anchor.day
+    ) {
+      return null;
+    }
+    return anchor;
+  }, [
+    showMode,
+    timerRunning,
+    activeItemId,
+    startedAt,
+    timerProgress.total,
+    cueActualStarts,
+    schedule,
+    indentedCues,
+    baseStart,
+    startCueId,
+    clockOffset,
+    eventTimezone,
+    liveProjectionTick,
+  ]);
+
+  const cueActualStartLabels = useMemo(() => {
+    const out: Record<number, string> = {};
+    if (showMode !== 'in-show') return out;
+    const tz = resolveShowTimezone(eventTimezone);
+    for (const [id, ms] of Object.entries(cueActualStarts)) {
+      const sec = eventLocalSecondsOfDay(ms, tz);
+      out[Number(id)] = as12(Math.floor(sec / 3600), Math.floor((sec % 3600) / 60));
+    }
+    return out;
+  }, [showMode, cueActualStarts, eventTimezone]);
+
+  const shiftClock = (base: string, minutes: number) => {
+    const mins = wallClockLabelToMinutes(base);
+    if (mins == null) return base;
+    return as12(Math.floor((((mins + minutes) % 1440) + 1440) % 1440 / 60), ((mins + minutes) % 60 + 60) % 60);
+  };
+
+  const adjStart = useCallback(
+    (full: ScheduleItem[], index: number): string => {
+      const item = full[index];
+      if (!item) return '';
+      if (isIndentedScheduleItem(item, indentedCues)) {
+        const parent = findParentScheduleIndex(full, index, indentedCues);
+        return parent < 0 ? '' : adjStart(full, parent);
+      }
+      const base = baseStart(full, index);
+      if (!base) return '';
+      if (
+        liveStartAnchor &&
+        index > liveStartAnchor.anchorIndex &&
+        (item.day || 1) === liveStartAnchor.day
+      ) {
+        return shiftClock(base, liveStartAnchor.offsetMinutes);
+      }
+      const startIdx = startCueId != null ? full.findIndex((s) => s.id === startCueId) : -1;
+      const from = startIdx >= 0 ? startIdx : 0;
+      let total = 0;
+      for (let i = from; i < index; i++) {
+        const it = full[i];
+        if ((it.day || 1) === (item.day || 1) && itemCountsTowardStartTime(it, indentedCues)) {
+          total += overtimeMinutes[it.id] || 0;
+        }
+      }
+      if (showStartOvertime && startCueId != null && startIdx >= 0 && index >= startIdx) {
+        total += showStartOvertime;
+      }
+      return total ? shiftClock(base, total) : base;
+    },
+    [baseStart, indentedCues, liveStartAnchor, overtimeMinutes, showStartOvertime, startCueId]
+  );
 
   const remainingSeconds = timerProgress.total - timerProgress.elapsed;
   const hasTimer = Boolean(activeItemId && (timerRunning || timerLoaded) && timerProgress.total > 0);
@@ -910,6 +1179,46 @@ const MicManagerPage: React.FC = () => {
                       >
                         {item.programType || 'Cue'}
                       </div>
+                      {(() => {
+                        const itemIndex = schedule.findIndex((s) => s.id === item.id);
+                        if (itemIndex < 0) return null;
+                        const scheduledStart = baseStart(schedule, itemIndex);
+                        const wasStart = lockedStartTimes[item.id]?.trim() || scheduledStart;
+                        const projectedStart =
+                          showMode === 'rehearsal' ? scheduledStart : adjStart(schedule, itemIndex);
+                        const startStatus = resolveStartTimeStatus({
+                          isIndented: isIndentedScheduleItem(item, indentedCues),
+                          showMode,
+                          projectedLabel: projectedStart,
+                          wasLabel: wasStart,
+                          actualLabel: cueActualStartLabels[item.id],
+                        });
+                        if (!startStatus.clockLabel) return null;
+                        return (
+                          <div className={`${compactView ? 'mt-1.5' : 'mt-3'}`}>
+                            <div
+                              className={`${compactView ? 'text-[10px]' : 'text-xs'} font-bold ${startTimeKindClass(
+                                startStatus.timeKind,
+                                startStatus.ranVsWasMinutes
+                              )}`}
+                            >
+                              {startStatus.timeKind ? (
+                                <span
+                                  className={`mr-1 align-middle text-[9px] font-semibold uppercase tracking-wide ${startTimeKindTagClass(
+                                    startStatus.timeKind
+                                  )}`}
+                                >
+                                  {startStatus.timeKind}
+                                </span>
+                              ) : null}
+                              {startStatus.clockLabel}
+                            </div>
+                            {startStatus.showWas ? (
+                              <div className="text-[10px] text-slate-400">was {startStatus.wasLabel}</div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
