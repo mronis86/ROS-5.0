@@ -30,6 +30,7 @@ import {
   externalSyncStatusClass,
   formatExternalSyncStatusLine,
 } from '../lib/externalSyncLabel';
+import { resolveScheduleCueLabel } from '../lib/cueDisplay';
 
 type ScheduleItem = {
   id: number;
@@ -163,16 +164,8 @@ function saveVisibleFields(set: Set<FieldId>) {
   }
 }
 
-const cueLabel = (item?: ScheduleItem | null, fallbackId?: number | string) => {
-  const c = item?.customFields?.cue;
-  if (c != null && c !== '') {
-    const s = String(c);
-    return s.toUpperCase().startsWith('CUE') ? s : `CUE ${s}`;
-  }
-  if (item) return `CUE ${item.id}`;
-  if (fallbackId != null) return `CUE ${fallbackId}`;
-  return 'CUE';
-};
+const cueLabel = (item?: ScheduleItem | null, fallbackId?: number | string) =>
+  resolveScheduleCueLabel(item, item ? null : fallbackId ?? null);
 
 const durLabel = (item: ScheduleItem) => {
   const t =

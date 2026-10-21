@@ -20,6 +20,7 @@ import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
+import { resolveLiveCueLabel } from '../lib/cueDisplay';
 
 interface FullScreenTimerProps {
   isRunning?: boolean;
@@ -714,9 +715,15 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
                 const activeTimer = hybridTimerData.activeTimer;
                 const lastLoadedCue = hybridTimerData?.lastLoadedCue;
                 const cueData = hybridTimerData?.cueData;
+                const liveCue = resolveLiveCueLabel({
+                  item: cueData,
+                  timer: activeTimer,
+                });
+                if (liveCue === 'DELAY') return 'DELAY';
+                if (liveCue && liveCue !== 'CUE') return liveCue;
                 
                 // Try CUE data from active timer cue_is column first
-                if (activeTimer.cue_is) {
+                if (activeTimer.cue_is && !/^CUE\s*\d{5,}$/i.test(String(activeTimer.cue_is))) {
                   console.log('✅ Using CUE data from active timer cue_is:', activeTimer.cue_is);
                   return activeTimer.cue_is;
                 }
@@ -752,13 +759,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
                   }
                 }
                 
-                // Final fallback: Generate CUE display from item_id
-                if (activeTimer.item_id) {
-                  // Extract a meaningful CUE number from the item_id
-                  const itemIdStr = activeTimer.item_id.toString();
-                  const lastDigits = itemIdStr.slice(-4); // Get last 4 digits
-                  return `CUE ${lastDigits}`;
-                }
+                if (liveCue) return liveCue;
                 
                 return 'No CUE';
               }

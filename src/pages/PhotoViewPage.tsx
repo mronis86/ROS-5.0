@@ -10,6 +10,7 @@ import { socketClient } from '../services/socket-client';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
+  isKilledScheduleItem,
   itemCountsTowardStartTime,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
@@ -27,6 +28,7 @@ import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { formatCueNumber, formatTimerCueStatus, resolveScheduleCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
 
 interface ScheduleItem {
   id: number;
@@ -508,13 +510,7 @@ const PhotoViewPage: React.FC = () => {
 
 
   // Helper function to format cue display with proper spacing (matches Run of Show)
-  const formatCueDisplay = (cue: string | number | undefined) => {
-    if (!cue && cue !== 0) return 'CUE';
-    const cueStr = String(cue);
-    if (cueStr.includes('CUE ')) return cueStr;
-    if (cueStr.match(/^CUE\d+$/)) return cueStr.replace(/^CUE(\d+)$/, 'CUE $1');
-    return `CUE ${cueStr}`;
-  };
+  const formatCueDisplay = (cue: string | number | undefined) => formatCueNumber(cue);
 
   const isResolumeArmed = (timer: {
     resolume_state?: string;
@@ -1393,6 +1389,9 @@ const PhotoViewPage: React.FC = () => {
         // Update hybrid timer data directly from WebSocket (same pattern as RunOfShowPage)
         if (data && data.item_id) {
           setHybridTimerData(prev => {
+            if (shouldKeepExistingRunningTimer(prev?.activeTimer, data)) {
+              return prev;
+            }
             if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, data)) {
               queueMicrotask(() => triggerResolumeSyncPulse());
             }
@@ -1419,8 +1418,6 @@ const PhotoViewPage: React.FC = () => {
             setActiveItemId(itemId);
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
           } else if (data.timer_state === 'loaded') {
-            setTimerState('loaded');
-            setActiveItemId(itemId);
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
           }
         }
@@ -1542,9 +1539,16 @@ const PhotoViewPage: React.FC = () => {
         if (data && data.item_id) {
           if (data.timer_state === 'running' || data.timer_state === 'loaded') {
             const itemId = parseInt(String(data.item_id), 10);
-            setHybridTimerData(prev => ({ ...prev, activeTimer: data }));
-            setActiveItemId(itemId);
-            setTimerState(data.timer_state);
+            setHybridTimerData(prev => {
+              if (shouldKeepExistingRunningTimer(prev?.activeTimer, data)) {
+                return prev;
+              }
+              return { ...prev, activeTimer: data };
+            });
+            if (data.timer_state === 'running') {
+              setActiveItemId(itemId);
+              setTimerState('running');
+            }
             setLoadedItems({ [itemId]: true });
 
             setTimerProgress({
@@ -2420,6 +2424,13 @@ const PhotoViewPage: React.FC = () => {
       : currentItem
         ? `CUE ${currentItem.id}`
         : 'NO CUE';
+    const currentKilled = isKilledScheduleItem(currentItem);
+    const nextKilled = isKilledScheduleItem(nextItem);
+    const killedStrike = {
+      textDecoration: 'line-through',
+      textDecorationThickness: '4px',
+      textDecorationColor: '#DC2626',
+    } as const;
     const statusRunning =
       (hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active) ||
       (timerState === 'running' && activeItemId);
@@ -2468,10 +2479,15 @@ const PhotoViewPage: React.FC = () => {
                 <h1 className="text-[clamp(0.75rem,1.5vw,1.1rem)] font-bold leading-tight truncate text-slate-200">
                   {event?.name || 'Current Event'}
                 </h1>
-                <div className="mt-1 text-[clamp(0.85rem,1.8vw,1.35rem)] font-bold leading-tight truncate text-white">
+                <div
+                  className={`mt-1 text-[clamp(0.85rem,1.8vw,1.35rem)] font-bold leading-tight truncate ${
+                    currentKilled ? 'text-slate-400' : 'text-white'
+                  }`}
+                  style={currentKilled ? killedStrike : undefined}
+                >
                   {cueLabel}
                   {currentItem?.segmentName ? (
-                    <span className="text-slate-300 font-semibold">
+                    <span className={`font-semibold ${currentKilled ? 'text-slate-500' : 'text-slate-300'}`}>
                       {' '}
                       · {currentItem.segmentName}
                     </span>
@@ -2480,12 +2496,17 @@ const PhotoViewPage: React.FC = () => {
                 <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                   {currentItem?.programType ? (
                     <span
-                      className="px-2 py-0.5 rounded text-[clamp(0.7rem,1.25vw,1rem)] font-semibold text-white"
-                      style={programTypeSurfaceStyle(
-                        currentItem.programType,
-                        programTypeColors,
-                        '#475569'
-                      )}
+                      className={`px-2 py-0.5 rounded text-[clamp(0.7rem,1.25vw,1rem)] font-semibold ${
+                        currentKilled ? 'text-black' : 'text-white'
+                      }`}
+                      style={{
+                        ...programTypeSurfaceStyle(
+                          currentItem.programType,
+                          programTypeColors,
+                          '#475569'
+                        ),
+                        ...(currentKilled ? killedStrike : {}),
+                      }}
                     >
                       {currentItem.programType}
                     </span>
@@ -2718,7 +2739,10 @@ const PhotoViewPage: React.FC = () => {
               </div>
               {nextItem ? (
                 <>
-                  <div className="shrink-0 min-w-0 max-w-[28%]">
+                  <div
+                    className={`shrink-0 min-w-0 max-w-[28%] ${nextKilled ? 'text-slate-500 opacity-80' : ''}`}
+                    style={nextKilled ? killedStrike : undefined}
+                  >
                     <div className="font-bold text-[clamp(0.85rem,1.8vw,1.35rem)] truncate">
                       {nextItem.customFields?.cue
                         ? formatCueDisplay(nextItem.customFields.cue)
@@ -2968,21 +2992,21 @@ const PhotoViewPage: React.FC = () => {
                         ? 'text-purple-300'
                         : 'text-yellow-400'
                   }`}>
-                    {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? isResolumeSynced(hybridTimerData.activeTimer)
-                        ? `RUNNING · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
-                        : 'RUNNING'
-                      : isResolumeArmed(hybridTimerData.activeTimer)
-                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
-                        : 'LOADED'
-                    } - {(() => {
+                    {(() => {
                       const itemId = hybridTimerData.activeTimer.item_id;
                       const idNum = typeof itemId === 'string' ? parseInt(itemId, 10) : Number(itemId);
                       const scheduleItem = schedule.find(item => item.id === idNum);
-                      if (scheduleItem?.customFields?.cue) {
-                        return formatCueDisplay(scheduleItem.customFields.cue);
-                      }
-                      return `CUE ${itemId}`;
+                      const cueLabel = resolveScheduleCueLabel(scheduleItem, null);
+                      const running = !!(
+                        hybridTimerData.activeTimer.is_running &&
+                        hybridTimerData.activeTimer.is_active
+                      );
+                      const sync =
+                        isResolumeSynced(hybridTimerData.activeTimer) ||
+                        isResolumeArmed(hybridTimerData.activeTimer)
+                          ? getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()
+                          : '';
+                      return formatTimerCueStatus(running ? 'running' : 'loaded', cueLabel, sync);
                     })()}
                   </div>
                   {isResolumeArmed(hybridTimerData.activeTimer) && (
@@ -3044,7 +3068,10 @@ const PhotoViewPage: React.FC = () => {
                 </div>
               ) : timerState === 'running' && activeItemId ? (
                 <div className="text-lg text-green-400 font-bold">
-                  RUNNING - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields?.cue)}
+                  {formatTimerCueStatus(
+                    'running',
+                    resolveScheduleCueLabel(schedule.find(item => item.id === activeItemId), null)
+                  )}
                   {secondaryTimer && secondaryTimer.isActive && (
                     <div className="text-lg text-orange-400 mt-0.5 font-bold">
                       {formatCueDisplay(secondaryTimer.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
@@ -3053,7 +3080,10 @@ const PhotoViewPage: React.FC = () => {
                 </div>
               ) : timerState === 'loaded' && activeItemId ? (
                 <div className="text-lg text-yellow-400 font-bold">
-                  LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields?.cue)}
+                  {formatTimerCueStatus(
+                    'loaded',
+                    resolveScheduleCueLabel(schedule.find(item => item.id === activeItemId), null)
+                  )}
                 </div>
               ) : (
                 <div className="text-lg text-slate-300 font-bold">

@@ -22,6 +22,7 @@ import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
+import { resolveLiveCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -533,6 +534,9 @@ const Clock: React.FC<ClockProps> = ({
           console.log('🔍 [CLOCK DEBUG] Updating hybridTimerData with WebSocket data');
           setHybridTimerData(prev => {
             console.log('🔍 [CLOCK DEBUG] Previous hybridTimerData:', prev);
+            if (shouldKeepExistingRunningTimer(prev?.activeTimer, data)) {
+              return prev;
+            }
             let activeTimer = data;
             if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
               activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
@@ -556,8 +560,10 @@ const Clock: React.FC<ClockProps> = ({
         // Handle array format (from server broadcast)
         let timerData = data;
         if (Array.isArray(data) && data.length > 0) {
-          timerData = data[0]; // Take first timer from array
-          console.log('🔍 [CLOCK DEBUG] Extracted first timer from array:', timerData);
+          timerData =
+            data.find((t: any) => t?.timer_state === 'running' || t?.is_running === true) ||
+            data[0];
+          console.log('🔍 [CLOCK DEBUG] Extracted timer from array:', timerData);
         }
         
         console.log('🔍 [CLOCK DEBUG] Event ID check:', { received: timerData?.event_id, expected: eventId, match: timerData?.event_id === eventId });
@@ -579,6 +585,9 @@ const Clock: React.FC<ClockProps> = ({
             console.log('🔍 [CLOCK DEBUG] Timer is active - updating hybridTimerData');
             // Update timer data directly from WebSocket
             setHybridTimerData(prev => {
+              if (shouldKeepExistingRunningTimer(prev?.activeTimer, timerData)) {
+                return prev;
+              }
               let activeTimer = timerData;
               if (shouldRejectResolumeAlignReset(prev?.activeTimer, timerData, clockOffset)) {
                 activeTimer = { ...timerData, started_at: prev!.activeTimer!.started_at };
@@ -1141,9 +1150,15 @@ const Clock: React.FC<ClockProps> = ({
                 const activeTimer = hybridTimerData.activeTimer;
                 const lastLoadedCue = hybridTimerData?.lastLoadedCue;
                 const cueData = hybridTimerData?.cueData;
+                const liveCue = resolveLiveCueLabel({
+                  item: activeCue || cueData,
+                  timer: activeTimer,
+                });
+                if (liveCue === 'DELAY') return 'DELAY';
+                if (liveCue && liveCue !== 'CUE') return liveCue;
                 
                 // Try CUE data from active timer cue_is column first
-                if (activeTimer.cue_is) {
+                if (activeTimer.cue_is && !/^CUE\s*\d{5,}$/i.test(String(activeTimer.cue_is))) {
                   return activeTimer.cue_is;
                 }
                 
@@ -1178,13 +1193,7 @@ const Clock: React.FC<ClockProps> = ({
                   }
                 }
                 
-                // Final fallback: Generate CUE display from item_id
-                if (activeTimer.item_id) {
-                  // Extract a meaningful CUE number from the item_id
-                  const itemIdStr = activeTimer.item_id.toString();
-                  const lastDigits = itemIdStr.slice(-4); // Get last 4 digits
-                  return `CUE ${lastDigits}`;
-                }
+                if (liveCue) return liveCue;
                 
                 return 'No CUE';
               } else {

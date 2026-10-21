@@ -43,6 +43,12 @@ import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
   shouldFoldPreshowOvertimeIntoShowStart,
 } from '../lib/showDelay';
+import {
+  formatCueNumber,
+  formatTimerCueStatus,
+  isDelayProgramType,
+  resolveScheduleCueLabel,
+} from '../lib/cueDisplay';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
@@ -1629,6 +1635,7 @@ const RunOfShowPage: React.FC = () => {
   
   // ClockPage-style hybrid timer data for real-time updates
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  const hybridTimerDataRef = useRef<any>({ activeTimer: null });
   const activeCueForPreshow =
     schedule.find(
       (s) =>
@@ -1724,6 +1731,9 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     activeTimersRef.current = activeTimers;
   }, [activeTimers]);
+  useEffect(() => {
+    hybridTimerDataRef.current = hybridTimerData;
+  }, [hybridTimerData]);
   useEffect(() => {
     const fromHybrid =
       hybridTimerData?.activeTimer?.item_id != null
@@ -2142,44 +2152,6 @@ const RunOfShowPage: React.FC = () => {
 
   const { viewers, setViewers } = useActiveViewers();
 
-  // Scroll to active item when activeItemId changes and follow is enabled
-  useEffect(() => {
-    if (isFollowEnabled && activeItemId) {
-      // Small delay to ensure DOM is updated
-      setTimeout(() => {
-        // Find the active row element
-        const activeRow = document.querySelector(`[data-item-id="${activeItemId}"]`);
-        if (activeRow) {
-          // Calculate the row's position relative to the document
-          const rowRect = activeRow.getBoundingClientRect();
-          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-          const rowTop = rowRect.top + scrollTop;
-          
-          // Find the column headers to calculate offset
-          const columnHeaders = document.querySelector('#main-scroll-container .h-24');
-          let headerHeight = 100; // Default fallback
-          
-          if (columnHeaders) {
-            const headerRect = columnHeaders.getBoundingClientRect();
-            headerHeight = headerRect.height + 20; // Add small gap
-          }
-          
-          // Calculate scroll position to keep row visible below headers
-          const extraOffset = 230; // Position the row nicely on screen
-          const targetScrollPosition = rowTop - headerHeight - extraOffset;
-          
-          // Scroll to the calculated position
-          window.scrollTo({
-            top: Math.max(0, targetScrollPosition), // Don't scroll above the top
-            behavior: 'smooth'
-          });
-          
-          console.log('📜 Follow: Scrolled to active item:', activeItemId, 'position:', targetScrollPosition);
-        }
-      }, 150); // Slightly longer delay to ensure DOM is fully updated
-    }
-  }, [activeItemId, isFollowEnabled]);
-  
   // Track stopped items for inactive styling
   const [stoppedItems, setStoppedItems] = useState<Set<number>>(new Set());
   
@@ -2431,6 +2403,51 @@ const RunOfShowPage: React.FC = () => {
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
 
+  const isHybridTimerRunning = (timer: any) =>
+    Boolean(
+      timer &&
+        timer.is_active !== false &&
+        (timer.is_running || timer.timer_state === 'running')
+    );
+
+  /** Running cue wins over a leftover loaded Delay / earlier LOAD. */
+  const followTargetId = useMemo(() => {
+    const hybrid = hybridTimerData?.activeTimer;
+    const hybridId = normalizeScheduleItemId(hybrid?.item_id);
+    const hybridRunning = isHybridTimerRunning(hybrid);
+    const runningIds = Object.keys(activeTimers)
+      .map((key) => Number(key))
+      .filter((id) => Number.isFinite(id) && activeTimers[id] && !isDelayBlock(id));
+
+    if (hybridRunning && hybridId != null && !isDelayBlock(hybridId)) {
+      return hybridId;
+    }
+    if (runningIds.length > 0) {
+      if (hybridId != null && runningIds.includes(hybridId)) return hybridId;
+      return runningIds[runningIds.length - 1];
+    }
+    if (hybridRunning && hybridId != null) return hybridId;
+    if (activeItemId != null && !isDelayBlock(activeItemId)) return activeItemId;
+    return null;
+  }, [
+    hybridTimerData?.activeTimer,
+    activeTimers,
+    activeItemId,
+    schedule,
+  ]);
+
+  const loadedUpdateWouldStealRunning = (incomingItemId: number | null) => {
+    if (incomingItemId == null) return false;
+    const hybrid = hybridTimerDataRef.current?.activeTimer;
+    const hybridId = normalizeScheduleItemId(hybrid?.item_id);
+    if (isHybridTimerRunning(hybrid) && hybridId != null && hybridId !== incomingItemId) {
+      return true;
+    }
+    return Object.entries(activeTimersRef.current).some(
+      ([key, on]) => on && Number(key) !== incomingItemId
+    );
+  };
+
   const getRowDimStyle = (item: { id: number; programType?: string }): React.CSSProperties => {
     if (item.programType === 'KILLED') return { opacity: 0.7 };
     if (isItemDimmed(item.id)) {
@@ -2639,17 +2656,7 @@ const RunOfShowPage: React.FC = () => {
       hybridActiveTimer?.is_running
   );
 
-  const formatCueDisplay = (cue: string | number | undefined) => {
-    if (!cue && cue !== 0) return 'CUE';
-    // Convert to string if it's a number
-    const cueStr = String(cue);
-    // If cue already has proper spacing, return as is
-    if (cueStr.includes('CUE ')) return cueStr;
-    // If cue is like "CUE2", convert to "CUE 2"
-    if (cueStr.match(/^CUE\d+$/)) return cueStr.replace(/^CUE(\d+)$/, 'CUE $1');
-    // For plain numbers or other formats, add "CUE " prefix
-    return `CUE ${cueStr}`;
-  };
+  const formatCueDisplay = (cue: string | number | undefined) => formatCueNumber(cue);
   // Helper function to convert HTML to plain text with basic markdown-style formatting
   const cleanNotesForCSV = (htmlString: string): string => {
     if (!htmlString) return '';
@@ -4211,7 +4218,7 @@ const RunOfShowPage: React.FC = () => {
           if (actualState === 'running') {
             setActiveItemId(itemId);
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
-            setActiveTimers(prev => ({ ...prev, [itemId]: true }));
+            setActiveTimers({ [itemId]: true });
             // Set dependent rows for orange highlighting
             const currentIndex = schedule.findIndex(item => item.id === itemId);
             const dependentIds = new Set<number>();
@@ -4227,9 +4234,17 @@ const RunOfShowPage: React.FC = () => {
             setLoadedCueDependents(dependentIds);
             setLastLoadedCueId(itemId);
           } else if (actualState === 'loaded') {
-            setActiveItemId(itemId);
+            const stealRunning = loadedUpdateWouldStealRunning(itemId);
+            const loadedDelay = isDelayProgramType(
+              scheduleRef.current?.find((item) => item.id === itemId)?.programType
+            );
+            if (!stealRunning && !loadedDelay) {
+              setActiveItemId(itemId);
+            }
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
-            setActiveTimers({});
+            if (!stealRunning) {
+              setActiveTimers({});
+            }
             // Set dependent rows for orange highlighting
             const currentIndex = schedule.findIndex(item => item.id === itemId);
             const dependentIds = new Set<number>();
@@ -4812,6 +4827,10 @@ const RunOfShowPage: React.FC = () => {
 
         // The top Run of Show counter reads hybridTimerData, so refresh it
         // directly instead of only updating the legacy row timer state.
+        const apiItemIdEarly = normalizeScheduleItemId(activeTimer.item_id);
+        if (!isRunningTimer && loadedUpdateWouldStealRunning(apiItemIdEarly)) {
+          return;
+        }
         setHybridTimerData((prev: any) => {
           let refreshedTimer = activeTimer;
           if (shouldRejectResolumeAlignReset(prev?.activeTimer, activeTimer, clockOffset)) {
@@ -4821,8 +4840,18 @@ const RunOfShowPage: React.FC = () => {
         });
         
         // Set the active item
-        setActiveItemId(activeTimer.item_id);
-        setLoadedItems(prev => ({ ...prev, [activeTimer.item_id]: true }));
+        const loadedFromApi = !isRunningTimer;
+        const apiItemId = normalizeScheduleItemId(activeTimer.item_id);
+        const stealRunning = loadedFromApi && loadedUpdateWouldStealRunning(apiItemId);
+        const loadedDelay = isDelayProgramType(
+          scheduleRef.current?.find((item) => item.id === apiItemId)?.programType
+        );
+        if (!stealRunning && !(loadedFromApi && loadedDelay) && apiItemId != null) {
+          setActiveItemId(apiItemId);
+        }
+        if (apiItemId != null) {
+          setLoadedItems(prev => ({ ...prev, [apiItemId]: true }));
+        }
         
         if (isRunningTimer && hasRealStart) {
           // Timer is running - set up with server timing
@@ -4840,7 +4869,7 @@ const RunOfShowPage: React.FC = () => {
               startedAt,
             }
           }));
-          setActiveTimers(prev => ({ ...prev, [activeTimer.item_id]: true }));
+          setActiveTimers({ [activeTimer.item_id]: true });
 
           // Start local timer interval that recalculates from server time every second
           const timer = setInterval(async () => {
@@ -5863,40 +5892,26 @@ const RunOfShowPage: React.FC = () => {
     clockOffset,
     eventTimezone,
   ]);  
-  // Auto-scroll to active row function
-  const scrollToActiveRow = () => {
-    if (!isFollowEnabled) return;
-    
-    const activeRow = document.querySelector(`[data-item-id="${activeItemId}"]`);
-    if (activeRow) {
-      // Use a more consistent calculation method
-      // Calculate the row's position relative to the document, not the viewport
-      const rowRect = activeRow.getBoundingClientRect();
-      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-      const rowTop = rowRect.top + scrollTop;
-      
-      // Find the column headers to calculate offset
-      const columnHeaders = document.querySelector('#main-scroll-container .h-24');
-      let headerHeight = 100; // Default fallback
-      
-      if (columnHeaders) {
-        const headerRect = columnHeaders.getBoundingClientRect();
-        headerHeight = headerRect.height + 20; // Add small gap
-      }
-      
-      // Calculate consistent scroll position - bring it up more
-      // Add extra offset to position the row higher on screen
-      const extraOffset = 230; // Bring the end point down significantly (250 - 20)
-      const targetScrollPosition = rowTop - headerHeight - extraOffset;
-      
-      // Scroll to the calculated position
-      window.scrollTo({
-        top: Math.max(0, targetScrollPosition), // Don't scroll above the top
-        behavior: 'smooth'
-      });
-      
-      // Note: Follow feature now handles its own scrolling via useEffect
+  const scrollToFollowTarget = (itemId: number | null) => {
+    if (!isFollowEnabled || itemId == null) return;
+
+    const activeRow = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (!activeRow) return;
+
+    const rowRect = activeRow.getBoundingClientRect();
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    const rowTop = rowRect.top + scrollTop;
+    const columnHeaders = document.querySelector('#main-scroll-container .h-24');
+    let headerHeight = 100;
+    if (columnHeaders) {
+      headerHeight = columnHeaders.getBoundingClientRect().height + 20;
     }
+    const extraOffset = 230;
+    const targetScrollPosition = rowTop - headerHeight - extraOffset;
+    window.scrollTo({
+      top: Math.max(0, targetScrollPosition),
+      behavior: 'smooth'
+    });
   };
   
   const [modalForm, setModalForm] = useState({
@@ -7641,7 +7656,9 @@ const RunOfShowPage: React.FC = () => {
       // Calculate row number and cue display for database
       const currentIndex = schedule.findIndex(scheduleItem => scheduleItem.id === itemId);
       const rowNumber = currentIndex + 1; // 1-based row number
-      const cueDisplay = formatCueDisplay(item.customFields.cue);
+      const cueDisplay = isDelayProgramType(item.programType)
+        ? 'DELAY'
+        : formatCueDisplay(item.customFields.cue);
       
       // Use the existing 5-character timer ID from the schedule item
       const timerId = item.timerId;
@@ -9679,6 +9696,13 @@ const RunOfShowPage: React.FC = () => {
           // Hybrid state (row colors / load-run-stop): skip elapsed-only ticks.
           // Countdown uses timerProgress below so it stays live.
           setHybridTimerData(prev => {
+            const incomingId = normalizeScheduleItemId(data.item_id);
+            const incomingLoaded =
+              data.timer_state === 'loaded' ||
+              (data.is_running !== true && data.timer_state !== 'running');
+            if (incomingLoaded && incomingId != null && loadedUpdateWouldStealRunning(incomingId)) {
+              return prev;
+            }
             let activeTimer = data;
             if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
               activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
@@ -9727,7 +9751,7 @@ const RunOfShowPage: React.FC = () => {
             const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id) : data.item_id;
             
             if (data.timer_state === 'running') {
-              setActiveTimers(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
+              setActiveTimers({ [numericItemId]: true });
               setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
               setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
               console.log('✅ RunOfShow: Timer RUNNING - button states updated:', numericItemId);
@@ -9738,7 +9762,13 @@ const RunOfShowPage: React.FC = () => {
                 delete newTimers[numericItemId]; // Remove from running timers
                 return newTimers;
               });
-              setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
+              const stealRunning = loadedUpdateWouldStealRunning(numericItemId);
+              const loadedDelay = isDelayProgramType(
+                scheduleRef.current?.find((item) => item.id === numericItemId)?.programType
+              );
+              if (!stealRunning && !loadedDelay) {
+                setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
+              }
               setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
               console.log('✅ RunOfShow: Timer LOADED - button states updated:', numericItemId);
             } else if (data.timer_state === 'stopped') {
@@ -9908,8 +9938,10 @@ const RunOfShowPage: React.FC = () => {
         // Handle array format (from server broadcast) - ClockPage style
         let timerData = data;
         if (Array.isArray(data) && data.length > 0) {
-          timerData = data[0]; // Take first timer from array
-          console.log('📡 RunOfShow: Processing first timer from array:', timerData);
+          timerData =
+            data.find((t: any) => t?.timer_state === 'running' || t?.is_running === true) ||
+            data[0];
+          console.log('📡 RunOfShow: Processing timer from array:', timerData);
         }
         
         console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: timerData?.event_id === event?.id });
@@ -9927,6 +9959,13 @@ const RunOfShowPage: React.FC = () => {
           } else if (timerData.is_active === true) {
             setHybridTimerData(prev => {
               const currentHybridTimer = prev?.activeTimer;
+              const incomingId = normalizeScheduleItemId(timerData.item_id);
+              const incomingLoaded =
+                timerData.timer_state === 'loaded' ||
+                (timerData.is_running !== true && timerData.timer_state !== 'running');
+              if (incomingLoaded && incomingId != null && loadedUpdateWouldStealRunning(incomingId)) {
+                return prev;
+              }
               if (currentHybridTimer && currentHybridTimer.id === timerData.id &&
                   (currentHybridTimer.timer_state === 'stopped' || !currentHybridTimer.is_active)) {
                 console.log('⏭️ RunOfShow: Ignoring stale timer data for stopped timer:', timerData.id);
@@ -12157,7 +12196,9 @@ const RunOfShowPage: React.FC = () => {
         // Calculate row number and cue display for database
         const currentIndex = schedule.findIndex(scheduleItem => scheduleItem.id === itemId);
         const rowNumber = currentIndex + 1; // 1-based row number
-        const cueDisplay = formatCueDisplay(item.customFields.cue);
+        const cueDisplay = isDelayProgramType(item.programType)
+          ? 'DELAY'
+          : formatCueDisplay(item.customFields.cue);
         
         // Use the existing 5-character timer ID from the schedule item
         const timerId = item.timerId;
@@ -13644,54 +13685,13 @@ const RunOfShowPage: React.FC = () => {
     };
   }, []);
 
-  // Auto-scroll to active row when activeItemId changes
   useEffect(() => {
-    if (activeItemId !== null) {
-      // Small delay to ensure DOM is updated
-      setTimeout(() => {
-        scrollToActiveRow();
-      }, 100);
-    }
-  }, [activeItemId, isFollowEnabled]);
-
-        // Auto-scroll to active timer row when timers start/stop
-        useEffect(() => {
-          if (isFollowEnabled && Object.keys(activeTimers).length > 0) {
-            const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
-            const activeRow = document.querySelector(`[data-item-id="${activeTimerId}"]`);
-            if (activeRow) {
-              setTimeout(() => {
-                // Find the column headers (main grid headers) to ensure row doesn't scroll past them
-                const columnHeaders = document.querySelector('#main-scroll-container .h-24');
-                let headerOffset = 100; // Default fallback
-                
-                if (columnHeaders) {
-                  const headerRect = columnHeaders.getBoundingClientRect();
-                  const containerRect = document.querySelector('#main-scroll-container')?.getBoundingClientRect();
-                  if (containerRect) {
-                    // Calculate the offset from the top of the viewport to the bottom of column headers
-                    // Use getBoundingClientRect for consistent positioning regardless of horizontal scroll
-                    headerOffset = headerRect.bottom - containerRect.top - 120; // -120px gap - split the difference
-                  }
-                }
-                
-                // Calculate position: ensure row doesn't go above column headers
-                // Use getBoundingClientRect for consistent positioning regardless of horizontal scroll
-                const elementRect = (activeRow as HTMLElement).getBoundingClientRect();
-                const containerRect = document.querySelector('#main-scroll-container')?.getBoundingClientRect();
-                if (containerRect) {
-                  const scrollPosition = elementRect.top - containerRect.top - headerOffset;
-                  
-                  // Scroll to position the row below the column headers
-                  window.scrollTo({
-                    top: scrollPosition,
-                    behavior: 'smooth'
-                  });
-                }
-              }, 100);
-            }
-          }
-        }, [activeTimers, isFollowEnabled]);
+    if (!isFollowEnabled || followTargetId == null) return;
+    const timer = window.setTimeout(() => {
+      scrollToFollowTarget(followTargetId);
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [followTargetId, isFollowEnabled]);
   if (!event) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
@@ -16008,33 +16008,16 @@ const RunOfShowPage: React.FC = () => {
                         ? 'text-purple-300'
                         : 'text-yellow-400'
                   }`}>
-                    {hybridActiveTimer.is_running && hybridActiveTimer.is_active
-                      ? isResolumeSynced(hybridActiveTimer)
-                        ? `RUNNING · ${getExternalSyncLabel(hybridActiveTimer).toUpperCase()}`
-                        : 'RUNNING'
-                      : isResolumeArmed(hybridActiveTimer)
-                        ? `LOADED · ${getExternalSyncLabel(hybridActiveTimer).toUpperCase()}`
-                        : 'LOADED'
-                    } - {(() => {
-                      // Try to find the schedule item with proper type conversion
+                    {(() => {
                       const itemId = hybridActiveTimer.item_id;
                       const idNum = typeof itemId === 'string' ? parseInt(itemId, 10) : Number(itemId);
                       const scheduleItem = schedule.find(item => item.id === idNum);
-                      
-                      // Debug: Log only occasionally to reduce spam
-                      if (Math.random() < 0.01) {
-                        console.log('🔍 RunOfShow: Hybrid timer data:', hybridActiveTimer);
-                        console.log('🔍 RunOfShow: Looking for item_id:', hybridActiveTimer.item_id, typeof hybridActiveTimer.item_id);
-                        console.log('🔍 RunOfShow: Found schedule item:', scheduleItem);
-                      }
-                      
-                      if (scheduleItem?.customFields?.cue) {
-                        return formatCueDisplay(scheduleItem.customFields.cue);
-                      } else {
-                        // Fallback: show item_id or try to get cue from timer data
-                        console.log('🔍 RunOfShow: No schedule item found, using fallback');
-                        return `CUE ${itemId}`;
-                      }
+                      const cueLabel = resolveScheduleCueLabel(scheduleItem, null);
+                      const running = !!(hybridActiveTimer.is_running && hybridActiveTimer.is_active);
+                      const sync = isResolumeSynced(hybridActiveTimer) || isResolumeArmed(hybridActiveTimer)
+                        ? getExternalSyncLabel(hybridActiveTimer).toUpperCase()
+                        : '';
+                      return formatTimerCueStatus(running ? 'running' : 'loaded', cueLabel, sync);
                     })()}
                   </div>
                   {rosPreshowRainbow ? (
@@ -16114,7 +16097,10 @@ const RunOfShowPage: React.FC = () => {
                 ) : Object.keys(activeTimers).length > 0 ? (
                   <div className="flex flex-col items-center gap-0.5">
                     <div className="text-lg text-green-400 font-bold">
-                      RUNNING - {formatCueDisplay(schedule.find(item => activeTimers[item.id])?.customFields.cue)}
+                      {formatTimerCueStatus(
+                        'running',
+                        resolveScheduleCueLabel(schedule.find(item => activeTimers[item.id]), null)
+                      )}
                       {secondaryTimer && (
                         <div className="text-lg text-orange-400 mt-0.5 font-bold">
                           {formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
@@ -16134,7 +16120,10 @@ const RunOfShowPage: React.FC = () => {
                 ) : activeItemId && timerProgress[activeItemId] ? (
                   <div className="flex flex-col items-center gap-0.5">
                     <div className="text-lg text-yellow-400 font-bold">
-                      LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields.cue)}
+                      {formatTimerCueStatus(
+                        'loaded',
+                        resolveScheduleCueLabel(schedule.find(item => item.id === activeItemId), null)
+                      )}
                     </div>
                     {renderOperatorCountdownTopLine()}
                     {isPreshowProgramType(schedule.find((item) => item.id === activeItemId)?.programType) ? (

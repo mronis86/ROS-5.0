@@ -112,6 +112,9 @@ export function formatExternalSyncStatusLine(options: {
       ? getExternalSyncLabel(enriched).toUpperCase()
       : '';
   const cuePart = includeCue && cueLabel ? ` - ${cueLabel}` : '';
+  if (/^delay$/i.test(String(cueLabel || '').trim())) {
+    return 'DELAY';
+  }
 
   if (running) {
     return sync ? `RUNNING · ${sync}${cuePart}` : cueLabel ? `RUNNING - ${cueLabel}` : 'RUNNING';
