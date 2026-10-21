@@ -1725,6 +1725,27 @@ export class DatabaseService {
     }
   }
 
+  static async saveCueActualStart(eventId: string, itemId: number, startedAtMs: number): Promise<boolean> {
+    try {
+      if (!eventId || !Number.isFinite(itemId) || !Number.isFinite(startedAtMs)) return false;
+      const started = new Date(startedAtMs);
+      if (started.getUTCFullYear() >= 2090) return false;
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/cue-actual-starts`, {
+        method: 'POST',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify({
+          event_id: eventId,
+          item_id: itemId,
+          started_at: started.toISOString(),
+        }),
+      });
+      return response.ok;
+    } catch (error) {
+      console.warn('⚠️ Failed to save cue actual start:', error);
+      return false;
+    }
+  }
+
   // Clear all overtime minutes for an event
   static async clearOvertimeMinutes(eventId: string): Promise<boolean> {
     try {

@@ -1778,12 +1778,16 @@ async function runCueActualStartsSyncTable(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS public.cue_actual_starts (
       event_id TEXT NOT NULL,
-      item_id INTEGER NOT NULL,
+      item_id BIGINT NOT NULL,
       started_at TIMESTAMPTZ NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (event_id, item_id)
     )
   `);
+  await db.query(`
+    ALTER TABLE public.cue_actual_starts
+    ALTER COLUMN item_id TYPE BIGINT
+  `).catch(() => {});
 }
 
 async function runOperatorCountdownsSyncTable(db) {
@@ -7635,6 +7639,7 @@ app.post('/api/active-timers', async (req, res) => {
     );
     
     // Broadcast update via WebSocket with database elapsed_seconds
+    recordCueActualStart(event_id, timerData);
     broadcastUpdate(event_id, 'timerUpdated', timerData);
     
     res.status(201).json(timerData);
@@ -8568,6 +8573,29 @@ app.get('/api/cue-actual-starts/:eventId', async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching cue actual starts:', error);
     res.status(500).json({ error: 'Failed to fetch cue actual starts', details: error.message });
+  }
+});
+
+// Persist a cue's actual run time (ROS, Companion, OSC). Idempotent per event+item.
+app.post('/api/cue-actual-starts', async (req, res) => {
+  try {
+    const eventId = req.body?.event_id;
+    const itemId = parseInt(req.body?.item_id, 10);
+    const startedAt = req.body?.started_at;
+    if (!eventId || !Number.isFinite(itemId) || startedAt == null) {
+      return res.status(400).json({ error: 'event_id, item_id, and started_at are required' });
+    }
+    recordCueActualStart(eventId, {
+      item_id: itemId,
+      started_at: startedAt,
+      timer_state: 'running',
+      is_running: true,
+      is_active: true,
+    });
+    res.json({ ok: true, event_id: eventId, item_id: itemId, started_at: startedAt });
+  } catch (error) {
+    console.error('❌ Error saving cue actual start:', error);
+    res.status(500).json({ error: 'Failed to save cue actual start', details: error.message });
   }
 });
 

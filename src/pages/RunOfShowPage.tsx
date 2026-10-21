@@ -1533,6 +1533,7 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => { lockedStartTimesRef.current = lockedStartTimes; }, [lockedStartTimes]);
   /** When each cue actually started running (item id → epoch ms) — "ran" under Start. */
   const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
+  const persistedActualStartsRef = useRef<Record<number, number>>({});
   const noteCueActualStart = useCallback((timer: any) => {
     if (!timer) return;
     const id = parseInt(String(timer.item_id ?? timer.itemId ?? timer.timerId ?? ''), 10);
@@ -1542,7 +1543,11 @@ const RunOfShowPage: React.FC = () => {
     const ms = started.getTime();
     if (!Number.isFinite(id) || !Number.isFinite(ms) || started.getUTCFullYear() >= 2090) return;
     setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
-  }, []);
+    if (event?.id && persistedActualStartsRef.current[id] !== ms) {
+      persistedActualStartsRef.current[id] = ms;
+      void DatabaseService.saveCueActualStart(event.id, id, ms);
+    }
+  }, [event?.id]);
   /** Re-evaluates the live Start projection while a cue runs over / between cues. */
   const [liveProjectionTick, setLiveProjectionTick] = useState(0);
   useEffect(() => {
@@ -2928,6 +2933,20 @@ const RunOfShowPage: React.FC = () => {
           currentUserRole || 'VIEWER'
         ).catch((err) => console.warn('⚠️ Failed to persist completed cue:', cueId, err));
       });
+    }
+  };
+
+  /** When a cue starts running, every earlier same-day cue is done — not only the one we Stopped. */
+  const completePriorCuesOnDay = (liveItemId: number | null | undefined) => {
+    const liveId = normalizeScheduleItemId(liveItemId);
+    if (liveId == null) return;
+    const list = scheduleRef.current || schedule;
+    const liveIdx = list.findIndex((s: { id: number }) => s.id === liveId);
+    if (liveIdx <= 0) return;
+    const liveDay = list[liveIdx].day || 1;
+    for (let i = 0; i < liveIdx; i++) {
+      if ((list[i].day || 1) !== liveDay) continue;
+      markCueGroupCompleted(list[i].id);
     }
   };
   const trackWasDurationsRef = useRef(trackWasDurations);
@@ -9852,6 +9871,7 @@ const RunOfShowPage: React.FC = () => {
               setActiveTimers({ [numericItemId]: true });
               setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
               setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
+              completePriorCuesOnDay(numericItemId);
               console.log('✅ RunOfShow: Timer RUNNING - button states updated:', numericItemId);
             } else if (data.timer_state === 'loaded') {
               setActiveTimers(prev => {
@@ -10058,6 +10078,9 @@ const RunOfShowPage: React.FC = () => {
             markCueGroupCompleted(timerData.item_id);
             console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
           } else if (timerData.is_active === true) {
+            if (timerData.timer_state === 'running' || timerData.is_running === true) {
+              completePriorCuesOnDay(timerData.item_id);
+            }
             noteCueActualStart(timerData);
             setHybridTimerData(prev => {
               const currentHybridTimer = prev?.activeTimer;
@@ -11926,6 +11949,7 @@ const RunOfShowPage: React.FC = () => {
       // Add to stopped items for inactive styling
       setStoppedItems(prev => new Set([...prev, itemId]));
       setLastLoadedCueId((prev) => (prev === itemId ? null : prev));
+      logChange('TIMER_STOPPED', `Cue stopped`, { itemId });
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
       const currentProgress = timerProgress[itemId];
@@ -12257,6 +12281,11 @@ const RunOfShowPage: React.FC = () => {
           is_running: true,
           is_active: true,
           started_at: now.toISOString(),
+        });
+        completePriorCuesOnDay(itemId);
+        logChange('TIMER_STARTED', `Cue started running`, {
+          itemId,
+          startedAt: now.toISOString(),
         });
         
         // Start local timer immediately for UI updates (1 second intervals)
