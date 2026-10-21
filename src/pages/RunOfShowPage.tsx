@@ -2943,9 +2943,9 @@ const RunOfShowPage: React.FC = () => {
     const list = scheduleRef.current || schedule;
     const liveIdx = list.findIndex((s: { id: number }) => s.id === liveId);
     if (liveIdx <= 0) return;
-    const liveDay = list[liveIdx].day || 1;
+    const liveDay = Number(list[liveIdx].day || 1);
     for (let i = 0; i < liveIdx; i++) {
-      if ((list[i].day || 1) !== liveDay) continue;
+      if (Number(list[i].day || 1) !== liveDay) continue;
       markCueGroupCompleted(list[i].id);
     }
   };
@@ -7608,6 +7608,11 @@ const RunOfShowPage: React.FC = () => {
       await stopSecondaryTimer();
     }
     
+    // Loading a later cue means everything above it on this day is done
+    if (activeItemId !== itemId) {
+      completePriorCuesOnDay(itemId);
+    }
+
     // Mark the previously active CUE as stopped (if there was one)
     if (activeItemId && activeItemId !== itemId) {
       setStoppedItems(prev => new Set([...prev, activeItemId]));
@@ -9888,6 +9893,9 @@ const RunOfShowPage: React.FC = () => {
                 setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
               }
               setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
+              if (!stealRunning) {
+                completePriorCuesOnDay(numericItemId);
+              }
               console.log('✅ RunOfShow: Timer LOADED - button states updated:', numericItemId);
             } else if (data.timer_state === 'stopped') {
               setActiveTimers(prev => {
