@@ -2,11 +2,13 @@
  * Suggest shot type from speaker list when admin auto-shot is enabled.
  *
  * Rules:
- * - No named speakers → null (leave shot type unchanged)
- * - Exactly one named speaker with location Podium → "Podium"
- * - Otherwise → "N-Shot" where N = named speaker count (capped 1–7)
+ * - Manual override → leave shot type unchanged
+ * - No named speakers → leave shot type unchanged
+ * - Program type is Podium / Podium Transition → "Podium"
+ * - Otherwise → "N-Shot" from named speaker count (capped 1–7)
  *
  * Per-cue `shotTypeManualOverride` skips auto updates until the shot type is cleared.
+ * New speakers default to Seat unless that program type is Podium.
  */
 
 export type SpeakerForShotType = {
@@ -14,17 +16,41 @@ export type SpeakerForShotType = {
   location?: string | null;
 };
 
+export function isPodiumProgramType(programType?: string | null): boolean {
+  const t = String(programType || '').trim().toLowerCase();
+  return t === 'podium' || t === 'podium transition';
+}
+
+/** New speaker slot: Seat, unless this cue's program type is Podium. */
+export function defaultSpeakerLocationForProgram(
+  programType?: string | null
+): 'Podium' | 'Seat' {
+  return isPodiumProgramType(programType) ? 'Podium' : 'Seat';
+}
+
+export function parseSpeakersForShotType(raw: unknown): SpeakerForShotType[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export function isPodiumSpeakerLocation(location?: string | null): boolean {
   return String(location || '').trim().toLowerCase() === 'podium';
 }
 
 export function suggestShotTypeFromSpeakers(
-  speakers: SpeakerForShotType[] | null | undefined
+  speakers: SpeakerForShotType[] | null | undefined,
+  opts?: { programType?: string | null }
 ): string | null {
   const named = (speakers || []).filter((s) => String(s.fullName || '').trim() !== '');
   if (named.length === 0) return null;
 
-  if (named.length === 1 && isPodiumSpeakerLocation(named[0].location)) {
+  if (isPodiumProgramType(opts?.programType)) {
     return 'Podium';
   }
 
@@ -35,10 +61,10 @@ export function suggestShotTypeFromSpeakers(
 /** Patch fields when applying (or skipping) auto shot type on speaker save. */
 export function shotTypePatchFromSpeakers(
   speakers: SpeakerForShotType[] | null | undefined,
-  opts?: { manualOverride?: boolean }
+  opts?: { manualOverride?: boolean; programType?: string | null }
 ): { shotType: string } | Record<string, never> {
   if (opts?.manualOverride) return {};
-  const suggested = suggestShotTypeFromSpeakers(speakers);
+  const suggested = suggestShotTypeFromSpeakers(speakers, { programType: opts?.programType });
   if (!suggested) return {};
   return { shotType: suggested };
 }

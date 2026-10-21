@@ -38,7 +38,7 @@ import {
   normalizeSchedulePreshowEndTypes,
   programTypeSurfaceStyle,
 } from '../lib/rosProgramTypeSplit';
-import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { shotTypePatchFromSpeakers, shotTypeManualEditPatch, defaultSpeakerLocationForProgram, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
   shouldFoldPreshowOvertimeIntoShowStart,
@@ -6514,6 +6514,10 @@ const RunOfShowPage: React.FC = () => {
                 editingSpeakersItem === -1
                   ? !!modalForm.shotTypeManualOverride
                   : !!existingItem?.shotTypeManualOverride,
+              programType:
+                editingSpeakersItem === -1
+                  ? modalForm.programType
+                  : existingItem?.programType,
             })
           : {};
 
@@ -6794,7 +6798,11 @@ const RunOfShowPage: React.FC = () => {
     const newSpeaker: Speaker = {
       id: `speaker_${Date.now()}`,
       slot: nextSlot,
-      location: 'Podium',
+      location: defaultSpeakerLocationForProgram(
+        editingParticipantsItem === -1
+          ? modalForm.programType
+          : schedule.find((row) => row.id === editingParticipantsItem)?.programType
+      ),
       fullName: '',
       title: '',
       org: '',
@@ -6860,7 +6868,11 @@ const RunOfShowPage: React.FC = () => {
     const newSpeaker: Speaker = {
       id: Date.now().toString(),
       fullName: '',
-      location: 'Podium',
+      location: defaultSpeakerLocationForProgram(
+        editingSpeakersItem === -1
+          ? modalForm.programType
+          : schedule.find((row) => row.id === editingSpeakersItem)?.programType
+      ),
       slot: nextSlot,
       title: '',
       org: '',
@@ -18639,7 +18651,16 @@ const RunOfShowPage: React.FC = () => {
                       handleModalEditing();
                     }}
                     onChange={(e) => {
-                      setModalForm(prev => ({ ...prev, programType: e.target.value }));
+                      setModalForm((prev) => {
+                        const programType = e.target.value;
+                        const autoShot =
+                          getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
+                            ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
+                                programType,
+                              })
+                            : {};
+                        return { ...prev, programType, ...autoShot };
+                      });
                       // Resume syncing when dropdown selection is made
                       handleModalClosed();
                     }}

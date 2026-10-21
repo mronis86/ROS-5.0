@@ -6,7 +6,8 @@ import {
   formatStageDirectionNoteText,
   prependStageDirectionNote,
 } from '../lib/audioCallouts';
-import { shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { shotTypeManualEditPatch, shotTypePatchFromSpeakers, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
+import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import { boostNotesContrastHtml } from '../lib/notesContrast';
 import StageDirectionModal from '../components/StageDirectionModal';
@@ -392,9 +393,17 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 return;
               }
               const oldValue = item.programType;
+              const programType = e.target.value;
+              const autoShot =
+                getAutoShotTypeFromSpeakers()
+                  ? shotTypePatchFromSpeakers(parseSpeakersForShotType(item.speakersText), {
+                      manualOverride: !!item.shotTypeManualOverride,
+                      programType,
+                    })
+                  : {};
               setSchedule((prev: any[]) => prev.map(scheduleItem =>
                 scheduleItem.id === item.id
-                  ? { ...scheduleItem, programType: e.target.value }
+                  ? { ...scheduleItem, programType, ...autoShot }
                   : scheduleItem
               ));
               logChangeDebounced(

@@ -41,7 +41,7 @@ import {
   type SpeakerLocation,
   normalizeSpeakerLocation,
 } from '../lib/speakerLocations';
-import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { shotTypePatchFromSpeakers, shotTypeManualEditPatch, defaultSpeakerLocationForProgram, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import StageDirectionModal from '../components/StageDirectionModal';
 import {
@@ -3058,9 +3058,16 @@ const ContentReviewPage: React.FC = () => {
     setIsSavingCueProgram(true);
     setCueProgramSaveMessage(null);
     setCueProgramError(null);
+    const autoShotPatch = getAutoShotTypeFromSpeakers()
+      ? shotTypePatchFromSpeakers(parseSpeakersForShotType(displayItem.speakersText), {
+          manualOverride: !!displayItem.shotTypeManualOverride,
+          programType: nextProgramType,
+        })
+      : {};
     const result = await saveCuePatch(displayItem.id, (it) => ({
       ...it,
       programType: nextProgramType,
+      ...autoShotPatch,
       customFields: {
         ...(it.customFields || {}),
         cue: nextCue,
@@ -3069,6 +3076,10 @@ const ContentReviewPage: React.FC = () => {
     if (result.ok) {
       setCueProgramDirty(false);
       setCueProgramSaveMessage('Saved');
+      if ('shotType' in autoShotPatch && autoShotPatch.shotType) {
+        setShotDraft(autoShotPatch.shotType);
+        setShotDirty(false);
+      }
     } else {
       setCueProgramSaveMessage(result.error || 'Save failed');
     }
@@ -3081,6 +3092,7 @@ const ContentReviewPage: React.FC = () => {
     const autoShotPatch = getAutoShotTypeFromSpeakers()
       ? shotTypePatchFromSpeakers(speakerDraft, {
           manualOverride: !!displayItem.shotTypeManualOverride,
+          programType: displayItem.programType,
         })
       : {};
     setIsSavingSpeakers(true);
@@ -4551,7 +4563,7 @@ const ContentReviewPage: React.FC = () => {
                                 {
                                   id: `speaker-${Date.now()}-${nextSlot}`,
                                   slot: nextSlot,
-                                  location: 'Podium',
+                                  location: defaultSpeakerLocationForProgram(displayItem?.programType),
                                   fullName: '',
                                   title: '',
                                   org: '',

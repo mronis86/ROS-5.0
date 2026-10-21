@@ -4407,9 +4407,9 @@ export default function AdminPage() {
               <span>
                 <span className="block font-semibold text-white">Auto-set shot type from speakers</span>
                 <span className="block mt-1 text-sm text-slate-400">
-                  When saving speakers on a cue: one Podium speaker → Podium; otherwise N-Shot from named speaker
-                  count (1–7). Manual shot type edits lock that cue (amber border); clear the shot type to unlock
-                  auto again.
+                  When saving speakers on a cue: N-Shot from named speaker count (1–7), unless Program Type is
+                  Podium / Podium Transition (then Podium). Manual shot type edits lock that cue (amber border);
+                  clear the shot type to unlock auto again. New speakers default to Seat except on Podium cues.
                 </span>
               </span>
             </label>

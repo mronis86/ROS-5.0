@@ -20,7 +20,7 @@ import {
 } from '../lib/speakerLocations';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
-import { shotTypePatchFromSpeakers, shotTypeManualEditPatch } from '../lib/shotTypeFromSpeakers';
+import { shotTypePatchFromSpeakers, shotTypeManualEditPatch, defaultSpeakerLocationForProgram } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 
 /** Mirrored from desktop ROS via guestRosHelpers — keep visuals consistent. */
@@ -790,7 +790,9 @@ const RunOfShowMobilePage: React.FC = () => {
       nextOverride = manualShotPatch.shotTypeManualOverride;
     }
     if (getAutoShotTypeFromSpeakers() && !nextOverride) {
-      const autoShotPatch = shotTypePatchFromSpeakers(speakerDraft);
+      const autoShotPatch = shotTypePatchFromSpeakers(speakerDraft, {
+        programType: programDraft,
+      });
       if ('shotType' in autoShotPatch && autoShotPatch.shotType) {
         nextShotType = autoShotPatch.shotType;
       }
@@ -1172,7 +1174,7 @@ const RunOfShowMobilePage: React.FC = () => {
                             {
                               id: `speaker-${Date.now()}-${nextSlot}`,
                               slot: nextSlot,
-                              location: 'Podium' as const,
+                              location: defaultSpeakerLocationForProgram(programDraft),
                               fullName: '',
                               title: '',
                               org: '',

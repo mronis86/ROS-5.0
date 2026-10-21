@@ -26,6 +26,7 @@ import {
   eventLocalSecondsOfDay,
 } from '../lib/eventLocalClock';
 import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import { defaultSpeakerLocationForProgram } from '../lib/shotTypeFromSpeakers';
 import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
@@ -4846,7 +4847,11 @@ const RunOfShowPage: React.FC = () => {
     const newSpeaker: Speaker = {
       id: `speaker_${Date.now()}`,
       slot: nextSlot,
-      location: 'Podium',
+      location: defaultSpeakerLocationForProgram(
+        editingParticipantsItem === -1
+          ? modalForm.programType
+          : schedule.find((row) => row.id === editingParticipantsItem)?.programType
+      ),
       fullName: '',
       title: '',
       org: '',
@@ -4912,7 +4917,11 @@ const RunOfShowPage: React.FC = () => {
     const newSpeaker: Speaker = {
       id: Date.now().toString(),
       fullName: '',
-      location: 'Podium',
+      location: defaultSpeakerLocationForProgram(
+        editingSpeakersItem === -1
+          ? modalForm.programType
+          : schedule.find((row) => row.id === editingSpeakersItem)?.programType
+      ),
       slot: nextSlot,
       title: '',
       org: '',
