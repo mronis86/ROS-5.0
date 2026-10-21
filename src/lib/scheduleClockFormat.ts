@@ -11,7 +11,7 @@ export function formatScheduleClock(
   const daySec = ((Math.floor(totalSeconds) % 86400) + 86400) % 86400;
   const h = Math.floor(daySec / 3600);
   const m = Math.floor((daySec % 3600) / 60);
-  const s = daySec % 60;
+  const s = mode === 'hms' ? daySec % 60 : 0;
   const date = new Date();
   date.setHours(h, m, s, 0);
   return date.toLocaleTimeString('en-US', {

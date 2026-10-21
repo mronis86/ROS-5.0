@@ -1535,10 +1535,7 @@ const RunOfShowPage: React.FC = () => {
   const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
   const noteCueActualStart = useCallback((timer: any) => {
     if (!timer) return;
-    const running =
-      timer.timer_state === 'running' || (timer.is_running === true && timer.is_active !== false);
-    if (!running) return;
-    const id = parseInt(String(timer.item_id ?? timer.itemId ?? ''), 10);
+    const id = parseInt(String(timer.item_id ?? timer.itemId ?? timer.timerId ?? ''), 10);
     const startedRaw = timer.started_at || timer.timer_started_at || timer.startedAt;
     if (startedRaw == null || (typeof startedRaw === 'string' && startedRaw.startsWith('2099'))) return;
     const started = startedRaw instanceof Date ? startedRaw : new Date(startedRaw);
@@ -1546,6 +1543,13 @@ const RunOfShowPage: React.FC = () => {
     if (!Number.isFinite(id) || !Number.isFinite(ms) || started.getUTCFullYear() >= 2090) return;
     setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
   }, []);
+  useEffect(() => {
+    Object.entries(timerProgress).forEach(([id, row]) => {
+      if (row?.startedAt) {
+        noteCueActualStart({ item_id: id, started_at: row.startedAt });
+      }
+    });
+  }, [timerProgress, noteCueActualStart]);
   /** Re-evaluates the live Start projection while a cue runs over / between cues. */
   const [liveProjectionTick, setLiveProjectionTick] = useState(0);
   useEffect(() => {
@@ -2404,7 +2408,7 @@ const RunOfShowPage: React.FC = () => {
     );
 
   const COMPLETED_ROW_CLASS =
-    'bg-purple-950/80 ring-1 ring-inset ring-purple-500/30';
+    'bg-slate-950/90 ring-1 ring-inset ring-slate-600/40';
   const DELAY_BLOCK_ROW_CLASS =
     'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
 
@@ -2475,8 +2479,7 @@ const RunOfShowPage: React.FC = () => {
   const getRowDimStyle = (item: { id: number; programType?: string }): React.CSSProperties => {
     if (item.programType === 'KILLED') return { opacity: 0.7 };
     if (isItemDimmed(item.id)) {
-      // Opacity only — brightness/saturate filters washed out notes highlights and colored text
-      return { opacity: 0.78 };
+      return { opacity: 0.68, filter: 'brightness(0.59) saturate(0.33)' };
     }
     return { opacity: 1 };
   };
@@ -2888,6 +2891,45 @@ const RunOfShowPage: React.FC = () => {
   const dayStartTimesRef = useRef(dayStartTimes);
   const completedDaysRef = useRef(completedDays);
   const indentedCuesRef = useRef(indentedCues);
+
+  /** Grey-out a stopped cue + its indented children (local Stop and Companion/WS Stop). */
+  const markCueGroupCompleted = (itemId: number | null | undefined) => {
+    const id = normalizeScheduleItemId(itemId);
+    if (id == null) return;
+    const ids = [id];
+    const list = scheduleRef.current || schedule;
+    const idx = list.findIndex((s: { id: number }) => s.id === id);
+    if (idx !== -1) {
+      for (let i = idx + 1; i < list.length; i++) {
+        if (isIndentedScheduleItem(list[i], indentedCuesRef.current)) ids.push(list[i].id);
+        else break;
+      }
+    }
+    setCompletedCues((prev) => {
+      const next = { ...prev };
+      ids.forEach((cueId) => { next[cueId] = true; });
+      return next;
+    });
+    setStoppedItems((prev) => {
+      const next = new Set(prev);
+      ids.forEach((cueId) => next.add(cueId));
+      return next;
+    });
+    setLastLoadedCueId((prev) => (prev != null && ids.includes(prev) ? null : prev));
+    if (event?.id && user?.id) {
+      ids.forEach((cueId) => {
+        const item = list.find((s: { id: number }) => s.id === cueId);
+        void DatabaseService.markCueCompleted(
+          event.id,
+          cueId,
+          item?.customFields?.cue || 'CUE',
+          user.id,
+          user.full_name || user.email || 'Unknown User',
+          currentUserRole || 'VIEWER'
+        ).catch((err) => console.warn('⚠️ Failed to persist completed cue:', cueId, err));
+      });
+    }
+  };
   const trackWasDurationsRef = useRef(trackWasDurations);
   const originalDurationsRef = useRef(originalDurations);
   const eventTimezoneRef = useRef(eventTimezone);
@@ -4156,7 +4198,7 @@ const RunOfShowPage: React.FC = () => {
           const id = normalizeScheduleItemId(cue.item_id);
           if (id != null) completedCuesMap[id] = true;
         });
-        setCompletedCues(stripLiveCuesFromCompletedMap(completedCuesMap));
+        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedCuesMap }));
         console.log('🟣 Synced completed cues:', stripLiveCuesFromCompletedMap(completedCuesMap));
       }
     } catch (error) {
@@ -4400,7 +4442,7 @@ const RunOfShowPage: React.FC = () => {
           completedCuesMap[id] = true;
         });
         const filtered = stripLiveCuesFromCompletedMap(completedCuesMap);
-        setCompletedCues(filtered);
+        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...filtered }));
         console.log('🟣 Set completedCues state:', filtered);
       } else {
         console.log('🟣 No completed cues found');
@@ -4966,14 +5008,23 @@ const RunOfShowPage: React.FC = () => {
           setLoadedCueDependents(dependentIds);
         }
 
-        // Running/loaded cue must not stay in completedCues after restore (refresh)
+        // Only a RUNNING restore should un-complete. A leftover loaded row after Stop
+        // must not strip the grey-out from the cue that just finished.
         const restoredId = normalizeScheduleItemId(activeTimer.item_id);
-        if (restoredId != null) {
+        if (restoredId != null && isRunningTimer) {
           setCompletedCues((prev) => {
             const next = { ...prev };
             delete next[restoredId];
             return next;
           });
+          setStoppedItems((prev) => {
+            if (!prev.has(restoredId)) return prev;
+            const next = new Set(prev);
+            next.delete(restoredId);
+            return next;
+          });
+          activeLoadedItemIdRef.current = restoredId;
+        } else if (restoredId != null) {
           activeLoadedItemIdRef.current = restoredId;
         }
         
@@ -7484,6 +7535,10 @@ const RunOfShowPage: React.FC = () => {
           const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
           const totalSeconds = timerData.total || 0;
           runningTimerData.push({ timerId, elapsedSeconds, totalSeconds });
+          noteCueActualStart({
+            item_id: timerId,
+            started_at: startTime,
+          });
         }
       }
     });
@@ -9602,7 +9657,7 @@ const RunOfShowPage: React.FC = () => {
             if (id != null) acc[id] = true;
             return acc;
           }, {});
-          setCompletedCues(stripLiveCuesFromCompletedMap(completedObject));
+          setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedObject }));
         } else if (data && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
@@ -9731,6 +9786,7 @@ const RunOfShowPage: React.FC = () => {
                 return next;
               });
             }
+            markCueGroupCompleted(numericItemId);
             console.log('✅ RunOfShow: Timer cleared from timerUpdated:', numericItemId);
             return;
           }
@@ -9853,6 +9909,7 @@ const RunOfShowPage: React.FC = () => {
               return next;
             });
           }
+          markCueGroupCompleted(numericItemId);
           console.log('✅ RunOfShow: Timer cleared via WebSocket');
         }
       },
@@ -9998,6 +10055,7 @@ const RunOfShowPage: React.FC = () => {
             ));
             setActiveItemId(null);
             setActiveTimers({});
+            markCueGroupCompleted(timerData.item_id);
             console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
           } else if (timerData.is_active === true) {
             noteCueActualStart(timerData);
@@ -11867,6 +11925,7 @@ const RunOfShowPage: React.FC = () => {
       });
       // Add to stopped items for inactive styling
       setStoppedItems(prev => new Set([...prev, itemId]));
+      setLastLoadedCueId((prev) => (prev === itemId ? null : prev));
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
       const currentProgress = timerProgress[itemId];
@@ -11997,6 +12056,14 @@ const RunOfShowPage: React.FC = () => {
       // Clear active item if this was the active item
       if (activeItemId === itemId) {
         setActiveItemId(null);
+      }
+
+      const stoppedProgress = timerProgress[itemId];
+      if (stoppedProgress?.startedAt) {
+        noteCueActualStart({
+          item_id: itemId,
+          started_at: stoppedProgress.startedAt,
+        });
       }
       
       setTimerProgress(prev => {
@@ -13321,8 +13388,13 @@ const RunOfShowPage: React.FC = () => {
       const liveMs = startedRaw != null ? new Date(startedRaw).getTime() : NaN;
       if (!out[liveId]) add(liveId, liveMs);
     }
+    Object.entries(timerProgress).forEach(([id, row]) => {
+      if (!row?.startedAt || out[Number(id)]) return;
+      const ms = row.startedAt instanceof Date ? row.startedAt.getTime() : new Date(row.startedAt).getTime();
+      add(Number(id), ms);
+    });
     return out;
-  }, [showMode, cueActualStarts, eventTimezone, startTimeDisplayMode, hybridTimerData?.activeTimer]);
+  }, [showMode, cueActualStarts, eventTimezone, startTimeDisplayMode, hybridTimerData?.activeTimer, timerProgress]);
 
   /** Planned Start for a row with the live anchor applied, or null when the anchor does not reach it. */
   const liveAnchoredStartMinutes = (index: number): number | null => {

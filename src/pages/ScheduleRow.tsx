@@ -214,13 +214,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   }, [isLockedByOther]);
 
   const cellFill = isRowDimmed
-    ? 'bg-purple-950/55 border-purple-700/50 text-slate-500'
+    ? 'bg-slate-950/70 border-slate-700/60 text-slate-500'
     : 'bg-slate-700 border-slate-600 text-white';
   const cellFillInteractive = isRowDimmed
-    ? 'bg-purple-950/55 border-purple-700/50 text-slate-500 cursor-pointer hover:bg-purple-950/70'
+    ? 'bg-slate-950/70 border-slate-700/60 text-slate-500 cursor-pointer hover:bg-slate-900/80'
     : 'bg-slate-700 border-slate-600 text-white cursor-pointer hover:bg-slate-600';
   const cellFocus = isRowDimmed
-    ? 'bg-purple-950/55 border-purple-600/50 text-slate-500 focus:border-purple-500/55'
+    ? 'bg-slate-950/70 border-slate-600/50 text-slate-500 focus:border-slate-500/55'
     : 'bg-slate-700 border-slate-500 text-white focus:border-blue-500';
 
   // Helper functions

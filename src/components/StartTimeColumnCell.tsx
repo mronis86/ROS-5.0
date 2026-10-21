@@ -112,7 +112,7 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
     >
       <div className="flex flex-col items-center gap-1">
         <span
-          className={`font-mono text-base font-bold ${
+          className={`font-mono text-base font-bold whitespace-nowrap ${
             isTimedMarker
               ? 'text-sky-300'
               : timeKind === 'ran'
@@ -146,7 +146,7 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
           </span>
         ) : null}
         {startTimeRolled && wasStart && (
-          <span className="text-xs text-slate-400">was {wasStart}</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">was {wasStart}</span>
         )}
         {showOtBadge && (
           <span
