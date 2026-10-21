@@ -271,22 +271,29 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {/* Start time, program type, and row details, mirroring RunOfShowPage*/}
       {visibleColumns.start && (() => {
         const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
-        const displayedStart = calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : null;
         const isIndentedRow = Boolean(indentedCues[item.id] || item.isIndented);
         // Prefer frozen Enter In-Show times for WAS so +/- minutes don't move the "was" line.
         const wasStart =
           lockedStartTime && String(lockedStartTime).trim()
             ? String(lockedStartTime).trim()
             : scheduledStart;
+        const hasRan = !isIndentedRow && showMode === 'in-show' && !!actualStartLabel;
+        const clockLabel = hasRan
+          ? actualStartLabel!
+          : calculateStartTime && calculateStartTimeWithOvertime
+            ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)) || (isIndentedRow ? '↘' : '')
+            : isIndentedRow
+              ? '↘'
+              : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1));
         const startTimeRolled =
           !isIndentedRow &&
           showMode === 'in-show' &&
-          wasStart &&
-          displayedStart &&
-          wasStart !== displayedStart;
-        const showActualStart = !isIndentedRow && showMode === 'in-show' && !!actualStartLabel;
+          !!wasStart &&
+          !!clockLabel &&
+          wasStart !== clockLabel;
+        const timeKind: 'est' | 'ran' | null = hasRan ? 'ran' : startTimeRolled ? 'est' : null;
         const actualVsWasMinutes = (() => {
-          if (!showActualStart || !wasStart) return null;
+          if (!hasRan || !wasStart) return null;
           const ran = wallClockLabelToMinutes(actualStartLabel!);
           const was = wallClockLabelToMinutes(wasStart);
           if (ran == null || was == null) return null;
@@ -301,30 +308,36 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           style={{ width: columnWidths.start }}
         >
           <div className="flex flex-col items-center gap-1">
-            <span className="text-white font-mono text-base font-bold">
-              {calculateStartTime && calculateStartTimeWithOvertime
-                ? String(showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)) || (isIndentedRow ? '↘' : '')
-                : isIndentedRow
-                  ? '↘'
-                  : (calculateStartTimeWithOvertime ? String(calculateStartTimeWithOvertime(index)) : String(index + 1))}
+            <span
+              className={`font-mono text-base font-bold ${
+                timeKind === 'ran'
+                  ? actualVsWasMinutes == null
+                    ? 'text-white'
+                    : actualVsWasMinutes > 0
+                      ? 'text-red-400'
+                      : 'text-green-400'
+                  : 'text-white'
+              }`}
+            >
+              {timeKind ? (
+                <span
+                  className={`mr-1.5 align-middle text-[10px] font-semibold uppercase tracking-wide ${
+                    timeKind === 'ran' ? 'text-current' : 'text-amber-400'
+                  }`}
+                  title={
+                    timeKind === 'ran'
+                      ? 'When this cue actually started running'
+                      : 'Projected Start — updates from the live cue'
+                  }
+                >
+                  {timeKind}
+                </span>
+              ) : null}
+              {clockLabel}
             </span>
             {startTimeRolled && wasStart && (
               <span className="text-xs text-slate-400">
                 was {wasStart}
-              </span>
-            )}
-            {showActualStart && (
-              <span
-                className={`text-xs font-semibold ${
-                  actualVsWasMinutes == null
-                    ? 'text-slate-300'
-                    : actualVsWasMinutes > 0
-                      ? 'text-red-400'
-                      : 'text-green-400'
-                }`}
-                title="When this cue actually started running"
-              >
-                ran {actualStartLabel}
               </span>
             )}
             {!isIndentedRow && showMode !== 'rehearsal' && (

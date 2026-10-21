@@ -50,34 +50,14 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
   onEditTimedMarker,
 }) => {
   const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
-  const displayedStart = calculateStartTimeWithOvertime
-    ? String(calculateStartTimeWithOvertime(index))
-    : null;
   const wasStart =
     lockedStartTime && String(lockedStartTime).trim()
       ? String(lockedStartTime).trim()
       : scheduledStart;
-  const startTimeRolled =
-    !isIndented &&
-    showMode === 'in-show' &&
-    wasStart &&
-    displayedStart &&
-    wasStart !== displayedStart;
-
-  const showActualStart = !isIndented && showMode === 'in-show' && !!actualStartLabel;
-  const actualVsWasMinutes = (() => {
-    if (!showActualStart || !wasStart) return null;
-    const ran = wallClockLabelToMinutes(actualStartLabel!);
-    const was = wallClockLabelToMinutes(wasStart);
-    if (ran == null || was == null) return null;
-    let diff = ran - was;
-    if (diff > 720) diff -= 1440;
-    if (diff < -720) diff += 1440;
-    return diff;
-  })();
-
-  const primaryLabel =
-    calculateStartTime && calculateStartTimeWithOvertime
+  const hasRan = !isIndented && showMode === 'in-show' && !!actualStartLabel;
+  const clockLabel = hasRan
+    ? actualStartLabel!
+    : calculateStartTime && calculateStartTimeWithOvertime
       ? String(
           showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)
         ) || (isIndented ? '↘' : '')
@@ -86,6 +66,25 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
         : calculateStartTimeWithOvertime
           ? String(calculateStartTimeWithOvertime(index))
           : String(index + 1);
+  const startTimeRolled =
+    !isIndented &&
+    showMode === 'in-show' &&
+    !!wasStart &&
+    !!clockLabel &&
+    wasStart !== clockLabel;
+  /** Upcoming adjusted Start is an estimate; once the cue starts we swap est → ran. */
+  const timeKind: 'est' | 'ran' | null = hasRan ? 'ran' : startTimeRolled ? 'est' : null;
+  const actualVsWasMinutes = (() => {
+    if (!hasRan || !wasStart) return null;
+    const ran = wallClockLabelToMinutes(actualStartLabel!);
+    const was = wallClockLabelToMinutes(wasStart);
+    if (ran == null || was == null) return null;
+    let diff = ran - was;
+    if (diff > 720) diff -= 1440;
+    if (diff < -720) diff += 1440;
+    return diff;
+  })();
+  const primaryLabel = clockLabel;
 
   const showOtBadge =
     !isIndented &&
@@ -114,9 +113,31 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
       <div className="flex flex-col items-center gap-1">
         <span
           className={`font-mono text-base font-bold ${
-            isTimedMarker ? 'text-sky-300' : 'text-white'
+            isTimedMarker
+              ? 'text-sky-300'
+              : timeKind === 'ran'
+                ? actualVsWasMinutes == null
+                  ? 'text-white'
+                  : actualVsWasMinutes > 0
+                    ? 'text-red-400'
+                    : 'text-green-400'
+                : 'text-white'
           }`}
         >
+          {timeKind ? (
+            <span
+              className={`mr-1.5 align-middle text-[10px] font-semibold uppercase tracking-wide ${
+                timeKind === 'ran' ? 'text-current' : 'text-amber-400'
+              }`}
+              title={
+                timeKind === 'ran'
+                  ? 'When this cue actually started running'
+                  : 'Projected Start — updates from the live cue'
+              }
+            >
+              {timeKind}
+            </span>
+          ) : null}
           {primaryLabel}
         </span>
         {isTimedMarker ? (
@@ -126,20 +147,6 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
         ) : null}
         {startTimeRolled && wasStart && (
           <span className="text-xs text-slate-400">was {wasStart}</span>
-        )}
-        {showActualStart && (
-          <span
-            className={`text-xs font-semibold ${
-              actualVsWasMinutes == null
-                ? 'text-slate-300'
-                : actualVsWasMinutes > 0
-                  ? 'text-red-400'
-                  : 'text-green-400'
-            }`}
-            title="When this cue actually started running"
-          >
-            ran {actualStartLabel}
-          </span>
         )}
         {showOtBadge && (
           <span
