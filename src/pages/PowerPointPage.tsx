@@ -6,7 +6,7 @@ import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { normalizeCueLabel } from '../lib/cueCards';
 
-type PptAction = 'none' | 'load' | 'load_start' | 'start';
+type PptAction = 'none' | 'load' | 'load_start' | 'start' | 'stop';
 
 type PptBinding = {
   itemId: number | null;
@@ -47,7 +47,10 @@ const ACTION_OPTIONS: { id: PptAction; label: string }[] = [
   { id: 'load', label: 'Load cue' },
   { id: 'load_start', label: 'Load + start' },
   { id: 'start', label: 'Start timer' },
+  { id: 'stop', label: 'Stop clock' },
 ];
+
+const CUE_REQUIRED_ACTIONS = new Set<PptAction>(['load', 'load_start', 'start']);
 
 function formatLastSeen(raw: string | null): string {
   if (!raw) return 'never';
@@ -344,7 +347,7 @@ const PowerPointPage: React.FC = () => {
             </div>
             <div className="text-sm text-slate-300">
               {liveSlide.binding.action === 'none'
-                ? 'No cue mapped'
+                ? 'No action'
                 : `${ACTION_OPTIONS.find((a) => a.id === liveSlide.binding.action)?.label || liveSlide.binding.action}${
                     liveSlide.binding.itemId
                       ? ` · ${cues.find((c) => c.id === liveSlide.binding.itemId)?.label || `Item ${liveSlide.binding.itemId}`}`
@@ -408,10 +411,10 @@ const PowerPointPage: React.FC = () => {
                       value={slide.binding.itemId ?? ''}
                       onChange={(e) => {
                         const itemId = e.target.value ? Number(e.target.value) : null;
-                        void saveBinding(slide, {
-                          itemId,
-                          action: itemId ? slide.binding.action === 'none' ? 'load_start' : slide.binding.action : 'none',
-                        });
+                        let action = slide.binding.action;
+                        if (!itemId && CUE_REQUIRED_ACTIONS.has(action)) action = 'none';
+                        else if (itemId && action === 'none') action = 'load_start';
+                        void saveBinding(slide, { itemId, action });
                       }}
                     >
                       <option value="">Not mapped</option>
@@ -428,11 +431,12 @@ const PowerPointPage: React.FC = () => {
                     <select
                       className="mt-1 w-full rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-white"
                       value={slide.binding.action}
-                      disabled={!slide.binding.itemId}
                       onChange={(e) => {
+                        const action = e.target.value as PptAction;
+                        if (CUE_REQUIRED_ACTIONS.has(action) && !slide.binding.itemId) return;
                         void saveBinding(slide, {
                           itemId: slide.binding.itemId,
-                          action: e.target.value as PptAction,
+                          action,
                         });
                       }}
                     >

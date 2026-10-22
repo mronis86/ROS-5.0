@@ -93,6 +93,37 @@ input, select {
   color: var(--text);
 }
 
+.event-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.45rem;
+}
+
+.event-tab {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: #243247;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.event-tab:hover {
+  color: var(--text);
+}
+
+.event-tab.active {
+  background: #9a3412;
+  border-color: var(--accent);
+  color: #fff7ed;
+}
+
+#eventSearch {
+  margin-bottom: 0.35rem;
+}
+
 button {
   border: 1px solid var(--border);
   background: #243247;

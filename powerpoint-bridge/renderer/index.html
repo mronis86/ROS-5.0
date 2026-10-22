@@ -38,6 +38,12 @@
         </div>
         <label>
           Event
+          <div class="event-tabs" role="tablist" aria-label="Event list filter">
+            <button type="button" class="event-tab" data-event-filter="all" role="tab" aria-selected="false">All</button>
+            <button type="button" class="event-tab active" data-event-filter="upcoming" role="tab" aria-selected="true">Upcoming</button>
+            <button type="button" class="event-tab" data-event-filter="past" role="tab" aria-selected="false">Past</button>
+          </div>
+          <input id="eventSearch" type="search" placeholder="Search by name or date…" autocomplete="off" />
           <select id="eventSelect">
             <option value="">Load events first</option>
           </select>
