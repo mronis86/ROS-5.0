@@ -12,6 +12,14 @@ import {
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
 import { normalizeVoiceIgnoreLineIndexes } from '../lib/teleprompter-voice-alignment';
+import {
+  formatCueMarker,
+  isCueMarkerScriptLine,
+  loadFollowForLoadedCue,
+  normalizeCueKey,
+  type ScriptCueBinding,
+  type ScriptCueFollowPayload,
+} from '../lib/teleprompterCueFollow';
 
 type CommentType = 'GENERAL' | 'CUE' | 'AUDIO' | 'GFX' | 'VIDEO' | 'LIGHTING';
 
@@ -195,6 +203,21 @@ const ScriptsFollowPage: React.FC = () => {
   const [currentScriptName, setCurrentScriptName] = useState<string>(scriptNameFromState);
   const [savedScripts, setSavedScripts] = useState<any[]>([]);
   const [showScriptManager, setShowScriptManager] = useState<boolean>(false);
+  const [followLoadedCues, setFollowLoadedCues] = useState(() => {
+    try {
+      return localStorage.getItem('ros.teleprompter.followCues') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const followLoadedCuesRef = useRef(true);
+  const lastScriptCueFollowKeyRef = useRef('');
+  const scriptTextRef = useRef(scriptText);
+  const [scheduleCues, setScheduleCues] = useState<
+    Array<{ item_id: number; day: number; cue: string; cue_key: string | null; name: string; label: string }>
+  >([]);
+  const [cueBindings, setCueBindings] = useState<ScriptCueBinding[]>([]);
+  const [bindCueItemId, setBindCueItemId] = useState('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [commentType, setCommentType] = useState<CommentType>('GENERAL');
   const [showDisconnectModal, setShowDisconnectModal] = useState<boolean>(false);
@@ -330,8 +353,27 @@ const ScriptsFollowPage: React.FC = () => {
 
     console.log('🔌 Setting up WebSocket for Scripts Follow, role:', userRole);
 
+    const followFromTimer = (data: any) => {
+      if (!followLoadedCuesRef.current || !eventId) return;
+      if (data?.event_id && data.event_id !== eventId) return;
+      const state = data?.timer_state;
+      if (state !== 'running' && state !== 'loaded') return;
+      const itemId = Number(data.item_id);
+      if (!Number.isFinite(itemId)) return;
+      void loadFollowForLoadedCue({
+        eventId,
+        itemId,
+        currentScriptText: scriptTextRef.current,
+        apiBase: getApiBaseUrl(),
+        headers: apiJsonHeaders(),
+      }).then((payload) => {
+        if (!payload || isEditingScriptRef.current) return;
+        handleScriptCueFollow(payload);
+      });
+    };
+
     if (connectionEnabledRef.current) {
-      socketClient.connect(eventId, {});
+      socketClient.connect(eventId, { onTimerUpdated: followFromTimer });
     }
 
     const socket = socketClient.getSocket();
@@ -386,9 +428,46 @@ const ScriptsFollowPage: React.FC = () => {
       }
     };
 
+    const handleScriptCueFollow = (data: ScriptCueFollowPayload) => {
+      if (!followLoadedCuesRef.current) return;
+      if (data?.eventId && data.eventId !== eventId) return;
+      if (isEditingScriptRef.current) return;
+      const key = `${data.itemId}:${data.scriptId || ''}:${data.jumpLine ?? ''}`;
+      if (lastScriptCueFollowKeyRef.current === key) return;
+      lastScriptCueFollowKeyRef.current = key;
+      if (typeof data.scriptText === 'string') {
+        setScriptText(data.scriptText);
+        if (typeof data.scriptName === 'string') setCurrentScriptName(data.scriptName);
+        if (data.scriptId != null) setCurrentScriptId(String(data.scriptId));
+        if (Array.isArray(data.voiceIgnoreLines)) {
+          setVoiceIgnoreLines(normalizeVoiceIgnoreLineIndexes(data.voiceIgnoreLines));
+        }
+      }
+      if (Array.isArray(data.comments)) {
+        setComments(
+          data.comments.map((c: any) => ({
+            id: String(c.id || c.commentId || `${c.lineNumber || c.line_number}-${c.text || c.comment_text}`),
+            lineNumber: Number(c.lineNumber ?? c.line_number) || 0,
+            text: String(c.text ?? c.comment_text ?? ''),
+            author: String(c.author || 'User'),
+            timestamp: c.timestamp ? new Date(c.timestamp) : new Date(c.created_at || Date.now()),
+            type: (c.type || c.comment_type || 'GENERAL') as CommentType,
+          }))
+        );
+      }
+      const jumpLine = data.jumpLine;
+      if (jumpLine == null || !Number.isFinite(jumpLine)) return;
+      window.setTimeout(() => {
+        const lineEl = scriptRef.current?.querySelector(`[data-line-number="${jumpLine}"]`);
+        lineEl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        setSelectedLine(jumpLine);
+      }, 80);
+    };
+
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('scriptContentSync', handleScriptContentSync);
+    socket.on('scriptCueFollow', handleScriptCueFollow);
     if (socket.connected) {
       socketClient.emitScriptContentRequest();
     }
@@ -539,7 +618,7 @@ const ScriptsFollowPage: React.FC = () => {
         socketClient.disconnect(eventId);
       } else if (!socketClient.isConnected()) {
         console.log('👁️ Scripts Follow: Tab visible - silently reconnecting WebSocket (no modal)');
-        socketClient.connect(eventId, {});
+        socketClient.connect(eventId, { onTimerUpdated: followFromTimer });
         const newSocket = socketClient.getSocket();
         if (newSocket) {
           newSocket.on('connect', handleConnect);
@@ -558,6 +637,7 @@ const ScriptsFollowPage: React.FC = () => {
         socket.off('scriptScrollSync');
         socket.off('scriptCommentSync');
         socket.off('scriptContentSync', handleScriptContentSync);
+        socket.off('scriptCueFollow', handleScriptCueFollow);
         socket.off('connect', handleConnect);
         socket.off('disconnect', handleDisconnect);
         console.log('✅ Removed Scripts Follow socket listeners');
@@ -966,6 +1046,146 @@ const ScriptsFollowPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    scriptTextRef.current = scriptText;
+  }, [scriptText]);
+
+  useEffect(() => {
+    followLoadedCuesRef.current = followLoadedCues;
+    try {
+      localStorage.setItem('ros.teleprompter.followCues', followLoadedCues ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [followLoadedCues]);
+
+  const loadCueBindings = async () => {
+    if (!eventId) return;
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/script-cue-bindings/${eventId}`, {
+        headers: apiJsonHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCueBindings(Array.isArray(data.bindings) ? data.bindings : []);
+        setScheduleCues(Array.isArray(data.cues) ? data.cues : []);
+        return;
+      }
+    } catch (error) {
+      console.warn('Failed to load script cue bindings:', error);
+    }
+    try {
+      const rosRes = await fetch(`${getApiBaseUrl()}/api/run-of-show-data/${eventId}`, {
+        headers: apiJsonHeaders(),
+      });
+      if (!rosRes.ok) return;
+      const ros = await rosRes.json();
+      const rawItems = ros?.schedule_items;
+      const items = Array.isArray(rawItems)
+        ? rawItems
+        : typeof rawItems === 'string'
+          ? JSON.parse(rawItems)
+          : [];
+      setScheduleCues(
+        items
+          .map((item: any) => {
+            const itemId = Number(item?.id);
+            if (!Number.isFinite(itemId)) return null;
+            const rawCue = item?.customFields?.cue ?? item?.custom_fields?.cue ?? '';
+            const name = String(item?.segmentName || item?.segment_name || '').trim();
+            return {
+              item_id: itemId,
+              day: Number(item?.day || 1),
+              cue: rawCue ? String(rawCue) : '',
+              cue_key: normalizeCueKey(rawCue),
+              name,
+              label: rawCue ? String(rawCue) : name || `Item ${itemId}`,
+            };
+          })
+          .filter(Boolean)
+      );
+    } catch (error) {
+      console.warn('Failed to load ROS cues for script follow:', error);
+    }
+  };
+
+  useEffect(() => {
+    void loadCueBindings();
+  }, [eventId]);
+
+  const selectedBindCue = scheduleCues.find((cue) => String(cue.item_id) === bindCueItemId);
+  const selectedBindBinding = cueBindings.find((row) => String(row.item_id) === bindCueItemId);
+
+  const assignScriptToCue = async (jumpLine: number | null) => {
+    if (!eventId || !currentScriptId || !bindCueItemId) {
+      alert('Save this script, then pick a ROS cue to assign.');
+      return;
+    }
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/script-cue-bindings/${eventId}`, {
+        method: 'PUT',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify({
+          item_id: Number(bindCueItemId),
+          script_id: currentScriptId,
+          jump_line: jumpLine,
+        }),
+      });
+      if (!response.ok) throw new Error('save failed');
+      await loadCueBindings();
+    } catch (error) {
+      console.error(error);
+      alert('Could not assign this script to the cue.');
+    }
+  };
+
+  const unassignScriptFromCue = async () => {
+    if (!eventId || !bindCueItemId) return;
+    try {
+      await fetch(`${getApiBaseUrl()}/api/script-cue-bindings/${eventId}/${bindCueItemId}`, {
+        method: 'DELETE',
+        headers: apiJsonHeaders(),
+      });
+      await loadCueBindings();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const insertCueMarker = () => {
+    if (!selectedBindCue) {
+      alert('Pick a ROS cue first.');
+      return;
+    }
+    const marker = formatCueMarker(selectedBindCue.cue || selectedBindCue.label);
+    const at = selectedLine ?? 0;
+    const lines = scriptText.split('\n');
+    if (lines[at] != null && isCueMarkerScriptLine(lines[at])) {
+      lines[at] = marker;
+    } else {
+      lines.splice(at, 0, marker);
+    }
+    const next = lines.join('\n');
+    const adjustedComments = adjustCommentLineNumbers(scriptText, next);
+    const adjustedIgnore = remapVoiceIgnoreLines(scriptText, next, voiceIgnoreLines);
+    setScriptText(next);
+    setComments(adjustedComments);
+    setVoiceIgnoreLines(adjustedIgnore);
+    setSelectedLine(at);
+    broadcastScriptContent(next, currentScriptName, currentScriptId, adjustedComments, adjustedIgnore);
+    if (currentScriptId) {
+      void fetch(`${getApiBaseUrl()}/api/scripts/${currentScriptId}`, {
+        method: 'PUT',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify({
+          script_name: currentScriptName || 'Untitled Script',
+          script_text: next,
+          voice_ignore_lines: adjustedIgnore,
+        }),
+      }).catch((error) => console.error('Failed to save cue marker:', error));
+    }
+  };
+
   // Load list of saved scripts
   const loadSavedScripts = async () => {
     try {
@@ -1328,6 +1548,74 @@ const ScriptsFollowPage: React.FC = () => {
               📺 Teleprompter
             </button>
           </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-600 bg-slate-800/80 px-4 py-3">
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              checked={followLoadedCues}
+              onChange={(e) => setFollowLoadedCues(e.target.checked)}
+            />
+            Follow loaded cues
+          </label>
+          <select
+            value={bindCueItemId}
+            onChange={(e) => setBindCueItemId(e.target.value)}
+            className="min-w-[14rem] rounded border border-slate-600 bg-slate-700 px-2 py-1 text-sm text-white"
+          >
+            <option value="">ROS cue…</option>
+            {scheduleCues.map((cue) => (
+              <option key={cue.item_id} value={String(cue.item_id)}>
+                Day {cue.day} · {cue.label}
+                {cue.name ? ` — ${cue.name}` : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => void assignScriptToCue(null)}
+            disabled={!currentScriptId || !bindCueItemId}
+            className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-600"
+            title="When this cue loads, open this whole script"
+          >
+            Assign script
+          </button>
+          <button
+            type="button"
+            onClick={() => void assignScriptToCue(selectedLine)}
+            disabled={!currentScriptId || !bindCueItemId || selectedLine == null}
+            className="rounded bg-sky-700 px-3 py-1 text-sm font-medium text-white hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-slate-600"
+            title="When this cue loads, open this script and jump to the selected line"
+          >
+            Jump to selected line
+          </button>
+          <button
+            type="button"
+            onClick={insertCueMarker}
+            disabled={!bindCueItemId}
+            className="rounded bg-slate-600 px-3 py-1 text-sm font-medium text-white hover:bg-slate-500 disabled:cursor-not-allowed disabled:bg-slate-700"
+            title="Insert [[CUE n]] — teleprompter jumps here if this script is already open"
+          >
+            Insert [[CUE]]
+          </button>
+          <button
+            type="button"
+            onClick={() => void unassignScriptFromCue()}
+            disabled={!bindCueItemId || !selectedBindBinding}
+            className="rounded bg-slate-700 px-3 py-1 text-sm text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Unlink
+          </button>
+          {selectedBindBinding ? (
+            <span className="text-xs text-emerald-300">
+              Linked
+              {selectedBindBinding.jump_line != null ? ` → line ${selectedBindBinding.jump_line + 1}` : ''}
+            </span>
+          ) : null}
+          <span className="text-xs text-slate-400">
+            Per-cue script, or one book with [[CUE 12]] marks.
+          </span>
         </div>
 
         {/* Role Info Banner - Enhanced */}
@@ -1818,6 +2106,7 @@ const ScriptsFollowPage: React.FC = () => {
                   const lineComments = getCommentsForLine(index);
                   const hasComments = lineComments.length > 0;
                   const isVoiceIgnored = voiceIgnoreLines.includes(index);
+                  const isCueMarker = isCueMarkerScriptLine(line);
                   const isSelected =
                     selectedLines.includes(index) || selectedLine === index;
                   
@@ -1876,13 +2165,15 @@ const ScriptsFollowPage: React.FC = () => {
                       {/* Script Line and Icons */}
                       <div className="flex-1 flex items-start justify-between relative z-10">
                         <div className={`whitespace-pre-wrap break-words ${
-                          isVoiceIgnored
+                          isCueMarker
+                            ? 'text-cyan-300 italic'
+                            : isVoiceIgnored
                             ? 'text-amber-100/70 italic opacity-70'
                             : hasComments 
                             ? 'text-white font-medium bg-blue-900 rounded-md px-2 py-1' 
                             : 'text-white'
                         }`}>
-                          {line || '\u00A0'}
+                          {isCueMarker ? `🎬 ${line}` : line || '\u00A0'}
                         </div>
                         {hasComments && (
                           <div className="flex items-center gap-1 flex-shrink-0 ml-4 bg-slate-800 px-2 py-1 rounded-lg">

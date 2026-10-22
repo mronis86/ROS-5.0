@@ -8,6 +8,10 @@ import {
   type ScriptSpeechToken
 } from '../lib/teleprompter-voice-alignment';
 import {
+  loadFollowForLoadedCue,
+  type ScriptCueFollowPayload,
+} from '../lib/teleprompterCueFollow';
+import {
   audioConstraintsForMic,
   computeMicLevelFromTimeDomain,
   isEdgeBrowser,
@@ -153,6 +157,27 @@ const TeleprompterPage: React.FC = () => {
   const [voiceMicLevel, setVoiceMicLevel] = useState(0);
   const [voiceHeardAnything, setVoiceHeardAnything] = useState(false);
   const [showSttDiagnostics, setShowSttDiagnostics] = useState(false);
+  const [followLoadedCues, setFollowLoadedCues] = useState(() => {
+    try {
+      return localStorage.getItem('ros.teleprompter.followCues') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const followLoadedCuesRef = useRef(true);
+  const lastScriptCueFollowKeyRef = useRef('');
+  const scriptTextRef = useRef(scriptText);
+  useEffect(() => {
+    scriptTextRef.current = scriptText;
+  }, [scriptText]);
+  useEffect(() => {
+    followLoadedCuesRef.current = followLoadedCues;
+    try {
+      localStorage.setItem('ros.teleprompter.followCues', followLoadedCues ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [followLoadedCues]);
   
   // Teleprompter settings
   const [settings, setSettings] = useState<TeleprompterSettings>({
@@ -396,6 +421,42 @@ const TeleprompterPage: React.FC = () => {
       console.error('Error loading script:', error);
     }
   };
+
+  const applyTeleprompterCueFollow = (data: ScriptCueFollowPayload) => {
+    if (!followLoadedCuesRef.current) return;
+    if (data?.eventId && eventId && data.eventId !== eventId) return;
+    const key = `${data.itemId}:${data.scriptId || ''}:${data.jumpLine ?? ''}`;
+    if (lastScriptCueFollowKeyRef.current === key) return;
+    lastScriptCueFollowKeyRef.current = key;
+    if (typeof data.scriptText === 'string') {
+      setScriptText(data.scriptText);
+      if (typeof data.scriptName === 'string') setCurrentScriptName(data.scriptName);
+      if (data.scriptId != null) setCurrentScriptId(String(data.scriptId));
+      if (Array.isArray(data.voiceIgnoreLines)) {
+        setVoiceIgnoreLines(normalizeVoiceIgnoreLineIndexes(data.voiceIgnoreLines));
+      }
+    }
+    if (Array.isArray(data.comments)) {
+      setComments(
+        data.comments.map((c: any) => ({
+          id: String(c.id || c.commentId || `${c.lineNumber || c.line_number}-${c.text || c.comment_text}`),
+          lineNumber: Number(c.lineNumber ?? c.line_number) || 0,
+          text: String(c.text ?? c.comment_text ?? ''),
+          author: String(c.author || 'User'),
+          timestamp: c.timestamp ? new Date(c.timestamp) : new Date(c.created_at || Date.now()),
+          type: (c.type || c.comment_type || 'GENERAL') as CommentType,
+        }))
+      );
+    }
+    const jumpLine = data.jumpLine;
+    if (jumpLine == null || !Number.isFinite(jumpLine)) return;
+    window.setTimeout(() => {
+      lineRefsMap.current.get(jumpLine)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+    }, 80);
+  };
   
   // WebSocket connection
   useEffect(() => {
@@ -408,7 +469,25 @@ const TeleprompterPage: React.FC = () => {
       onConnectionChange: (connected: boolean) => {
         console.log(connected ? '✅ WebSocket connected for teleprompter' : '❌ WebSocket disconnected');
         setIsWebSocketConnected(connected);
-      }
+      },
+      onTimerUpdated: (data: any) => {
+        if (!followLoadedCuesRef.current || !eventId) return;
+        if (data?.event_id && data.event_id !== eventId) return;
+        const state = data?.timer_state;
+        if (state !== 'running' && state !== 'loaded') return;
+        const itemId = Number(data.item_id);
+        if (!Number.isFinite(itemId)) return;
+        void loadFollowForLoadedCue({
+          eventId,
+          itemId,
+          currentScriptText: scriptTextRef.current,
+          apiBase: getApiBaseUrl(),
+          headers: apiJsonHeaders(),
+        }).then((payload) => {
+          if (!payload) return;
+          applyTeleprompterCueFollow(payload);
+        });
+      },
     };
     
     if (connectionEnabledRef.current) {
@@ -464,11 +543,26 @@ const TeleprompterPage: React.FC = () => {
     };
 
     socket.on('scriptContentSync', onScriptContent);
+
+    const onCueFollow = (data: ScriptCueFollowPayload) => {
+      applyTeleprompterCueFollow(data);
+      const jumpLine = data.jumpLine;
+      if (jumpLine == null || !Number.isFinite(jumpLine)) return;
+      window.setTimeout(() => {
+        const scroller = previewScrollRef.current || scriptRef.current;
+        if (scroller && userRoleRef.current === 'SCROLLER') {
+          broadcastScriptScroll(scroller.scrollTop, settings.fontSize);
+        }
+      }, 120);
+    };
+    socket.on('scriptCueFollow', onCueFollow);
+
     socketClient.emitScriptContentRequest();
     return () => {
       socket.off('scriptContentSync', onScriptContent);
+      socket.off('scriptCueFollow', onCueFollow);
     };
-  }, [eventId, isWebSocketConnected]);
+  }, [eventId, isWebSocketConnected, settings.fontSize]);
 
   // Listen for scroll sync events (Viewers only) using raw socket
   useEffect(() => {
@@ -2126,6 +2220,15 @@ const TeleprompterPage: React.FC = () => {
                 {isFullscreen ? '⛶ Exit Fullscreen' : '⛶ Fullscreen'}
               </button>
             )}
+
+            <label className="flex items-center gap-2 px-3 py-2 rounded border border-slate-600 bg-slate-800 text-xs text-slate-200">
+              <input
+                type="checkbox"
+                checked={followLoadedCues}
+                onChange={(e) => setFollowLoadedCues(e.target.checked)}
+              />
+              Follow loaded cues
+            </label>
 
             {userRole === 'SCROLLER' && (
               <>

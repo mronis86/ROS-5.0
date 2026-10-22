@@ -1,3 +1,5 @@
+import { isCueMarkerScriptLine } from './teleprompterCueFollow';
+
 /**
  * Tokenize script into normalized words with source line indices (0-based).
  */
@@ -13,7 +15,7 @@ export type ScriptSpeechToken = {
  */
 export function isVoiceNoteScriptLine(line: string): boolean {
   const t = line.trimStart();
-  return t.startsWith('//') || /^NOTE:\s/i.test(t);
+  return t.startsWith('//') || /^NOTE:\s/i.test(t) || isCueMarkerScriptLine(line);
 }
 
 /**
