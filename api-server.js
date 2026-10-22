@@ -1217,6 +1217,7 @@ function buildRailwayHealthMeta() {
     uptimeSeconds: Math.floor(process.uptime()),
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
+    apiRevision: 'ppt-20261022',
   };
 }
 
