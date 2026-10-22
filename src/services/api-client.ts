@@ -1190,4 +1190,8 @@ export interface EventCueFile {
 }
 
 export const apiClient = new ApiClient();
-export { getApiBaseUrl };
+function getAppDownloadUrl(fileName: string) {
+  return `${getApiBaseUrl()}/api/downloads/${encodeURIComponent(fileName)}`;
+}
+
+export { getApiBaseUrl, getAppDownloadUrl };

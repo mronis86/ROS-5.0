@@ -4,11 +4,12 @@ Local helper that attaches to the running PowerPoint deck, uploads low-res slide
 
 ## Use
 
-1. Open the deck in PowerPoint.
-2. Run `START.bat` (first run installs Electron).
-3. Paste the Railway API URL and an integration token (`ros_itok_…`) with scopes `read,control,write`.
-4. Load events, pick the show, click **Capture stills**.
-5. In the ROS web app open **PowerPoint** from the Run of Show operator menu and map stills to cues.
-6. Click **Start follow**, then start Slideshow. Advancing a mapped slide fires the mapped action.
+1. Unzip the whole folder. Do not run `START.bat` from inside the zip window.
+2. Open the deck in PowerPoint.
+3. Run `START.bat` (or `ROS PowerPoint Bridge.exe` in the same folder).
+4. Paste the Railway API URL and an integration token (`ros_itok_…`) with scopes `read,control,write`.
+5. Load events, pick the show, click **Capture stills**.
+6. In the ROS web app open **PowerPoint** from the Run of Show operator menu and map stills to cues.
+7. Click **Start follow**, then start Slideshow. Advancing a mapped slide fires the mapped action.
 
 Requires Windows and desktop PowerPoint. The helper never writes into the PPTX.

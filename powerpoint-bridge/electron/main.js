@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -6,6 +6,19 @@ const { loadConfig, saveConfig } = require('./config-store');
 const { BridgeController } = require('./bridge-controller');
 const { validateApi, listCalendarEvents } = require('./railway-client');
 const ppt = require('./ppt-com');
+
+function showCrash(err) {
+  const message = err && err.stack ? err.stack : String(err || 'Unknown error');
+  console.error('[powerpoint-bridge]', message);
+  try {
+    dialog.showErrorBox('ROS PowerPoint Bridge crashed', message.slice(0, 1500));
+  } catch {
+    /* ignore */
+  }
+}
+
+process.on('uncaughtException', showCrash);
+process.on('unhandledRejection', showCrash);
 
 const userDataRoot = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'ros-powerpoint-bridge');
 fs.mkdirSync(userDataRoot, { recursive: true });

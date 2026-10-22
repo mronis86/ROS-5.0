@@ -63,6 +63,7 @@ const {
 } = require('./lib/event-cue-files');
 const { registerEventBoardRoutes, ensureEventBoardSchema } = require('./lib/event-board');
 const { registerPowerpointRoutes, ensurePowerpointSchema } = require('./lib/powerpoint-stills');
+const { registerAppDownloadRoutes } = require('./lib/app-downloads');
 const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
@@ -1024,6 +1025,7 @@ registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
 registerEventCueFileRoutes(app, pool);
+registerAppDownloadRoutes(app);
 registerPowerpointRoutes(app, {
   pool,
   isBucketConfigured,

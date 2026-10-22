@@ -4,6 +4,7 @@ import { Event } from '../types/Event';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { buildLedOutputPageUrl } from '../lib/ledOutputBackground';
+import { getAppDownloadUrl } from '../services/api-client';
 
 interface ScheduleItem {
   id: number;
@@ -80,7 +81,7 @@ const DOWNLOAD_TOOLS = [
     title: 'PowerPoint Bridge',
     blurb: 'Capture slide stills and fire ROS cues when a slide goes live',
     meta: 'Windows · unzip and run START.bat',
-    href: '/powerpoint-bridge.zip',
+    href: getAppDownloadUrl('powerpoint-bridge.zip'),
     filename: 'powerpoint-bridge.zip',
     details: [
       'Open the deck in PowerPoint first',

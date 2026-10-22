@@ -1,4 +1,5 @@
 import React from 'react';
+import { getAppDownloadUrl } from '../services/api-client';
 
 interface OSCModalSimplifiedProps {
   isOpen: boolean;
@@ -130,8 +131,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
               {/* Offline Show — LAN show laptop */}
               <div className="text-center mb-4">
                 <a
-                  href="/powerpoint-bridge.zip"
-                  download="powerpoint-bridge.zip"
+                  href={getAppDownloadUrl('powerpoint-bridge.zip')}
                   className="block bg-orange-600 hover:bg-orange-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
                   PowerPoint Bridge (Windows)

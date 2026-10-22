@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { getApiBaseUrl } from '../services/api-client';
+import { getApiBaseUrl, getAppDownloadUrl } from '../services/api-client';
 import { apiAuthFetch, apiJsonHeaders } from '../lib/sessionAuth';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
@@ -299,8 +299,7 @@ const PowerPointPage: React.FC = () => {
             Seen {formatLastSeen(session?.lastSeen || null)}
           </span>
           <a
-            href="/powerpoint-bridge.zip"
-            download="powerpoint-bridge.zip"
+            href={getAppDownloadUrl('powerpoint-bridge.zip')}
             className="rounded bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
           >
             Download Windows bridge
@@ -365,8 +364,7 @@ const PowerPointPage: React.FC = () => {
             <code className="rounded bg-slate-900 px-1 text-orange-200">{eventId}</code>
           </p>
           <a
-            href="/powerpoint-bridge.zip"
-            download="powerpoint-bridge.zip"
+            href={getAppDownloadUrl('powerpoint-bridge.zip')}
             className="mt-4 inline-flex rounded bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500"
           >
             Download PowerPoint Bridge

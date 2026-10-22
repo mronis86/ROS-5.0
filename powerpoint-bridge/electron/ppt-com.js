@@ -3,7 +3,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const SCRIPT = path.join(__dirname, 'ppt-com.ps1');
+function resolveScript() {
+  const packaged = path.join(process.resourcesPath || '', 'ppt-com.ps1');
+  if (process.resourcesPath && fs.existsSync(packaged)) return packaged;
+  return path.join(__dirname, 'ppt-com.ps1');
+}
+
+const SCRIPT = resolveScript();
 
 function runPptCommand(command, extraArgs = []) {
   return new Promise((resolve, reject) => {

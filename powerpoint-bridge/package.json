@@ -25,6 +25,12 @@
       "renderer/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "electron/ppt-com.ps1",
+        "to": "ppt-com.ps1"
+      }
+    ],
     "win": {
       "target": [
         {

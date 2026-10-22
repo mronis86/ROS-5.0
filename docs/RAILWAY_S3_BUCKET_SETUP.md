@@ -35,3 +35,12 @@ After deploy, ROS Assets modal should say platform upload is available.
 `GET /api/event-cue-files/status` returns `{ "configured": true, "retentionMonths": 4 }`.
 
 Local `.env` template: `docs/env-templates/railway-s3-bucket.env.example`
+
+## Operator downloads (`ros-downloads`)
+
+Large helper zips (starting with PowerPoint Bridge) live in a separate Railway bucket so Cloudflare Pages stays under 25 MiB.
+
+1. Bucket: **ros-downloads** (US East / `iad`)
+2. API service variables: `DOWNLOADS_BUCKET_NAME`, `DOWNLOADS_BUCKET_ENDPOINT`, `DOWNLOADS_BUCKET_ACCESS_KEY_ID`, `DOWNLOADS_BUCKET_SECRET_ACCESS_KEY`, `DOWNLOADS_BUCKET_REGION`
+3. Upload: `node scripts/upload-app-download.js public/powerpoint-bridge.zip`
+4. Public URL: `https://ros-50-production.up.railway.app/api/downloads/powerpoint-bridge.zip`

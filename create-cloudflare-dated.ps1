@@ -10,7 +10,8 @@
 #   npx wrangler pages deploy cloudflare-YYYY-MM-DD-V2 --project-name=ros1615 --commit-dirty=true
 
 param(
-    [string]$NetlifyDownloadsBase = 'https://ros1615.netlify.app'
+    [string]$NetlifyDownloadsBase = 'https://ros1615.netlify.app',
+    [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,8 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 $MaxFileBytes = 25 * 1024 * 1024
 $NetlifyBase = $NetlifyDownloadsBase.TrimEnd('/')
 $LargeZips = @('ROS-OSC-Control-portable.zip', 'ros-vmix-datasource-bridge.zip', 'ros-civics-vmix-bridge.zip')
+$RailwayDownloadsBase = 'https://ros-50-production.up.railway.app/api/downloads'
+$RailwayZips = @('powerpoint-bridge.zip')
 $UnusedDeployZips = @(
     'OSC_GUI_App_Enhanced.zip',
     'OSC_GUI_App_Enhanced_Updated.zip',
@@ -37,13 +40,17 @@ $UnusedDeployZips = @(
 
 Write-Host '========== Cloudflare Pages deploy folder =========='
 
-# Always rebuild so Pages never ships a stale dist from an earlier build.
-Write-Host 'Running npm run build...'
-Push-Location $ProjectRoot
-try { npm run build } finally { Pop-Location }
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "npm run build failed (exit $LASTEXITCODE). Refusing to upload the previous dist."
-    exit $LASTEXITCODE
+if (-not $SkipBuild) {
+    # Always rebuild so Pages never ships a stale dist from an earlier build.
+    Write-Host 'Running npm run build...'
+    Push-Location $ProjectRoot
+    try { npm run build } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "npm run build failed (exit $LASTEXITCODE). Refusing to upload the previous dist."
+        exit $LASTEXITCODE
+    }
+} else {
+    Write-Host 'Skipping npm run build. Using the dist folder that is already here.'
 }
 
 if (-not (Test-Path (Join-Path $DistDir 'index.html'))) {
@@ -137,6 +144,16 @@ $redirectLines = New-Object System.Collections.Generic.List[string]
 foreach ($big in $LargeZips) {
     # 302 to Netlify so CF Pages stays under 25 MiB; app links stay /filename.zip
     [void]$redirectLines.Add(('/{0}  {1}/{0}  302' -f $big, $NetlifyBase))
+}
+
+foreach ($big in $RailwayZips) {
+    $src = Join-Path $publicDir $big
+    if (Test-Path $src) {
+        $mb = (Get-Item $src).Length / 1MB
+        [void]$NetlifyHosted.Add(('{0} ({1:N1} MB -> {2}/{0})' -f $big, $mb, $RailwayDownloadsBase))
+        Write-Host ("Large zip redirect: /{0} -> {1}/{0}" -f $big, $RailwayDownloadsBase)
+    }
+    [void]$redirectLines.Add(('/{0}  {1}/{0}  302' -f $big, $RailwayDownloadsBase))
 }
 
 [void]$redirectLines.Add('')
